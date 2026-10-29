@@ -144,11 +144,19 @@ function mockDb() {
       update: vi.fn(async () => ({})),
     },
     productMetafield: {
-      upsert: vi.fn(async () => ({})),
+      // Shop-scoped mirror: looked up by id WITH its product's shop, then
+      // created or updated (an upsert cannot filter by relation).
+      findUnique: vi.fn(async (_args?: unknown): Promise<unknown> => null),
+      create: vi.fn(async (_args?: unknown) => ({})),
+      update: vi.fn(async (_args?: unknown) => ({})),
       deleteMany: vi.fn(async () => ({ count: 1 })),
       // A deleted metafield takes its translations with it — the apply path
       // looks the gid up to clear them.
       findFirst: vi.fn(async () => ({ id: "gid://shopify/Metafield/1" })),
+      // A confirmed delete keeps ONE row as a cleared slot (value "") — the
+      // rows of that namespace/key are read first.
+      findMany: vi.fn(async (_args?: unknown) => [{ id: "gid://shopify/Metafield/1", value: "Wool" }]),
+      updateMany: vi.fn(async (_args?: unknown) => ({ count: 1 })),
     },
     productOption: {
       findFirst: vi.fn(async (_args?: unknown) => ({
@@ -330,7 +338,7 @@ describe("applyBulkDiff — metafields (Plan §4.1/§4.4/§14)", () => {
       type: "single_line_text_field",
     });
     // Echoed values are mirrored into the DB.
-    expect(db.productMetafield.upsert).toHaveBeenCalledTimes(METAFIELDS_SET_CHUNK + 1);
+    expect(db.productMetafield.create).toHaveBeenCalledTimes(METAFIELDS_SET_CHUNK + 1);
   });
 
   it("chunks metafieldsDelete at 25 like metafieldsSet (Finding 9)", async () => {
@@ -353,7 +361,8 @@ describe("applyBulkDiff — metafields (Plan §4.1/§4.4/§14)", () => {
     expect(deleteCalls).toHaveLength(2);
     expect((deleteCalls[0].variables?.metafields as unknown[]).length).toBe(METAFIELDS_SET_CHUNK);
     expect((deleteCalls[1].variables?.metafields as unknown[]).length).toBe(1);
-    expect(db.productMetafield.deleteMany).toHaveBeenCalledTimes(METAFIELDS_SET_CHUNK + 1);
+    // Every confirmed removal keeps its row as a cleared slot.
+    expect(db.productMetafield.updateMany).toHaveBeenCalledTimes(METAFIELDS_SET_CHUNK + 1);
   });
 
   it("clears a metafield cell via metafieldsDelete, NEVER metafieldsSet with '' (§14 no. 4)", async () => {
@@ -372,9 +381,41 @@ describe("applyBulkDiff — metafields (Plan §4.1/§4.4/§14)", () => {
     expect(deleteCalls[0].variables?.metafields).toEqual([
       { ownerId: PRODUCT_ID, namespace: "custom", key: "material" },
     ]);
-    // Local row removed only after Shopify confirmed the delete (echo check).
+    // Only after Shopify confirmed the delete (echo check) is the local row
+    // turned into a cleared slot (kept, value ""), and its translations go.
+    expect(db.productMetafield.findMany).toHaveBeenCalledWith({
+      where: { productId: PRODUCT_ID, product: { shop: SHOP }, namespace: "custom", key: "material" },
+      select: { id: true, value: true },
+    });
+    expect(db.productMetafield.updateMany).toHaveBeenCalledWith({
+      where: { id: "gid://shopify/Metafield/1", product: { shop: SHOP } },
+      data: { value: "" },
+    });
+    expect(db.productMetafield.deleteMany).not.toHaveBeenCalled();
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalledWith({
+      where: { shop: SHOP, resourceId: { in: ["gid://shopify/Metafield/1"] }, resourceType: "Metafield" },
+    });
+  });
+
+  it("a confirmed set drops a CLEARED SLOT of the same namespace/key (never the echoed row)", async () => {
+    const { admin } = mockAdmin();
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([MATERIAL_SPEC]) },
+      [entry(metafieldColumnId("custom", "material"), "Linen")],
+    );
+
+    expect(result.failures).toEqual([]);
     expect(db.productMetafield.deleteMany).toHaveBeenCalledWith({
-      where: { productId: PRODUCT_ID, namespace: "custom", key: "material" },
+      where: {
+        productId: PRODUCT_ID,
+        product: { shop: SHOP },
+        namespace: "custom",
+        key: "material",
+        value: "",
+        id: { not: "gid://shopify/Metafield/1" },
+      },
     });
   });
 
@@ -393,6 +434,7 @@ describe("applyBulkDiff — metafields (Plan §4.1/§4.4/§14)", () => {
     );
 
     expect(db.productMetafield.deleteMany).not.toHaveBeenCalled();
+    expect(db.productMetafield.updateMany).not.toHaveBeenCalled();
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0].columnId).toBe(metafieldColumnId("custom", "material"));
   });
@@ -465,7 +507,8 @@ describe("applyBulkDiff — cell-granular partial failures (Plan §4.4/§12)", (
     expect(byColumn.has(metafieldColumnId("custom", "material"))).toBe(true);
     expect(byColumn.has("field.title")).toBe(false);
     // No DB mirror for the failed (atomic) chunk.
-    expect(db.productMetafield.upsert).not.toHaveBeenCalled();
+    expect(db.productMetafield.create).not.toHaveBeenCalled();
+    expect(db.productMetafield.update).not.toHaveBeenCalled();
   });
 
   it("fails an option values-count mismatch as a cell error without calling Shopify (§4.2)", async () => {
@@ -955,5 +998,53 @@ describe("applyBulkDiff — top-level GraphQL errors on productUpdate", () => {
 
     expect(result.failures.length).toBeGreaterThan(0);
     expect(db.product.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("applyBulkDiff — cache writes keyed by client-diff ids are shop-scoped", () => {
+  const spec: MetafieldColumnSpec[] = [{ namespace: "custom", key: "material", type: "single_line_text_field" }];
+
+  it("updates an existing metafield row of THIS shop, never one of another shop", async () => {
+    const { admin } = mockAdmin();
+    const db = mockDb();
+    db.productMetafield.findUnique.mockResolvedValueOnce({ id: "x", product: { shop: SHOP } });
+    const ok = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor(spec) },
+      [entry(metafieldColumnId("custom", "material"), "Linen")],
+    );
+    expect(ok.failures).toEqual([]);
+    expect(db.productMetafield.update).toHaveBeenCalledTimes(1);
+    expect(db.productMetafield.create).not.toHaveBeenCalled();
+
+    const db2 = mockDb();
+    db2.productMetafield.findUnique.mockResolvedValueOnce({ id: "x", product: { shop: "other.myshopify.com" } });
+    const refused = await applyBulkDiff(
+      { db: db2 as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor(spec) },
+      [entry(metafieldColumnId("custom", "material"), "Linen")],
+    );
+    expect(refused.failures.map((f) => f.columnId)).toEqual([metafieldColumnId("custom", "material")]);
+    expect(db2.productMetafield.update).not.toHaveBeenCalled();
+    expect(db2.productMetafield.create).not.toHaveBeenCalled();
+  });
+
+  it("scopes the metafield delete mirror and the option lookup by shop", async () => {
+    const where = (fn: { mock: { calls: unknown[][] } }) =>
+      fn.mock.calls.map((c) => (c[0] as { where: Record<string, unknown> }).where);
+    const run = async (diff: BulkDiffEntry[], specs: MetafieldColumnSpec[] = []) => {
+      const { admin } = mockAdmin();
+      const db = mockDb();
+      await applyBulkDiff(
+        { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor(specs) },
+        diff,
+      );
+      return db;
+    };
+
+    const mf = await run([entry(metafieldColumnId("custom", "material"), "")], spec);
+    expect(where(mf.productMetafield.findMany)).toEqual([expect.objectContaining({ product: { shop: SHOP } })]);
+    expect(where(mf.productMetafield.updateMany)).toEqual([expect.objectContaining({ product: { shop: SHOP } })]);
+
+    const opt = await run([entry(optionColumnId(1, "values"), "Small | M")]);
+    expect(where(opt.productOption.findFirst)).toEqual([expect.objectContaining({ product: { shop: SHOP } })]);
   });
 });

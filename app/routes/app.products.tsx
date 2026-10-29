@@ -32,10 +32,12 @@ import { logger } from "~/utils/logger.server";
 import { wasRecentlySaved } from "~/utils/translation-timing";
 import { isDefaultTitleOption } from "~/utils/shopify-product.utils";
 import { countsAsSalesChannel } from "~/services/commerce-sync.shared";
+import { splitClearedMetafieldSlots } from "~/services/product-metafields.shared";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import type { FetcherData } from "~/types/content-editor.types";
 import { LocalizedMediaProvider } from "~/components/localized-images/LocalizedMediaContext";
+import { appFetch } from "../utils/app-fetch";
 
 // ============================================================================
 // LOADER - Paginated upsert sync + load from database
@@ -244,14 +246,24 @@ export const loader = createContentLoader({
         const isLinked = !!opt.linkedMetafieldKey || values.some(v => v.linked);
         return { id: opt.id, name: opt.name, position: opt.position, values, isLinked, linkedMetafieldKey: opt.linkedMetafieldKey || undefined };
       }) || [],
-      metafields: p.metafields?.filter((mf: any) =>
-        // Shared predicate — the bulk editor's metafield columns use the SAME
-        // filter (isEditableProductMetafield), so both surfaces show the same
-        // fields (Plan §4.1).
-        isEditableProductMetafield(mf, enabledMetafieldKeys)
-      ).map((mf: any) => ({
-        id: mf.id, namespace: mf.namespace, key: mf.key, value: mf.value, type: mf.type,
-      })) || [],
+      // Real metafields and CLEARED SLOTS travel apart: a slot (`value: ""`,
+      // product-metafields.shared.ts) is a metafield deleted on Shopify whose
+      // row is kept so the card can show the field empty and re-create it.
+      // Everything translation-shaped reads `metafields` only — a slot's id is
+      // a deleted resource — and only the primary card reads both.
+      ...(() => {
+        type CardMetafield = { id: string; namespace: string; key: string; value: string; type: string };
+        const editable: CardMetafield[] = (p.metafields ?? [])
+          // Shared predicate — the bulk editor's metafield columns use the SAME
+          // filter (isEditableProductMetafield), so both surfaces show the same
+          // fields (Plan §4.1).
+          .filter((mf: any) => isEditableProductMetafield(mf, enabledMetafieldKeys))
+          .map((mf: any) => ({
+            id: mf.id as string, namespace: mf.namespace as string, key: mf.key as string,
+            value: (mf.value ?? "") as string, type: mf.type as string,
+          }));
+        return splitClearedMetafieldSlots<CardMetafield>(editable);
+      })(),
       // Sub-resource translations loaded via same DB pipeline as main translations
       subResourceTranslations: (() => {
         // Carry marketId per row so the client can layer market → global (see
@@ -554,6 +566,14 @@ export default function ProductsPage() {
       optionWarning_optionNameEmpty: t.products.optionWarningNameEmpty,
       optionWarning_optionValueEmpty: t.products.optionWarningValueEmpty,
       optionWarning_optionLastOne: t.products.optionWarningLastOne,
+      optionWarning_metafieldValueBlank: t.products.metafieldWarningValueBlank,
+      optionWarning_metafieldListInvalid: t.products.metafieldListInvalid,
+      optionWarning_metafieldExistsMeanwhile: t.products.metafieldWarningExistsMeanwhile,
+      optionWarning_metafieldSlotUnverified: t.products.metafieldWarningSlotUnverified,
+      metafieldTypeNotTranslatable: t.products.metafieldTypeNotTranslatable,
+      metafieldListInvalid: t.products.metafieldListInvalid,
+      saveFirstSource: t.common.saveFirstSource,
+      sourceReloading: t.common.sourceReloading,
     },
   });
 
@@ -626,7 +646,7 @@ export default function ProductsPage() {
     }
     const delays = [10000, 15000, 30000, 45000, 60000, 60000, 60000, 60000];
     try {
-      const r = await fetch("/api/refresh-3d-previews", {
+      const r = await appFetch("/api/refresh-3d-previews", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId, pendingModels }),
@@ -760,6 +780,10 @@ export default function ProductsPage() {
     editor.state.currentLanguage === primaryLocale &&
     (Object.keys(subResources.state.primaryMetafieldEdits).length > 0 ||
       (showImageManager && imageManagerState.hasAltTextEdits));
+  // A landed primary save whose reload is still out: the item still carries
+  // the metafield text from BEFORE it. Blocks too, but is no unsaved change.
+  const primaryTranslateAllReloadPending =
+    editor.state.currentLanguage === primaryLocale && subResources.state.metafieldTranslationBlocked;
   const wrappedSubResourceState = useMemo(() => ({
     ...subResources.state,
     hasChanges: subResources.state.hasChanges || hasPendingImageChanges,
@@ -774,7 +798,8 @@ export default function ProductsPage() {
     // waiting for a new image): the Save shows busy until they are answered.
     isSaving: subResources.state.isSaving || imageManagerState.isApplying || imageManagerState.isDeletingImages || imageManagerState.isSavingAltTexts,
     translateAllSaveFirst: hasPrimaryTranslateAllDrafts,
-  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying, imageManagerState.isDeletingImages, imageManagerState.isSavingAltTexts, hasPrimaryTranslateAllDrafts]);
+    translateAllReloadPending: primaryTranslateAllReloadPending,
+  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying, imageManagerState.isDeletingImages, imageManagerState.isSavingAltTexts, hasPrimaryTranslateAllDrafts, primaryTranslateAllReloadPending]);
 
   const wrappedSubResourceHandlers = useMemo(() => ({
     ...subResources.handlers,
@@ -891,6 +916,10 @@ export default function ProductsPage() {
             String(t.common?.saveFirstSource || "Save first — the main-language text has unsaved changes."),
             "warning",
           );
+          return;
+        }
+        if (primaryTranslateAllReloadPending) {
+          showInfoBox(String(t.common?.sourceReloading || "One moment — the saved text is reloading."), "info");
           return;
         }
         // Refused (a save it would race is still out): neither half runs.

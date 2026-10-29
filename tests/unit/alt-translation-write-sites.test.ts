@@ -417,6 +417,50 @@ describe("api-ai alt-text handlers (product path)", () => {
     });
   });
 
+  // A managed-AI refusal aborts the run and reaches the /api/ai catch: it is
+  // never recorded per locale (no per-locale fallback asking again) and
+  // nothing is registered or mirrored.
+  describe("managed-AI refusal", () => {
+    it("translate-to-all: propagates, no fallback, nothing written", async () => {
+      const { handleTranslateAltTextToAllLocales } = await import("~/routes/api-ai-handlers/alt-text.handler");
+      const { ManagedAiRefusedError } = await import("../../src/services/ai.service");
+      batch.mockRejectedValue(new ManagedAiRefusedError("budgetExceeded"));
+      const admin = fakeAdmin();
+      const db = makeDb();
+      const err = await handleTranslateAltTextToAllLocales(
+        ctx(admin, db, {
+          imageIndex: "0",
+          sourceAltText: "Box",
+          targetLocales: JSON.stringify(["de", "fr"]),
+          primaryLocale: "en",
+          productId: PID,
+        }),
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ManagedAiRefusedError);
+      expect(admin.registers).toEqual([]);
+      expect(altWrites(db)).toEqual([]);
+    });
+
+    it("translate-all-alt-texts: propagates, nothing written", async () => {
+      const { handleTranslateAllAltTextsToAllLocales } = await import("~/routes/api-ai-handlers/alt-text.handler");
+      const { ManagedAiRefusedError } = await import("../../src/services/ai.service");
+      batch.mockRejectedValue(new ManagedAiRefusedError("consentMissing"));
+      const admin = fakeAdmin();
+      const db = makeDb();
+      const err = await handleTranslateAllAltTextsToAllLocales(
+        ctx(admin, db, {
+          altTextsData: JSON.stringify({ "0": "Box" }),
+          targetLocales: JSON.stringify(["de", "fr"]),
+          primaryLocale: "en",
+          productId: PID,
+        }),
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ManagedAiRefusedError);
+      expect(admin.registers).toEqual([]);
+      expect(altWrites(db)).toEqual([]);
+    });
+  });
+
   describe("handleTranslateAllAltTextsToAllLocales", () => {
     async function run(admin: ReturnType<typeof fakeAdmin>, db: any) {
       const { handleTranslateAllAltTextsToAllLocales } = await import("~/routes/api-ai-handlers/alt-text.handler");

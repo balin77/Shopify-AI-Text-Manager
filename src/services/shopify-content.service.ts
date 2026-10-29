@@ -12,7 +12,7 @@ import { FIELD_TO_TRANSLATION_KEY, fieldTranslationKeyMap } from '../../app/serv
 import { collectRetranslationTaskIds } from '../../app/services/translations/retranslation-tasks.shared';
 import { echoComparisonKey, ECHO_PAIR_SEP } from '../../app/services/translations/translation-echo.shared';
 import type { VerifiedWriteResult, TranslationUserError } from '../../app/services/translations/verified-translations.server';
-import { isAuthError, isManagedRefusal, localeName } from './ai.service';
+import { isProviderKeyRejection, isManagedRefusal, localeName } from './ai.service';
 import { attributeInputFor as buildAttributeInput } from '../../app/services/content-attributes.shared';
 import {
   keywordTranslationDirective,
@@ -2818,7 +2818,7 @@ export class ShopifyContentService {
       } catch (batchError: unknown) {
         // Invalid API key: the sequential fallback would fail for every locale
         // too — surface it so the caller reports failure instead of success.
-        if (isAuthError(batchError) || isManagedRefusal(batchError)) throw batchError;
+        if (isProviderKeyRejection(batchError) || isManagedRefusal(batchError)) throw batchError;
         loggers.translation('error', 'Batch short fields failed', { error: batchError instanceof Error ? batchError.message : String(batchError) });
         loggers.translation('warn', 'Falling back to sequential for short fields...');
         for (const locale of targetLocales) {
@@ -2831,7 +2831,7 @@ export class ShopifyContentService {
             }
           } catch (localeError: unknown) {
             // Invalid key: abort — every remaining locale would fail identically.
-            if (isAuthError(localeError) || isManagedRefusal(localeError)) throw localeError;
+            if (isProviderKeyRejection(localeError) || isManagedRefusal(localeError)) throw localeError;
             loggers.translation('error', `Fallback failed for ${locale}`, { error: localeError instanceof Error ? localeError.message : String(localeError) });
             if (!failedLocales.includes(locale)) failedLocales.push(locale);
           }
@@ -2899,7 +2899,7 @@ export class ShopifyContentService {
         } catch (batchError: unknown) {
           // Invalid API key: the per-locale fallback would fail identically —
           // surface it instead of degrading to a doomed second pass.
-          if (isAuthError(batchError) || isManagedRefusal(batchError)) throw batchError;
+          if (isProviderKeyRejection(batchError) || isManagedRefusal(batchError)) throw batchError;
           loggers.translation('error', 'Batch long fields failed, falling back to per-locale', {
             error: batchError instanceof Error ? batchError.message : String(batchError),
           });
@@ -2940,7 +2940,7 @@ export class ShopifyContentService {
               const localeTranslations = await translationService.translateProduct(retryFields, [locale], contentType, customInstructions, keywordDirectiveFor(locale));
               retried = localeTranslations[locale];
             } catch (retryError: unknown) {
-              if (isAuthError(retryError) || isManagedRefusal(retryError)) throw retryError;
+              if (isProviderKeyRejection(retryError) || isManagedRefusal(retryError)) throw retryError;
               loggers.translation('error', `Long-field retry failed for ${locale} — keeping what the batch delivered`, {
                 fields: missingKeys,
                 error: retryError instanceof Error ? retryError.message : String(retryError),
@@ -3003,7 +3003,7 @@ export class ShopifyContentService {
           }
         } catch (localeError: unknown) {
           // Invalid key: abort — every remaining locale would fail identically.
-          if (isAuthError(localeError) || isManagedRefusal(localeError)) throw localeError;
+          if (isProviderKeyRejection(localeError) || isManagedRefusal(localeError)) throw localeError;
           loggers.translation('error', `Failed to translate long fields to ${locale}`, { error: localeError instanceof Error ? localeError.message : String(localeError) });
           if (!failedLocales.includes(locale)) failedLocales.push(locale);
         }

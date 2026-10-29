@@ -75,6 +75,7 @@ export const guideEn: GuideCopy = {
           heading: "Your own key",
           paragraphs: [
             "ContentPilot AI writes with the AI provider you connect: Anthropic (Claude), OpenAI, Google Gemini, DeepSeek, Grok or HuggingFace. You enter your own API key — so the cost and the choice of model stay with you.",
+            "For security, a stored key is never shown again: the field stays empty and only shows \"Stored\" with the last four characters, so you can recognise the key. Leave the field empty to keep the key; type a new one to replace it. To delete it, click \"Remove key\" and save.",
           ],
           steps: [
             "Create an account with a provider and generate an API key.",
@@ -554,6 +555,13 @@ export const guideEn: GuideCopy = {
             "Translate the entries, one by one or with AI, and save.",
           ],
         },
+        {
+          heading: "Capture texts by clicking",
+          paragraphs: [
+            "Instead of typing texts in, you can click them in the theme editor. Under Content → Direct translations, click “Open capture mode”. The theme editor opens, and clicking a text in the preview adds it to the list — translated into every language right away if you like.",
+            "Capture mode is valid for 2 hours and ends when you close the theme editor; after that, open it again from the app. If the capture panel in the theme editor asks for a code, copy it in the app with “Show capture code” and paste it there — this always works, even if capture mode does not switch on by itself when the editor opens. Do not share that code. Visitors to your shop see nothing of capture mode.",
+          ],
+        },
       ],
       tips: [
         "Unlike everywhere else, the primary language is offered as a target here too: another app's text can be in any language.",
@@ -784,6 +792,7 @@ export const guideEn: GuideCopy = {
           heading: "How it works",
           paragraphs: [
             "In the Image Variant Manager you select images and start the conversion. It runs in the background; the converted image replaces the original wherever it is used, keeping its variant assignment and alt text.",
+            "A conversion usually takes a few seconds per image, and you can keep working in the meantime. If a conversion is still waiting to start after 24 hours, it is cancelled, the original stays unchanged and the image is credited back to your allowance.",
           ],
         },
       ],
@@ -945,7 +954,7 @@ export const guideEn: GuideCopy = {
         {
           heading: "How it works",
           paragraphs: [
-            "The app searches blog articles, pages and product descriptions for mentions of your products and collections that are not a link yet. Each find appears as a suggestion with the text excerpt.",
+            "The app searches blog articles, pages and product descriptions for mentions of your products and collections that are not a link yet. Each find appears as a suggestion with the text excerpt. After each scan the page tells you how many new suggestions were found — or, if none were found or the scan failed, why.",
           ],
         },
         {
@@ -1090,6 +1099,13 @@ export const guideEn: GuideCopy = {
           heading: "Translating options",
           paragraphs: [
             "Below every option in the variants section — even when it is collapsed — “Translate” translates the option name and its values into every language, and “Copy to all languages” copies them unchanged. On an open option, the two buttons sit between “Delete” and “Done”. An option with a blue background is still missing a translation in at least one language. If you changed an option, save first: the buttons stay locked until the change is saved, so the old text is never translated.",
+          ],
+        },
+        {
+          heading: "Metafields",
+          paragraphs: [
+            "In the “Metafields” section you edit, in the primary language, the values of the metafields you enabled under Settings → Metafields. A list field shows one entry per line; empty lines are ignored. If an entry does not match the list's type, the app marks that line on the field, and nothing is saved until you correct it.",
+            "If you empty a metafield and save, Shopify removes the value together with its translations. The field still stays in the editor until your products are next fully synced: enter a new value before then and save, and the metafield is created again. If someone else has set a value there in the meantime — in the Shopify admin or through another app, for example — the app does not overwrite it: you are told, and the field then shows the current value. 🌍 next to a metafield translates its saved value into every language; while you have changed the field and not saved yet — and briefly after saving, until the page has reloaded the saved value — the button is locked. Multi-line fields, lists and rich text are not translated automatically, because line breaks or the list would be lost; enter their translation by hand. If, when re-creating an emptied metafield, the app cannot check whether Shopify already holds a value, it saves nothing and keeps your value in the field — simply save again. A field containing only spaces is not saved — empty it completely to remove the value.",
           ],
         },
         {

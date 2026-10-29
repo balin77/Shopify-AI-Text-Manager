@@ -28,6 +28,7 @@ import type { Plan } from "~/config/plans";
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { DataResponse } from "~/types/data-response";
+import { backgroundAdmin } from "~/utils/offline-admin.server";
 
 export async function handleSeoAudit(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, settings } = ctx;
@@ -78,7 +79,7 @@ export async function handleSeoAudit(ctx: AIActionContext): Promise<DataResponse
   // locale so the SEO overview language switcher has fresh data for each tab.
   void runSeoAudit(task.id, {
     db,
-    admin,
+    admin: backgroundAdmin(session.shop, admin),
     shop: session.shop,
     plan,
     seoTitleEffectiveLimit: effectiveLimit,

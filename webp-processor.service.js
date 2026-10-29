@@ -31,6 +31,9 @@ import crypto from "crypto";
 import { PLAN_WEBP_CONCURRENCY, DEFAULT_WEBP_CONCURRENCY } from "./app/config/webp-concurrency.js";
 import { refundImageOperations } from "./image-op-refund.js";
 import { rekeyLocalizedMediaAfterConversion } from "./localized-media-rekey.js";
+import { isAllowedWebpSourceUrl, webpSourceHostForMessage } from "./app/config/webp-source-url.js";
+import { adminGraphqlUrl } from "./app/config/admin-api-version.js";
+import { resolveShopAccessToken } from "./app/utils/shop-access-token.js";
 import {
   WEBP_FAILURE_LIST_MAX,
   WEBP_FAILURE_MESSAGE_MAX,
@@ -38,6 +41,8 @@ import {
   WEBP_NON_TERMINAL_STATUS,
   WEBP_PARENT_ORPHAN_GRACE_MS,
   WEBP_PARENT_TASK_TYPE,
+  WEBP_EXPIRED_IN_QUEUE_ERROR,
+  isWebpItemExpiredInQueue,
   parseTaskResult,
   webpBatchStatus,
   webpParentTaskId,
@@ -166,7 +171,60 @@ async function fetchNewMediaUrl(shopifyApiUrl, headers, mediaId) {
   }
 }
 
-async function downloadImageAsBuffer(url) {
+/** Most redirects a source download follows — each hop is re-checked. */
+const DOWNLOAD_MAX_REDIRECTS = 3;
+
+/**
+ * A download refused by the source-URL allowlist, or one that cannot succeed
+ * by retrying (a non-retryable HTTP status, a bad redirect). Never retried.
+ */
+class WebPDownloadRefused extends Error {}
+
+/**
+ * ONE request of a download, following redirects BY HAND so every hop is
+ * checked against the allowlist (`app/config/webp-source-url.js`) before it is
+ * requested. `redirect: "follow"` would let an allowlisted URL bounce the
+ * worker to any address at all — the guard on the first URL alone is no guard.
+ * Messages name the HOST only: they land in `Task.error`, and a refused
+ * address may be an internal one.
+ */
+async function fetchSourceOnce(url, fetchFn, signal) {
+  let current = url;
+  for (let hop = 0; hop <= DOWNLOAD_MAX_REDIRECTS; hop++) {
+    if (!isAllowedWebpSourceUrl(current)) {
+      throw new WebPDownloadRefused(
+        `Image source not allowed (host ${webpSourceHostForMessage(current)}); only the Shopify CDN is accepted`,
+      );
+    }
+    const response = await fetchFn(current, { signal, redirect: "manual" });
+    if (response.status >= 300 && response.status < 400) {
+      // Release the redirect's body so its connection is not held open.
+      try {
+        await response.body?.cancel?.();
+      } catch {
+        // already consumed or not cancelable — nothing to release
+      }
+      const location = response.headers?.get?.("location");
+      if (!location) {
+        throw new WebPDownloadRefused(`Failed to download image: redirect ${response.status} without a location`);
+      }
+      try {
+        current = new URL(location, current).toString();
+      } catch {
+        throw new WebPDownloadRefused(`Failed to download image: redirect ${response.status} to an invalid location`);
+      }
+      continue;
+    }
+    return response;
+  }
+  throw new WebPDownloadRefused(`Failed to download image: more than ${DOWNLOAD_MAX_REDIRECTS} redirects`);
+}
+
+/**
+ * Download a conversion source. Exported (with injectable fetch/sleep) for the
+ * allowlist tests; the worker calls it with the defaults.
+ */
+export async function downloadImageAsBuffer(url, { fetchFn = fetch, sleepFn = sleep } = {}) {
   for (let attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++) {
     const isLastAttempt = attempt === DOWNLOAD_MAX_ATTEMPTS;
     const controller = new AbortController();
@@ -174,17 +232,20 @@ async function downloadImageAsBuffer(url) {
 
     let retryReason;
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetchSourceOnce(url, fetchFn, controller.signal);
       if (response.ok) return Buffer.from(await response.arrayBuffer());
 
       if (RETRYABLE_STATUS.has(response.status) && !isLastAttempt) {
         retryReason = `HTTP ${response.status}`;
       } else {
-        throw new Error(`Failed to download image: ${response.status} ${url}`);
+        throw new WebPDownloadRefused(
+          `Failed to download image: HTTP ${response.status} from ${webpSourceHostForMessage(url)}`,
+        );
       }
     } catch (err) {
-      // Network error or timeout — retry until last attempt; HTTP errors above re-throw directly.
-      if (isLastAttempt || err.message?.startsWith("Failed to download image:")) throw err;
+      // Network error or timeout — retry until last attempt; refusals and
+      // non-retryable HTTP errors re-throw directly.
+      if (isLastAttempt || err instanceof WebPDownloadRefused) throw err;
       retryReason = err.name === "AbortError" ? `timeout after ${DOWNLOAD_TIMEOUT_MS}ms` : err.message;
     } finally {
       clearTimeout(timeout);
@@ -192,10 +253,10 @@ async function downloadImageAsBuffer(url) {
 
     const delay = DOWNLOAD_BASE_DELAY_MS * 2 ** (attempt - 1) + Math.floor(Math.random() * 250);
     console.warn(`[WebPProcessor] Download attempt ${attempt}/${DOWNLOAD_MAX_ATTEMPTS} failed (${retryReason}) for ${url} — retrying in ${delay}ms`);
-    await sleep(delay);
+    await sleepFn(delay);
   }
   // Unreachable: loop either returns or throws.
-  throw new Error(`Failed to download image after ${DOWNLOAD_MAX_ATTEMPTS} attempts: ${url}`);
+  throw new Error(`Failed to download image after ${DOWNLOAD_MAX_ATTEMPTS} attempts`);
 }
 
 async function convertToWebP(sourceBuffer, originalUrl, quality = 85) {
@@ -227,6 +288,12 @@ const GLOBAL_MAX_CONCURRENT = 8;
 export class WebPProcessorService {
   static instance = null;
   isRunning = false;
+  /** A poll is running right now (its `processPendingTasks` has not returned). */
+  pollInFlight = false;
+  /** A wake-up arrived while a poll was in flight: poll again as soon as it ends. */
+  pollAgain = false;
+  /** The timer of the next regular tick (exactly one is ever scheduled). */
+  nextTick = null;
 
   static getInstance() {
     if (!WebPProcessorService.instance) {
@@ -238,24 +305,66 @@ export class WebPProcessorService {
   start() {
     if (this.isRunning) return;
     this.isRunning = true;
+    // The convert route (inside the React Router bundle, which cannot import
+    // this root module) nudges the worker through this hook right after it has
+    // created the task rows, so a conversion starts at once instead of waiting
+    // for the next 10s tick. Same pattern as `globalThis.__getShopAccessToken`.
+    globalThis.__wakeWebpProcessor = () => this.wake();
     this.poll();
     console.log("[WebPProcessor] Service started, polling every", POLL_INTERVAL_MS / 1000, "seconds");
   }
 
   stop() {
     this.isRunning = false;
+    if (this.nextTick) clearTimeout(this.nextTick);
+    this.nextTick = null;
+    this.pollAgain = false;
+    if (globalThis.__wakeWebpProcessor) delete globalThis.__wakeWebpProcessor;
+  }
+
+  /**
+   * Poll NOW rather than at the next tick. Never runs two polls at once: while
+   * one is in flight the wake-up is remembered and the poll runs again the
+   * moment the current one ends (its rows may have been created after that
+   * poll's queries ran). Never throws.
+   */
+  wake() {
+    if (!this.isRunning) return;
+    if (this.pollInFlight) {
+      this.pollAgain = true;
+      return;
+    }
+    this.poll().catch(() => {});
   }
 
   async poll() {
     if (!this.isRunning) return;
+    if (this.pollInFlight) {
+      // A tick and a wake-up can meet; the second one is folded into the first.
+      this.pollAgain = true;
+      return;
+    }
+    if (this.nextTick) clearTimeout(this.nextTick);
+    this.nextTick = null;
+    this.pollInFlight = true;
 
     try {
       await this.processPendingTasks();
     } catch (err) {
       console.error("[WebPProcessor] Poll error:", err);
+    } finally {
+      this.pollInFlight = false;
     }
 
-    setTimeout(() => this.poll(), POLL_INTERVAL_MS);
+    if (!this.isRunning) return;
+    if (this.pollAgain) {
+      this.pollAgain = false;
+      // Next macrotask, not a recursive call: keeps the stack flat and gives
+      // `stop()` a chance to land in between.
+      this.nextTick = setTimeout(() => this.poll(), 0);
+      return;
+    }
+    this.nextTick = setTimeout(() => this.poll(), POLL_INTERVAL_MS);
   }
 
   async processPendingTasks() {
@@ -558,6 +667,20 @@ export class WebPProcessorService {
   }
 
   async _processTaskItem(task) {
+    // A conversion replaces the merchant's original on Shopify, so it may only
+    // START close to the moment they asked for it. An item that waited past
+    // WEBP_QUEUE_MAX_AGE_MS (app/config/webp-tasks.js) is failed with a code
+    // and refunded through the ordinary `failTask`, never run. Checked before
+    // anything else and before the row is marked `running`: nothing has touched
+    // Shopify for it, so the refund is owed and the batch settles from it.
+    if (isWebpItemExpiredInQueue(task.createdAt)) {
+      console.warn(
+        `[WebPProcessor] Task ${task.id} waited in the queue since ${new Date(task.createdAt).toISOString()} — expired, not started`,
+      );
+      await this.failTask(task, WEBP_EXPIRED_IN_QUEUE_ERROR);
+      return;
+    }
+
     let taskData;
     try {
       taskData = JSON.parse(task.result || "{}");
@@ -620,22 +743,15 @@ export class WebPProcessorService {
       const { buffer, filename } = await convertToWebP(sourceBuffer, sourceUrl);
       await db.task.update({ where: { id: task.id }, data: { progress: 50 } });
 
-      // 3. Get Shopify session for this shop
-      const session = await db.session.findFirst({
-        where: { shop: task.shop, isOnline: false },
-        orderBy: { lastActivityAt: "desc" },
-      });
-
-      if (!session?.accessToken) {
-        await this.failTask(task, "No valid session found for shop");
+      // 3. Get the shop's OFFLINE token — through the app (refreshed when it is
+      // an expiring token) when the bundle has registered its hook, otherwise
+      // read directly as before (app/utils/shop-access-token.js).
+      const resolved = await resolveShopAccessToken(task.shop, { db, decryptToken, logPrefix: "[WebPProcessor]" });
+      if (!resolved.token) {
+        await this.failTask(task, resolved.reason);
         return;
       }
-
-      const accessToken = decryptToken(session.accessToken);
-      if (!accessToken) {
-        await this.failTask(task, "Failed to decrypt session access token");
-        return;
-      }
+      const accessToken = resolved.token;
 
       // Use altText passed from the client; fall back to DB lookup if not present
       let originalAltText = taskAltText ?? null;
@@ -647,7 +763,7 @@ export class WebPProcessorService {
         originalAltText = productImage?.altText || null;
       }
 
-      const shopifyApiUrl = `https://${task.shop}/admin/api/2025-04/graphql.json`;
+      const shopifyApiUrl = adminGraphqlUrl(task.shop);
       const headers = {
         "X-Shopify-Access-Token": accessToken,
         "Content-Type": "application/json",

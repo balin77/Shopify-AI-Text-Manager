@@ -4,6 +4,8 @@ import type { FetcherWithComponents } from "react-router";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import { meetsPlan, getPlanDisplayName, type Plan } from "../utils/planUtils";
 import { SettingsLanguageTab } from "./SettingsLanguageTab";
+import { appFetch, isAuthError } from "../utils/app-fetch";
+import { translateErrorMessage } from "../utils/editor-error-messages";
 
 interface WebhookEntry {
   topic: string;
@@ -79,7 +81,7 @@ export function SettingsSetupTab({
     setWebhookData(null);
 
     try {
-      const response = await fetch("/api/setup-webhooks", {
+      const response = await appFetch("/api/setup-webhooks", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -95,7 +97,7 @@ export function SettingsSetupTab({
         setWebhookStatus(`✗ Error: ${data.error}`);
       }
     } catch (error: unknown) {
-      setWebhookStatus(`✗ Error: ${error instanceof Error ? error.message : String(error)}`);
+      setWebhookStatus(`✗ Error: ${isAuthError(error) ? translateErrorMessage(error.message, t as never) : error instanceof Error ? error.message : String(error)}`);
     } finally {
       setWebhookLoading(false);
     }
@@ -105,13 +107,13 @@ export function SettingsSetupTab({
     setSyncTriggerError("");
     setSyncTriggerLoading(true);
     try {
-      const response = await fetch("/api/sync-trigger", { method: "POST" });
+      const response = await appFetch("/api/sync-trigger", { method: "POST" });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
       setSyncTriggered(true);
     } catch (error: unknown) {
-      setSyncTriggerError(error instanceof Error ? error.message : String(error));
+      setSyncTriggerError(isAuthError(error) ? translateErrorMessage(error.message, t as never) : error instanceof Error ? error.message : String(error));
     } finally {
       setSyncTriggerLoading(false);
     }

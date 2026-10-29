@@ -76,6 +76,7 @@ export const guideDe: GuideCopy = {
           heading: "Ihr eigener Schlüssel",
           paragraphs: [
             "ContentPilot AI schreibt mit dem KI-Anbieter, den Sie verbinden: Anthropic (Claude), OpenAI, Google Gemini, DeepSeek, Grok oder HuggingFace. Sie hinterlegen dafür Ihren eigenen API-Schlüssel — die Kosten und die Wahl des Modells bleiben damit bei Ihnen.",
+            "Ein gespeicherter Schlüssel wird aus Sicherheitsgründen nie wieder angezeigt: Das Feld bleibt leer und zeigt nur „Gespeichert“ mit den letzten vier Zeichen, damit Sie den Schlüssel wiedererkennen. Lassen Sie das Feld leer, bleibt der Schlüssel erhalten; tippen Sie einen neuen ein, ersetzt er den alten. Zum Löschen klicken Sie „Schlüssel entfernen“ und speichern.",
           ],
           steps: [
             "Bei einem Anbieter ein Konto anlegen und einen API-Schlüssel erzeugen.",
@@ -559,6 +560,13 @@ export const guideDe: GuideCopy = {
             "Texte übersetzen, einzeln oder per KI, und speichern.",
           ],
         },
+        {
+          heading: "Texte per Klick erfassen",
+          paragraphs: [
+            "Statt Texte abzutippen, können Sie sie im Theme-Editor anklicken. Klicken Sie dazu unter Inhalte → Direktübersetzungen auf „Erfassungsmodus öffnen“. Der Theme-Editor öffnet sich, und ein Klick auf einen Text in der Vorschau übernimmt ihn in die Liste — auf Wunsch gleich in alle Sprachen übersetzt.",
+            "Der Erfassungsmodus gilt 2 Stunden und endet, wenn Sie den Theme-Editor schließen; danach öffnen Sie ihn in der App erneut. Fragt das Erfassungsfenster im Theme-Editor nach einem Code, kopieren Sie ihn in der App mit „Erfassungscode anzeigen“ und fügen Sie ihn dort ein — das funktioniert immer, auch wenn sich der Erfassungsmodus beim Öffnen nicht von selbst einschaltet. Geben Sie diesen Code nicht weiter. Besucher Ihres Shops sehen vom Erfassungsmodus nichts.",
+          ],
+        },
       ],
       tips: [
         "Anders als sonst werden hier auch Texte in der Hauptsprache angeboten: Ein Text einer anderen App kann in einer beliebigen Sprache vorliegen.",
@@ -794,6 +802,7 @@ export const guideDe: GuideCopy = {
           heading: "So geht's",
           paragraphs: [
             "Im Image Variant Manager wählen Sie Bilder aus und starten die Umwandlung. Sie läuft im Hintergrund; das umgewandelte Bild ersetzt das Original an allen Stellen, an denen es verwendet wird, inklusive Varianten-Zuordnung und Alt-Text.",
+            "Pro Bild dauert die Umwandlung meist einige Sekunden; Sie können währenddessen weiterarbeiten. Wartet eine Umwandlung nach 24 Stunden noch immer auf ihren Start, wird sie abgebrochen, das Original bleibt unverändert und das Bild wird Ihrem Kontingent wieder gutgeschrieben.",
           ],
         },
       ],
@@ -958,7 +967,7 @@ export const guideDe: GuideCopy = {
         {
           heading: "Wie es funktioniert",
           paragraphs: [
-            "Die App durchsucht Blog-Artikel, Seiten und Produktbeschreibungen nach Erwähnungen Ihrer Produkte und Kollektionen, die noch kein Link sind. Jeder Fund erscheint als Vorschlag mit dem Textausschnitt.",
+            "Die App durchsucht Blog-Artikel, Seiten und Produktbeschreibungen nach Erwähnungen Ihrer Produkte und Kollektionen, die noch kein Link sind. Jeder Fund erscheint als Vorschlag mit dem Textausschnitt. Nach jedem Scan steht oben, wie viele Vorschläge neu dazugekommen sind — oder, wenn keiner gefunden wurde oder der Scan fehlgeschlagen ist, warum.",
           ],
         },
         {
@@ -1103,6 +1112,13 @@ export const guideDe: GuideCopy = {
           heading: "Optionen übersetzen",
           paragraphs: [
             "Unter jeder Option im Varianten-Bereich — auch im zugeklappten Zustand — übersetzt „Übersetzen“ den Optionsnamen und seine Werte in alle Sprachen; „In alle Sprachen übertragen“ übernimmt sie unverändert. Bei einer geöffneten Option stehen die beiden Buttons zwischen „Löschen“ und „Fertig“. Ist eine Option blau unterlegt, fehlt ihr in mindestens einer Sprache noch eine Übersetzung. Haben Sie eine Option geändert, speichern Sie zuerst: Bis die Änderung gespeichert ist, bleiben die Buttons gesperrt, damit nicht der alte Text übersetzt wird.",
+          ],
+        },
+        {
+          heading: "Metafelder",
+          paragraphs: [
+            "Im Bereich „Metafelder“ bearbeiten Sie in der Hauptsprache die Werte der Metafelder, die Sie unter Einstellungen → Metafields aktiviert haben. Ein Listenfeld zeigt einen Eintrag pro Zeile; leere Zeilen werden ignoriert. Passt ein Eintrag nicht zum Typ der Liste, markiert die App die Zeile am Feld, und es wird nichts gespeichert, bis Sie sie korrigieren.",
+            "Leeren Sie ein Metafeld und speichern, entfernt Shopify den Wert samt seinen Übersetzungen. Das Feld bleibt trotzdem im Editor stehen, bis Sie Ihre Produkte das nächste Mal vollständig synchronisieren: Geben Sie bis dahin einen neuen Wert ein und speichern, wird das Metafeld wieder angelegt. Hat inzwischen jemand anderes — etwa im Shopify-Admin oder eine andere App — dort einen Wert gesetzt, überschreibt die App ihn nicht: Sie werden informiert, und das Feld zeigt danach den aktuellen Wert. Mit 🌍 neben einem Metafeld übersetzen Sie seinen gespeicherten Wert in alle Sprachen; solange Sie das Feld geändert und noch nicht gespeichert haben — und kurz nach dem Speichern, bis die Seite den gespeicherten Wert neu geladen hat —, ist der Knopf gesperrt. Mehrzeilige Felder, Listen und Rich-Text übersetzt die App nicht automatisch, weil Zeilenumbrüche oder die Liste verloren gingen; dort geben Sie die Übersetzung von Hand ein. Kann die App beim Wiederanlegen eines geleerten Metafelds nicht prüfen, ob Shopify schon einen Wert hat, speichert sie nichts und lässt Ihren Wert im Feld — speichern Sie dann einfach noch einmal. Ein Feld nur aus Leerzeichen wird nicht gespeichert — leeren Sie es ganz, um den Wert zu entfernen.",
           ],
         },
         {

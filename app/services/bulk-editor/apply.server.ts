@@ -136,6 +136,7 @@ import {
 } from "./columns.shared";
 import { moneyToDecimalString } from "../product-variant-sync.server";
 import { writeMetaobjectFields, type MetaobjectFieldWrite } from "../metaobject-write.server";
+import { dropSupersededMetafieldSlots, keepClearedMetafieldSlot } from "../product-metafield-slots.server";
 
 interface ApplyContext {
   db: PrismaClient;
@@ -1305,17 +1306,44 @@ async function persistProductMetafields(
           failures.push(failureOf(group, "Shopify did not confirm the metafield write.", entry.columnId));
           continue;
         }
-        await db.productMetafield.upsert({
+        // Shop-scoped mirror: an upsert cannot carry a relation filter in its
+        // `where`, so the existing row is looked up WITH the shop first. A row
+        // under that id that belongs to another shop's product is never
+        // touched — the cell fails instead of writing across tenants.
+        const existingMetafield = await db.productMetafield.findUnique({
           where: { id: echo.id },
-          create: {
-            id: echo.id,
-            productId,
-            namespace: echo.namespace,
-            key: echo.key,
-            value: echo.value,
-            type: echo.type,
-          },
-          update: { value: echo.value, type: echo.type },
+          select: { id: true, product: { select: { shop: true } } },
+        });
+        if (existingMetafield && existingMetafield.product?.shop !== shop) {
+          failures.push(failureOf(group, "Shopify confirmed the metafield, but its cache row belongs to another shop.", entry.columnId));
+          continue;
+        }
+        if (existingMetafield) {
+          await db.productMetafield.update({
+            where: { id: echo.id },
+            data: { value: echo.value, type: echo.type },
+          });
+        } else {
+          await db.productMetafield.create({
+            data: {
+              id: echo.id,
+              productId,
+              namespace: echo.namespace,
+              key: echo.key,
+              value: echo.value,
+              type: echo.type,
+            },
+          });
+        }
+        // A CLEARED SLOT of this namespace/key (product-metafields.shared.ts)
+        // has a real row again and goes, or the editor's card shows the
+        // field twice.
+        await dropSupersededMetafieldSlots(db, {
+          shop,
+          productId,
+          namespace: echo.namespace,
+          key: echo.key,
+          keepId: echo.id,
         });
         // The metafield's own foreign translations are now stale (§6.6) — they
         // live on the METAFIELD gid, so they need their own invalidation.
@@ -1368,19 +1396,22 @@ async function persistProductMetafields(
           }
           // The metafield is gone — so are its translations. Delete the local
           // rows by gid; Shopify removed them with the metafield itself, so
-          // there is nothing to confirm remotely.
-          const removed = await db.productMetafield.findFirst({
-            where: { productId, namespace: entry.identifier.namespace, key: entry.identifier.key },
-            select: { id: true },
+          // there is nothing to confirm remotely. The cache row itself is KEPT
+          // as a cleared slot (value ""), the same rule as the product
+          // editor's card: there it is what keeps the field on screen so a
+          // new value can be typed. This grid never reads a slot (its loader
+          // filters `value: ""`), so nothing changes here.
+          const formerIds = await keepClearedMetafieldSlot(db, {
+            shop,
+            productId,
+            namespace: entry.identifier.namespace,
+            key: entry.identifier.key,
           });
-          if (removed) {
+          if (formerIds.length > 0) {
             await db.contentTranslation.deleteMany({
-              where: { shop, resourceId: removed.id, resourceType: "Metafield" },
+              where: { shop, resourceId: { in: formerIds }, resourceType: "Metafield" },
             });
           }
-          await db.productMetafield.deleteMany({
-            where: { productId, namespace: entry.identifier.namespace, key: entry.identifier.key },
-          });
         }
       }
     } catch (err: unknown) {
@@ -1399,7 +1430,7 @@ async function persistProductOptions(
   cells: ProductCellGroups,
   deps: PersistDeps,
 ): Promise<BulkFailure[]> {
-  const { db, gateway } = deps;
+  const { db, shop, gateway } = deps;
   const productId = group.rowId;
   const failures: BulkFailure[] = [];
 
@@ -1413,7 +1444,7 @@ async function persistProductOptions(
       for (const columnId of columnIds) failures.push(failureOf(group, message, columnId));
     };
 
-    const option = await db.productOption.findFirst({ where: { productId, position } });
+    const option = await db.productOption.findFirst({ where: { productId, position, product: { shop } } });
     if (!option) {
       failAll(`This product has no option at position ${position}.`);
       continue;
@@ -1716,7 +1747,7 @@ async function persistProductImageAlt(
 
   // Main image = lowest position — the same image the loader resolved.
   const image = await db.productImage.findFirst({
-    where: { productId },
+    where: { productId, product: { shop } },
     orderBy: { position: "asc" },
   });
   if (!image) {

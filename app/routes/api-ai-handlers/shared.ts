@@ -3,7 +3,7 @@
  */
 
 import { data as json } from "react-router";
-import { AIService, toValidProvider, isAuthError } from "../../../src/services/ai.service";
+import { AIService, toValidProvider, isProviderKeyRejection, isManagedRefusal } from "../../../src/services/ai.service";
 import type { AIProvider } from "../../../src/services/ai.service";
 import { getProviderDisplayName } from "../../utils/api-key-validation";
 import { getTranslation, type Locale } from "../../i18n";
@@ -124,10 +124,31 @@ export function errorStack(err: unknown): string | undefined {
 }
 
 /**
- * Re-export so api.ai handlers can detect provider auth failures (invalid key)
- * without each importing from the deep src/ path.
+ * Re-export so api.ai handlers can detect a REJECTED provider key without each
+ * importing from the deep src/ path. Deliberately the precise marker
+ * (`InvalidAIKeyError`, which `askAI` normalises every provider auth failure
+ * into) and NOT the `isAuthError` message heuristic: the handlers' loops wrap
+ * Shopify writes, DB calls and CDN fetches too, and a non-AI failure whose
+ * message merely contains "401" or "unauthorized" must fail its own item or
+ * locale, not abort the whole run as if the merchant's AI key were invalid.
  */
-export { isAuthError };
+export { isProviderKeyRejection };
+
+/**
+ * A managed-AI refusal (`ManagedAiRefusedError`: budget spent, pool closed,
+ * consent withdrawn mid-run). Every handler loop that aborts on
+ * `isProviderKeyRejection` aborts on this too and lets it PROPAGATE, so the
+ * /api/ai catch answers it with the coded refusal response — recorded per
+ * locale or item instead, it read as "this one failed" and the loop spent the
+ * next call on the same refusal (CLAUDE.md, managed-AI rules: a refusal is an
+ * abort, never a failure that may lead to a purge).
+ */
+export { isManagedRefusal };
+
+/** Either of the two errors that must stop a whole run rather than one item. */
+export function isRunAbortingAIError(error: unknown): boolean {
+  return isProviderKeyRejection(error) || isManagedRefusal(error);
+}
 
 /**
  * Standard 401 response when the merchant's API key was rejected by the

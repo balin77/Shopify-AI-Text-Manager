@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import type { StagedItem, VariantWithGallery, MediaKind } from "../components/image-manager/types";
 import type { SettlingMediaEntry } from "../components/image-manager/settling-media";
+import { appFetch } from "../utils/app-fetch";
 
 /** Resource URL + the kind it was uploaded as. The kind is needed at save
  *  time so productCreateMedia.mediaContentType maps correctly — without it
@@ -270,7 +271,7 @@ export function useVariantImageManager() {
         orderJson,
       }));
 
-      const res = await fetch("/api/update-variant-galleries", {
+      const res = await appFetch("/api/update-variant-galleries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -54,6 +54,7 @@ import {
 } from "./columns.shared";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
+import { backgroundAdmin } from "~/utils/offline-admin.server";
 
 /** One save group's identity — the unit a batch never splits. */
 function rowKey(e: BulkDiffEntry): string {
@@ -204,7 +205,7 @@ export async function startCsvImportTask(
     },
   });
 
-  void runCsvImport(task.id, { db, shop, admin: args.admin, columnsByType: args.columnsByType, batches, rowTotal }).catch(
+  void runCsvImport(task.id, { db, shop, admin: backgroundAdmin(shop, args.admin), columnsByType: args.columnsByType, batches, rowTotal }).catch(
     (err: unknown) => {
       logger.error("[BulkCsvImport] Import run crashed", {
         context: "BulkEditor",

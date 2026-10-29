@@ -31,6 +31,8 @@ import { formatNumber } from "../utils/format";
 import { SettingsUsageLimitsTab } from "./SettingsUsageLimitsTab";
 import { MANAGED_BILLING_PLANS } from "../config/billing";
 import { ToggleRow } from "./ToggleRow";
+import { appFetch, isAuthError } from "../utils/app-fetch";
+import { translateErrorMessage } from "../utils/editor-error-messages";
 
 /**
  * Wraps a plan-card value in <strong> when the row differs from the tier below.
@@ -153,12 +155,12 @@ export function SettingsPlanTab({
     setPlanLoading("free");
     setPlanError(null);
     try {
-      const response = await fetch("/api/billing/cancel-subscription", { method: "POST" });
+      const response = await appFetch("/api/billing/cancel-subscription", { method: "POST" });
       if (!response.ok) throw new Error("Failed to cancel subscription");
       revalidator.revalidate();
       setPlanLoading(null);
     } catch (err) {
-      setPlanError(err instanceof Error ? err.message : t.settings.errorOccurred);
+      setPlanError(isAuthError(err) ? translateErrorMessage(err.message, t as never) : err instanceof Error ? err.message : t.settings.errorOccurred);
       setPlanLoading(null);
     }
   };
@@ -173,7 +175,7 @@ export function SettingsPlanTab({
     setPlanError(null);
 
     try {
-      const response = await fetch("/api/billing/create-subscription", {
+      const response = await appFetch("/api/billing/create-subscription", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // PLAN_MANAGED_AI_KEY §8 — which VARIANT of the plan. The server
@@ -190,7 +192,7 @@ export function SettingsPlanTab({
         window.open(data.confirmationUrl, "_top");
       }
     } catch (err) {
-      setPlanError(err instanceof Error ? err.message : t.settings.errorOccurred);
+      setPlanError(isAuthError(err) ? translateErrorMessage(err.message, t as never) : err instanceof Error ? err.message : t.settings.errorOccurred);
       setPlanLoading(null);
     }
   };

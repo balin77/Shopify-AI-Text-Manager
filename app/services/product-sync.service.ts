@@ -317,6 +317,9 @@ export class ProductSyncService {
                     }
                   }
                   metafields(first: 250) {
+                    pageInfo {
+                      hasNextPage
+                    }
                     edges {
                       node {
                         id
@@ -519,7 +522,11 @@ export class ProductSyncService {
 
       // Upsert metafields (idempotent — safe under concurrent execution)
       const metafields = product.metafields?.edges?.map((edge) => edge.node) ?? [];
-      await upsertProductMetafields(tx, product.id, metafields);
+      // A 250-metafield WINDOW, not paged: a truncated read drops the
+      // product's cleared slots (db.server.ts). No pageInfo = truncated.
+      await upsertProductMetafields(tx, product.id, metafields, {
+        complete: product.metafields?.pageInfo?.hasNextPage === false,
+      });
 
       // Variants (Plan §5.1): targeted upsert + targeted delete of vanished
       // ids — NEVER deleteMany+createMany, galleryJson/imageKey come from the
@@ -1620,6 +1627,18 @@ export class ProductSyncService {
         break; // Stop pagination on error, but keep what we have
       }
 
+      // A page that answers without the connection (a null product, a
+      // throttled `data`) is not "no more metafields": stop with
+      // `hasNextPage` still true, so the read is reported as truncated and
+      // nothing past the pages actually read is treated as gone.
+      const nextConnection = nextData.data?.product?.metafields;
+      if (!nextConnection) {
+        logger.warn(`[ProductSync] Metafield page answered without metafields; read reported as truncated`, {
+          productId, fetched: allMetafields.length,
+        });
+        break;
+      }
+
       const nextPageMetafields = nextData.data?.product?.metafields?.edges?.map((edge: GraphQLEdge<ShopifyMetafield>) => edge.node) || [];
       allMetafields.push(...nextPageMetafields);
 
@@ -1632,8 +1651,11 @@ export class ProductSyncService {
     logger.info(`[ProductSync] Successfully fetched ${allMetafields.length} metafields for product ${productId}`);
 
     // Replace metafields with all paginated results
+    // `hasNextPage` stays true when a page failed (the loop breaks on an
+    // error), so a read that stopped early is reported as truncated.
     product.metafields = {
-      edges: allMetafields.map(node => ({ node }))
+      edges: allMetafields.map(node => ({ node })),
+      pageInfo: { hasNextPage, endCursor: cursor },
     };
 
     // Log warning if productType is missing (this shouldn't happen normally)
@@ -2316,7 +2338,11 @@ export class ProductSyncService {
       // Upsert metafields (idempotent — safe under concurrent execution)
       const metafields: ShopifyMetafield[] = productData.metafields?.edges?.map((edge) => edge.node) || [];
       const { upsertProductMetafields } = await import("../db.server");
-      await upsertProductMetafields(tx, productData.id, metafields);
+      await upsertProductMetafields(tx, productData.id, metafields, {
+        // Paged to the end by the fetch; a page that failed leaves
+        // hasNextPage true. A shape without pageInfo counts as truncated.
+        complete: productData.metafields?.pageInfo?.hasNextPage === false,
+      });
       if (metafields.length > 0) {
         logger.debug(`[ProductSync] Saved ${metafields.length} metafields`);
       }

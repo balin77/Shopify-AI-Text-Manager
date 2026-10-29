@@ -24,10 +24,11 @@ import { useState } from 'react';
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { data as json, redirect, createCookie } from "react-router";
 import { useLoaderData, useActionData, Form, useNavigation } from "react-router";
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { db } from '~/db.server';
 import { redactShopData } from '~/services/gdpr.service';
 import { logger } from '~/utils/logger.server';
+import { adminLoginLimiter, clientIpFromRequest } from '~/utils/admin-login-limiter.server';
 
 /** Liefert das konfigurierte Admin-Passwort oder null, wenn nicht gesetzt. */
 function adminPassword(): string | null {
@@ -53,9 +54,11 @@ function authCookie() {
 }
 
 function constantTimeEqual(a: string, b: string): boolean {
-  const ba = Buffer.from(a, 'utf-8');
-  const bb = Buffer.from(b, 'utf-8');
-  return ba.length === bb.length && timingSafeEqual(ba, bb);
+  // Compare fixed-length digests, so neither the early length check nor the
+  // comparison itself reveals the expected password's length.
+  const ba = createHash('sha256').update(a, 'utf-8').digest();
+  const bb = createHash('sha256').update(b, 'utf-8').digest();
+  return timingSafeEqual(ba, bb);
 }
 
 /** True, wenn das Request-Cookie eine gültige Admin-Session trägt. */
@@ -224,10 +227,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         { status: 503 },
       );
     }
+    // Brute-force guard (admin-login-limiter.server.ts): failed attempts are
+    // counted per client IP and globally; a locked caller is refused BEFORE
+    // the password is compared, so a lockout cannot be probed for a hit.
+    const clientIp = clientIpFromRequest(request);
+    const limit = adminLoginLimiter.check(clientIp);
+    if (!limit.allowed) {
+      logger.warn('[ADMIN] Login gesperrt (zu viele Fehlversuche)', { clientIp });
+      const minutes = Math.max(1, Math.ceil(limit.retryAfterSec / 60));
+      return json(
+        { error: `Zu viele Fehlversuche. Bitte in ${minutes} Minute(n) erneut versuchen.` },
+        { status: 429, headers: { 'Retry-After': String(limit.retryAfterSec) } },
+      );
+    }
     const pw = String(form.get('password') ?? '');
     if (!constantTimeEqual(pw, expected)) {
+      adminLoginLimiter.recordFailure(clientIp);
+      logger.warn('[ADMIN] Falsches Passwort', { clientIp });
       return json({ error: 'Falsches Passwort.' }, { status: 401 });
     }
+    adminLoginLimiter.recordSuccess(clientIp);
     return redirect('/admin', {
       headers: { 'Set-Cookie': await authCookie().serialize('ok') },
     });

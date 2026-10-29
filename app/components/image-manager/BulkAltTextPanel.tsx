@@ -15,6 +15,8 @@ import {
 } from "@shopify/polaris";
 import { PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
+import { appFetch, isAuthError } from "../../utils/app-fetch";
+import { translateErrorMessage } from "../../utils/editor-error-messages";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useInfoBox } from "../../contexts/InfoBoxContext";
 import { useAltTextOps } from "../../contexts/AltTextOpsContext";
@@ -166,7 +168,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   useEffect(() => {
     if (!productId) return;
     setIsLoading(true);
-    fetch(`/api/alt-text-templates?productId=${encodeURIComponent(productId)}`)
+    appFetch(`/api/alt-text-templates?productId=${encodeURIComponent(productId)}`)
       .then((r) => r.json())
       .then((data: AltTextTemplateRow[]) => {
         if (!Array.isArray(data) || data.length === 0) {
@@ -223,7 +225,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     }
 
     let cancelled = false;
-    fetch("/api/option-value-translations", {
+    appFetch("/api/option-value-translations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ locale: activeLocale, options: Array.from(seen.values()) }),
@@ -243,7 +245,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     async (pos: TemplatePosition, locale: string, value: string) => {
       let saved = false;
       try {
-        const res = await fetch("/api/alt-text-templates", {
+        const res = await appFetch("/api/alt-text-templates", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -256,12 +258,17 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
         });
         const body = (await res.json().catch(() => null)) as { success?: boolean } | null;
         saved = res.ok && body?.success !== false;
-      } catch {}
+      } catch (err) {
+        if (isAuthError(err)) {
+          showInfoBox(translateErrorMessage(err.message, t as never), "critical");
+          return;
+        }
+      }
       if (!saved) {
         showInfoBox(im?.altTemplateSaveFailed ?? "The alt text template could not be saved. Please try again.", "critical");
       }
     },
-    [productId, im, showInfoBox]
+    [productId, im, showInfoBox, t]
   );
 
   const handleTemplateChange = useCallback(
@@ -319,13 +326,18 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       const pos = positions[positionIndex];
       let deleted = false;
       try {
-        const res = await fetch(
+        const res = await appFetch(
           `/api/alt-text-templates?productId=${encodeURIComponent(productId)}&position=${pos.position}`,
           { method: "DELETE" }
         );
         const body = (await res.json().catch(() => null)) as { success?: boolean } | null;
         deleted = res.ok && body?.success !== false;
-      } catch {}
+      } catch (err) {
+        if (isAuthError(err)) {
+          showInfoBox(translateErrorMessage(err.message, t as never), "critical");
+          return;
+        }
+      }
       if (!deleted) {
         // The row stays: removing it here would show a template as gone that
         // is still stored and would come back on the next load.
@@ -334,7 +346,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       }
       setPositions((prev) => prev.filter((_, i) => i !== positionIndex));
     },
-    [positions, productId, im, showInfoBox]
+    [positions, productId, im, showInfoBox, t]
   );
 
   const insertVariable = useCallback(
@@ -383,7 +395,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       }
 
       try {
-        const res = await fetch("/api/translate-alt-text-template", {
+        const res = await appFetch("/api/translate-alt-text-template", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ templates, fromLocale: primaryLocale, toLocales, productId, productTitle }),
@@ -437,7 +449,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     if (ops.applyingLocales.includes(loc)) return; // reentrancy guard
     setApplyingLocale(loc, true);
     try {
-      const res = await fetch("/api/apply-alt-text-templates", {
+      const res = await appFetch("/api/apply-alt-text-templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -470,12 +482,12 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
         if (typeof data.applied === "number" && data.applied > 0 && isStillActive(productId)) onApplySuccess?.();
       }
     } catch (e: any) {
-      const detail = e.message ?? "Unknown error";
+      const detail = isAuthError(e) ? translateErrorMessage(e.message, t as never) : (e.message ?? "Unknown error");
       showInfoBox(scopedMsg(detail, productId, productTitle), "critical");
     } finally {
       setApplyingLocale(loc, false);
     }
-  }, [ops.applyingLocales, productId, productTitle, activeLocale, primaryLocale, variants, im, showInfoBox, onApplySuccess, onSaveResponse, setApplyingLocale, scopedMsg, isStillActive]);
+  }, [ops.applyingLocales, productId, productTitle, activeLocale, primaryLocale, variants, im, showInfoBox, onApplySuccess, onSaveResponse, setApplyingLocale, scopedMsg, isStillActive, t]);
 
   // Locales that "Apply to all languages" will write to. Primary is always included;
   // foreign locales can be Ctrl-clicked off via excludedLocales.
@@ -505,7 +517,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       let done = 0;
       const runLocale = async (loc: string) => {
         try {
-          const res = await fetch("/api/apply-alt-text-templates", {
+          const res = await appFetch("/api/apply-alt-text-templates", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ productId, locale: loc, primaryLocale, scope: "all", variants }),
@@ -519,7 +531,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
             allErrors.push(`[${loc.toUpperCase()}] ${data.error}`);
           }
         } catch (e: any) {
-          allErrors.push(`[${loc.toUpperCase()}] ${e?.message ?? "Unknown error"}`);
+          allErrors.push(`[${loc.toUpperCase()}] ${isAuthError(e) ? translateErrorMessage(e.message, t as never) : (e?.message ?? "Unknown error")}`);
         } finally {
           done += 1;
           patchOps({ applyAllProgress: { done, total } });
@@ -547,7 +559,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     } finally {
       patchOps({ applyingAll: false, applyAllProgress: null });
     }
-  }, [ops.applyingAll, targetLocales, productId, productTitle, primaryLocale, variants, im, showInfoBox, onApplySuccess, onSaveResponse, patchOps, scopedMsg, isStillActive]);
+  }, [ops.applyingAll, targetLocales, productId, productTitle, primaryLocale, variants, im, showInfoBox, onApplySuccess, onSaveResponse, patchOps, scopedMsg, isStillActive, t]);
 
   const previewVariants = variants.slice(0, 3);
 

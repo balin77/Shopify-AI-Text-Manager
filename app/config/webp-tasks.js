@@ -136,3 +136,34 @@ export function webpBatchStatus(converted, failed) {
   if (failed <= 0) return "completed";
   return converted > 0 ? "completed_with_errors" : "failed";
 }
+
+/**
+ * How long a work item may WAIT in the queue before the processor refuses to
+ * start it. A conversion deletes the merchant's original on Shopify and swaps
+ * in a new file, so it is only acceptable shortly after the merchant asked for
+ * it: an item that has been waiting for a day (the processor was not running —
+ * until 2026-10 it was not started in production at all — or the shop's queue
+ * was blocked) is no longer a request anybody is watching, and running it would
+ * change their images out of the blue.
+ *
+ * Measured against `createdAt`, never `updatedAt`: the processor heartbeats
+ * every waiting row on each poll, so `updatedAt` says nothing about age. A row
+ * the boot recovery reset after a crash keeps its `createdAt` too, which is the
+ * intent — the merchant's request is just as old.
+ */
+export const WEBP_QUEUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** The machine code an expired item is failed with (`taskErrorText` renders it). */
+export const WEBP_EXPIRED_IN_QUEUE_ERROR = "webp_expired_in_queue";
+
+/**
+ * Has this waiting work item been in the queue too long to be started? An
+ * unreadable `createdAt` is NOT expired — refusing on a value we cannot read
+ * would fail a fresh request; the stuck-task reaper still bounds that row.
+ */
+export function isWebpItemExpiredInQueue(createdAt, now = Date.now()) {
+  if (createdAt == null) return false;
+  const created = createdAt instanceof Date ? createdAt.getTime() : new Date(createdAt).getTime();
+  if (!Number.isFinite(created)) return false;
+  return now - created > WEBP_QUEUE_MAX_AGE_MS;
+}

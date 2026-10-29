@@ -20,6 +20,7 @@
 import { useEffect, useRef } from "react";
 import { useLocation, useRevalidator, useRouteLoaderData } from "react-router";
 import { useInfoBox } from "../contexts/InfoBoxContext";
+import { appFetch } from "../utils/app-fetch";
 
 interface SyncStatus {
   needsSetup: boolean;
@@ -78,7 +79,7 @@ export function InitialSyncBanner() {
       }
       inflightRef.current = true;
       try {
-        const res = await fetch(`/api/sync-status?${searchRef.current}`);
+        const res = await appFetch(`/api/sync-status?${searchRef.current}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as SyncStatus;
         if (stopped) return;

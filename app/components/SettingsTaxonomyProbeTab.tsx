@@ -19,6 +19,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { Badge, Banner, BlockStack, Button, Card, InlineStack, Spinner, Text } from "@shopify/polaris";
+import { appFetch } from "../utils/app-fetch";
 
 interface Finding {
   ok: boolean;
@@ -92,7 +93,7 @@ export function SettingsTaxonomyProbeTab() {
     setRunning(true);
     setError(null);
     try {
-      const response = await fetch("/api/taxonomy-probe");
+      const response = await appFetch("/api/taxonomy-probe");
       const body = await response.json();
       if (!body?.success) {
         setError(body?.error || "The probe did not run.");

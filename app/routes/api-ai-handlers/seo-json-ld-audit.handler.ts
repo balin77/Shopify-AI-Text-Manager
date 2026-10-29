@@ -34,6 +34,7 @@ import type { ShopInfo } from "~/services/structured-data.service";
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { DataResponse } from "~/types/data-response";
+import { backgroundAdmin } from "~/utils/offline-admin.server";
 
 const SHOP_CONTEXT_QUERY = `#graphql
   query seoJsonLdAuditShop {
@@ -98,7 +99,7 @@ export async function handleSeoJsonLdAudit(ctx: AIActionContext): Promise<DataRe
   });
 
   // Fire-and-forget: survives navigation, same pattern as runSeoAudit.
-  void runSeoJsonLdAuditTask(task.id, { db, admin, shop: session.shop }).catch((err: unknown) => {
+  void runSeoJsonLdAuditTask(task.id, { db, admin: backgroundAdmin(session.shop, admin), shop: session.shop }).catch((err: unknown) => {
     logger.error("[API-AI] JSON-LD batch audit crashed", {
       context: "AI",
       taskId: task.id,

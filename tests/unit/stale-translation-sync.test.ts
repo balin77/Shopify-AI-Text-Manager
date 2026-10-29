@@ -13,7 +13,7 @@
  * convention); the module's own logic is real.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { db, shopify, ai, policy } = vi.hoisted(() => {
   const db = {
@@ -173,6 +173,7 @@ vi.mock("../../app/services/translations/verified-translations.server", async (i
   ),
   registerAndVerify: vi.fn(
     async (_gw: unknown, resourceId: string, inputs: Array<{ key: string; locale: string; value: string }>) => {
+      registerGateways.push(_gw);
       for (const input of inputs) {
         shopify.registerCalls.push(input);
         shopify.registerTargets.push(resourceId);
@@ -225,6 +226,31 @@ vi.mock("../../app/services/translations/handle-retranslation.server", () => ({
   }),
 }));
 
+// The detached run's client. With expiring offline tokens it must NOT keep the
+// request's client (dead by the time a long or queued run writes); with them
+// off it must keep it, byte for byte (offline-admin.server.ts).
+const refreshing = vi.hoisted(() => ({ client: { graphql: async () => ({}) }, built: 0 }));
+vi.mock("../../app/utils/offline-admin.server", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../../app/utils/offline-admin.server")>();
+  const { expiringOfflineTokensEnabled } = await import("../../app/utils/offline-token-flags.server");
+  const createRefreshingAdmin = vi.fn(() => {
+    refreshing.built++;
+    return refreshing.client;
+  });
+  return {
+    ...real,
+    createRefreshingAdmin,
+    // The real `backgroundAdmin` calls its module-local createRefreshingAdmin,
+    // which the spread above cannot replace — same decision, mocked builder.
+    backgroundAdmin: <T,>(_shop: string, captured: T): T => {
+      if (!expiringOfflineTokensEnabled()) return captured;
+      if (real.isSelfRefreshingAdminClient(captured)) return captured;
+      return createRefreshingAdmin() as unknown as T;
+    },
+  };
+});
+const registerGateways = vi.hoisted(() => [] as unknown[]);
+
 vi.mock("../../app/services/translations/translation-change-policy.server", () => ({
   loadTranslationChangePolicy: vi.fn(async () => policy),
   isPurgeOnPrimaryChangeEnabled: vi.fn(async () => policy.purgeOnPrimaryChange),
@@ -251,6 +277,7 @@ import {
   awaitDetachedRetranslations,
   IN_APP_RETRANSLATED_RESOURCE_TYPES,
 } from "../../app/services/translations/stale-translation-sync.server";
+import { markSelfRefreshingAdminClient } from "../../app/utils/offline-admin.server";
 import { digestBaselineKey } from "../../app/services/translations/stale-translations.shared";
 import { ManagedAiRefusedError } from "../../src/services/ai.service";
 import {
@@ -785,6 +812,64 @@ describe("auto-translation path (Max)", () => {
     expect(shopify.registerCalls).toEqual([]);
     expect(shopify.removeCalls).toEqual([]);
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("the detached run's Shopify client", () => {
+  const ENV = "SHOPIFY_EXPIRING_OFFLINE_TOKENS";
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env[ENV];
+    policy.autoTranslateExternalChanges = true;
+    policy.purgeOnPrimaryChange = false;
+    registerGateways.length = 0;
+    refreshing.built = 0;
+    ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) => ({
+      [locales[0]]: Object.fromEntries(Object.keys(fields).map((k) => [k, `translated-${k}`])),
+    }));
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env[ENV];
+    else process.env[ENV] = saved;
+  });
+
+  it("flag ON: writes through a refreshing client, never the request's", async () => {
+    process.env[ENV] = "true";
+    const captured = { graphql: vi.fn() };
+    await reconcileStaleTranslations(baseParams({ client: captured as never }));
+    await awaitDetachedRetranslations();
+
+    expect(registerGateways.length).toBeGreaterThan(0);
+    expect(refreshing.built).toBe(1);
+    for (const gw of registerGateways) {
+      expect((gw as { admin: unknown }).admin).toBe(refreshing.client);
+    }
+  });
+
+  it("flag ON: keeps a raw self-refreshing client a webhook/sweep handed in", async () => {
+    process.env[ENV] = "true";
+    const captured = markSelfRefreshingAdminClient({ graphql: vi.fn() });
+    await reconcileStaleTranslations(baseParams({ client: captured as never }));
+    await awaitDetachedRetranslations();
+
+    expect(registerGateways.length).toBeGreaterThan(0);
+    expect(refreshing.built).toBe(0);
+    for (const gw of registerGateways) {
+      expect((gw as { admin: unknown }).admin).toBe(captured);
+    }
+  });
+
+  it("flag OFF: keeps the request's client exactly as before", async () => {
+    delete process.env[ENV];
+    const captured = { graphql: vi.fn() };
+    await reconcileStaleTranslations(baseParams({ client: captured as never }));
+    await awaitDetachedRetranslations();
+
+    expect(registerGateways.length).toBeGreaterThan(0);
+    expect(refreshing.built).toBe(0);
+    for (const gw of registerGateways) {
+      expect((gw as { admin: unknown }).admin).toBe(captured);
+    }
   });
 });
 

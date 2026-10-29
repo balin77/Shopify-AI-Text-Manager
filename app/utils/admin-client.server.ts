@@ -11,6 +11,19 @@ import { apiVersion, sessionStorage } from "../shopify.server";
 import { logger } from "./logger.server";
 import { isValidShopDomain } from "./validation";
 import { isEncrypted } from "./encryption.server";
+import {
+  getOfflineAdmin,
+  invalidateOfflineAdmin,
+  markSelfRefreshingAdminClient,
+  OfflineAdminUnavailableError,
+} from "./offline-admin.server";
+
+export {
+  getOfflineAdmin,
+  getOfflineAccessToken,
+  createRefreshingAdmin,
+  backgroundAdmin,
+} from "./offline-admin.server";
 
 interface ShopifyGraphQLClient {
   graphql: (query: string, options?: { variables?: any }) => Promise<Response>;
@@ -32,42 +45,74 @@ export async function createAdminClientFromShop(
     throw new Error(`Invalid shop domain: ${shop}`);
   }
 
-  // Go through the app's sessionStorage (EncryptedPrismaSessionStorage), NOT
-  // db.session directly: access tokens are AES-256-GCM encrypted at rest, so a
-  // raw Prisma read hands back ciphertext. Sending that as X-Shopify-Access-Token
-  // makes every background call fail with 401 "Invalid API key or access token"
-  // — silently breaking product/collection webhooks, the webhook retry queue and
-  // the llms.txt auto-refresh, while the embedded UI kept working (it goes
-  // through authenticate.admin, which decrypts).
+  // The token is NOT read once and kept. With expiring offline tokens (~1h) a
+  // client built from a token captured here dies mid-run for every long caller
+  // (drift sweep, crawl sweep, webhook retry queue). So the client keeps the
+  // SHOP and asks offline-admin.server.ts for the token on every call: cached
+  // in-process while valid, refreshed through the library when it is about to
+  // expire, single-flight per shop, and re-read once after a 401.
+  //
+  // Validated eagerly, so a shop with no usable session still throws HERE —
+  // the callers' "no session" handling (skip the shop, stamp the backoff)
+  // keeps working.
+  try {
+    await getOfflineAdmin(shop);
+  } catch (error) {
+    if (error instanceof OfflineAdminUnavailableError && error.reason === "no_session") {
+      // Legacy fallback, unchanged from before: an install whose only session
+      // is an online one (pre token-exchange). Never used once an offline
+      // session exists; such a client keeps that token (residual — it expires
+      // anyway after ~24h and the shop re-authenticates).
+      const legacy = await legacyOnlineTokenClient(shop);
+      if (legacy) return legacy;
+      throw new Error(`No session found for shop: ${shop}`);
+    }
+    throw error;
+  }
+
+  return createRefreshingRawClient(shop);
+}
+
+async function legacyOnlineTokenClient(shop: string): Promise<ShopifyGraphQLClient | null> {
+  // Through the app's sessionStorage (EncryptedPrismaSessionStorage), never
+  // db.session: tokens are encrypted at rest and a raw read is ciphertext.
   const sessions = await sessionStorage.findSessionsByShop(shop);
-
-  if (sessions.length === 0) {
-    throw new Error(`No session found for shop: ${shop}`);
-  }
-
-  // Prefer the offline session: it is the only one meant for background work.
-  // Online sessions belong to one logged-in user and expire after ~24h, and the
-  // previous `orderBy: { id: "desc" }` picked between them by string sort — so
-  // whether background jobs got a usable token was down to id ordering.
   const now = Date.now();
-  const session =
-    sessions.find((s) => !s.isOnline && s.accessToken) ??
-    sessions.find((s) => s.accessToken && (!s.expires || s.expires.getTime() > now));
-
-  if (!session?.accessToken) {
-    throw new Error(`Session for shop ${shop} has no usable access token`);
-  }
-
-  // Belt and braces: never spend a Shopify call on a token we know is ciphertext.
-  // findSessionsByShop logs decryption failures but keeps the raw value, so a
-  // wrong/rotated ENCRYPTION_KEY would otherwise surface as an opaque 401.
+  const session = sessions.find(
+    (s) => s.isOnline && s.accessToken && (!s.expires || s.expires.getTime() > now),
+  );
+  if (!session?.accessToken) return null;
   if (isEncrypted(session.accessToken)) {
     throw new Error(
       `Access token for shop ${shop} could not be decrypted — check ENCRYPTION_KEY`
     );
   }
+  logger.warn("[AdminClient] No offline session — falling back to an online session token", { shop });
+  // Also handed back unchanged by `backgroundAdmin`: there is no offline
+  // session for the refreshing client to load, so swapping it would only fail.
+  return markSelfRefreshingAdminClient(createAdminClient(shop, session.accessToken));
+}
 
-  return createAdminClient(shop, session.accessToken);
+/**
+ * Raw-fetch client with the same response contract as before (the Response is
+ * returned as-is on 2xx, GraphQL `errors` included; non-2xx throws), whose
+ * token is re-acquired per call and which retries ONCE on a 401 after forcing
+ * a reload of the stored session.
+ */
+function createRefreshingRawClient(shop: string): ShopifyGraphQLClient {
+  // Marked so `backgroundAdmin` hands it back unchanged rather than swapping
+  // its raw contract for the library client's (see offline-admin.server.ts).
+  return markSelfRefreshingAdminClient({
+    graphql: async (query: string, options?: { variables?: any }) => {
+      const token = (await getOfflineAdmin(shop)).session.accessToken!;
+      const first = await rawGraphql(shop, token, query, options);
+      if (first.status !== 401) return checkOk(first);
+      logger.warn("[AdminClient] 401 from Shopify — reloading the offline session and retrying once", { shop });
+      invalidateOfflineAdmin(shop);
+      const fresh = (await getOfflineAdmin(shop, { forceReload: true, refusedToken: token })).session.accessToken!;
+      return checkOk(await rawGraphql(shop, fresh, query, options));
+    },
+  });
 }
 
 /**
@@ -96,39 +141,46 @@ function createAdminClient(
   shop: string,
   accessToken: string
 ): ShopifyGraphQLClient {
+  return {
+    graphql: async (query: string, options?: { variables?: any }) =>
+      checkOk(await rawGraphql(shop, accessToken, query, options)),
+  };
+}
+
+async function rawGraphql(
+  shop: string,
+  accessToken: string,
+  query: string,
+  options?: { variables?: any },
+): Promise<Response> {
   // Use the API version from config, with fallback
   const version = apiVersion || "2025-10";
   const graphqlEndpoint = `https://${shop}/admin/api/${version}/graphql.json`;
-
-  return {
-    graphql: async (query: string, options?: { variables?: any }) => {
-      logger.debug('[AdminClient] Making GraphQL request to ' + shop);
-
-      const response = await fetch(graphqlEndpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Shopify-Access-Token": accessToken,
-        },
-        body: JSON.stringify({
-          query,
-          variables: options?.variables,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        logger.error('[AdminClient] GraphQL request failed', {
-          status: response.status,
-          statusText: response.statusText,
-          body: errorText,
-        });
-        throw new Error(
-          `GraphQL request failed: ${response.status} ${response.statusText}`
-        );
-      }
-
-      return response;
+  logger.debug('[AdminClient] Making GraphQL request to ' + shop);
+  return fetch(graphqlEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": accessToken,
     },
-  };
+    body: JSON.stringify({
+      query,
+      variables: options?.variables,
+    }),
+  });
+}
+
+async function checkOk(response: Response): Promise<Response> {
+  if (!response.ok) {
+    const errorText = await response.text();
+    logger.error('[AdminClient] GraphQL request failed', {
+      status: response.status,
+      statusText: response.statusText,
+      body: errorText,
+    });
+    throw new Error(
+      `GraphQL request failed: ${response.status} ${response.statusText}`
+    );
+  }
+  return response;
 }
