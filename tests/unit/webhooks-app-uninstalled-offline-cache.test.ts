@@ -38,9 +38,9 @@ vi.mock("~/utils/offline-admin.server", () => ({
     h.invalidate(shop);
   },
   // The durable token-migration record holds an encrypted credential.
-  forgetOfflineTokenMigration: async (shop: string) => {
+  forgetOfflineTokenMigration: async (shop: string, options?: unknown) => {
     h.order.push("forgetMigration");
-    h.forget(shop);
+    h.forget(shop, options);
   },
 }));
 
@@ -51,7 +51,8 @@ describe("app/uninstalled webhook", () => {
     const res = await action({ request: new Request("https://x/webhooks", { method: "POST" }) } as never);
     expect(res.status).toBe(200);
     expect(h.invalidate).toHaveBeenCalledWith("gone.myshopify.com");
-    expect(h.forget).toHaveBeenCalledWith("gone.myshopify.com");
+    // forced: also with the token switches off (rollback case)
+    expect(h.forget).toHaveBeenCalledWith("gone.myshopify.com", { force: true });
     expect(h.order).toEqual(["deleteSessions", "invalidate", "forgetMigration"]);
   });
 });

@@ -68,6 +68,8 @@ function sorted(rows: Row[], orderBy?: Row): Row[] {
 
 export function fakeDelegate(table: Row[], defaults: () => Row = () => ({})) {
   const apply = (row: Row, data: Row) => {
+    // @updatedAt: every write stamps the row (the tests use fake timers).
+    if ("updatedAt" in row || "startedAt" in row) row.updatedAt = new Date();
     for (const [k, v] of Object.entries(data)) {
       if (v && typeof v === "object" && !(v instanceof Date) && "increment" in v) row[k] = (row[k] ?? 0) + (v as any).increment;
       else row[k] = v;
@@ -92,6 +94,7 @@ export function fakeDelegate(table: Row[], defaults: () => Row = () => ({})) {
         return { ...row };
       }
       const fresh = { ...defaults(), ...create };
+      if ("startedAt" in fresh && !("updatedAt" in fresh)) fresh.updatedAt = new Date();
       table.push(fresh);
       return { ...fresh };
     },
@@ -123,6 +126,7 @@ export function migrationDefaults(): Row {
     attempts: 0,
     lastError: null,
     startedAt: now,
+    updatedAt: now,
     completedAt: null,
   };
 }

@@ -10,9 +10,10 @@
  * non-expiring session is always "active" to the library, so opening the app
  * does not migrate it either: only `maybeMigrateToExpiringToken` does.
  *
- * What it does, per tick (everything behind BOTH env switches — see
- * offline-token-flags.server.ts; with them off `start()` starts no timer and
- * `tick()` does nothing, not even a query):
+ * What it does, per tick. Gating (offline-token-flags.server.ts): with
+ * SHOPIFY_EXPIRING_OFFLINE_TOKENS off `start()` starts no timer and `tick()` does
+ * nothing, not even a query. Keep-alive needs only that switch; the MIGRATION
+ * part additionally needs SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS:
  *
  *   1. MIGRATE shops whose offline session has a token and NO `expires`, that are
  *      installed, whose last authenticated activity (`Session.lastActivityAt`,
@@ -58,21 +59,39 @@
 import { db } from "../db.server";
 import { logger } from "../utils/logger.server";
 import { getLastActivity } from "../middleware/activity-tracker.middleware";
-import { getOfflineAdmin, maybeMigrateToExpiringToken, migrationMayBeNeeded } from "../utils/offline-admin.server";
-import { migrateToExpiringTokensEnabled } from "../utils/offline-token-flags.server";
 import {
+  getOfflineAdmin,
+  maybeMigrateToExpiringToken,
+  MIGRATION_RETRY_DELAYS_MS,
+  migrationMayBeNeeded,
+} from "../utils/offline-admin.server";
+import { expiringOfflineTokensEnabled, migrateToExpiringTokensEnabled } from "../utils/offline-token-flags.server";
+import {
+  listBackedOffShops,
   listMigrationShopsByStatus,
   MIGRATION_RECOVERY_WINDOW_MS,
 } from "../utils/offline-token-migration-store.server";
 import { syncScheduler } from "./sync-scheduler.service";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Exchange attempts in one migration run (first try + one per retry delay); sizes the persisted backoff. */
+const MIGRATION_ATTEMPTS_PER_RUN = MIGRATION_RETRY_DELAYS_MS.length + 1;
 
 /** Disable the whole sweep without a redeploy. */
 const SWEEP_DISABLED = process.env.OFFLINE_TOKEN_SWEEP_DISABLED === "true";
 
-/** How often the sweep looks for work. Default 10 min. */
-export const TICK_INTERVAL_MS = parseInt(process.env.OFFLINE_TOKEN_SWEEP_INTERVAL_MS || String(10 * 60 * 1000), 10);
+/**
+ * An env knob as a finite number >= `min`; anything else (unset, "abc", "0",
+ * negative, NaN) falls back to the default. `parseInt("abc")` is NaN, and a NaN
+ * interval makes `setInterval` fire in a tight loop.
+ */
+export function envNumber(raw: string | undefined, fallback: number, min: number): number {
+  const n = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+  return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
+}
+
+/** How often the sweep looks for work. Default 10 min, never faster than once a minute. */
+export const TICK_INTERVAL_MS = envNumber(process.env.OFFLINE_TOKEN_SWEEP_INTERVAL_MS, 10 * 60 * 1000, 60 * 1000);
 /** The first tick waits this long after start, so a deploy's boot work is not competing with it. */
 export const FIRST_TICK_DELAY_MS = 2 * 60 * 1000;
 /**
@@ -82,9 +101,9 @@ export const FIRST_TICK_DELAY_MS = 2 * 60 * 1000;
  */
 export const SWEEP_QUIET_MS = 30 * 60 * 1000;
 /** Shops per kind (migrate / keep-alive) per tick. */
-export const BATCH_SIZE = Math.max(1, parseInt(process.env.OFFLINE_TOKEN_SWEEP_BATCH_SIZE || "5", 10));
+export const BATCH_SIZE = envNumber(process.env.OFFLINE_TOKEN_SWEEP_BATCH_SIZE, 5, 1);
 /** Pause between two shops of one tick. */
-export const PAUSE_BETWEEN_SHOPS_MS = parseInt(process.env.OFFLINE_TOKEN_SWEEP_PAUSE_MS || "5000", 10);
+export const PAUSE_BETWEEN_SHOPS_MS = envNumber(process.env.OFFLINE_TOKEN_SWEEP_PAUSE_MS, 5000, 0);
 /** Refresh tokens that end within this are kept alive. */
 export const KEEP_ALIVE_WINDOW_MS = 14 * DAY_MS;
 /** A shop is kept alive at most this often (see the ASSUMPTION note above). */
@@ -147,7 +166,9 @@ export class OfflineTokenSweepService {
    */
   start(): void {
     if (this.isRunning) return;
-    if (!migrateToExpiringTokensEnabled()) return;
+    // The timer runs with expiring tokens on: keep-alive needs only that switch;
+    // the migration part inside the tick additionally needs the migrate switch.
+    if (!expiringOfflineTokensEnabled()) return;
     if (SWEEP_DISABLED) {
       logger.info("[OfflineTokenSweep] Disabled via OFFLINE_TOKEN_SWEEP_DISABLED - not starting");
       return;
@@ -191,12 +212,12 @@ export class OfflineTokenSweepService {
    */
   async tick(now: Date = new Date(), options: { pauseMs?: number } = {}): Promise<OfflineTokenSweepStats> {
     const stats = emptyStats();
-    if (!migrateToExpiringTokensEnabled()) return stats;
+    if (!expiringOfflineTokensEnabled()) return stats;
     if (this.ticking) return stats;
     this.ticking = true;
     try {
       const pauseMs = options.pauseMs ?? PAUSE_BETWEEN_SHOPS_MS;
-      await this.migrateDormantShops(now, pauseMs, stats);
+      if (migrateToExpiringTokensEnabled()) await this.migrateDormantShops(now, pauseMs, stats);
       await this.keepAliveShops(now, pauseMs, stats);
       if (stats.migrateCandidates || stats.keepAliveCandidates) {
         logger.info(
@@ -221,16 +242,26 @@ export class OfflineTokenSweepService {
     return new Set(rows.map((r) => r.shop));
   }
 
-  /** Quiet RIGHT NOW (the candidate query may be a moment old): unknown activity counts as quiet. */
-  private async isQuiet(shop: string, nowMs: number): Promise<boolean> {
+  /**
+   * Quiet RIGHT NOW (the candidate query may be a moment old). An unknown
+   * activity counts as quiet only if the candidate row itself said so
+   * (`lastActivityAt` null); `getLastActivity` also answers null when its
+   * lookup FAILED, and that must skip the shop, not release it.
+   */
+  private async isQuiet(shop: string, nowMs: number, rowActivityUnknown: boolean): Promise<boolean> {
     if (syncScheduler.isShopActive(shop)) return false;
     const last = await getLastActivity(shop);
-    return !last || nowMs - last.getTime() >= SWEEP_QUIET_MS;
+    if (!last) return rowActivityUnknown;
+    return nowMs - last.getTime() >= SWEEP_QUIET_MS;
   }
 
   private async migrateDormantShops(now: Date, pauseMs: number, stats: OfflineTokenSweepStats): Promise<void> {
     const quietBefore = new Date(now.getTime() - SWEEP_QUIET_MS);
     const needsReauth = await listMigrationShopsByStatus(["needs_reauth"]);
+    // `failed` records inside their persisted (exponential) backoff, or given up
+    // on: left out IN SQL, so they cannot sit at the front of the oldest-first
+    // order and starve the shops behind them.
+    const backedOff = await listBackedOffShops(now.getTime(), MIGRATION_ATTEMPTS_PER_RUN);
     // Shops whose migration is half-way and whose old token is still persisted:
     // their session may have lost its token, which would hide them from a
     // "has a token" filter.
@@ -243,18 +274,19 @@ export class OfflineTokenSweepService {
         isOnline: false,
         id: { startsWith: "offline_" },
         expires: null,
-        shop: { notIn: needsReauth },
+        shop: { notIn: [...needsReauth, ...backedOff] },
         AND: [
           { OR: [{ lastActivityAt: null }, { lastActivityAt: { lt: quietBefore } }] },
           { OR: [{ accessToken: { not: "" } }, { shop: { in: retriable } }] },
         ],
       },
-      select: { shop: true },
+      select: { shop: true, lastActivityAt: true },
       // Longest-quiet first; an unknown activity is the longest quiet there is.
       orderBy: { lastActivityAt: { sort: "asc", nulls: "first" } },
       take: BATCH_SIZE * CANDIDATE_OVERFETCH,
     });
-    const shops = [...new Set(rows.map((r) => r.shop))];
+    const unknownActivity = new Map(rows.map((r) => [r.shop, r.lastActivityAt === null || r.lastActivityAt === undefined]));
+    const shops = [...unknownActivity.keys()];
     stats.migrateCandidates = shops.length;
     if (shops.length === 0) return;
 
@@ -264,7 +296,7 @@ export class OfflineTokenSweepService {
       if (processed >= BATCH_SIZE) break;
       // Not installed, being migrated right now (scheduler trigger), in backoff,
       // settled, or refused for good in this process: nothing to do.
-      if (gone.has(shop) || !migrationMayBeNeeded(shop) || !(await this.isQuiet(shop, now.getTime()))) {
+      if (gone.has(shop) || !migrationMayBeNeeded(shop) || !(await this.isQuiet(shop, now.getTime(), unknownActivity.get(shop) ?? false))) {
         stats.migrateSkipped++;
         continue;
       }
@@ -290,7 +322,7 @@ export class OfflineTokenSweepService {
         refreshTokenExpires: { gt: now, lt: new Date(now.getTime() + KEEP_ALIVE_WINDOW_MS) },
         OR: [{ lastActivityAt: null }, { lastActivityAt: { lt: quietBefore } }],
       },
-      select: { shop: true, refreshTokenExpires: true },
+      select: { shop: true, refreshTokenExpires: true, lastActivityAt: true },
       orderBy: { refreshTokenExpires: "asc" },
       take: BATCH_SIZE * CANDIDATE_OVERFETCH,
     });
@@ -303,7 +335,7 @@ export class OfflineTokenSweepService {
       if (processed >= BATCH_SIZE) break;
       const last = this.keepAliveAt.get(row.shop);
       if (gone.has(row.shop) || (last !== undefined && now.getTime() - last < KEEP_ALIVE_MIN_INTERVAL_MS)) continue;
-      if (!(await this.isQuiet(row.shop, now.getTime()))) continue;
+      if (!(await this.isQuiet(row.shop, now.getTime(), row.lastActivityAt === null || row.lastActivityAt === undefined))) continue;
       if (processed > 0) await sleep(pauseMs);
       processed++;
       this.keepAliveAt.set(row.shop, now.getTime());

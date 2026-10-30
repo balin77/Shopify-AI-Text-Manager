@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const h = vi.hoisted(() => ({
   getOfflineAdmin: vi.fn(),
   invalidateOfflineAdmin: vi.fn(),
+  report: vi.fn(),
   findSessionsByShop: vi.fn(async () => []),
 }));
 
@@ -25,6 +26,7 @@ vi.mock("~/utils/offline-admin.server", async (importOriginal) => {
     ...actual,
     getOfflineAdmin: h.getOfflineAdmin,
     invalidateOfflineAdmin: h.invalidateOfflineAdmin,
+    reportNonExpiringTokenRejection: h.report,
   };
 });
 
@@ -38,6 +40,7 @@ const fetchMock = vi.fn();
 beforeEach(() => {
   h.getOfflineAdmin.mockReset();
   h.invalidateOfflineAdmin.mockReset();
+  h.report.mockReset();
   h.findSessionsByShop.mockReset().mockResolvedValue([]);
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
@@ -63,6 +66,25 @@ describe("createAdminClientFromShop", () => {
     h.getOfflineAdmin.mockResolvedValue(ctx("t0"));
     const client = await createAdminClientFromShop(SHOP);
     expect(isSelfRefreshingAdminClient(client)).toBe(true);
+  });
+
+  it("a 403 'non-expiring tokens no longer accepted' starts the migration handling and is NOT retried", async () => {
+    h.getOfflineAdmin.mockResolvedValue(ctx("legacy"));
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ errors: "Non-expiring access tokens are no longer accepted for the Admin API." }), { status: 403 }),
+    );
+    const client = await createAdminClientFromShop(SHOP);
+    await expect(client.graphql("q")).rejects.toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(h.report).toHaveBeenCalledWith(SHOP);
+  });
+
+  it("a scope 403 is not treated that way", async () => {
+    h.getOfflineAdmin.mockResolvedValue(ctx("legacy"));
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ errors: "Required access: read_products" }), { status: 403 }));
+    const client = await createAdminClientFromShop(SHOP);
+    await expect(client.graphql("q")).rejects.toBeTruthy();
+    expect(h.report).not.toHaveBeenCalled();
   });
 
   it("retries once on 401 with a forced reload", async () => {

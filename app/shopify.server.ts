@@ -269,7 +269,8 @@ let managedSmokeTestFired = false;
 // The sweep that migrates / keeps alive the offline tokens of shops that never
 // open the app. Started at BOOT, not only from authenticate.admin below: a
 // dormant shop is exactly one nobody authenticates for. start() is a no-op unless
-// BOTH token switches are on (default: no timer at all) and idempotent.
+// SHOPIFY_EXPIRING_OFFLINE_TOKENS is on (default: no timer at all; the migration
+// part of a tick additionally needs the migrate switch) and idempotent.
 OfflineTokenSweepService.getInstance().start();
 
 import { hostParamRejection } from "./utils/shopify-host-param.server";
@@ -330,7 +331,7 @@ const enhancedAuthenticate = {
     LlmsAutoRefreshService.getInstance().start();
 
     // Migration / keep-alive sweep for offline tokens (already started at boot;
-    // idempotent, and a no-op unless both token switches are on).
+    // idempotent, and a no-op unless the expiring-token switch is on).
     OfflineTokenSweepService.getInstance().start();
 
     // Bootstrap the IndexNow auto-submit sweep (same idempotent-start

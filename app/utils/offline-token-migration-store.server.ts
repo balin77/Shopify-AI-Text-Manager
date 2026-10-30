@@ -35,10 +35,54 @@ export interface MigrationRecord {
   lastError: string | null;
   startedAt: Date;
   completedAt: Date | null;
+  updatedAt: Date;
 }
 
-/** Shopify answers a repeat of the SAME exchange with the SAME pair for this long (changelog 2026-09-29). */
+/**
+ * Shopify answers a repeat of the SAME exchange with the SAME pair for this long
+ * (changelog 2026-09-29). We measure it from OUR first attempt with that token
+ * (`startedAt`), not from the moment Shopify actually performed the exchange —
+ * which can only be later, so the window we allow is the conservative one.
+ */
 export const MIGRATION_RECOVERY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Base of the persisted retry backoff after a run of prompt retries ran out; doubles per failed run. */
+export const PERSISTED_BACKOFF_BASE_MS = 10 * 60 * 1000;
+export const PERSISTED_BACKOFF_MAX_MS = 24 * 60 * 60 * 1000;
+/**
+ * Exchange attempts after which a shop is given up on: status stays `failed`,
+ * but nothing retries it automatically any more (see `isTerminal`). Ops reset:
+ * the SQL in RAILWAY-SETUP.md. With 4 attempts per run and the doubling backoff
+ * this is ~10 runs, i.e. a little over 3 days of trying.
+ */
+export const MIGRATION_MAX_ATTEMPTS = 40;
+
+/** Failed runs so far (a run = `attemptsPerRun` exchange attempts). */
+function failedRuns(attempts: number, attemptsPerRun: number): number {
+  return Math.max(1, Math.ceil(attempts / Math.max(1, attemptsPerRun)));
+}
+
+/** How long a `failed` record waits (counted from its `updatedAt`) before the next run. Survives restarts. */
+export function persistedBackoffMs(attempts: number, attemptsPerRun: number): number {
+  return Math.min(PERSISTED_BACKOFF_BASE_MS * 2 ** (failedRuns(attempts, attemptsPerRun) - 1), PERSISTED_BACKOFF_MAX_MS);
+}
+
+export function isTerminal(record: MigrationRecord): boolean {
+  return record.status === "failed" && record.attempts >= MIGRATION_MAX_ATTEMPTS;
+}
+
+/** Epoch ms before which a `failed` record must not be retried (Infinity when terminal). */
+export function retryNotBefore(record: MigrationRecord, attemptsPerRun: number): number {
+  if (record.status !== "failed") return 0;
+  if (isTerminal(record)) return Infinity;
+  return (record.updatedAt ?? record.startedAt).getTime() + persistedBackoffMs(record.attempts, attemptsPerRun);
+}
+
+/** Shops with a `failed` record that is terminal or still inside its persisted backoff — the sweep leaves them out in SQL. */
+export async function listBackedOffShops(now: number, attemptsPerRun: number): Promise<string[]> {
+  const rows = (await (await table()).findMany({ where: { status: "failed" } })) as MigrationRecord[];
+  return rows.filter((r) => retryNotBefore(r, attemptsPerRun) > now).map((r) => r.shop);
+}
 
 const MAX_ERROR_LENGTH = 300;
 
@@ -101,7 +145,9 @@ export async function persistOldToken(shop: string, oldToken: string, existing: 
 
 /** The prompt retries ran out: keep the token, remember why. Retriable later. */
 export async function markMigrationFailed(shop: string, message: string, attemptsMade: number): Promise<void> {
-  await (await table()).update({
+  // updateMany, never upsert: a record deleted meanwhile (uninstall, re-auth)
+  // must not be re-created, least of all with a credential in it.
+  await (await table()).updateMany({
     where: { shop },
     data: { status: "failed", lastError: clip(message), attempts: { increment: attemptsMade } },
   });
@@ -112,10 +158,9 @@ export async function markMigrationFailed(shop: string, message: string, attempt
  * together with the status flip — there is nothing left to recover with.
  */
 export async function markMigrationNeedsReauth(shop: string, message: string, attemptsMade: number): Promise<void> {
-  await (await table()).upsert({
+  await (await table()).updateMany({
     where: { shop },
-    create: { shop, status: "needs_reauth", lastError: clip(message), attempts: attemptsMade },
-    update: {
+    data: {
       status: "needs_reauth",
       encryptedOldToken: null,
       lastError: clip(message),
@@ -124,21 +169,11 @@ export async function markMigrationNeedsReauth(shop: string, message: string, at
   });
 }
 
-/** The new pair is stored: erase the old token (see the decision note in offline-admin.server.ts). */
-export async function markMigrationMigrated(shop: string, attemptsMade: number): Promise<void> {
-  await (await table()).updateMany({
-    where: { shop },
-    data: {
-      status: "migrated",
-      encryptedOldToken: null,
-      lastError: null,
-      completedAt: new Date(),
-      attempts: { increment: attemptsMade },
-    },
-  });
-}
-
-/** Uninstall, redact, or a fresh token acquisition: the record (and its credential) goes. */
+/**
+ * The migration succeeded (pair stored), or the shop is gone, or a fresh token
+ * was acquired: the record (and its credential) goes. Nothing needs a "migrated"
+ * row afterwards, so there is none.
+ */
 export async function deleteMigrationRecord(shop: string): Promise<void> {
   await (await table()).deleteMany({ where: { shop } });
 }

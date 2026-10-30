@@ -44,12 +44,14 @@ vi.mock("~/middleware/activity-tracker.middleware", () => ({
 vi.mock("~/utils/offline-admin.server", () => ({
   maybeMigrateToExpiringToken: (shop: string) => h.migrate(shop),
   migrationMayBeNeeded: (shop: string) => !h.backoff.has(shop),
+  MIGRATION_RETRY_DELAYS_MS: [2000, 5000, 15000],
   getOfflineAdmin: (shop: string) => h.getAdmin(shop),
 }));
 
 import {
   BATCH_SIZE,
   FIRST_TICK_DELAY_MS,
+  envNumber,
   KEEP_ALIVE_MIN_INTERVAL_MS,
   OfflineTokenSweepService,
   SWEEP_QUIET_MS,
@@ -244,6 +246,43 @@ describe("migration of dormant shops", () => {
   });
 });
 
+describe("quietness, backoff exclusion, env knobs", () => {
+  it("a failed activity lookup (null) does not release a shop whose row HAD an activity stamp", async () => {
+    offlineSession("had-stamp.myshopify.com"); // row: 2 days ago
+    h.lastActivityOverride.set("had-stamp.myshopify.com", null); // lookup error
+    offlineSession("never.myshopify.com", { lastActivityAt: null }); // row itself says unknown
+    await tick();
+    expect(h.migrate.mock.calls.map(([s]) => s)).toEqual(["never.myshopify.com"]);
+  });
+
+  it("shops in persisted backoff / given up are excluded in SQL and do not starve the batch", async () => {
+    for (let i = 0; i < BATCH_SIZE + 2; i++) {
+      offlineSession(`failed-${i}.myshopify.com`, { lastActivityAt: new Date(NOW.getTime() - (30 + i) * DAY) });
+      h.migrations.push({ shop: `failed-${i}.myshopify.com`, encryptedOldToken: "c", status: "failed", attempts: i === 0 ? 40 : 4, startedAt: NOW, updatedAt: NOW });
+    }
+    offlineSession("healthy.myshopify.com");
+    await tick();
+    expect(h.migrate.mock.calls.map(([s]) => s)).toEqual(["healthy.myshopify.com"]);
+    // once the backoff has passed it is a candidate again (the capped one never is)
+    h.migrate.mockClear();
+    await sweep().tick(new Date(NOW.getTime() + 2 * 3600_000), { pauseMs: 0 });
+    const again = h.migrate.mock.calls.map(([s]) => s);
+    expect(again).toContain("failed-6.myshopify.com");
+    expect(again).not.toContain("failed-0.myshopify.com");
+  });
+
+  it("envNumber falls back for NaN, empty, below-minimum values", () => {
+    expect(envNumber("abc", 600000, 60000)).toBe(600000);
+    expect(envNumber("", 5, 1)).toBe(5);
+    expect(envNumber(undefined, 5, 1)).toBe(5);
+    expect(envNumber("0", 5, 1)).toBe(5);
+    expect(envNumber("10", 600000, 60000)).toBe(600000); // interval below the minimum
+    expect(envNumber("120000", 600000, 60000)).toBe(120000);
+    expect(envNumber("0", 5000, 0)).toBe(0); // a zero pause is valid
+    expect(envNumber("-1", 5000, 0)).toBe(5000);
+  });
+});
+
 describe("keep-alive of expiring tokens", () => {
   it("refreshes quiet shops whose refresh token ends within 14 days, soonest first", async () => {
     expiringSession("soon.myshopify.com", 3);
@@ -290,7 +329,6 @@ describe("keep-alive of expiring tokens", () => {
 describe("switches off", () => {
   it.each([
     ["both off", {}],
-    ["migration switch only", { SHOPIFY_EXPIRING_OFFLINE_TOKENS: "true", SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS: undefined }],
     ["migration switch without the first", { SHOPIFY_EXPIRING_OFFLINE_TOKENS: undefined, SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS: "true" }],
   ])("%s: tick() does nothing, not even a query", async (_name, env) => {
     for (const k of ENV) delete process.env[k];
@@ -305,6 +343,27 @@ describe("switches off", () => {
     expect(h.getAdmin).not.toHaveBeenCalled();
     expect(Object.values(stats).every((v) => v === 0)).toBe(true);
     spy.mockRestore();
+  });
+
+  it("expiring switch only: keep-alive still runs, the migration part does not", async () => {
+    delete process.env.SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS;
+    offlineSession("quiet.myshopify.com");
+    expiringSession("expiring.myshopify.com", 2);
+    const stats = await tick();
+    expect(h.migrate).not.toHaveBeenCalled();
+    expect(stats.migrateCandidates).toBe(0);
+    expect(h.getAdmin.mock.calls.map(([s]) => s)).toEqual(["expiring.myshopify.com"]);
+  });
+
+  it("start() with the expiring switch only DOES start the timer (keep-alive); with both off it does not", () => {
+    vi.useFakeTimers();
+    delete process.env.SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS;
+    sweep().start();
+    expect(vi.getTimerCount()).toBe(2);
+    sweep().stop();
+    delete process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS;
+    sweep().start();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("start() starts no timer at all", () => {

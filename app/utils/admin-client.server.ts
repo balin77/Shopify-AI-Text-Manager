@@ -14,7 +14,9 @@ import { isEncrypted } from "./encryption.server";
 import {
   getOfflineAdmin,
   invalidateOfflineAdmin,
+  isNonExpiringTokenRejectedError,
   markSelfRefreshingAdminClient,
+  reportNonExpiringTokenRejection,
   OfflineAdminUnavailableError,
 } from "./offline-admin.server";
 
@@ -106,6 +108,12 @@ function createRefreshingRawClient(shop: string): ShopifyGraphQLClient {
     graphql: async (query: string, options?: { variables?: any }) => {
       const token = (await getOfflineAdmin(shop)).session.accessToken!;
       const first = await rawGraphql(shop, token, query, options);
+      if (first.status === 403 && (await isNonExpiringTokenRejectedError(first))) {
+        // Same handling as createRefreshingAdmin: warn, start the migration
+        // (switches permitting), no retry with the same token; the caller gets
+        // the ordinary error for the 403 below.
+        reportNonExpiringTokenRejection(shop);
+      }
       if (first.status !== 401) return checkOk(first);
       logger.warn("[AdminClient] 401 from Shopify — reloading the offline session and retrying once", { shop });
       invalidateOfflineAdmin(shop);

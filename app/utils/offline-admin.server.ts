@@ -162,6 +162,7 @@ export function __resetOfflineAdminForTests(): void {
   migrationBackoff.clear();
   migrationSettled.clear();
   migrationNeedsReauth.clear();
+  migrationHeldUntil = 0;
   nonExpiringRejectionLoggedAt.clear();
   deps = null;
 }
@@ -263,6 +264,25 @@ export async function getOfflineAdmin(
   return startAcquisition(shop);
 }
 
+/**
+ * Is a failed acquisition really a refused REFRESH of an expiring session? Only
+ * then is failing fast for a minute right. The same `refresh_failed` reason also
+ * covers any other error the library threw while loading (a database or pool
+ * error on a deployment that does not use expiring tokens at all): remembering
+ * that would change behaviour with the switches off, so the negative cache is
+ * gated on the switch AND on the stored session actually carrying `expires` or
+ * a refresh token. A failing lookup counts as "no".
+ */
+async function refreshWasReallyRefused(shop: string): Promise<boolean> {
+  if (!expiringOfflineTokensEnabled()) return false;
+  try {
+    const stored = await (await resolveDeps()).loadOfflineSession(shop);
+    return !!stored && (!!stored.expires || !!stored.refreshToken);
+  } catch {
+    return false;
+  }
+}
+
 function startAcquisition(shop: string): Promise<OfflineAdminContext> {
   const failedBefore = refreshFailed.get(shop);
   if (failedBefore) {
@@ -303,6 +323,7 @@ function startAcquisition(shop: string): Promise<OfflineAdminContext> {
         if (
           second instanceof OfflineAdminUnavailableError &&
           second.reason === "refresh_failed" &&
+          (await refreshWasReallyRefused(shop)) &&
           (generation.get(shop) ?? 0) === startedGeneration
         ) {
           refreshFailed.set(shop, { at: Date.now(), error: second });
@@ -381,12 +402,15 @@ const NON_EXPIRING_REJECTION_LOG_INTERVAL_MS = 60 * 1000;
 
 /**
  * A request got the "non-expiring tokens no longer accepted" 403: say so, and
- * start the migration if the switches allow it. It does NOT retry the request —
+ * start the migration if the switches allow it. Deliberately WITHOUT the quiet
+ * gate of the scheduler / sweep: the old token is useless for the Admin API from
+ * that moment on, so a request in flight on it cannot be made worse by the
+ * migration, and waiting would only prolong the outage. It does NOT retry the request —
  * the same token would be refused again; the migration stores a new pair and the
  * NEXT call picks it up (`maybeMigrateToExpiringToken` invalidates the cache).
  * Never throws.
  */
-function handleNonExpiringTokenRejection(shop: string): void {
+export function reportNonExpiringTokenRejection(shop: string): void {
   const lastLogged = nonExpiringRejectionLoggedAt.get(shop);
   if (lastLogged === undefined || Date.now() - lastLogged >= NON_EXPIRING_REJECTION_LOG_INTERVAL_MS) {
     nonExpiringRejectionLoggedAt.set(shop, Date.now());
@@ -415,7 +439,7 @@ export function createRefreshingAdmin(shop: string): AdminApiContext {
       return await (admin.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
     } catch (error) {
       if (!isUnauthorizedError(error)) {
-        if (await isNonExpiringTokenRejectedError(error)) handleNonExpiringTokenRejection(shop);
+        if (await isNonExpiringTokenRejectedError(error)) reportNonExpiringTokenRejection(shop);
         throw error;
       }
       logger.warn("[OfflineAdmin] 401 from Shopify — reloading the offline session and retrying once", { shop });
@@ -518,6 +542,17 @@ export const MIGRATION_BACKOFF_MS = 10 * 60 * 1000;
  * 5xx, 429, a body without the expiring token, `storeSession()` returning false.
  */
 export const MIGRATION_RETRY_DELAYS_MS: readonly number[] = [2_000, 5_000, 15_000];
+/** Exchange attempts in one run (the first plus one per retry delay). */
+const attemptsPerRun = () => MIGRATION_RETRY_DELAYS_MS.length + 1;
+/**
+ * 400 `invalid_requested_token_type` says OUR request is wrong (client id /
+ * secret, token type, API version), not that one shop is lost — it would flip
+ * every shop. So it is a global configuration error: no shop is marked, no token
+ * is erased, and NO shop is tried for this long (a fix + restart retries at once,
+ * the hold is in-process).
+ */
+export const MIGRATION_CONFIG_ERROR_HOLD_MS = 6 * 60 * 60 * 1000;
+let migrationHeldUntil = 0;
 
 /**
  * Could `maybeMigrateToExpiringToken(shop)` do anything right now? Cheap and
@@ -527,6 +562,7 @@ export const MIGRATION_RETRY_DELAYS_MS: readonly number[] = [2_000, 5_000, 15_00
  */
 export function migrationMayBeNeeded(shop: string): boolean {
   if (!migrateToExpiringTokensEnabled()) return false;
+  if (Date.now() < migrationHeldUntil) return false;
   if (migrationSettled.has(shop)) return false;
   if (migrationNeedsReauth.has(shop)) return false;
   if (migrationsInFlight.has(shop)) return false;
@@ -544,11 +580,15 @@ export function migrationMayBeNeeded(shop: string): boolean {
  * in-process migration state (so a `needs_reauth` shop is eligible again) and
  * deletes the record.
  *
- * Gated on the expiring-tokens switch: with it off this module touches neither
- * the database nor any state (behaviour as before the feature). Never throws.
+ * Gated on the expiring-tokens switch by default, so a request path (afterAuth)
+ * touches nothing with the switches off. `force` skips the gate: the uninstall
+ * webhook passes it, because after a ROLLBACK (switches turned off again) an
+ * unfinished record with its encrypted token may still exist, and one cheap
+ * delete on an uninstall is the price of not leaving a credential behind. Never
+ * throws.
  */
-export async function forgetOfflineTokenMigration(shop: string): Promise<void> {
-  if (!expiringOfflineTokensEnabled()) return;
+export async function forgetOfflineTokenMigration(shop: string, options: { force?: boolean } = {}): Promise<void> {
+  if (!options.force && !expiringOfflineTokensEnabled()) return;
   migrationNeedsReauth.delete(shop);
   migrationBackoff.delete(shop);
   try {
@@ -577,17 +617,32 @@ function exchangeStatus(error: unknown): number | undefined {
 }
 
 /**
- * Is this migration failure PERMANENT? Shopify documents 400 `invalid_subject_token`
- * (the old token is not one it can exchange: already migrated and past the
- * 7-day recovery, or revoked) and 400 `invalid_requested_token_type` as final —
- * the shop needs a new token through an ID-token exchange (merchant opens the
- * app) or OAuth, and repeating the request changes nothing.
+ * Is this migration failure PERMANENT FOR THE SHOP? Shopify documents 400
+ * `invalid_subject_token` as final: the old token is not one it can exchange
+ * (already migrated and past the 7-day recovery, or revoked), the shop needs a
+ * new token through an ID-token exchange (merchant opens the app) or OAuth, and
+ * repeating the request changes nothing.
  */
 export function isPermanentMigrationError(error: unknown): boolean {
-  const code = exchangeErrorCode(error);
-  if (code !== "invalid_subject_token" && code !== "invalid_requested_token_type") return false;
+  if (exchangeErrorCode(error) !== "invalid_subject_token") return false;
   const status = exchangeStatus(error);
   return status === undefined || status === 400;
+}
+
+/**
+ * 400 `invalid_requested_token_type`: also documented as permanent, but it is
+ * about OUR request, not about the shop — see `MIGRATION_CONFIG_ERROR_HOLD_MS`.
+ */
+export function isMigrationConfigError(error: unknown): boolean {
+  if (exchangeErrorCode(error) !== "invalid_requested_token_type") return false;
+  const status = exchangeStatus(error);
+  return status === undefined || status === 400;
+}
+
+/** `name` and Prisma `code` only: a Prisma message can echo the query arguments, i.e. the ciphertext. */
+function safeDbErrorLabel(error: unknown): string {
+  const e = error as { name?: string; code?: string } | null;
+  return `${e?.name ?? "Error"}${e?.code ? ` ${e.code}` : ""}`;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -624,6 +679,22 @@ function sleep(ms: number): Promise<void> {
  *     shop heals when its merchant opens the app (a token exchange creates a
  *     session with `expires`); afterAuth then deletes the record.
  *
+ * The 7-day window is measured from OUR first attempt with that token
+ * (`startedAt`), never from the moment Shopify performed the exchange — which
+ * can only be later, so the window we allow ourselves is the conservative one.
+ *
+ * NOBODY ELSE MAY HAVE STORED A SESSION IN THE MEANTIME. A recovery replay can
+ * take ~22 s (retry pauses) and the merchant can open the app in that time: the
+ * library then token-exchanges and stores its own pair P2 (afterAuth forgets the
+ * record); storing our replayed P1 over it would be a regression, and an
+ * app/uninstalled landing mid-run must not get a record or a session re-created
+ * for it. So the stored session is re-read after the record is written and
+ * before EVERY storeSession; if it is gone, has an `expires`, or its token
+ * differs from the one the run started with (empty, for a recovery), the run
+ * aborts. The mark-functions of the store use updateMany, never upsert, so a
+ * deleted row is not re-created either. Residual: the window between that last
+ * read and the write is a few milliseconds, not closed.
+ *
  * WHEN THE OLD TOKEN IS ERASED: right after the new pair was stored, not later.
  * Keeping it "until the first successful Admin call with the new token" would
  * cover one more failure — the library overwriting the stored pair with a
@@ -634,8 +705,9 @@ function sleep(ms: number): Promise<void> {
  * old token is a credential at rest for no purpose once the pair is stored (it
  * is revoked for the Admin API; only the 7-day replay could still hand out the
  * pair), and "first successful call" would need extra state. So: erase on
- * success. If the erase itself fails the record stays `pending` and is cleaned
- * up the next time the shop is looked at (it then has `expires`).
+ * success — the record is DELETED then (nothing needs a "migrated" row). If the
+ * delete itself fails the record stays `pending` and is cleaned up the next time
+ * the shop is looked at (it then has `expires`).
  *
  * It is called from the BACKGROUND only (the sync scheduler's cycle, the
  * offline-token sweep), never from `authenticate.admin`: a request's captured
@@ -665,6 +737,7 @@ export async function maybeMigrateToExpiringToken(shop: string): Promise<Migrati
   if (migrationSettled.has(shop)) return "not_needed";
   const running = migrationsInFlight.get(shop);
   if (running) return running;
+  if (Date.now() < migrationHeldUntil) return "backoff";
   if (migrationNeedsReauth.has(shop)) return "needs_reauth";
   const failedAt = migrationBackoff.get(shop);
   if (failedAt !== undefined && Date.now() - failedAt < MIGRATION_BACKOFF_MS) return "backoff";
@@ -685,6 +758,57 @@ export async function maybeMigrateToExpiringToken(shop: string): Promise<Migrati
   });
   migrationsInFlight.set(shop, promise);
   return promise;
+}
+
+/**
+ * Re-read the stored session; `null` = unchanged and still ours to migrate.
+ * Otherwise the run must stop and this is its outcome (see the "NOBODY ELSE"
+ * note on `maybeMigrateToExpiringToken`).
+ */
+async function driftedOutcome(d: OfflineAdminDeps, shop: string, startToken: string): Promise<MigrationOutcome | null> {
+  const now = await d.loadOfflineSession(shop);
+  if (now && !now.expires && (now.accessToken || "") === startToken) return null;
+  if (!now || now.expires) {
+    // Gone (uninstall) or re-issued by a token exchange: the migration is moot
+    // and so is the record (which holds a credential).
+    if (now?.expires) {
+      migrationSettled.add(shop);
+      migrationNeedsReauth.delete(shop);
+    }
+    await migrationStore.deleteMigrationRecord(shop).catch(() => undefined);
+    logger.warn("[OfflineAdmin] Token migration aborted: the stored session changed while it ran", {
+      shop,
+      reason: now ? "re-issued with an expiring token" : "session gone",
+    });
+    return now ? "not_needed" : "no_session";
+  }
+  logger.warn("[OfflineAdmin] Token migration aborted: the stored session now holds a different token", { shop });
+  return "backoff";
+}
+
+/** Park `shop` in the in-process backoff until `until` (epoch ms). */
+function backoffUntil(shop: string, until: number): void {
+  migrationBackoff.set(shop, until - MIGRATION_BACKOFF_MS);
+}
+
+/**
+ * `invalid_subject_token`: the stored non-expiring token is dead on Shopify's
+ * side. Blank it in the session store (what the library's invalidateAccessToken
+ * does), so the shop's next authenticate.admin sees an inactive session and
+ * token-exchanges at once instead of failing one request with a 401 first.
+ */
+async function clearDeadSessionToken(d: OfflineAdminDeps, shop: string, current: Session, startToken: string): Promise<void> {
+  if (!startToken) return;
+  try {
+    if (await driftedOutcome(d, shop, startToken)) return;
+    const Ctor = current.constructor as new (params: object) => Session;
+    const cleared = new Ctor(current.toObject());
+    cleared.accessToken = undefined;
+    await d.storeSession(cleared);
+    invalidateOfflineAdmin(shop);
+  } catch (error) {
+    logger.warn("[OfflineAdmin] Could not blank the dead offline token of a needs_reauth shop", { shop, error: describe(error) });
+  }
 }
 
 async function runMigration(shop: string): Promise<MigrationOutcome> {
@@ -712,8 +836,19 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
     migrationNeedsReauth.add(shop);
     return "needs_reauth";
   }
+  if (record) {
+    // Persisted backoff (survives a restart) and the terminal state after too
+    // many attempts: a shop Shopify keeps answering with something we do not
+    // understand is not worth ~24 calls an hour forever.
+    const notBefore = migrationStore.retryNotBefore(record, attemptsPerRun());
+    if (notBefore > Date.now()) {
+      backoffUntil(shop, Number.isFinite(notBefore) ? notBefore : Date.now() + migrationStore.PERSISTED_BACKOFF_MAX_MS);
+      return "backoff";
+    }
+  }
 
-  let oldToken = current.accessToken || undefined;
+  const startToken = current.accessToken || "";
+  let oldToken = startToken || undefined;
   let recovered = false;
   if (!oldToken) {
     // The stored session lost its token (the library stores `accessToken:
@@ -733,14 +868,24 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
   }
 
   // Persist BEFORE the exchange. If this fails the migration does not start:
-  // an exchange we cannot recover from is worse than no exchange.
-  await migrationStore.persistOldToken(shop, oldToken, record);
+  // an exchange we cannot recover from is worse than no exchange. Only name and
+  // code of a database error are carried on — its message can echo the
+  // arguments, i.e. the ciphertext.
+  try {
+    await migrationStore.persistOldToken(shop, oldToken, record);
+  } catch (error) {
+    throw new Error(`could not persist the old token (${safeDbErrorLabel(error)})`);
+  }
+  // The upsert may have re-created a record for a shop that was uninstalled
+  // (or re-authenticated) since we read it: look again, and take it back out.
+  const moot = await driftedOutcome(d, shop, startToken);
+  if (moot) return moot;
   if (recovered) {
     logger.warn("[OfflineAdmin] Stored session has no token — recovering the migration with the persisted old token", { shop });
   }
 
   let lastError = "unknown";
-  const maxAttempts = MIGRATION_RETRY_DELAYS_MS.length + 1;
+  const maxAttempts = attemptsPerRun();
   let attempts = 0;
   for (let i = 0; i < maxAttempts; i++) {
     if (i > 0) await sleep(MIGRATION_RETRY_DELAYS_MS[i - 1]);
@@ -751,7 +896,21 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
     } catch (error) {
       if (isPermanentMigrationError(error)) {
         await markNeedsReauth(shop, `HTTP ${exchangeStatus(error) ?? "?"} ${exchangeErrorCode(error)}`, attempts);
+        await clearDeadSessionToken(d, shop, current, startToken);
         return "needs_reauth";
+      }
+      if (isMigrationConfigError(error)) {
+        migrationHeldUntil = Date.now() + MIGRATION_CONFIG_ERROR_HOLD_MS;
+        await migrationStore
+          .markMigrationFailed(shop, "invalid_requested_token_type (request/config problem, not the shop)", attempts)
+          .catch(() => undefined);
+        logger.error(
+          "[OfflineAdmin] CONFIG ERROR — Shopify answered the token migration with invalid_requested_token_type. " +
+            "This is about OUR request (client id / secret / API version), not about this shop: NO shop is marked and no token " +
+            "is erased; ALL migrations pause for 6 h. Fix the configuration and restart.",
+          { shop },
+        );
+        return "failed";
       }
       lastError = describe(error);
       logger.warn("[OfflineAdmin] Token migration attempt failed (transient) — retrying", {
@@ -769,6 +928,9 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
       logger.warn("[OfflineAdmin] Token migration returned no expiring token — retrying", { shop, attempt: attempts });
       continue;
     }
+    // Somebody may have stored a session while we slept / exchanged.
+    const drift = await driftedOutcome(d, shop, startToken);
+    if (drift) return drift;
     let stored = false;
     let storeError = "storeSession returned false";
     try {
@@ -791,8 +953,8 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
     invalidateOfflineAdmin(shop);
     migrationBackoff.delete(shop);
     migrationSettled.add(shop);
-    await migrationStore.markMigrationMigrated(shop, attempts).catch((error) => {
-      logger.warn("[OfflineAdmin] Migrated, but could not mark/erase the token-migration record", {
+    await migrationStore.deleteMigrationRecord(shop).catch((error) => {
+      logger.warn("[OfflineAdmin] Migrated, but could not delete the token-migration record", {
         shop,
         error: describe(error),
       });
@@ -807,13 +969,29 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
     return "migrated";
   }
 
-  migrationBackoff.set(shop, Date.now());
   await migrationStore.markMigrationFailed(shop, lastError, attempts).catch(() => undefined);
-  logger.error("[OfflineAdmin] Token migration failed after prompt retries — kept the persisted old token, retried after backoff", {
+  const after = await migrationStore.getMigrationRecord(shop).catch(() => null);
+  const notBefore = after ? migrationStore.retryNotBefore(after, attemptsPerRun()) : 0;
+  backoffUntil(
     shop,
-    attempts,
-    error: lastError,
-  });
+    notBefore === Infinity
+      ? Date.now() + migrationStore.PERSISTED_BACKOFF_MAX_MS
+      : Math.max(notBefore, Date.now() + MIGRATION_BACKOFF_MS),
+  );
+  if (after && migrationStore.isTerminal(after)) {
+    // Once: from here on the record is skipped (persisted), not retried.
+    logger.error(
+      "[OfflineAdmin] MIGRATION_GAVE_UP — the token migration kept failing; no automatic retry any more. " +
+        "Reset: see RAILWAY-SETUP.md (OfflineTokenMigration)",
+      { shop, attempts: after.attempts, error: lastError },
+    );
+  } else {
+    logger.error("[OfflineAdmin] Token migration failed after prompt retries — kept the persisted old token, retried after backoff", {
+      shop,
+      attempts,
+      error: lastError,
+    });
+  }
   return "failed";
 }
 
@@ -824,8 +1002,8 @@ async function markNeedsReauth(shop: string, reason: string, attempts: number): 
   });
   // One line, greppable: this is the list of shops that need their merchant.
   logger.error(
-    "[OfflineAdmin] NEEDS_REAUTH — Shopify refused the token migration permanently; no automatic retry. " +
-      "The merchant must open the app once (token exchange issues a new token) or reinstall",
+    "[OfflineAdmin] NEEDS_REAUTH — Shopify refused the token migration permanently (invalid_subject_token); no automatic retry. " +
+      "The stored dead token was blanked, so the merchant's next visit token-exchanges directly; or reinstall",
     { shop, reason },
   );
 }

@@ -169,18 +169,22 @@ Zeit sofort, statt bei Shopify erneut anzufragen. Ein neuer Token-Exchange
 #### Hintergrund-Sweep, Wiederherstellung und `needs_reauth`
 
 **Offline-Token-Sweep** ([app/services/offline-token-sweep.service.ts](app/services/offline-token-sweep.service.ts)):
-läuft nur, wenn **beide** Variablen an sind (sonst startet kein Timer), prozesslokal
-(die EINE Web-Instanz), beim Boot gestartet und alle 10 min. Pro Lauf höchstens
-5 Shops je Art, nacheinander, mit 5 s Pause dazwischen (`OFFLINE_TOKEN_SWEEP_BATCH_SIZE`,
-`OFFLINE_TOKEN_SWEEP_PAUSE_MS`, `OFFLINE_TOKEN_SWEEP_INTERVAL_MS`; komplett abschaltbar
-mit `OFFLINE_TOKEN_SWEEP_DISABLED=true`).
+läuft nur, wenn `SHOPIFY_EXPIRING_OFFLINE_TOKENS` an ist (sonst startet kein Timer;
+der Migrationsteil braucht zusätzlich `SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS`, das
+Keep-alive nicht), prozesslokal (die EINE Web-Instanz), beim Boot gestartet und alle
+10 min. Pro Lauf höchstens 5 Shops je Art, nacheinander, mit 5 s Pause dazwischen
+(`OFFLINE_TOKEN_SWEEP_BATCH_SIZE` ≥ 1, `OFFLINE_TOKEN_SWEEP_PAUSE_MS` ≥ 0,
+`OFFLINE_TOKEN_SWEEP_INTERVAL_MS` ≥ 60000; ungültige Werte fallen auf den Standard
+zurück; komplett abschaltbar mit `OFFLINE_TOKEN_SWEEP_DISABLED=true`).
 
-- **Migration:** installierte Shops, deren Offline-Session ein Token, aber kein
-  `expires` hat, ohne authentifizierten Request seit mindestens 30 min (oder
-  unbekannt) und ohne laufenden Scheduler. Läuft durch dasselbe Single-Flight
+- **Migration** (beide Variablen): installierte Shops, deren Offline-Session ein Token,
+  aber kein `expires` hat, ohne authentifizierten Request seit mindestens 30 min
+  (oder unbekannt — ein fehlgeschlagener Aktivitäts-Lookup zählt NICHT als ruhig)
+  und ohne laufenden Scheduler. Läuft durch dasselbe Single-Flight
   `maybeMigrateToExpiringToken` wie der Scheduler-Auslöser (der bleibt bestehen).
-  Shops mit Status `needs_reauth` werden übersprungen.
-- **Keep-alive:** Shops mit ablaufender Session, deren `refreshTokenExpires` in
+  Shops mit Status `needs_reauth` sowie `failed`-Shops innerhalb ihres Backoffs oder
+  nach dem Aufgeben werden schon in der Abfrage ausgeschlossen.
+- **Keep-alive** (nur `SHOPIFY_EXPIRING_OFFLINE_TOKENS`): Shops mit ablaufender Session, deren `refreshTokenExpires` in
   weniger als 14 Tagen liegt (und die ruhig sind), werden über `getOfflineAdmin`
   angesprochen, wodurch die Library den Token erneuert — sonst stirbt der
   Refresh-Token eines schlafenden Shops nach 90 Tagen. **Annahme, nicht belegt:**
@@ -196,32 +200,52 @@ die App dieses Paar erneuert hat, oder nach einem neuen Token-Erwerb für den Sh
 Dafür muss die App das alte Token noch haben. Deshalb wird es **vor** dem Exchange
 verschlüsselt (AES-256-GCM, derselbe Helfer wie für Session-Tokens) in der Tabelle
 `OfflineTokenMigration` abgelegt (Status `pending|migrated|needs_reauth|failed`,
-`attempts`, `lastError` ohne Geheimnisse) und **gelöscht, sobald das neue Paar
-gespeichert ist**. Damit gilt:
+`attempts`, `lastError` ohne Geheimnisse) und die **ganze Zeile wird gelöscht, sobald
+das neue Paar gespeichert ist** (es gibt keine „migrated"-Zeilen). Vor jedem
+Schreiben liest die Migration die gespeicherte Session neu: hat inzwischen ein
+Token-Exchange eine Session mit `expires` gespeichert (Merchant öffnet die App
+während eines Wiederherstellungs-Laufs), ist der Shop deinstalliert oder hat ein
+anderes Token, bricht der Lauf ab und überschreibt/erzeugt nichts. Damit gilt:
 
 - Transiente Fehler (Netzwerk, 5xx/429, Antwort ohne ablaufendes Token,
   `storeSession` liefert `false`/wirft) werden **sofort** wiederholt (nach 2 s,
   5 s, 15 s), nicht erst nach einer Stunde. Reicht das nicht, bleibt das Token
-  gespeichert (Status `failed`) und der Shop wird nach 10 min Backoff erneut
-  versucht.
+  gespeichert (Status `failed`) und der Shop wird nach einem **exponentiellen,
+  in der Zeile (`attempts`, `updatedAt`) persistierten** Backoff erneut versucht:
+  10 min, 20 min, 40 min … bis höchstens 24 h, auch nach einem Neustart. Nach 40
+  Versuchen (ca. 3 Tage) gibt die App auf: einmal Logzeile `MIGRATION_GAVE_UP`,
+  danach kein automatischer Neuversuch mehr (Status bleibt `failed`, das alte Token
+  bleibt verschlüsselt liegen, Rücksetzen siehe unten).
 - Hat die gespeicherte Session ihr Token verloren (die Library speichert nach einem
   401 auf das widerrufene Token eine Session mit `accessToken: undefined`), wiederholt
   die App den Exchange mit dem gespeicherten alten Token — nur innerhalb von 7 Tagen
   ab dem ersten Versuch.
 - Eine Zeile pro Shop liegt nur, solange etwas offen ist; sie wird bei
-  `app/uninstalled`, im GDPR-`shop/redact` (`redactShopData`) und bei jedem neuen
-  Token-Exchange (afterAuth) gelöscht. Ist die Ablaufumstellung per Variable
-  ausgeschaltet, passiert nichts davon (kein DB-Zugriff).
+  `app/uninstalled` (**immer**, auch bei ausgeschalteten Variablen — nach einem
+  Rollback kann noch ein verschlüsseltes Token liegen), im GDPR-`shop/redact`
+  (`redactShopData`, immer) und bei jedem neuen Token-Exchange (afterAuth, nur wenn
+  `SHOPIFY_EXPIRING_OFFLINE_TOKENS` an ist) gelöscht. Bei ausgeschalteten Variablen
+  macht die Migration selbst keinen DB-Zugriff; die beiden Löschungen oben sind die
+  Ausnahme.
 
-**`needs_reauth`.** Antwortet Shopify auf die Migration mit 400
-`invalid_subject_token` oder `invalid_requested_token_type`, ist das endgültig: das
-Token lässt sich nicht mehr tauschen (z. B. schon migriert und die 7 Tage sind um).
-Der Shop bekommt Status `needs_reauth`, es gibt **keinen** automatischen Neuversuch
-(Sweep und Scheduler überspringen ihn) und genau eine Fehlerzeile im Log:
-`[OfflineAdmin] NEEDS_REAUTH — Shopify refused the token migration permanently …`.
-Der Shop braucht ein neues Token über den Token-Exchange (Merchant öffnet die App)
-oder OAuth (Neuinstallation). Sobald das passiert, räumt afterAuth den Datensatz auf
-und der Shop gilt als migriert. Betroffene Shops finden:
+**`needs_reauth`.** Antwortet Shopify auf die Migration mit 400 `invalid_subject_token`,
+ist das endgültig: das Token lässt sich nicht mehr tauschen (z. B. schon migriert und
+die 7 Tage sind um). Der Shop bekommt Status `needs_reauth`, es gibt **keinen**
+automatischen Neuversuch (Sweep und Scheduler überspringen ihn) und genau eine
+Fehlerzeile im Log: `[OfflineAdmin] NEEDS_REAUTH — Shopify refused the token migration
+permanently …`. Zusätzlich wird das tote, gespeicherte Token in der Session geleert
+(wie `invalidateAccessToken` der Library), sodass der nächste `authenticate.admin` des
+Shops direkt einen Token-Exchange macht, statt einen Request mit 401 scheitern zu
+lassen. Der Merchant muss die App also einmal öffnen (oder neu installieren); danach
+räumt afterAuth den Datensatz auf und der Shop gilt als migriert. Bis dahin scheitern
+Hintergrund-Aufrufe dieses Shops mit `no_token`.
+
+**`invalid_requested_token_type` ist etwas anderes:** es sagt, dass *unsere Anfrage*
+nicht stimmt (Client-ID/-Secret, Token-Typ, API-Version), nicht dass ein Shop verloren
+ist — es würde alle Shops treffen. Deshalb wird **kein** Shop als `needs_reauth`
+markiert und kein Token gelöscht; stattdessen eine laute Logzeile `CONFIG ERROR` und
+**6 h Pause für alle Migrationen** (prozesslokal; Konfiguration korrigieren und neu
+starten, dann geht es sofort weiter). Betroffene Shops finden:
 
 ```sql
 SELECT shop, "lastError", attempts, "updatedAt"
@@ -231,15 +255,32 @@ ORDER BY "updatedAt";
 ```
 
 bzw. im Log nach `NEEDS_REAUTH` suchen. Hängende Fälle (`pending`/`failed`) zeigt
-dieselbe Abfrage mit `status IN ('pending','failed')`.
+dieselbe Abfrage mit `status IN ('pending','failed')`; aufgegebene (`MIGRATION_GAVE_UP`)
+sind `status = 'failed' AND attempts >= 40`.
+
+**Operator-Reset** (nach Behebung der Ursache; der Sweep nimmt die Shops dann beim
+nächsten Lauf wieder auf). Ein `needs_reauth`-Shop, der die App nie öffnet, hat keinen
+brauchbaren Token mehr — die Zeile nur löschen, wenn er ein neues Token bekommen hat
+(sonst landet er sofort wieder in `needs_reauth`):
+
+```sql
+-- aufgegebene / hängende Migration erneut versuchen (alter Token liegt noch verschlüsselt in der Zeile)
+UPDATE "OfflineTokenMigration" SET status = 'pending', attempts = 0
+WHERE status = 'failed' AND "encryptedOldToken" IS NOT NULL;
+
+-- needs_reauth-Zeile eines Shops verwerfen (z. B. nachdem er die App neu installiert hat)
+DELETE FROM "OfflineTokenMigration" WHERE shop = 'example.myshopify.com' AND status = 'needs_reauth';
+```
 
 **Nach dem Stichtag (2027-01-01).** Eine Admin-API-Antwort 403 mit „Non-expiring
 access tokens are no longer accepted" erkennt die App an der Meldung (ein 403 wegen
 fehlendem Scope wird nicht so behandelt): `createRefreshingAdmin` loggt eine
 spezifische Warnung, stößt — bei beiden Variablen an — die Migration an und wirft
 den ursprünglichen Fehler weiter (kein blindes Wiederholen mit demselben Token). Der
-nächste Aufruf sieht das neue Paar. Roh-Clients (`admin-client.server.ts`) erkennen
-den 403 nicht selbst; für sie greift der Sweep.
+nächste Aufruf sieht das neue Paar. Der Roh-Client (`admin-client.server.ts`) erkennt
+den 403 ebenso. Dieser Auslöser wartet bewusst **nicht** auf die ruhige Phase: das alte
+Token ist ab dem Stichtag für die Admin API ohnehin unbrauchbar, ein laufender Request
+damit kann nicht schlimmer scheitern.
 
 ### Env-Variablen des Cron-Service `Db Space Checker`
 

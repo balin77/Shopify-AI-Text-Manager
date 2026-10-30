@@ -189,7 +189,7 @@ export async function redactCustomerData(
  * incoming `shop_domain` (NEVER an unscoped/`startsWith` delete — that would
  * wipe other tenants, see regression R1).
  *
- * Coverage of all 59 models in prisma/schema.prisma:
+ * Coverage of all 71 models in prisma/schema.prisma:
  *
  *  • Explicitly deleted below (scope field in parentheses):
  *      Session, OfflineTokenMigration (shop), AISettings, AIInstructions, Task, Product, Collection,

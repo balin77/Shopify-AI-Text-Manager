@@ -43,9 +43,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   invalidateOfflineAdmin(shop);
 
   // A pending token migration holds the shop's old token (encrypted) in its own
-  // table; it dies with the install. Never throws; a no-op with the
-  // expiring-token switch off.
-  await forgetOfflineTokenMigration(shop);
+  // table; it dies with the install. Never throws. `force`: also with the
+  // switches off, because after a rollback an unfinished record may still exist.
+  await forgetOfflineTokenMigration(shop, { force: true });
 
   // Stamp the uninstall time. This is the reliable "inactive since" anchor for
   // the 30-day reaper (shop-reaper.service), which finally purges all remaining

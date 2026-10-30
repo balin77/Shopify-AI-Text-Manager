@@ -24,6 +24,7 @@ vi.mock("~/db.server", async () => {
 });
 
 import { logger } from "~/utils/logger.server";
+import * as store from "~/utils/offline-token-migration-store.server";
 import { decryptToken, encryptToken, isEncrypted } from "~/utils/encryption.server";
 import {
   __resetOfflineAdminForTests,
@@ -32,6 +33,7 @@ import {
   createRefreshingAdmin,
   forgetOfflineTokenMigration,
   isNonExpiringTokenRejectedError,
+  isMigrationConfigError,
   isPermanentMigrationError,
   MIGRATION_RETRY_DELAYS_MS,
   REFRESH_FAILED_TTL_MS,
@@ -369,7 +371,6 @@ describe("maybeMigrateToExpiringToken", () => {
       expect(d.migrateToExpiringToken).toHaveBeenCalledWith({ shop: SHOP, nonExpiringOfflineAccessToken: "legacy-token" });
       expect(d.storeSession).toHaveBeenCalledTimes(1);
       expect(await maybeMigrateToExpiringToken(SHOP)).toBe("not_needed");
-      expect(d.loadOfflineSession).toHaveBeenCalledTimes(1);
     });
 
     it("leaves an already expiring session alone", async () => {
@@ -462,9 +463,8 @@ describe("durable migration (both switches on)", () => {
     expect(isEncrypted(seenDuringExchange?.encryptedOldToken)).toBe(true);
     expect(decryptToken(seenDuringExchange?.encryptedOldToken)).toBe("legacy-token");
 
-    expect(h.migrations).toHaveLength(1);
-    expect(h.migrations[0]).toMatchObject({ shop: SHOP, status: "migrated", encryptedOldToken: null, attempts: 1 });
-    expect(h.migrations[0].completedAt).toBeInstanceOf(Date);
+    // Nothing needs a "migrated" row, so the record (and its credential) is gone.
+    expect(h.migrations).toHaveLength(0);
   });
 
   it("transient failure (network error, then 503) -> prompt retry -> success, within seconds", async () => {
@@ -482,7 +482,7 @@ describe("durable migration (both switches on)", () => {
     // Every attempt presented the SAME old token (Shopify returns the same pair for it).
     for (const call of migrate.mock.calls) expect(call[0].nonExpiringOfflineAccessToken).toBe("legacy-token");
     expect(d.storeSession).toHaveBeenCalledTimes(1);
-    expect(h.migrations[0]).toMatchObject({ status: "migrated", encryptedOldToken: null, attempts: 3 });
+    expect(h.migrations).toHaveLength(0);
     // A retry is not an hour away: the shop is settled, not in backoff.
     expect(await maybeMigrateToExpiringToken(SHOP)).toBe("not_needed");
   });
@@ -550,9 +550,7 @@ describe("durable migration (both switches on)", () => {
     expect(await maybeMigrateToExpiringToken(SHOP)).toBe("migrated");
     expect(d.migrateToExpiringToken).toHaveBeenCalledWith({ shop: SHOP, nonExpiringOfflineAccessToken: "legacy-token" });
     expect(d.storeSession).toHaveBeenCalledTimes(1);
-    expect(h.migrations[0]).toMatchObject({ status: "migrated", encryptedOldToken: null });
-    // The 7-day window is anchored at the FIRST attempt, not reset by the recovery.
-    expect(Date.now() - h.migrations[0].startedAt.getTime()).toBeGreaterThan(2.9 * 24 * 3600_000);
+    expect(h.migrations).toHaveLength(0);
   });
 
   it("does not recover after the 7-day window: needs_reauth, no exchange", async () => {
@@ -606,7 +604,7 @@ describe("durable migration (both switches on)", () => {
   });
 
   describe("permanent errors", () => {
-    it.each(["invalid_subject_token", "invalid_requested_token_type"])(
+    it.each(["invalid_subject_token"])(
       "400 %s -> needs_reauth, logged once, never retried",
       async (code) => {
         const d = deps({ migrateToExpiringToken: vi.fn(async () => Promise.reject(exchangeError(400, code))) });
@@ -659,6 +657,9 @@ describe("durable migration (both switches on)", () => {
 
     it("other 400s (e.g. invalid_client) and 401/5xx are NOT permanent", () => {
       expect(isPermanentMigrationError(exchangeError(400, "invalid_subject_token"))).toBe(true);
+      // about OUR request, not the shop: a separate, global class
+      expect(isPermanentMigrationError(exchangeError(400, "invalid_requested_token_type"))).toBe(false);
+      expect(isMigrationConfigError(exchangeError(400, "invalid_requested_token_type"))).toBe(true);
       expect(isPermanentMigrationError(exchangeError(400, "invalid_client"))).toBe(false);
       expect(isPermanentMigrationError(exchangeError(401, "invalid_subject_token"))).toBe(false);
       expect(isPermanentMigrationError(exchangeError(503))).toBe(false);
@@ -758,8 +759,16 @@ describe("403 'non-expiring access tokens are no longer accepted'", () => {
 // ---------------------------------------------------------------------------
 
 describe("refresh_failed negative cache", () => {
+  // Remembered only for an EXPIRING session with the switch on (see refreshWasReallyRefused).
+  const expiringStored = () => vi.fn(async () => session("x", new Date(Date.now() - 1000), "refresh"));
+  beforeEach(() => {
+    process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS = "true";
+  });
   const failingDeps = () =>
-    deps({ unauthenticatedAdmin: vi.fn(async () => Promise.reject(new Response(undefined, { status: 500 }))) });
+    deps({
+      loadOfflineSession: expiringStored(),
+      unauthenticatedAdmin: vi.fn(async () => Promise.reject(new Response(undefined, { status: 500 }))),
+    });
 
   it("a loop of callers fails fast after the final refresh_failed instead of refreshing every time", async () => {
     vi.useFakeTimers();
@@ -780,6 +789,7 @@ describe("refresh_failed negative cache", () => {
   it("is cleared by invalidateOfflineAdmin", async () => {
     vi.useFakeTimers();
     const d = deps({
+      loadOfflineSession: expiringStored(),
       unauthenticatedAdmin: vi
         .fn()
         .mockRejectedValueOnce(new Response(undefined, { status: 500 }))
@@ -798,6 +808,7 @@ describe("refresh_failed negative cache", () => {
   it("expires by itself after REFRESH_FAILED_TTL_MS", async () => {
     vi.useFakeTimers();
     const d = deps({
+      loadOfflineSession: expiringStored(),
       unauthenticatedAdmin: vi
         .fn()
         .mockRejectedValueOnce(new Response(undefined, { status: 500 }))
@@ -812,6 +823,36 @@ describe("refresh_failed negative cache", () => {
     expect(await getOfflineAccessToken(SHOP)).toBe("back");
   });
 
+  it("does NOT change behaviour with the switch OFF (a pool/db error twice does not fail callers fast)", async () => {
+    vi.useFakeTimers();
+    delete process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS;
+    const d = failingDeps();
+    configureOfflineAdmin(d);
+    const first = getOfflineAdmin(SHOP).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await first;
+    const second = getOfflineAdmin(SHOP).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await second;
+    expect(d.unauthenticatedAdmin).toHaveBeenCalledTimes(4); // asked again, no negative cache
+  });
+
+  it("does NOT remember a failure of a session that has no expiry / refresh token", async () => {
+    vi.useFakeTimers();
+    const d = deps({
+      loadOfflineSession: vi.fn(async () => session("legacy")),
+      unauthenticatedAdmin: vi.fn(async () => Promise.reject(new Error("pool exhausted"))),
+    });
+    configureOfflineAdmin(d);
+    const first = getOfflineAdmin(SHOP).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await first;
+    const second = getOfflineAdmin(SHOP).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await second;
+    expect(d.unauthenticatedAdmin).toHaveBeenCalledTimes(4);
+  });
+
   it("does not remember no_session (a shop that is simply not installed)", async () => {
     const err = Object.assign(new Error("Could not find a session"), { name: "SessionNotFoundError" });
     const d = deps({
@@ -820,5 +861,215 @@ describe("refresh_failed negative cache", () => {
     configureOfflineAdmin(d);
     await expect(getOfflineAdmin(SHOP)).rejects.toMatchObject({ reason: "no_session" });
     expect(await getOfflineAccessToken(SHOP)).toBe("installed-now");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hardening round 1: races, config error, backoff, hygiene
+// ---------------------------------------------------------------------------
+
+describe("migration races (switches on)", () => {
+  beforeEach(() => {
+    process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS = "true";
+    process.env.SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS = "true";
+    vi.useFakeTimers();
+  });
+  const seedRecovery = () =>
+    h.migrations.push({
+      shop: SHOP,
+      encryptedOldToken: encryptToken("legacy-token"),
+      status: "pending",
+      attempts: 1,
+      lastError: null,
+      startedAt: new Date(Date.now() - 3600_000),
+      updatedAt: new Date(),
+      completedAt: null,
+    });
+
+  it("(A) a recovery replay does not overwrite the pair a token exchange stored meanwhile", async () => {
+    seedRecovery();
+    let stored: Session = session("");
+    const d = deps({
+      loadOfflineSession: vi.fn(async () => stored),
+      migrateToExpiringToken: vi.fn().mockRejectedValueOnce(exchangeError(503)).mockResolvedValue(NEW_PAIR()),
+    });
+    configureOfflineAdmin(d);
+    const run = maybeMigrateToExpiringToken(SHOP);
+    await vi.advanceTimersByTimeAsync(500);
+    // the merchant opens the app during the retry pause: library stores P2, afterAuth forgets the record
+    stored = session("P2", new Date(Date.now() + 3600_000), "r2");
+    await forgetOfflineTokenMigration(SHOP);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await run).toBe("not_needed");
+    expect(d.storeSession).not.toHaveBeenCalled();
+    expect(h.migrations).toHaveLength(0); // and no record re-created
+    expect(migrationMayBeNeeded(SHOP)).toBe(false);
+  });
+
+  it("(A2) a token-less session that got ANOTHER token meanwhile aborts the run too", async () => {
+    seedRecovery();
+    let stored: Session = session("");
+    const d = deps({
+      loadOfflineSession: vi.fn(async () => stored),
+      migrateToExpiringToken: vi.fn().mockRejectedValueOnce(exchangeError(503)).mockResolvedValue(NEW_PAIR()),
+    });
+    configureOfflineAdmin(d);
+    const run = maybeMigrateToExpiringToken(SHOP);
+    await vi.advanceTimersByTimeAsync(500);
+    stored = session("someone-elses-token");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await run).toBe("backoff");
+    expect(d.storeSession).not.toHaveBeenCalled();
+  });
+
+  it("(B) app/uninstalled between reading the record and persisting: no record, no session re-created", async () => {
+    // 1st read: still installed; every later read (after the upsert): gone.
+    const load = vi.fn().mockResolvedValueOnce(session("legacy-token")).mockResolvedValue(undefined);
+    const d = deps({ loadOfflineSession: load });
+    configureOfflineAdmin(d);
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("no_session");
+    expect(d.migrateToExpiringToken).not.toHaveBeenCalled();
+    expect(d.storeSession).not.toHaveBeenCalled();
+    expect(h.migrations).toHaveLength(0); // the upsert's record was taken back out
+  });
+
+  it("(B2) the shop is uninstalled while the exchange is out: the returned pair is not stored", async () => {
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(session("legacy-token")) // runMigration
+      .mockResolvedValueOnce(session("legacy-token")) // after persist
+      .mockResolvedValue(undefined); // before storeSession
+    const d = deps({ loadOfflineSession: load });
+    configureOfflineAdmin(d);
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("no_session");
+    expect(d.migrateToExpiringToken).toHaveBeenCalledTimes(1);
+    expect(d.storeSession).not.toHaveBeenCalled();
+    expect(h.migrations).toHaveLength(0);
+  });
+
+  it("the store's mark functions never re-create a deleted row", async () => {
+    await store.markMigrationNeedsReauth(SHOP, "x", 1);
+    await store.markMigrationFailed(SHOP, "x", 1);
+    expect(h.migrations).toHaveLength(0);
+  });
+});
+
+describe("needs_reauth healing and the global config error", () => {
+  beforeEach(() => {
+    process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS = "true";
+    process.env.SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS = "true";
+    vi.useFakeTimers();
+  });
+
+  it("invalid_subject_token also blanks the dead token in the session store (next visit token-exchanges directly)", async () => {
+    const d = deps({ migrateToExpiringToken: vi.fn(async () => Promise.reject(exchangeError(400, "invalid_subject_token"))) });
+    configureOfflineAdmin(d);
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("needs_reauth");
+    expect(d.storeSession).toHaveBeenCalledTimes(1);
+    const cleared = vi.mocked(d.storeSession).mock.calls[0][0];
+    expect(cleared.shop).toBe(SHOP);
+    expect(cleared.accessToken).toBeUndefined();
+    expect(h.migrations[0]).toMatchObject({ status: "needs_reauth", encryptedOldToken: null });
+  });
+
+  it("invalid_requested_token_type is a GLOBAL config error: no needs_reauth, token kept, every shop paused", async () => {
+    const d = deps({ migrateToExpiringToken: vi.fn(async () => Promise.reject(exchangeError(400, "invalid_requested_token_type"))) });
+    configureOfflineAdmin(d);
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("failed");
+    expect(d.migrateToExpiringToken).toHaveBeenCalledTimes(1); // no prompt retries
+    expect(d.storeSession).not.toHaveBeenCalled(); // session untouched
+    expect(h.migrations[0].status).toBe("failed");
+    expect(decryptToken(h.migrations[0].encryptedOldToken)).toBe("legacy-token"); // not erased
+    const errors = JSON.stringify(vi.mocked(logger.error).mock.calls);
+    expect(errors).toContain("CONFIG ERROR");
+    expect(errors).not.toContain("NEEDS_REAUTH");
+
+    // another shop is held as well, for hours
+    expect(migrationMayBeNeeded("other.myshopify.com")).toBe(false);
+    expect(await maybeMigrateToExpiringToken("other.myshopify.com")).toBe("backoff");
+    await vi.advanceTimersByTimeAsync(5 * 3600_000);
+    expect(migrationMayBeNeeded("other.myshopify.com")).toBe(false);
+    await vi.advanceTimersByTimeAsync(2 * 3600_000);
+    expect(migrationMayBeNeeded("other.myshopify.com")).toBe(true);
+  });
+});
+
+describe("persisted backoff and the attempt cap", () => {
+  beforeEach(() => {
+    process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS = "true";
+    process.env.SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS = "true";
+    vi.useFakeTimers();
+  });
+  const seedFailed = (attempts: number, updatedAgoMs: number) =>
+    h.migrations.push({
+      shop: SHOP,
+      encryptedOldToken: encryptToken("legacy-token"),
+      status: "failed",
+      attempts,
+      lastError: "x",
+      startedAt: new Date(Date.now() - 3600_000),
+      updatedAt: new Date(Date.now() - updatedAgoMs),
+      completedAt: null,
+    });
+
+  it("a failed record waits its (doubling) persisted backoff, also after a restart", async () => {
+    seedFailed(8, 5 * 60_000); // 2 failed runs -> 20 min, 5 min ago
+    const d = deps();
+    configureOfflineAdmin(d);
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("backoff");
+    expect(d.migrateToExpiringToken).not.toHaveBeenCalled();
+    expect(migrationMayBeNeeded(SHOP)).toBe(false);
+    await vi.advanceTimersByTimeAsync(16 * 60_000);
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("migrated");
+  });
+
+  it("gives up at the cap: logged once, then skipped for good", async () => {
+    seedFailed(36, 25 * 3600_000); // 36 + 4 = 40 = MIGRATION_MAX_ATTEMPTS
+    const d = deps({ migrateToExpiringToken: vi.fn(async () => Promise.reject(exchangeError(400, "invalid_client"))) });
+    configureOfflineAdmin(d);
+    const run = maybeMigrateToExpiringToken(SHOP);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await run).toBe("failed");
+    expect(h.migrations[0].attempts).toBe(store.MIGRATION_MAX_ATTEMPTS);
+    const gaveUp = vi.mocked(logger.error).mock.calls.filter(([m]) => String(m).includes("MIGRATION_GAVE_UP"));
+    expect(gaveUp).toHaveLength(1);
+    vi.mocked(d.migrateToExpiringToken).mockClear();
+    __resetOfflineAdminForTests();
+    configureOfflineAdmin(d);
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("backoff");
+    await vi.advanceTimersByTimeAsync(30 * 24 * 3600_000);
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("backoff");
+    expect(d.migrateToExpiringToken).not.toHaveBeenCalled();
+    expect(await store.listBackedOffShops(Date.now(), 4)).toEqual([SHOP]);
+  });
+});
+
+describe("hygiene", () => {
+  beforeEach(() => {
+    process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS = "true";
+    process.env.SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS = "true";
+  });
+
+  it("forgetOfflineTokenMigration({ force }) deletes even with the switches off (uninstall after a rollback)", async () => {
+    delete process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS;
+    h.migrations.push({ shop: SHOP, encryptedOldToken: encryptToken("legacy-token"), status: "pending", attempts: 0, lastError: null, startedAt: new Date(), updatedAt: new Date(), completedAt: null });
+    await forgetOfflineTokenMigration(SHOP);
+    expect(h.migrations).toHaveLength(1);
+    await forgetOfflineTokenMigration(SHOP, { force: true });
+    expect(h.migrations).toHaveLength(0);
+  });
+
+  it("a database error while persisting is never logged with its message (it can echo the ciphertext)", async () => {
+    const d = deps();
+    configureOfflineAdmin(d);
+    const { db } = await import("~/db.server");
+    const spy = vi
+      .spyOn(db.offlineTokenMigration, "upsert")
+      .mockRejectedValueOnce(Object.assign(new Error('Invalid upsert() invocation: encryptedOldToken: "SECRET-CIPHERTEXT"'), { name: "PrismaClientKnownRequestError", code: "P2002" }));
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("failed");
+    const logged = JSON.stringify([vi.mocked(logger.error).mock.calls, vi.mocked(logger.warn).mock.calls]);
+    expect(logged).not.toContain("SECRET-CIPHERTEXT");
+    expect(logged).toContain("P2002");
+    spy.mockRestore();
   });
 });
