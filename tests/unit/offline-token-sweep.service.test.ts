@@ -294,6 +294,22 @@ describe("quietness, backoff exclusion, env knobs", () => {
     expect(h.released).toContain("reset.myshopify.com");
   });
 
+  it("m-3: erases the ciphertext of past-window records whose session holds no token (fingerprint stays)", async () => {
+    offlineSession("blank.myshopify.com", { accessToken: "" });
+    offlineSession("holds.myshopify.com", { accessToken: "still-has-it" });
+    const old = new Date(NOW.getTime() - 9 * DAY);
+    for (const shop of ["blank.myshopify.com", "holds.myshopify.com"]) {
+      h.migrations.push({ shop, encryptedOldToken: "cipher", tokenFingerprint: "abcd", status: "failed", attempts: 4, startedAt: old, updatedAt: old });
+    }
+    h.migrations.push({ shop: "fresh.myshopify.com", encryptedOldToken: "cipher", tokenFingerprint: "abcd", status: "pending", attempts: 0, startedAt: NOW, updatedAt: NOW });
+    await tick();
+    const by = (s: string) => h.migrations.find((m) => m.shop === s)!;
+    expect(by("blank.myshopify.com").encryptedOldToken).toBeNull();
+    expect(by("blank.myshopify.com").tokenFingerprint).toBe("abcd");
+    expect(by("holds.myshopify.com").encryptedOldToken).toBe("cipher");
+    expect(by("fresh.myshopify.com").encryptedOldToken).toBe("cipher");
+  });
+
   it("envNumber falls back for NaN, empty, below-minimum values", () => {
     expect(envNumber("abc", 600000, 60000)).toBe(600000);
     expect(envNumber("", 5, 1)).toBe(5);

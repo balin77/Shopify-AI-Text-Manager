@@ -124,6 +124,53 @@ export async function listBlockingRecords(now: number, attemptsPerRun: number): 
 }
 
 /**
+ * Re-arm ONE migration run for a given-up record: attempts back to cap-1 and the
+ * persisted backoff cleared (`updatedAt` far in the past), status `failed`. The
+ * run that follows either migrates or fails 4 more attempts and is terminal
+ * again. Only the 403 deadline heal calls this (see healIfMigrationCannotRun).
+ */
+export async function rearmTerminal(shop: string): Promise<void> {
+  await (await table()).updateMany({
+    where: { shop },
+    data: { status: "failed", attempts: MIGRATION_MAX_ATTEMPTS - 1, updatedAt: new Date(0) },
+  });
+}
+
+/**
+ * Shops whose record (pending/failed) still holds a ciphertext although the
+ * recovery window is over — the ciphertext can only matter for a session that
+ * LOST its token, which needs the window.
+ */
+export async function listPastWindowTokenShops(now: number, limit = 200): Promise<string[]> {
+  const rows = (await (await table()).findMany({
+    where: {
+      status: { in: ["pending", "failed"] },
+      encryptedOldToken: { not: null },
+      startedAt: { lt: new Date(now - MIGRATION_RECOVERY_WINDOW_MS) },
+    },
+    select: { shop: true },
+    take: limit,
+  })) as Array<{ shop: string }>;
+  return rows.map((r) => r.shop);
+}
+
+/**
+ * Is `shop` marked uninstalled (ShopInstallState.uninstalledAt, stamped by the
+ * app/uninstalled webhook, cleared by afterAuth)? A failing lookup answers
+ * `false`: the check is an extra guard on top of the session re-read, and a
+ * database that cannot answer this will fail the surrounding writes anyway.
+ */
+export async function isShopUninstalled(shop: string): Promise<boolean> {
+  try {
+    const { db } = await import("../db.server");
+    const row = await db.shopInstallState.findUnique({ where: { shop }, select: { uninstalledAt: true } });
+    return !!row?.uninstalledAt;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Erase only the ciphertext (a given-up record): the fingerprint stays, so the
  * stale-record check still works. A reset of such a row can only retry while the
  * shop's session still holds the token (see RAILWAY-SETUP.md).

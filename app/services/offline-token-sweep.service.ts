@@ -68,8 +68,10 @@ import {
 } from "../utils/offline-admin.server";
 import { expiringOfflineTokensEnabled, migrateToExpiringTokensEnabled } from "../utils/offline-token-flags.server";
 import {
+  eraseOldToken,
   listBlockingRecords,
   listMigrationShopsByStatus,
+  listPastWindowTokenShops,
   MIGRATION_RECOVERY_WINDOW_MS,
   storedTokenDiffers,
   type BlockingRecord,
@@ -281,7 +283,29 @@ export class OfflineTokenSweepService {
     return new Set(rows.filter((r) => storedTokenDiffers(fingerprints.get(r.shop), r.accessToken)).map((r) => r.shop));
   }
 
+  /**
+   * Erase the ciphertext of pending/failed records past the 7-day recovery
+   * window whose session holds no token (unrecoverable: a credential at rest with
+   * no use). The fingerprint stays. The window is measured from OUR first attempt
+   * (`startedAt`), which can only be earlier than Shopify's own start — the
+   * conservative side.
+   */
+  private async purgeUnrecoverableTokens(now: Date): Promise<void> {
+    const shops = await listPastWindowTokenShops(now.getTime());
+    if (shops.length === 0) return;
+    const holding = await db.session.findMany({
+      where: { isOnline: false, id: { startsWith: "offline_" }, shop: { in: shops }, accessToken: { not: "" } },
+      select: { shop: true },
+    });
+    const stillHolds = new Set(holding.map((r) => r.shop));
+    for (const shop of shops) {
+      if (stillHolds.has(shop)) continue;
+      await eraseOldToken(shop).catch(() => undefined);
+    }
+  }
+
   private async migrateDormantShops(now: Date, pauseMs: number, stats: OfflineTokenSweepStats): Promise<void> {
+    await this.purgeUnrecoverableTokens(now);
     const quietBefore = new Date(now.getTime() - SWEEP_QUIET_MS);
     // `needs_reauth` records and `failed` ones inside their persisted
     // (exponential) backoff or given up on: left out IN SQL, so they cannot sit

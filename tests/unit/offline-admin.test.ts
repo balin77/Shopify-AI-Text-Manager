@@ -16,10 +16,13 @@ vi.mock("~/utils/logger.server", () => ({
 
 // The durable migration record lives in an in-memory fake of the Prisma table;
 // the REAL store module (incl. the real AES helper) runs on top of it.
-const h = vi.hoisted(() => ({ migrations: [] as Array<Record<string, any>> }));
+const h = vi.hoisted(() => ({ migrations: [] as Array<Record<string, any>>, install: [] as Array<Record<string, any>> }));
 vi.mock("~/db.server", async () => {
   const { fakeDelegate, migrationDefaults } = await import("../helpers/fake-prisma-tables");
-  const db = { offlineTokenMigration: fakeDelegate(h.migrations, migrationDefaults) };
+  const db = {
+    offlineTokenMigration: fakeDelegate(h.migrations, migrationDefaults),
+    shopInstallState: fakeDelegate(h.install),
+  };
   return { db, default: db };
 });
 
@@ -38,6 +41,7 @@ import {
   MIGRATION_RETRY_DELAYS_MS,
   REFRESH_FAILED_TTL_MS,
   releaseStaleMigrationBlock,
+  reportNonExpiringTokenRejection,
   getOfflineAccessToken,
   getOfflineAdmin,
   invalidateOfflineAdmin,
@@ -90,6 +94,7 @@ const savedEnv: Record<string, string | undefined> = {};
 beforeEach(() => {
   __resetOfflineAdminForTests();
   h.migrations.length = 0;
+  h.install.length = 0;
   vi.mocked(logger.error).mockClear();
   vi.mocked(logger.warn).mockClear();
   for (const k of ENV_KEYS) {
@@ -901,10 +906,10 @@ describe("migration races (switches on)", () => {
     stored = session("P2", new Date(Date.now() + 3600_000), "r2");
     await forgetOfflineTokenMigration(SHOP);
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(await run).toBe("not_needed");
+    // the re-issue (afterAuth -> forget) changed the epoch: the run stops, stores nothing
+    expect(await run).toBe("no_session");
     expect(d.storeSession).not.toHaveBeenCalled();
     expect(h.migrations).toHaveLength(0); // and no record re-created
-    expect(migrationMayBeNeeded(SHOP)).toBe(false);
   });
 
   it("(A2) a token-less session that got ANOTHER token meanwhile aborts the run too", async () => {
@@ -1027,7 +1032,7 @@ describe("persisted backoff and the attempt cap", () => {
 
   it("gives up at the cap: logged once, then skipped for good", async () => {
     seedFailed(36, 25 * 3600_000); // 36 + 4 = 40 = MIGRATION_MAX_ATTEMPTS
-    const d = deps({ migrateToExpiringToken: vi.fn(async () => Promise.reject(exchangeError(400, "invalid_client"))) });
+    const d = deps({ migrateToExpiringToken: vi.fn(async () => Promise.reject(exchangeError(400, "invalid_request"))) });
     configureOfflineAdmin(d);
     const run = maybeMigrateToExpiringToken(SHOP);
     await vi.advanceTimersByTimeAsync(60_000);
@@ -1189,11 +1194,33 @@ describe("healing after the deadline when no migration can run", () => {
     expect(h.migrations).toHaveLength(1); // record stays the ops-visible fact
   });
 
-  it("a given-up record is blanked too", async () => {
-    h.migrations.push(row({ status: "failed", attempts: 40, tokenFingerprint: store.fingerprintToken("legacy-token"), encryptedOldToken: encryptToken("legacy-token") }));
+  it("a given-up record is NOT blanked (a 403 proves the token is not revoked): ONE migration run is re-armed instead", async () => {
+    vi.useFakeTimers();
+    h.migrations.push(row({ status: "failed", attempts: 40, tokenFingerprint: store.fingerprintToken("legacy-token"), encryptedOldToken: null }));
+    const d = deps({ migrateToExpiringToken: vi.fn(async () => Promise.reject(exchangeError(503))) });
+    configureOfflineAdmin(d);
+    reportNonExpiringTokenRejection(SHOP, "legacy-token");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(blanked(d)).toBe(false);
+    expect(d.migrateToExpiringToken).toHaveBeenCalledTimes(4); // exactly one run
+    expect(vi.mocked(d.migrateToExpiringToken).mock.calls[0][0].nonExpiringOfflineAccessToken).toBe("legacy-token");
+    expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).toContain("ONE more migration run");
+    // terminal again afterwards; a second deadline 403 (after the throttle) does not re-arm again
+    expect(h.migrations[0].attempts).toBe(store.MIGRATION_MAX_ATTEMPTS + 3);
+    await vi.advanceTimersByTimeAsync(61_000);
+    reportNonExpiringTokenRejection(SHOP, "legacy-token");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(d.migrateToExpiringToken).toHaveBeenCalledTimes(4);
+    expect(blanked(d)).toBe(false);
+  });
+
+  it("a re-armed run that succeeds migrates the shop", async () => {
+    h.migrations.push(row({ status: "failed", attempts: 40, tokenFingerprint: store.fingerprintToken("legacy-token"), encryptedOldToken: null }));
     const d = deps();
     await run(d);
-    await vi.waitFor(() => expect(blanked(d)).toBe(true));
+    await vi.waitFor(() => expect(d.storeSession).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(d.storeSession).mock.calls[0][0].accessToken).toBe("expiring-token");
+    expect(h.migrations).toHaveLength(0);
   });
 
   it("NOT blanked while a migration can still succeed (transient backoff inside the 7-day window)", async () => {
@@ -1367,5 +1394,96 @@ describe("heal throttle", () => {
     // 1st call: runMigration reads the record + the heal reads it; later calls: in-process needs_reauth, heal throttled
     expect(spy.mock.calls.length).toBe(2);
     spy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hardening round 4
+// ---------------------------------------------------------------------------
+
+describe("invalid_client is a global config error too", () => {
+  beforeEach(() => {
+    process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS = "true";
+    process.env.SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS = "true";
+    vi.useFakeTimers();
+  });
+
+  it("401 and 400 invalid_client: hold, no per-shop attempts, loud log", async () => {
+    expect(isMigrationConfigError(exchangeError(401, "invalid_client"))).toBe(true);
+    expect(isMigrationConfigError(exchangeError(400, "invalid_client"))).toBe(true);
+    expect(isMigrationConfigError(exchangeError(400, "invalid_request"))).toBe(false);
+    const d = deps({ migrateToExpiringToken: vi.fn(async () => Promise.reject(exchangeError(401, "invalid_client"))) });
+    configureOfflineAdmin(d);
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("failed");
+    expect(d.migrateToExpiringToken).toHaveBeenCalledTimes(1);
+    expect(h.migrations[0]).toMatchObject({ status: "pending", attempts: 0 });
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).toContain("invalid_client");
+    expect(await maybeMigrateToExpiringToken("other.myshopify.com")).toBe("backoff");
+  });
+
+  it("other 4xx stay transient and per-shop", async () => {
+    const d = deps({ migrateToExpiringToken: vi.fn(async () => Promise.reject(exchangeError(401, "invalid_request"))) });
+    configureOfflineAdmin(d);
+    const run = maybeMigrateToExpiringToken(SHOP);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await run).toBe("failed");
+    expect(d.migrateToExpiringToken).toHaveBeenCalledTimes(4);
+    expect(migrationMayBeNeeded("other.myshopify.com")).toBe(true); // no global hold
+  });
+});
+
+describe("m-1: late-401 blanks after a re-issue or an uninstall", () => {
+  beforeEach(() => {
+    process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS = "true";
+    process.env.SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS = "true";
+  });
+
+  it("(a) merchant token exchange + afterAuth during the exchange, then a late 401 re-blanks: nothing is stored", async () => {
+    const load = vi.fn().mockResolvedValueOnce(session("legacy-token")).mockResolvedValueOnce(session("legacy-token")).mockResolvedValue(session(""));
+    const d = deps({
+      loadOfflineSession: load,
+      migrateToExpiringToken: vi.fn(async () => {
+        await forgetOfflineTokenMigration(SHOP); // afterAuth of the merchant's own exchange
+        return NEW_PAIR();
+      }),
+    });
+    configureOfflineAdmin(d);
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("no_session");
+    expect(d.storeSession).not.toHaveBeenCalled();
+    expect(h.migrations).toHaveLength(0);
+  });
+
+  it("(b) uninstalled meanwhile (marker set), then a late 401 re-created a blank row: nothing is stored", async () => {
+    const load = vi.fn().mockResolvedValueOnce(session("legacy-token")).mockResolvedValueOnce(session("legacy-token")).mockResolvedValue(session(""));
+    const d = deps({
+      loadOfflineSession: load,
+      migrateToExpiringToken: vi.fn(async () => {
+        h.install.push({ shop: SHOP, uninstalledAt: new Date() }); // webhook stamped the marker
+        return NEW_PAIR();
+      }),
+    });
+    configureOfflineAdmin(d);
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("no_session");
+    expect(d.storeSession).not.toHaveBeenCalled();
+    expect(h.migrations).toHaveLength(0);
+  });
+
+  it("an installed shop (marker cleared) is not affected", async () => {
+    h.install.push({ shop: SHOP, uninstalledAt: null });
+    configureOfflineAdmin(deps());
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("migrated");
+  });
+});
+
+describe("m-2: a run that THROWS counts as a failed run", () => {
+  it("attempts grow by a full run, status failed, label only", async () => {
+    process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS = "true";
+    process.env.SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS = "true";
+    // first read ok (record is persisted), the re-read after the persist throws
+    const load = vi.fn().mockResolvedValueOnce(session("legacy-token")).mockRejectedValue(new Error("db pool exhausted: encryptedOldToken SECRET-X"));
+    configureOfflineAdmin(deps({ loadOfflineSession: load }));
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("failed");
+    expect(h.migrations[0]).toMatchObject({ status: "failed", attempts: 4 });
+    expect(h.migrations[0].lastError).not.toContain("SECRET-X");
   });
 });

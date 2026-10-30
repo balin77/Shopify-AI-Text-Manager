@@ -199,7 +199,7 @@ demselben alten Token **7 Tage lang dasselbe Paar** (endet nach 7 Tagen, nachdem
 die App dieses Paar erneuert hat, oder nach einem neuen Token-Erwerb für den Shop).
 Dafür muss die App das alte Token noch haben. Deshalb wird es **vor** dem Exchange
 verschlüsselt (AES-256-GCM, derselbe Helfer wie für Session-Tokens) in der Tabelle
-`OfflineTokenMigration` abgelegt (Status `pending|migrated|needs_reauth|failed`,
+`OfflineTokenMigration` abgelegt (Status `pending|needs_reauth|failed`,
 `attempts`, `lastError` ohne Geheimnisse) und die **ganze Zeile wird gelöscht, sobald
 das neue Paar gespeichert ist** (es gibt keine „migrated"-Zeilen). Vor jedem
 Schreiben liest die Migration die gespeicherte Session neu: hat inzwischen ein
@@ -214,8 +214,16 @@ anderes Token, bricht der Lauf ab und überschreibt/erzeugt nichts. Damit gilt:
   in der Zeile (`attempts`, `updatedAt`) persistierten** Backoff erneut versucht:
   10 min, 20 min, 40 min … bis höchstens 24 h, auch nach einem Neustart. Nach 40
   Versuchen (ca. 3 Tage) gibt die App auf: einmal Logzeile `MIGRATION_GAVE_UP`,
-  danach kein automatischer Neuversuch mehr (Status bleibt `failed`, das alte Token
-  bleibt verschlüsselt liegen, Rücksetzen siehe unten).
+  danach kein automatischer Neuversuch mehr (Status bleibt `failed`; der
+  verschlüsselte alte Token wird dabei **gelöscht**, der Fingerabdruck bleibt;
+  Rücksetzen siehe unten). Ausnahme, einmalig: Meldet Shopify später für genau
+  dieses Token den Stichtags-403 (ein 403, kein 401 — das Token ist also nicht
+  widerrufen und noch migrierbar), erlaubt die App **einen** weiteren
+  Migrationslauf pro Token und Prozess (Logzeile „ONE more migration run"), statt
+  das letzte Token zu leeren. Schlägt auch der fehl, bleibt der Shop aufgegeben.
+  Zeilen jenseits der 7-Tage-Frist, deren Session kein Token mehr hat, verlieren
+  ihren Ciphertext im Sweep (nichts mehr wiederherzustellen). Ein Lauf, der mit einer
+  Exception endet (z. B. Datenbankfehler), zählt als fehlgeschlagener Lauf.
 - Hat die gespeicherte Session ihr Token verloren (die Library speichert nach einem
   401 auf das widerrufene Token eine Session mit `accessToken: undefined`), wiederholt
   die App den Exchange mit dem gespeicherten alten Token — nur innerhalb von 7 Tagen
@@ -240,8 +248,8 @@ lassen. Der Merchant muss die App also einmal öffnen (oder neu installieren); d
 räumt afterAuth den Datensatz auf und der Shop gilt als migriert. Bis dahin scheitern
 Hintergrund-Aufrufe dieses Shops mit `no_token`.
 
-**`invalid_requested_token_type` ist etwas anderes:** es sagt, dass *unsere Anfrage*
-nicht stimmt (Client-ID/-Secret, Token-Typ, API-Version), nicht dass ein Shop verloren
+**`invalid_requested_token_type` und `invalid_client` (400/401) sind etwas anderes:**
+sie sagen, dass *unsere Anfrage* nicht stimmt (Client-ID/-Secret, Token-Typ, API-Version), nicht dass ein Shop verloren
 ist — es würde alle Shops treffen. Deshalb wird **kein** Shop als `needs_reauth`
 markiert und kein Token gelöscht; stattdessen eine laute Logzeile `CONFIG ERROR` und
 **6 h Pause für alle Migrationen** (prozesslokal; Konfiguration korrigieren und neu
@@ -294,26 +302,29 @@ fehlendem Scope wird nicht so behandelt): `createRefreshingAdmin` loggt eine
 spezifische Warnung, stößt — bei beiden Variablen an — die Migration an und wirft
 den ursprünglichen Fehler weiter (kein blindes Wiederholen mit demselben Token). Der
 nächste Aufruf sieht das neue Paar. Kann für den Shop **keine** Migration mehr laufen
-(`needs_reauth`, aufgegeben, 6-h-Konfigurationspause oder `failed` jenseits der
-7-Tage-Frist), leert die App selbst das abgelehnte gespeicherte Token (nur wenn es noch
-genau das abgelehnte ist) — die Library würde es nach einem 403 nie tun —, damit der
-nächste Request des Merchants einen Token-Exchange auf ein ablaufendes Paar macht. Eine
-Migration, die noch gelingen kann (transienter Backoff innerhalb der 7 Tage), wird nicht
-übersprungen. Geleert wird nur bei einem dauerhaften Urteil über genau dieses Token
-(`needs_reauth` oder aufgegeben, Fingerabdruck passt) — nie bei der 6-h-Konfigurationspause,
-nie bei einem Shop ohne Zeile und nie, solange der Lauf selbst noch entscheiden kann
-(`failed` jenseits der 7 Tage, Session hält das Token noch). Der Schritt ist pro Shop auf
-einmal je Minute begrenzt. Ausnahme von „Variablen aus = unverändert": der Roh-Client
+(`needs_reauth`), leert die App selbst das abgelehnte gespeicherte Token (nur wenn es noch
+genau das abgelehnte ist, Fingerabdruck passt) — die Library würde es nach einem 403
+nie tun —, damit der nächste Request des Merchants einen Token-Exchange auf ein
+ablaufendes Paar macht. Bei einem **aufgegebenen** Shop wird dagegen NICHT geleert
+(der 403 beweist, dass das Token nicht widerrufen ist): es wird einmalig ein weiterer
+Migrationslauf erlaubt (siehe oben). Nie geleert wird bei der 6-h-Konfigurationspause,
+bei einem Shop ohne Zeile und solange der Lauf selbst noch entscheiden kann (`failed`,
+Session hält das Token noch). Der Schritt ist pro Shop auf einmal je Minute begrenzt. Ausnahme von „Variablen aus = unverändert": der Roh-Client
 liest bei jedem 403 den Body (ein Klon), um die Stichtags-Meldung zu erkennen.
 
 Bekannte Restgrenze: der In-Process-Verdikt-Check (`needs_reauth`, Backoff) in
 `maybeMigrateToExpiringToken` läuft vor dem Fingerabdruck-Vergleich; der Sweep räumt
 veraltete Zeilen dennoch über die Datenbank ab (siehe oben).
 
-Der Roh-Client (`admin-client.server.ts`) erkennt
-den 403 ebenso. Dieser Auslöser wartet bewusst **nicht** auf die ruhige Phase: das alte
-Token ist ab dem Stichtag für die Admin API ohnehin unbrauchbar, ein laufender Request
-damit kann nicht schlimmer scheitern.
+Der Roh-Client (`admin-client.server.ts`) erkennt den 403 ebenso. Dieser Auslöser wartet
+bewusst **nicht** auf die ruhige Phase: das alte Token ist ab dem Stichtag für die Admin
+API ohnehin unbrauchbar, ein laufender Request damit kann nicht schlimmer scheitern.
+
+Rennen mit dem Merchant: Pro Shop zählt die App mit, wie oft eine neue Session
+ausgestellt wurde bzw. der Shop deinstalliert wurde (afterAuth / `app/uninstalled`), und
+prüft vor jedem Schreiben zusätzlich die Deinstallationsmarke. Ein Lauf, der das
+verpasst hat, schreibt nichts — eine leere Session danach stammt dann womöglich von
+einem späten 401 auf einer NEUEN Session, nicht vom eigenen Exchange.
 
 ### Env-Variablen des Cron-Service `Db Space Checker`
 
