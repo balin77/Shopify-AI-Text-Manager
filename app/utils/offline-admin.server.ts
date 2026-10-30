@@ -437,16 +437,17 @@ export function reportNonExpiringTokenRejection(shop: string, refusedToken?: str
     );
   }
   if (!migrateToExpiringTokensEnabled()) return;
+  // The migration trigger AND the heal step (which reads the database) are
+  // throttled per shop like the log: a loop of 403s must not cost a call per
+  // request. maybeMigrate is single-flight and remembers its backoff anyway, so
+  // a skipped call loses nothing but a repeat of the previous answer.
+  const lastHeal = healAttemptedAt.get(shop);
+  if (lastHeal !== undefined && Date.now() - lastHeal < NON_EXPIRING_REJECTION_LOG_INTERVAL_MS) return;
+  healAttemptedAt.set(shop, Date.now());
   void (async () => {
     try {
       const outcome = await maybeMigrateToExpiringToken(shop);
-      // The heal step reads the database: throttled per shop like the log, so
-      // a loop of 403s does not cost a read per call.
-      const lastHeal = healAttemptedAt.get(shop);
-      if (lastHeal === undefined || Date.now() - lastHeal >= NON_EXPIRING_REJECTION_LOG_INTERVAL_MS) {
-        healAttemptedAt.set(shop, Date.now());
-        await healIfMigrationCannotRun(shop, outcome, refusedToken);
-      }
+      await healIfMigrationCannotRun(shop, outcome, refusedToken);
     } catch {
       /* never throws */
     }
@@ -495,20 +496,29 @@ async function healIfMigrationCannotRun(shop: string, outcome: MigrationOutcome,
     // exactly ONE run per token and process instead; the heal throttle spaces
     // out the checks, `rearmedOnce` makes it one.
     const key = `${shop}:${fingerprint}`;
-    if (rearmedOnce.has(key)) return;
-    rearmedOnce.add(key);
-    await migrationStore.rearmTerminal(shop);
-    migrationBackoff.delete(shop);
-    logger.warn(
-      "[OfflineAdmin] Deadline 403 on a given-up migration: the token is not revoked, so ONE more migration run is allowed",
-      { shop },
-    );
-    await maybeMigrateToExpiringToken(shop);
-    return;
+    if (!rearmedOnce.has(key)) {
+      rearmedOnce.add(key);
+      await migrationStore.rearmTerminal(shop);
+      migrationBackoff.delete(shop);
+      logger.warn(
+        "[OfflineAdmin] Deadline 403 on a given-up migration: the token is not revoked, so ONE more migration run is allowed",
+        { shop },
+      );
+      const rerun = await maybeMigrateToExpiringToken(shop);
+      if (rerun === "migrated" || rerun === "not_needed") return;
+      const after = await migrationStore.getMigrationRecord(shop).catch(() => null);
+      // Not terminal again (e.g. the run was aborted, held or is still backing
+      // off): the next throttled 403 decides.
+      if (after && !migrationStore.isTerminal(after)) return;
+    }
+    // The one re-armed run is spent and the shop is terminal again. The session
+    // keeps the dead non-expiring token, which the library counts as ACTIVE, so
+    // `authenticate.admin` would never token-exchange — not even when the
+    // merchant opens the app. Blank it (same guards as for needs_reauth).
   }
   if (await clearDeadSessionToken(d, shop, current, current.accessToken, epoch)) {
     logger.warn(
-      "[OfflineAdmin] Blanked the refused non-expiring token (needs_reauth): the merchant's next request token-exchanges an expiring pair",
+      `[OfflineAdmin] Blanked the refused non-expiring token (${terminal ? "migration given up, re-armed run spent" : "needs_reauth"}): the merchant's next request token-exchanges an expiring pair`,
       { shop },
     );
   }
@@ -723,7 +733,14 @@ export function isPermanentMigrationError(error: unknown): boolean {
  * Token-endpoint answers that are about OUR request, not about the shop — see
  * `MIGRATION_CONFIG_ERROR_HOLD_MS`: 400 `invalid_requested_token_type` (also
  * documented as permanent), and `invalid_client` (400 or 401: wrong client id /
- * secret). Every other 4xx stays a transient, per-shop failure.
+ * secret). ASSUMPTION: `invalid_client` is app-wide — client id / secret are the
+ * same for every shop. If it could ever be triggered by one shop for a shop-
+ * specific reason, that shop would hold ALL shops for 6 h (the log line names the
+ * shop that triggered it). A "two distinct shops" rule was considered and
+ * rejected: with a single installed shop (or the first dormant one in the sweep)
+ * bad credentials would never hold, and the shop would burn its 40 attempts and
+ * be given up for a fault that is not its own. Every other 4xx stays a transient,
+ * per-shop failure.
  */
 export function isMigrationConfigError(error: unknown): boolean {
   const code = exchangeErrorCode(error);
@@ -851,17 +868,17 @@ export async function maybeMigrateToExpiringToken(shop: string): Promise<Migrati
     try {
       return await runMigration(shop);
     } catch (error) {
-      migrationBackoff.set(shop, Date.now());
       // A run that THREW (database error, ...) counts as a failed run like any
-      // other, or it would be retried every tick forever. updateMany: a missing
-      // record is not created. Label only — see safeDbErrorLabel.
-      await migrationStore
-        .markMigrationFailed(shop, `run threw: ${safeDbErrorLabel(error)}`, attemptsPerRun())
-        .catch(() => undefined);
-      logger.error("[OfflineAdmin] Token migration failed — will retry after backoff", {
-        shop,
-        error: describe(error),
-      });
+      // other, or it would be retried every tick forever — including reaching
+      // the cap (settleFailedRun). updateMany: a missing record is not created.
+      // Label only — see safeDbErrorLabel.
+      const terminal = await settleFailedRun(shop, `run threw: ${safeDbErrorLabel(error)}`, attemptsPerRun());
+      if (!terminal) {
+        logger.error("[OfflineAdmin] Token migration failed — will retry after backoff", {
+          shop,
+          error: describe(error),
+        });
+      }
       return "failed";
     }
   })().finally(() => {
@@ -886,7 +903,18 @@ async function driftedOutcome(
   // epoch), or it is marked uninstalled now: "a blank is ours" no longer holds
   // (a late 401 may have re-blanked a NEW session, or re-created a row for an
   // uninstalled shop), so nothing may be stored. The record goes with it.
-  if ((reissueEpoch.get(shop) ?? 0) !== epoch || (await migrationStore.isShopUninstalled(shop))) {
+  const epochChanged = (reissueEpoch.get(shop) ?? 0) !== epoch;
+  if (epochChanged || (await migrationStore.isShopUninstalled(shop))) {
+    // Either way: do not come back at once (a stale marker would otherwise
+    // hot-loop every cycle and every 403).
+    backoffUntil(shop, Date.now() + MIGRATION_BACKOFF_MS);
+    if (!epochChanged && (await d.loadOfflineSession(shop))) {
+      // ONLY the marker says uninstalled, yet a session row exists and nothing
+      // re-issued it in this process: the marker looks STALE (afterAuth's upsert
+      // after a reinstall failed). Do not destroy the recovery record on it.
+      logger.warn("[OfflineAdmin] Token migration paused: the uninstall marker looks stale (a session exists)", { shop });
+      return "backoff";
+    }
     await migrationStore.deleteMigrationRecord(shop).catch(() => undefined);
     logger.warn("[OfflineAdmin] Token migration aborted: the shop was re-authenticated or uninstalled while it ran", { shop });
     return "no_session";
@@ -1138,7 +1166,26 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
     return "migrated";
   }
 
-  await migrationStore.markMigrationFailed(shop, lastError, attempts).catch(() => undefined);
+  const terminal = await settleFailedRun(shop, lastError, attempts);
+  if (!terminal) {
+    logger.error("[OfflineAdmin] Token migration failed after prompt retries — kept the persisted old token, retried after backoff", {
+      shop,
+      attempts,
+      error: lastError,
+    });
+  }
+  return "failed";
+}
+
+/**
+ * The common end of a failed run — whether the prompt retries ran out or the run
+ * threw: count the attempts on the record, park the shop in the in-process
+ * backoff until its persisted backoff ends, and if the record is TERMINAL now
+ * (attempt cap) erase the ciphertext (no use any more; the fingerprint stays) and
+ * log MIGRATION_GAVE_UP once. Returns whether the record is terminal.
+ */
+async function settleFailedRun(shop: string, lastError: string, attemptsMade: number): Promise<boolean> {
+  await migrationStore.markMigrationFailed(shop, lastError, attemptsMade).catch(() => undefined);
   const after = await migrationStore.getMigrationRecord(shop).catch(() => null);
   const notBefore = after ? migrationStore.retryNotBefore(after, attemptsPerRun()) : 0;
   backoffUntil(
@@ -1147,23 +1194,14 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
       ? Date.now() + migrationStore.PERSISTED_BACKOFF_MAX_MS
       : Math.max(notBefore, Date.now() + MIGRATION_BACKOFF_MS),
   );
-  if (after && migrationStore.isTerminal(after)) {
-    // Once: from here on the record is skipped (persisted), not retried. Its
-    // ciphertext has no use any more: erase it, keep the fingerprint.
-    await migrationStore.eraseOldToken(shop).catch(() => undefined);
-    logger.error(
-      "[OfflineAdmin] MIGRATION_GAVE_UP — the token migration kept failing; no automatic retry any more. " +
-        "Reset: see RAILWAY-SETUP.md (OfflineTokenMigration)",
-      { shop, attempts: after.attempts, error: lastError },
-    );
-  } else {
-    logger.error("[OfflineAdmin] Token migration failed after prompt retries — kept the persisted old token, retried after backoff", {
-      shop,
-      attempts,
-      error: lastError,
-    });
-  }
-  return "failed";
+  if (!after || !migrationStore.isTerminal(after)) return false;
+  await migrationStore.eraseOldToken(shop).catch(() => undefined);
+  logger.error(
+    "[OfflineAdmin] MIGRATION_GAVE_UP — the token migration kept failing; no automatic retry any more. " +
+      "Reset: see RAILWAY-SETUP.md (OfflineTokenMigration)",
+    { shop, attempts: after.attempts, error: lastError },
+  );
+  return true;
 }
 
 async function markNeedsReauth(shop: string, reason: string, attempts: number): Promise<void> {

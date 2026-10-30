@@ -310,6 +310,23 @@ describe("quietness, backoff exclusion, env knobs", () => {
     expect(by("fresh.myshopify.com").encryptedOldToken).toBe("cipher");
   });
 
+  it("m-E: the purge pages oldest-first with a cursor, so kept rows do not starve the ones behind them", async () => {
+    const { PURGE_PAGE_SIZE } = await import("~/services/offline-token-sweep.service");
+    // PURGE_PAGE_SIZE rows whose session still HOLDS a token (kept), then 3 behind them, one unrecoverable
+    for (let i = 0; i < PURGE_PAGE_SIZE + 3; i++) {
+      const shop = `p-${String(i).padStart(4, "0")}.myshopify.com`;
+      const blank = i === PURGE_PAGE_SIZE + 1;
+      offlineSession(shop, { accessToken: blank ? "" : "has-token", lastActivityAt: NOW });
+      const started = new Date(NOW.getTime() - 20 * DAY + i * 1000);
+      h.migrations.push({ shop, encryptedOldToken: "cipher", tokenFingerprint: "abcd", status: "failed", attempts: 4, startedAt: started, updatedAt: NOW });
+    }
+    const target = h.migrations[PURGE_PAGE_SIZE + 1];
+    await tick();
+    expect(target.encryptedOldToken).toBe("cipher"); // beyond the first page
+    await tick();
+    expect(target.encryptedOldToken).toBeNull(); // reached on the next tick
+  });
+
   it("envNumber falls back for NaN, empty, below-minimum values", () => {
     expect(envNumber("abc", 600000, 60000)).toBe(600000);
     expect(envNumber("", 5, 1)).toBe(5);

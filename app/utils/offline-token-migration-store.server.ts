@@ -141,17 +141,27 @@ export async function rearmTerminal(shop: string): Promise<void> {
  * recovery window is over — the ciphertext can only matter for a session that
  * LOST its token, which needs the window.
  */
-export async function listPastWindowTokenShops(now: number, limit = 200): Promise<string[]> {
+export async function listPastWindowTokenShops(
+  now: number,
+  limit = 200,
+  after?: Date | null,
+): Promise<Array<{ shop: string; startedAt: Date }>> {
+  // Oldest first, and paged by `after` (the last startedAt the caller saw): the
+  // rows whose session still holds the token are kept and would otherwise be
+  // re-read at the head of the list on every tick, starving the ones behind them.
   const rows = (await (await table()).findMany({
     where: {
       status: { in: ["pending", "failed"] },
       encryptedOldToken: { not: null },
-      startedAt: { lt: new Date(now - MIGRATION_RECOVERY_WINDOW_MS) },
+      startedAt: after
+        ? { lt: new Date(now - MIGRATION_RECOVERY_WINDOW_MS), gt: after }
+        : { lt: new Date(now - MIGRATION_RECOVERY_WINDOW_MS) },
     },
-    select: { shop: true },
+    select: { shop: true, startedAt: true },
+    orderBy: { startedAt: "asc" },
     take: limit,
-  })) as Array<{ shop: string }>;
-  return rows.map((r) => r.shop);
+  })) as Array<{ shop: string; startedAt: Date }>;
+  return rows;
 }
 
 /**
@@ -251,8 +261,10 @@ export async function persistOldToken(shop: string, oldToken: string, existing: 
 export async function markMigrationFailed(shop: string, message: string, attemptsMade: number): Promise<void> {
   // updateMany, never upsert: a record deleted meanwhile (uninstall, re-auth)
   // must not be re-created, least of all with a credential in it.
+  // Restricted to pending/failed: a `needs_reauth` verdict (set while this run
+  // was out, or by another path) must never be overwritten by a transient failure.
   await (await table()).updateMany({
-    where: { shop },
+    where: { shop, status: { in: ["pending", "failed"] } },
     data: { status: "failed", lastError: clip(message), attempts: { increment: attemptsMade } },
   });
 }

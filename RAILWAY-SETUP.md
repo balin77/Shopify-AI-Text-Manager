@@ -220,7 +220,10 @@ anderes Token, bricht der Lauf ab und überschreibt/erzeugt nichts. Damit gilt:
   dieses Token den Stichtags-403 (ein 403, kein 401 — das Token ist also nicht
   widerrufen und noch migrierbar), erlaubt die App **einen** weiteren
   Migrationslauf pro Token und Prozess (Logzeile „ONE more migration run"), statt
-  das letzte Token zu leeren. Schlägt auch der fehl, bleibt der Shop aufgegeben.
+  das letzte Token sofort zu leeren. Schlägt auch dieser Lauf fehl (Shop wieder
+  aufgegeben), wird das tote gespeicherte Token **doch geleert**: die Library zählt eine
+  Session mit Token immer als aktiv und würde nie einen Token-Exchange machen, auch
+  nicht beim Öffnen der App. Jeder weitere 403 leert erneut, ohne neuen Lauf.
   Zeilen jenseits der 7-Tage-Frist, deren Session kein Token mehr hat, verlieren
   ihren Ciphertext im Sweep (nichts mehr wiederherzustellen). Ein Lauf, der mit einer
   Exception endet (z. B. Datenbankfehler), zählt als fehlgeschlagener Lauf.
@@ -250,7 +253,12 @@ Hintergrund-Aufrufe dieses Shops mit `no_token`.
 
 **`invalid_requested_token_type` und `invalid_client` (400/401) sind etwas anderes:**
 sie sagen, dass *unsere Anfrage* nicht stimmt (Client-ID/-Secret, Token-Typ, API-Version), nicht dass ein Shop verloren
-ist — es würde alle Shops treffen. Deshalb wird **kein** Shop als `needs_reauth`
+ist — es würde alle Shops treffen. Annahme: `invalid_client` betrifft die ganze App
+(Client-ID/-Secret sind für alle Shops gleich). Könnte ein einzelner Shop es aus
+shop-spezifischem Grund auslösen, hielte er alle Shops 6 h an — die Logzeile nennt den
+auslösenden Shop. Eine „erst bei zwei Shops"-Regel wurde bewusst verworfen: bei nur
+einem installierten Shop würde falsche Konfiguration nie halten und der Shop seine 40
+Versuche für einen fremden Fehler verbrennen. Deshalb wird **kein** Shop als `needs_reauth`
 markiert und kein Token gelöscht; stattdessen eine laute Logzeile `CONFIG ERROR` und
 **6 h Pause für alle Migrationen** (prozesslokal; Konfiguration korrigieren und neu
 starten, dann geht es sofort weiter). Betroffene Shops finden:
@@ -305,9 +313,9 @@ nächste Aufruf sieht das neue Paar. Kann für den Shop **keine** Migration mehr
 (`needs_reauth`), leert die App selbst das abgelehnte gespeicherte Token (nur wenn es noch
 genau das abgelehnte ist, Fingerabdruck passt) — die Library würde es nach einem 403
 nie tun —, damit der nächste Request des Merchants einen Token-Exchange auf ein
-ablaufendes Paar macht. Bei einem **aufgegebenen** Shop wird dagegen NICHT geleert
-(der 403 beweist, dass das Token nicht widerrufen ist): es wird einmalig ein weiterer
-Migrationslauf erlaubt (siehe oben). Nie geleert wird bei der 6-h-Konfigurationspause,
+ablaufendes Paar macht. Bei einem **aufgegebenen** Shop wird zuerst NICHT geleert (der
+403 beweist, dass das Token nicht widerrufen ist): es wird einmalig ein weiterer
+Migrationslauf erlaubt und erst geleert, wenn der fehlschlägt (siehe oben). Nie geleert wird bei der 6-h-Konfigurationspause,
 bei einem Shop ohne Zeile und solange der Lauf selbst noch entscheiden kann (`failed`,
 Session hält das Token noch). Der Schritt ist pro Shop auf einmal je Minute begrenzt. Ausnahme von „Variablen aus = unverändert": der Roh-Client
 liest bei jedem 403 den Body (ein Klon), um die Stichtags-Meldung zu erkennen.
@@ -319,6 +327,12 @@ veraltete Zeilen dennoch über die Datenbank ab (siehe oben).
 Der Roh-Client (`admin-client.server.ts`) erkennt den 403 ebenso. Dieser Auslöser wartet
 bewusst **nicht** auf die ruhige Phase: das alte Token ist ab dem Stichtag für die Admin
 API ohnehin unbrauchbar, ein laufender Request damit kann nicht schlimmer scheitern.
+
+Veraltete Deinstallationsmarke: Sagt nur `ShopInstallState.uninstalledAt` „deinstalliert",
+obwohl eine Session existiert und in diesem Prozess nichts neu ausgestellt wurde (z. B.
+weil afterAuths Upsert nach einer Neuinstallation fehlschlug), pausiert die Migration
+(Backoff 10 min, Warnung „uninstall marker looks stale") und löscht den
+Wiederherstellungs-Datensatz NICHT.
 
 Rennen mit dem Merchant: Pro Shop zählt die App mit, wie oft eine neue Session
 ausgestellt wurde bzw. der Shop deinstalliert wurde (afterAuth / `app/uninstalled`), und

@@ -79,6 +79,8 @@ import {
 import { syncScheduler } from "./sync-scheduler.service";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Rows per tick the ciphertext purge looks at. */
+export const PURGE_PAGE_SIZE = 200;
 /** Exchange attempts in one migration run (first try + one per retry delay); sizes the persisted backoff. */
 const MIGRATION_ATTEMPTS_PER_RUN = MIGRATION_RETRY_DELAYS_MS.length + 1;
 
@@ -208,6 +210,7 @@ export class OfflineTokenSweepService {
   __resetForTests(): void {
     this.stop();
     this.ticking = false;
+    this.purgeCursor = null;
     this.keepAliveAt.clear();
   }
 
@@ -290,8 +293,15 @@ export class OfflineTokenSweepService {
    * (`startedAt`), which can only be earlier than Shopify's own start — the
    * conservative side.
    */
+  private purgeCursor: Date | null = null;
+
   private async purgeUnrecoverableTokens(now: Date): Promise<void> {
-    const shops = await listPastWindowTokenShops(now.getTime());
+    // Paged oldest-first with a cursor: rows already looked at (and kept because
+    // their session still holds the token) are not re-read every tick; when a
+    // page comes back short the cursor wraps to the start.
+    const page = await listPastWindowTokenShops(now.getTime(), PURGE_PAGE_SIZE, this.purgeCursor);
+    this.purgeCursor = page.length < PURGE_PAGE_SIZE ? null : page[page.length - 1].startedAt;
+    const shops = page.map((r) => r.shop);
     if (shops.length === 0) return;
     const holding = await db.session.findMany({
       where: { isOnline: false, id: { startsWith: "offline_" }, shop: { in: shops }, accessToken: { not: "" } },
