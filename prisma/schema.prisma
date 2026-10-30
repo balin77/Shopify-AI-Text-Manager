@@ -2457,17 +2457,25 @@ model MediaLibrarySyncState {
 // is stored. `encryptedOldToken` is therefore a credential while it is set:
 // removed on app/uninstalled and in redactShopData.
 //
-// status: pending | migrated | needs_reauth | failed
+// status: pending | needs_reauth | failed   (a finished migration DELETES the row)
 //   pending      exchange not (successfully) finished yet
-//   failed       the prompt retries ran out; retried by the sweep / scheduler
-//   needs_reauth Shopify refused permanently (invalid_subject_token /
-//                invalid_requested_token_type): no automatic retry, the
-//                merchant must open the app (token exchange) or reinstall
-//   migrated     done; the token column is empty
+//   failed       the prompt retries ran out; retried with a persisted
+//                exponential backoff, terminal at attempts >= 40
+//   needs_reauth Shopify refused the stored token permanently
+//                (invalid_subject_token): no automatic retry, the merchant must
+//                open the app (token exchange) or reinstall.
+//                invalid_requested_token_type is NOT recorded per shop: it is a
+//                request/config problem and pauses all migrations in-process.
+//
+// tokenFingerprint: first 16 hex chars of SHA-256 of the old token (never the
+// token). It survives the erase of encryptedOldToken (needs_reauth) so a row can
+// tell that the shop now holds a DIFFERENT token (re-issued while the switches
+// were off) and is stale — see runMigration / the sweep.
 model OfflineTokenMigration {
   id                String    @id @default(cuid())
   shop              String    @unique
   encryptedOldToken String?
+  tokenFingerprint  String?
   status            String    @default("pending")
   attempts          Int       @default(0)
   lastError         String? // never a token; a status line / Shopify error code

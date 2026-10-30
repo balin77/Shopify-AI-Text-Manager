@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   lastActivityOverride: new Map<string, Date | null>(),
   migrate: vi.fn(),
   getAdmin: vi.fn(),
+  released: [] as string[],
 }));
 
 vi.mock("~/utils/logger.server", () => ({
@@ -45,6 +46,7 @@ vi.mock("~/utils/offline-admin.server", () => ({
   maybeMigrateToExpiringToken: (shop: string) => h.migrate(shop),
   migrationMayBeNeeded: (shop: string) => !h.backoff.has(shop),
   MIGRATION_RETRY_DELAYS_MS: [2000, 5000, 15000],
+  releaseStaleMigrationBlock: (shop: string) => h.released.push(shop),
   getOfflineAdmin: (shop: string) => h.getAdmin(shop),
 }));
 
@@ -104,6 +106,7 @@ beforeEach(() => {
   h.activeSchedulers.clear();
   h.backoff.clear();
   h.lastActivityOverride.clear();
+  h.released.length = 0;
   h.migrate.mockReset().mockResolvedValue("migrated");
   h.getAdmin.mockReset().mockResolvedValue({ session: { refreshTokenExpires: new Date(NOW.getTime() + 90 * DAY) } });
   sweep().__resetForTests();
@@ -269,6 +272,26 @@ describe("quietness, backoff exclusion, env knobs", () => {
     const again = h.migrate.mock.calls.map(([s]) => s);
     expect(again).toContain("failed-6.myshopify.com");
     expect(again).not.toContain("failed-0.myshopify.com");
+  });
+
+  it("a blocking record of ANOTHER token (fingerprint differs from the session) no longer blocks the shop", async () => {
+    const { fingerprintToken } = await import("~/utils/offline-token-migration-store.server");
+    offlineSession("reissued.myshopify.com", { accessToken: "new-nonexpiring" });
+    offlineSession("same.myshopify.com", { accessToken: "still-the-dead-one" });
+    offlineSession("legacy-row.myshopify.com", { accessToken: "whatever" });
+    h.migrations.push(
+      { shop: "reissued.myshopify.com", encryptedOldToken: null, status: "needs_reauth", attempts: 1, startedAt: NOW, updatedAt: NOW, tokenFingerprint: fingerprintToken("old-token") },
+      { shop: "same.myshopify.com", encryptedOldToken: null, status: "needs_reauth", attempts: 1, startedAt: NOW, updatedAt: NOW, tokenFingerprint: fingerprintToken("still-the-dead-one") },
+      { shop: "legacy-row.myshopify.com", encryptedOldToken: null, status: "needs_reauth", attempts: 1, startedAt: NOW, updatedAt: NOW, tokenFingerprint: null },
+    );
+    await tick();
+    expect(h.migrate.mock.calls.map(([s]) => s)).toEqual(["reissued.myshopify.com"]);
+  });
+
+  it("asks the process to forget a stale in-process block for every candidate (database wins over memory)", async () => {
+    offlineSession("reset.myshopify.com");
+    await tick();
+    expect(h.released).toContain("reset.myshopify.com");
   });
 
   it("envNumber falls back for NaN, empty, below-minimum values", () => {

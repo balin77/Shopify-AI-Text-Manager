@@ -4,6 +4,7 @@ CREATE TABLE "OfflineTokenMigration" (
     "id" TEXT NOT NULL,
     "shop" TEXT NOT NULL,
     "encryptedOldToken" TEXT,
+    "tokenFingerprint" TEXT,
     "status" TEXT NOT NULL DEFAULT 'pending',
     "attempts" INTEGER NOT NULL DEFAULT 0,
     "lastError" TEXT,

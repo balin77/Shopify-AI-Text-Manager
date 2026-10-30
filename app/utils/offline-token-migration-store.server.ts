@@ -23,14 +23,17 @@
  */
 
 import { logger } from "./logger.server";
+import { createHash } from "node:crypto";
 import { decryptToken, encryptToken } from "./encryption.server";
 
-export type MigrationStatus = "pending" | "migrated" | "needs_reauth" | "failed";
+export type MigrationStatus = "pending" | "needs_reauth" | "failed";
 
 export interface MigrationRecord {
   shop: string;
   status: MigrationStatus;
   encryptedOldToken: string | null;
+  /** First 16 hex chars of SHA-256 of the old token; null on rows written before it existed. */
+  tokenFingerprint: string | null;
   attempts: number;
   lastError: string | null;
   startedAt: Date;
@@ -78,9 +81,54 @@ export function retryNotBefore(record: MigrationRecord, attemptsPerRun: number):
   return (record.updatedAt ?? record.startedAt).getTime() + persistedBackoffMs(record.attempts, attemptsPerRun);
 }
 
-/** Shops with a `failed` record that is terminal or still inside its persisted backoff — the sweep leaves them out in SQL. */
+/** A short fingerprint of a token — enough to tell two tokens apart, useless as a credential. */
+export function fingerprintToken(token: string): string {
+  return createHash("sha256").update(token.trim()).digest("hex").slice(0, 16);
+}
+
+/**
+ * Does the shop's stored session token (still ENCRYPTED, as read from the table)
+ * differ from the token `fingerprint` was taken of? `false` when it cannot be
+ * told (no fingerprint, undecryptable): a row is only ever released on evidence.
+ */
+export function storedTokenDiffers(fingerprint: string | null | undefined, storedSessionToken: string): boolean {
+  if (!fingerprint || !storedSessionToken) return false;
+  try {
+    const plain = decryptToken(storedSessionToken);
+    return !!plain && fingerprintToken(plain) !== fingerprint;
+  } catch {
+    return false;
+  }
+}
+
+export interface BlockingRecord {
+  shop: string;
+  tokenFingerprint: string | null;
+}
+
+const LIGHT_SELECT = { shop: true, status: true, attempts: true, updatedAt: true, startedAt: true, tokenFingerprint: true } as const;
+
+/**
+ * Records that keep a shop out of the automatic migration right now:
+ * `needs_reauth`, and `failed` ones that are terminal or inside their persisted
+ * backoff. Selects no ciphertext.
+ */
+export async function listBlockingRecords(now: number, attemptsPerRun: number): Promise<BlockingRecord[]> {
+  const rows = (await (await table()).findMany({
+    where: { status: { in: ["needs_reauth", "failed"] } },
+    select: LIGHT_SELECT,
+  })) as MigrationRecord[];
+  return rows
+    .filter((r) => r.status === "needs_reauth" || retryNotBefore(r, attemptsPerRun) > now)
+    .map((r) => ({ shop: r.shop, tokenFingerprint: r.tokenFingerprint ?? null }));
+}
+
+/** Shops with a `failed` record that is terminal or still inside its persisted backoff. */
 export async function listBackedOffShops(now: number, attemptsPerRun: number): Promise<string[]> {
-  const rows = (await (await table()).findMany({ where: { status: "failed" } })) as MigrationRecord[];
+  const rows = (await (await table()).findMany({
+    where: { status: "failed" },
+    select: LIGHT_SELECT,
+  })) as MigrationRecord[];
   return rows.filter((r) => retryNotBefore(r, attemptsPerRun) > now).map((r) => r.shop);
 }
 
@@ -130,16 +178,25 @@ export function decryptOldToken(record: MigrationRecord): string | null {
  * (reinstall, re-auth) starts a new window and a new attempt count.
  */
 export async function persistOldToken(shop: string, oldToken: string, existing: MigrationRecord | null): Promise<void> {
-  const sameToken = existing ? decryptOldToken(existing) === oldToken : false;
+  const fingerprint = fingerprintToken(oldToken);
+  const sameToken = existing ? existing.tokenFingerprint === fingerprint || decryptOldToken(existing) === oldToken : false;
   const encrypted = encryptToken(oldToken);
   if (!encrypted) throw new Error("[OfflineAdmin] Could not encrypt the old token for persistence");
   const now = new Date();
   await (await table()).upsert({
     where: { shop },
-    create: { shop, encryptedOldToken: encrypted, status: "pending", startedAt: now },
+    create: { shop, encryptedOldToken: encrypted, tokenFingerprint: fingerprint, status: "pending", startedAt: now },
     update: sameToken
-      ? { encryptedOldToken: encrypted, status: "pending" }
-      : { encryptedOldToken: encrypted, status: "pending", startedAt: now, attempts: 0, completedAt: null, lastError: null },
+      ? { encryptedOldToken: encrypted, tokenFingerprint: fingerprint, status: "pending" }
+      : {
+          encryptedOldToken: encrypted,
+          tokenFingerprint: fingerprint,
+          status: "pending",
+          startedAt: now,
+          attempts: 0,
+          completedAt: null,
+          lastError: null,
+        },
   });
 }
 

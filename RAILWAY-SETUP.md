@@ -258,8 +258,18 @@ bzw. im Log nach `NEEDS_REAUTH` suchen. Hängende Fälle (`pending`/`failed`) ze
 dieselbe Abfrage mit `status IN ('pending','failed')`; aufgegebene (`MIGRATION_GAVE_UP`)
 sind `status = 'failed' AND attempts >= 40`.
 
+**Veraltete Zeilen.** Jede Zeile trägt einen Fingerabdruck (SHA-256, 16 Hex-Zeichen,
+nie das Token) des Tokens, für den sie geschrieben wurde. Hält der Shop inzwischen ein
+ANDERES Token (z. B. Rollback der Variablen, Merchant öffnet die App, Token-Exchange
+stellt ein neues nicht ablaufendes Token aus, afterAuth löscht wegen der ausgeschalteten
+Variable nicht), gilt die Zeile als veraltet: `runMigration` und der Sweep verwerfen
+sie und behandeln den Shop als neu — Status, Backoff und `needs_reauth` einer Zeile
+sperren nur das Token, für das sie galten.
+
 **Operator-Reset** (nach Behebung der Ursache; der Sweep nimmt die Shops dann beim
-nächsten Lauf wieder auf). Ein `needs_reauth`-Shop, der die App nie öffnet, hat keinen
+nächsten Lauf wieder auf, auch ohne Neustart: ein In-Process-Backoff, den die
+Datenbank nicht mehr stützt, wird für jeden Sweep-Kandidaten verworfen. Nur die
+globale 6-h-Konfigurationspause hebt allein ein Neustart auf). Ein `needs_reauth`-Shop, der die App nie öffnet, hat keinen
 brauchbaren Token mehr — die Zeile nur löschen, wenn er ein neues Token bekommen hat
 (sonst landet er sofort wieder in `needs_reauth`):
 
@@ -277,7 +287,13 @@ access tokens are no longer accepted" erkennt die App an der Meldung (ein 403 we
 fehlendem Scope wird nicht so behandelt): `createRefreshingAdmin` loggt eine
 spezifische Warnung, stößt — bei beiden Variablen an — die Migration an und wirft
 den ursprünglichen Fehler weiter (kein blindes Wiederholen mit demselben Token). Der
-nächste Aufruf sieht das neue Paar. Der Roh-Client (`admin-client.server.ts`) erkennt
+nächste Aufruf sieht das neue Paar. Kann für den Shop **keine** Migration mehr laufen
+(`needs_reauth`, aufgegeben, 6-h-Konfigurationspause oder `failed` jenseits der
+7-Tage-Frist), leert die App selbst das abgelehnte gespeicherte Token (nur wenn es noch
+genau das abgelehnte ist) — die Library würde es nach einem 403 nie tun —, damit der
+nächste Request des Merchants einen Token-Exchange auf ein ablaufendes Paar macht. Eine
+Migration, die noch gelingen kann (transienter Backoff innerhalb der 7 Tage), wird nicht
+übersprungen. Der Roh-Client (`admin-client.server.ts`) erkennt
 den 403 ebenso. Dieser Auslöser wartet bewusst **nicht** auf die ruhige Phase: das alte
 Token ist ab dem Stichtag für die Admin API ohnehin unbrauchbar, ein laufender Request
 damit kann nicht schlimmer scheitern.

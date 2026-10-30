@@ -64,12 +64,15 @@ import {
   maybeMigrateToExpiringToken,
   MIGRATION_RETRY_DELAYS_MS,
   migrationMayBeNeeded,
+  releaseStaleMigrationBlock,
 } from "../utils/offline-admin.server";
 import { expiringOfflineTokensEnabled, migrateToExpiringTokensEnabled } from "../utils/offline-token-flags.server";
 import {
-  listBackedOffShops,
+  listBlockingRecords,
   listMigrationShopsByStatus,
   MIGRATION_RECOVERY_WINDOW_MS,
+  storedTokenDiffers,
+  type BlockingRecord,
 } from "../utils/offline-token-migration-store.server";
 import { syncScheduler } from "./sync-scheduler.service";
 
@@ -255,13 +258,40 @@ export class OfflineTokenSweepService {
     return nowMs - last.getTime() >= SWEEP_QUIET_MS;
   }
 
+  /**
+   * Blocking records whose shop's stored session token no longer matches the
+   * record's fingerprint. One extra read, only of the blocked shops that HAVE a
+   * fingerprint (bounded), decrypting in code — the session table holds random-IV
+   * ciphertext, there is nothing to compare in SQL.
+   */
+  private async releasedByNewToken(blocking: BlockingRecord[]): Promise<Set<string>> {
+    const fingerprints = new Map(blocking.filter((r) => r.tokenFingerprint).map((r) => [r.shop, r.tokenFingerprint]));
+    if (fingerprints.size === 0) return new Set();
+    const rows = await db.session.findMany({
+      where: {
+        isOnline: false,
+        id: { startsWith: "offline_" },
+        expires: null,
+        accessToken: { not: "" },
+        shop: { in: [...fingerprints.keys()] },
+      },
+      select: { shop: true, accessToken: true },
+      take: 500,
+    });
+    return new Set(rows.filter((r) => storedTokenDiffers(fingerprints.get(r.shop), r.accessToken)).map((r) => r.shop));
+  }
+
   private async migrateDormantShops(now: Date, pauseMs: number, stats: OfflineTokenSweepStats): Promise<void> {
     const quietBefore = new Date(now.getTime() - SWEEP_QUIET_MS);
-    const needsReauth = await listMigrationShopsByStatus(["needs_reauth"]);
-    // `failed` records inside their persisted (exponential) backoff, or given up
-    // on: left out IN SQL, so they cannot sit at the front of the oldest-first
-    // order and starve the shops behind them.
-    const backedOff = await listBackedOffShops(now.getTime(), MIGRATION_ATTEMPTS_PER_RUN);
+    // `needs_reauth` records and `failed` ones inside their persisted
+    // (exponential) backoff or given up on: left out IN SQL, so they cannot sit
+    // at the front of the oldest-first order and starve the shops behind them
+    // — except a record whose shop now holds a DIFFERENT token than the one it
+    // was written for (re-issued while the switches were off): that record is
+    // stale and the shop is a candidate again (runMigration deletes the record).
+    const blocking = await listBlockingRecords(now.getTime(), MIGRATION_ATTEMPTS_PER_RUN);
+    const released = await this.releasedByNewToken(blocking);
+    const blockedShops = blocking.map((r) => r.shop).filter((shop) => !released.has(shop));
     // Shops whose migration is half-way and whose old token is still persisted:
     // their session may have lost its token, which would hide them from a
     // "has a token" filter.
@@ -274,7 +304,7 @@ export class OfflineTokenSweepService {
         isOnline: false,
         id: { startsWith: "offline_" },
         expires: null,
-        shop: { notIn: [...needsReauth, ...backedOff] },
+        shop: { notIn: blockedShops },
         AND: [
           { OR: [{ lastActivityAt: null }, { lastActivityAt: { lt: quietBefore } }] },
           { OR: [{ accessToken: { not: "" } }, { shop: { in: retriable } }] },
@@ -296,6 +326,10 @@ export class OfflineTokenSweepService {
       if (processed >= BATCH_SIZE) break;
       // Not installed, being migrated right now (scheduler trigger), in backoff,
       // settled, or refused for good in this process: nothing to do.
+      // A candidate is not blocked by any record. If this process still holds a
+      // backoff / needs_reauth verdict for it, the row was reset or deleted since
+      // (operator SQL): honour the database, not the memory.
+      releaseStaleMigrationBlock(shop);
       if (gone.has(shop) || !migrationMayBeNeeded(shop) || !(await this.isQuiet(shop, now.getTime(), unknownActivity.get(shop) ?? false))) {
         stats.migrateSkipped++;
         continue;

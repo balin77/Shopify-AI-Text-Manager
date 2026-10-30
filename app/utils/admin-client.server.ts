@@ -101,6 +101,19 @@ async function legacyOnlineTokenClient(shop: string): Promise<ShopifyGraphQLClie
  * token is re-acquired per call and which retries ONCE on a 401 after forcing
  * a reload of the stored session.
  */
+/**
+ * Same handling as createRefreshingAdmin for the 403 "non-expiring tokens are no
+ * longer accepted": warn, start the migration (switches permitting), heal a shop
+ * the migration cannot help; no retry with the same token — the caller gets the
+ * ordinary error for the 403. Runs on the first response AND on the response of
+ * the 401 retry.
+ */
+async function reportIfDeadlineRejection(shop: string, token: string, response: Response): Promise<void> {
+  if (response.status === 403 && (await isNonExpiringTokenRejectedError(response))) {
+    reportNonExpiringTokenRejection(shop, token);
+  }
+}
+
 function createRefreshingRawClient(shop: string): ShopifyGraphQLClient {
   // Marked so `backgroundAdmin` hands it back unchanged rather than swapping
   // its raw contract for the library client's (see offline-admin.server.ts).
@@ -108,17 +121,14 @@ function createRefreshingRawClient(shop: string): ShopifyGraphQLClient {
     graphql: async (query: string, options?: { variables?: any }) => {
       const token = (await getOfflineAdmin(shop)).session.accessToken!;
       const first = await rawGraphql(shop, token, query, options);
-      if (first.status === 403 && (await isNonExpiringTokenRejectedError(first))) {
-        // Same handling as createRefreshingAdmin: warn, start the migration
-        // (switches permitting), no retry with the same token; the caller gets
-        // the ordinary error for the 403 below.
-        reportNonExpiringTokenRejection(shop);
-      }
+      await reportIfDeadlineRejection(shop, token, first);
       if (first.status !== 401) return checkOk(first);
       logger.warn("[AdminClient] 401 from Shopify — reloading the offline session and retrying once", { shop });
       invalidateOfflineAdmin(shop);
       const fresh = (await getOfflineAdmin(shop, { forceReload: true, refusedToken: token })).session.accessToken!;
-      return checkOk(await rawGraphql(shop, fresh, query, options));
+      const retried = await rawGraphql(shop, fresh, query, options);
+      await reportIfDeadlineRejection(shop, fresh, retried);
+      return checkOk(retried);
     },
   });
 }

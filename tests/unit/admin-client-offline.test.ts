@@ -76,7 +76,19 @@ describe("createAdminClientFromShop", () => {
     const client = await createAdminClientFromShop(SHOP);
     await expect(client.graphql("q")).rejects.toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(h.report).toHaveBeenCalledWith(SHOP);
+    expect(h.report).toHaveBeenCalledWith(SHOP, "legacy");
+  });
+
+  it("the 403 check also runs on the response of the 401 retry (with the retried token)", async () => {
+    h.getOfflineAdmin.mockResolvedValueOnce(ctx("t0")).mockResolvedValueOnce(ctx("old")).mockResolvedValueOnce(ctx("new"));
+    fetchMock
+      .mockResolvedValueOnce(new Response("", { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ errors: "Non-expiring access tokens are no longer accepted for the Admin API." }), { status: 403 }),
+      );
+    const client = await createAdminClientFromShop(SHOP);
+    await expect(client.graphql("q")).rejects.toBeTruthy();
+    expect(h.report).toHaveBeenCalledWith(SHOP, "new");
   });
 
   it("a scope 403 is not treated that way", async () => {
