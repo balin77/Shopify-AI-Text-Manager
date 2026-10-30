@@ -2443,3 +2443,35 @@ model MediaLibrarySyncState {
   truncated    Boolean  @default(false)
   updatedAt    DateTime @updatedAt
 }
+
+// Durable bookkeeping of the migration of a shop's NON-expiring offline token to
+// an expiring one (offline-admin.server.ts, maybeMigrateToExpiringToken).
+//
+// Shopify revokes the old token the moment the exchange succeeds. Since
+// 2026-09-29 a repeat of the SAME exchange with the SAME old token returns the
+// SAME pair for 7 days — but only if we still HAVE that old token. A failed
+// store, a crash after the exchange, or the library overwriting the stored
+// session with `accessToken: undefined` after a 401 on the revoked token all
+// destroy it. So the old token is written here, ENCRYPTED (AES-256-GCM, the
+// session-token helper), BEFORE the exchange, and erased as soon as the pair
+// is stored. `encryptedOldToken` is therefore a credential while it is set:
+// removed on app/uninstalled and in redactShopData.
+//
+// status: pending | migrated | needs_reauth | failed
+//   pending      exchange not (successfully) finished yet
+//   failed       the prompt retries ran out; retried by the sweep / scheduler
+//   needs_reauth Shopify refused permanently (invalid_subject_token /
+//                invalid_requested_token_type): no automatic retry, the
+//                merchant must open the app (token exchange) or reinstall
+//   migrated     done; the token column is empty
+model OfflineTokenMigration {
+  id                String    @id @default(cuid())
+  shop              String    @unique
+  encryptedOldToken String?
+  status            String    @default("pending")
+  attempts          Int       @default(0)
+  lastError         String? // never a token; a status line / Shopify error code
+  startedAt         DateTime  @default(now())
+  completedAt       DateTime?
+  updatedAt         DateTime  @updatedAt
+}

@@ -7,6 +7,7 @@ import { describe, it, expect, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   invalidate: vi.fn(),
+  forget: vi.fn(),
   order: [] as string[],
 }));
 
@@ -36,6 +37,11 @@ vi.mock("~/utils/offline-admin.server", () => ({
     h.order.push("invalidate");
     h.invalidate(shop);
   },
+  // The durable token-migration record holds an encrypted credential.
+  forgetOfflineTokenMigration: async (shop: string) => {
+    h.order.push("forgetMigration");
+    h.forget(shop);
+  },
 }));
 
 import { action } from "~/routes/webhooks.app-uninstalled";
@@ -45,6 +51,7 @@ describe("app/uninstalled webhook", () => {
     const res = await action({ request: new Request("https://x/webhooks", { method: "POST" }) } as never);
     expect(res.status).toBe(200);
     expect(h.invalidate).toHaveBeenCalledWith("gone.myshopify.com");
-    expect(h.order).toEqual(["deleteSessions", "invalidate"]);
+    expect(h.forget).toHaveBeenCalledWith("gone.myshopify.com");
+    expect(h.order).toEqual(["deleteSessions", "invalidate", "forgetMigration"]);
   });
 });
