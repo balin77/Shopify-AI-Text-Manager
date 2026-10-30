@@ -3,7 +3,7 @@ import { authenticate } from "~/shopify.server";
 import { db } from "~/db.server";
 import { syncScheduler } from "~/services/sync-scheduler.service";
 import { logger } from "~/utils/logger.server";
-import { invalidateOfflineAdmin } from "~/utils/offline-admin.server";
+import { forgetOfflineTokenMigration, invalidateOfflineAdmin } from "~/utils/offline-admin.server";
 
 /**
  * APP_UNINSTALLED webhook handler
@@ -41,6 +41,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // in this process must not keep serving the cached offline token. Done even
   // when the delete failed — the token is revoked by Shopify either way.
   invalidateOfflineAdmin(shop);
+
+  // A pending token migration holds the shop's old token (encrypted) in its own
+  // table; it dies with the install. Never throws. `force`: also with the
+  // switches off, because after a rollback an unfinished record may still exist.
+  await forgetOfflineTokenMigration(shop, { force: true });
 
   // Stamp the uninstall time. This is the reliable "inactive since" anchor for
   // the 30-day reaper (shop-reaper.service), which finally purges all remaining

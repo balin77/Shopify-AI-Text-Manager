@@ -189,10 +189,10 @@ export async function redactCustomerData(
  * incoming `shop_domain` (NEVER an unscoped/`startsWith` delete — that would
  * wipe other tenants, see regression R1).
  *
- * Coverage of all 59 models in prisma/schema.prisma:
+ * Coverage of all 71 models in prisma/schema.prisma:
  *
  *  • Explicitly deleted below (scope field in parentheses):
- *      Session, AISettings, AIInstructions, Task, Product, Collection,
+ *      Session, OfflineTokenMigration (shop), AISettings, AIInstructions, Task, Product, Collection,
  *      Article, Page, ShopPolicy, Menu, ProductCollection,
  *      ContentTranslation, ThemeContent,
  *      ThemeTranslation, WebhookLog, WebhookRetry, OptionValueMemory,
@@ -246,6 +246,13 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${sessionsDeleted.count} sessions`);
+
+    // 1b. The durable token-migration record: it holds the shop's OLD offline
+    // token (encrypted) while a migration is unfinished — a credential.
+    const tokenMigrationsDeleted = await tx.offlineTokenMigration.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${tokenMigrationsDeleted.count} token-migration records`);
 
     // 2. Delete AI settings
     const aiSettingsDeleted = await tx.aISettings.deleteMany({
