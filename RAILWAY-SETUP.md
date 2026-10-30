@@ -266,6 +266,12 @@ Variable nicht), gilt die Zeile als veraltet: `runMigration` und der Sweep verwe
 sie und behandeln den Shop als neu — Status, Backoff und `needs_reauth` einer Zeile
 sperren nur das Token, für das sie galten.
 
+**Aufgegebene Zeilen** (40 Versuche) verlieren beim Aufgeben ihren verschlüsselten
+alten Token (der Fingerabdruck bleibt). Ein Reset funktioniert dort nur, solange die
+Session des Shops noch genau dieses Token hält — der Lauf nimmt dann das Token der
+Session; ist die Session inzwischen ohne Token, gibt es nichts mehr zu retten und der
+Shop braucht einen Token-Exchange (Merchant öffnet die App).
+
 **Operator-Reset** (nach Behebung der Ursache; der Sweep nimmt die Shops dann beim
 nächsten Lauf wieder auf, auch ohne Neustart: ein In-Process-Backoff, den die
 Datenbank nicht mehr stützt, wird für jeden Sweep-Kandidaten verworfen. Nur die
@@ -274,9 +280,9 @@ brauchbaren Token mehr — die Zeile nur löschen, wenn er ein neues Token bekom
 (sonst landet er sofort wieder in `needs_reauth`):
 
 ```sql
--- aufgegebene / hängende Migration erneut versuchen (alter Token liegt noch verschlüsselt in der Zeile)
+-- aufgegebene / hängende Migration erneut versuchen
 UPDATE "OfflineTokenMigration" SET status = 'pending', attempts = 0
-WHERE status = 'failed' AND "encryptedOldToken" IS NOT NULL;
+WHERE status = 'failed';
 
 -- needs_reauth-Zeile eines Shops verwerfen (z. B. nachdem er die App neu installiert hat)
 DELETE FROM "OfflineTokenMigration" WHERE shop = 'example.myshopify.com' AND status = 'needs_reauth';
@@ -293,7 +299,18 @@ nächste Aufruf sieht das neue Paar. Kann für den Shop **keine** Migration mehr
 genau das abgelehnte ist) — die Library würde es nach einem 403 nie tun —, damit der
 nächste Request des Merchants einen Token-Exchange auf ein ablaufendes Paar macht. Eine
 Migration, die noch gelingen kann (transienter Backoff innerhalb der 7 Tage), wird nicht
-übersprungen. Der Roh-Client (`admin-client.server.ts`) erkennt
+übersprungen. Geleert wird nur bei einem dauerhaften Urteil über genau dieses Token
+(`needs_reauth` oder aufgegeben, Fingerabdruck passt) — nie bei der 6-h-Konfigurationspause,
+nie bei einem Shop ohne Zeile und nie, solange der Lauf selbst noch entscheiden kann
+(`failed` jenseits der 7 Tage, Session hält das Token noch). Der Schritt ist pro Shop auf
+einmal je Minute begrenzt. Ausnahme von „Variablen aus = unverändert": der Roh-Client
+liest bei jedem 403 den Body (ein Klon), um die Stichtags-Meldung zu erkennen.
+
+Bekannte Restgrenze: der In-Process-Verdikt-Check (`needs_reauth`, Backoff) in
+`maybeMigrateToExpiringToken` läuft vor dem Fingerabdruck-Vergleich; der Sweep räumt
+veraltete Zeilen dennoch über die Datenbank ab (siehe oben).
+
+Der Roh-Client (`admin-client.server.ts`) erkennt
 den 403 ebenso. Dieser Auslöser wartet bewusst **nicht** auf die ruhige Phase: das alte
 Token ist ab dem Stichtag für die Admin API ohnehin unbrauchbar, ein laufender Request
 damit kann nicht schlimmer scheitern.

@@ -123,13 +123,13 @@ export async function listBlockingRecords(now: number, attemptsPerRun: number): 
     .map((r) => ({ shop: r.shop, tokenFingerprint: r.tokenFingerprint ?? null }));
 }
 
-/** Shops with a `failed` record that is terminal or still inside its persisted backoff. */
-export async function listBackedOffShops(now: number, attemptsPerRun: number): Promise<string[]> {
-  const rows = (await (await table()).findMany({
-    where: { status: "failed" },
-    select: LIGHT_SELECT,
-  })) as MigrationRecord[];
-  return rows.filter((r) => retryNotBefore(r, attemptsPerRun) > now).map((r) => r.shop);
+/**
+ * Erase only the ciphertext (a given-up record): the fingerprint stays, so the
+ * stale-record check still works. A reset of such a row can only retry while the
+ * shop's session still holds the token (see RAILWAY-SETUP.md).
+ */
+export async function eraseOldToken(shop: string): Promise<void> {
+  await (await table()).updateMany({ where: { shop }, data: { encryptedOldToken: null } });
 }
 
 const MAX_ERROR_LENGTH = 300;

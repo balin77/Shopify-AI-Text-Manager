@@ -164,6 +164,7 @@ export function __resetOfflineAdminForTests(): void {
   migrationNeedsReauth.clear();
   migrationHeldUntil = 0;
   nonExpiringRejectionLoggedAt.clear();
+  healAttemptedAt.clear();
   deps = null;
 }
 
@@ -397,6 +398,7 @@ export async function isNonExpiringTokenRejectedError(error: unknown): Promise<b
 }
 
 const nonExpiringRejectionLoggedAt = new Map<string, number>();
+const healAttemptedAt = new Map<string, number>();
 /** The 403 warning is logged at most this often per shop (a loop of callers would repeat it per call). */
 const NON_EXPIRING_REJECTION_LOG_INTERVAL_MS = 60 * 1000;
 
@@ -426,7 +428,13 @@ export function reportNonExpiringTokenRejection(shop: string, refusedToken?: str
   void (async () => {
     try {
       const outcome = await maybeMigrateToExpiringToken(shop);
-      await healIfMigrationCannotRun(shop, outcome, refusedToken);
+      // The heal step reads the database: throttled per shop like the log, so
+      // a loop of 403s does not cost a read per call.
+      const lastHeal = healAttemptedAt.get(shop);
+      if (lastHeal === undefined || Date.now() - lastHeal >= NON_EXPIRING_REJECTION_LOG_INTERVAL_MS) {
+        healAttemptedAt.set(shop, Date.now());
+        await healIfMigrationCannotRun(shop, outcome, refusedToken);
+      }
     } catch {
       /* never throws */
     }
@@ -447,21 +455,25 @@ export function reportNonExpiringTokenRejection(shop: string, refusedToken?: str
  * stays the ops-visible fact; afterAuth deletes it when the exchange happens.
  */
 async function healIfMigrationCannotRun(shop: string, outcome: MigrationOutcome, refusedToken?: string): Promise<void> {
+  // Only a DURABLE verdict about THIS token justifies erasing the only copy of
+  // it: a needs_reauth or given-up record whose fingerprint (if it has one)
+  // matches the refused token. NOT the global config hold (a held shop is never
+  // touched: after the fix + restart it must still be migratable), NOT a shop
+  // without a record, NOT a failed record past the 7-day window while the
+  // session still holds the token (the next run's exchange decides, and its
+  // permanent-refusal path blanks by itself).
+  if (outcome === "disabled" || Date.now() < migrationHeldUntil) return;
+  const record = await migrationStore.getMigrationRecord(shop).catch(() => null);
+  if (!record) return;
   let why: string | null = null;
-  if (outcome === "needs_reauth") why = "needs_reauth";
-  else if (Date.now() < migrationHeldUntil) why = "configuration hold";
-  else if (outcome === "backoff" || outcome === "failed") {
-    const record = await migrationStore.getMigrationRecord(shop).catch(() => null);
-    if (record && migrationStore.isTerminal(record)) why = "migration given up";
-    else if (record?.status === "failed" && Date.now() - record.startedAt.getTime() >= migrationStore.MIGRATION_RECOVERY_WINDOW_MS) {
-      why = "failed past the 7-day recovery window";
-    }
-  }
+  if (record.status === "needs_reauth") why = "needs_reauth";
+  else if (migrationStore.isTerminal(record)) why = "migration given up";
   if (!why) return;
   const d = await resolveDeps();
   const current = await d.loadOfflineSession(shop);
   if (!current || current.expires || !current.accessToken) return;
   if (refusedToken !== undefined && current.accessToken !== refusedToken) return;
+  if (record.tokenFingerprint && migrationStore.fingerprintToken(current.accessToken) !== record.tokenFingerprint) return;
   if (await clearDeadSessionToken(d, shop, current, current.accessToken)) {
     logger.warn(
       `[OfflineAdmin] Blanked the refused non-expiring token (${why}): the merchant's next request token-exchanges an expiring pair`,
@@ -776,7 +788,8 @@ function sleep(ms: number): Promise<void> {
  * migration exchange running at the same moment can retire each other's result
  * (Shopify: acquiring and refreshing/exchanging concurrently for one store); the
  * stored session then ends up with whichever landed last, and the next request
- * heals it. And: a request that is still in flight at the moment of the
+ * heals it. The same goes for the few milliseconds between the last re-read
+ * and the write of `clearDeadSessionToken`. And: a request that is still in flight at the moment of the
  * migration (one that authenticated before the quiet window began and runs
  * longer than it, or one that races the exchange) holds the revoked token. Its
  * next Admin call gets a 401, the library stores its OLD session with
@@ -821,7 +834,14 @@ export async function maybeMigrateToExpiringToken(shop: string): Promise<Migrati
  */
 async function driftedOutcome(d: OfflineAdminDeps, shop: string, startToken: string): Promise<MigrationOutcome | null> {
   const now = await d.loadOfflineSession(shop);
-  if (now && !now.expires && (now.accessToken || "") === startToken) return null;
+  // Still ours: same token — or BLANK. Our own exchange revokes the old token, so
+  // a request in flight on it gets a 401 and the library stores the session with
+  // `accessToken: undefined`; that blank is not "someone else's token", the pair
+  // we hold must still be stored over it (and the record kept until it is).
+  if (now && !now.expires) {
+    const token = now.accessToken || "";
+    if (token === startToken || (startToken !== "" && token === "")) return null;
+  }
   if (!now || now.expires) {
     // Gone (uninstall) or re-issued by a token exchange: the migration is moot
     // and so is the record (which holds a credential).
@@ -836,8 +856,8 @@ async function driftedOutcome(d: OfflineAdminDeps, shop: string, startToken: str
     });
     return now ? "not_needed" : "no_session";
   }
-  // Someone stored another non-expiring token: whatever we persisted belongs to
-  // the old one, so the (encrypted) record goes; the next run starts clean.
+  // Someone stored another NON-EMPTY non-expiring token: whatever we persisted
+  // belongs to the old one, so the (encrypted) record goes; the next run starts clean.
   await migrationStore.deleteMigrationRecord(shop).catch(() => undefined);
   logger.warn("[OfflineAdmin] Token migration aborted: the stored session now holds a different token", { shop });
   return "backoff";
@@ -1063,7 +1083,9 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
       : Math.max(notBefore, Date.now() + MIGRATION_BACKOFF_MS),
   );
   if (after && migrationStore.isTerminal(after)) {
-    // Once: from here on the record is skipped (persisted), not retried.
+    // Once: from here on the record is skipped (persisted), not retried. Its
+    // ciphertext has no use any more: erase it, keep the fingerprint.
+    await migrationStore.eraseOldToken(shop).catch(() => undefined);
     logger.error(
       "[OfflineAdmin] MIGRATION_GAVE_UP — the token migration kept failing; no automatic retry any more. " +
         "Reset: see RAILWAY-SETUP.md (OfflineTokenMigration)",

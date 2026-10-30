@@ -106,7 +106,9 @@ async function legacyOnlineTokenClient(shop: string): Promise<ShopifyGraphQLClie
  * longer accepted": warn, start the migration (switches permitting), heal a shop
  * the migration cannot help; no retry with the same token — the caller gets the
  * ordinary error for the 403. Runs on the first response AND on the response of
- * the 401 retry.
+ * the 401 retry. Reads (a clone of) the body of EVERY 403, also with the token
+ * switches off — intended: it is how the deadline message is recognised, and
+ * reporting only warns then.
  */
 async function reportIfDeadlineRejection(shop: string, token: string, response: Response): Promise<void> {
   if (response.status === 403 && (await isNonExpiringTokenRejectedError(response))) {
