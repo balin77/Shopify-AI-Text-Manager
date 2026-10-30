@@ -29,6 +29,9 @@ function cmp(value: any, cond: any): boolean {
       case "gt":
         if (value === null || value === undefined || !(value > (arg as any))) return false;
         break;
+      case "gte":
+        if (value === null || value === undefined || !(value >= (arg as any))) return false;
+        break;
       case "startsWith":
         if (typeof value !== "string" || !value.startsWith(arg as string)) return false;
         break;
@@ -43,6 +46,8 @@ export function matches(row: Row, where: Row = {}): boolean {
   for (const [key, cond] of Object.entries(where)) {
     if (key === "AND") {
       if (!(cond as Row[]).every((w) => matches(row, w))) return false;
+    } else if (key === "NOT") {
+      if (matches(row, cond as Row)) return false;
     } else if (key === "OR") {
       if (!(cond as Row[]).some((w) => matches(row, w))) return false;
     } else if (!cmp(row[key], cond)) return false;

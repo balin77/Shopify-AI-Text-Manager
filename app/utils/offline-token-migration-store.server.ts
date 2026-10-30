@@ -247,7 +247,14 @@ export async function persistOldToken(shop: string, oldToken: string, existing: 
     where: { shop },
     create: { shop, encryptedOldToken: encrypted, tokenFingerprint: fingerprint, status: "pending", startedAt: now },
     update: sameToken
-      ? { encryptedOldToken: encrypted, tokenFingerprint: fingerprint, status: "pending" }
+      ? {
+          encryptedOldToken: encrypted,
+          tokenFingerprint: fingerprint,
+          // A terminal row stays terminal (another process may persist while we
+          // are parked); the re-arm sets attempts to cap-1 FIRST, so it is not
+          // terminal here and goes back to pending as intended.
+          ...(existing && isTerminal(existing) ? {} : { status: "pending" }),
+        }
       : {
           encryptedOldToken: encrypted,
           tokenFingerprint: fingerprint,
@@ -267,8 +274,14 @@ export async function markMigrationFailed(shop: string, message: string, attempt
   // Restricted to pending/failed: a `needs_reauth` verdict (set while this run
   // was out, or by another path) must never be overwritten by a transient failure.
   await (await table()).updateMany({
-    // attempts < cap: a record that is already terminal is never counted further.
-    where: { shop, status: { in: ["pending", "failed"] }, attempts: { lt: MIGRATION_MAX_ATTEMPTS } },
+    // Only a TERMINAL row (failed AND at the cap) is never counted further. A
+    // pending row at/over the cap (another process flipped it back) still is, and
+    // becomes failed = terminal here.
+    where: {
+      shop,
+      status: { in: ["pending", "failed"] },
+      NOT: { status: "failed", attempts: { gte: MIGRATION_MAX_ATTEMPTS } },
+    },
     data: { status: "failed", lastError: clip(message), attempts: { increment: attemptsMade } },
   });
 }

@@ -1635,6 +1635,24 @@ describe("final minors", () => {
     expect(migrationMayBeNeeded(SHOP)).toBe(false); // still parked
   });
 
+  it("a pending row at/over the cap (flipped back by another process) is still counted and ends terminal", async () => {
+    h.migrations.push(row({ status: "pending", attempts: 41, encryptedOldToken: encryptToken("legacy-token"), tokenFingerprint: store.fingerprintToken("legacy-token") }));
+    await store.markMigrationFailed(SHOP, "x", 4);
+    expect(h.migrations[0]).toMatchObject({ status: "failed", attempts: 45 });
+    expect(store.isTerminal(h.migrations[0] as never)).toBe(true);
+    await store.markMigrationFailed(SHOP, "again", 4); // terminal: not counted further
+    expect(h.migrations[0].attempts).toBe(45);
+  });
+
+  it("persistOldToken does not un-terminal a terminal row, but the re-arm (cap-1) still goes back to pending", async () => {
+    h.migrations.push(terminalRow({ encryptedOldToken: encryptToken("legacy-token") }));
+    await store.persistOldToken(SHOP, "legacy-token", (await store.getMigrationRecord(SHOP)));
+    expect(h.migrations[0]).toMatchObject({ status: "failed", attempts: 40 });
+    await store.rearmTerminal(SHOP);
+    await store.persistOldToken(SHOP, "legacy-token", (await store.getMigrationRecord(SHOP)));
+    expect(h.migrations[0]).toMatchObject({ status: "pending", attempts: 39 });
+  });
+
   it("m5: a stale uninstall marker is logged at ERROR once per shop and process", async () => {
     h.install.push({ shop: SHOP, uninstalledAt: new Date(Date.now() - 1000) });
     configureOfflineAdmin(deps());
