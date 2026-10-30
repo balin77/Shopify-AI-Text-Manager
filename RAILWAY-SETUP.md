@@ -334,6 +334,17 @@ weil afterAuths Upsert nach einer Neuinstallation fehlschlug), pausiert die Migr
 (Backoff 10 min, Warnung „uninstall marker looks stale") und löscht den
 Wiederherstellungs-Datensatz NICHT.
 
+Das pausiert die Migration dieses Shops dauerhaft und still, denn beim Öffnen der App
+läuft afterAuth nicht, solange die Session ein nicht ablaufendes Token hat. Die App
+loggt es deshalb einmal je Shop und Prozess auf ERROR (`STALE_UNINSTALL_MARKER`) und
+räumt die Marke **nicht** selbst auf (ein später 401 kann nach einer echten
+Deinstallation eine leere Session-Zeile neu anlegen; „Aktivität nach der Marke" wäre also
+kein sicherer Beleg). Reset durch den Operator, wenn der Shop installiert ist:
+
+```sql
+UPDATE "ShopInstallState" SET "uninstalledAt" = NULL WHERE shop = 'example.myshopify.com';
+```
+
 Rennen mit dem Merchant: Pro Shop zählt die App mit, wie oft eine neue Session
 ausgestellt wurde bzw. der Shop deinstalliert wurde (afterAuth / `app/uninstalled`), und
 prüft vor jedem Schreiben zusätzlich die Deinstallationsmarke. Ein Lauf, der das

@@ -327,6 +327,22 @@ describe("quietness, backoff exclusion, env knobs", () => {
     expect(target.encryptedOldToken).toBeNull(); // reached on the next tick
   });
 
+  it("m4: rows sharing a startedAt across a page boundary are all visited (composite cursor)", async () => {
+    const { PURGE_PAGE_SIZE } = await import("~/services/offline-token-sweep.service");
+    const same = new Date(NOW.getTime() - 20 * DAY);
+    // the LAST row of page 1 and the FIRST of page 2 have the identical startedAt
+    for (let i = 0; i < PURGE_PAGE_SIZE + 1; i++) {
+      const shop = `t-${String(i).padStart(4, "0")}.myshopify.com`;
+      const blank = i === PURGE_PAGE_SIZE;
+      offlineSession(shop, { accessToken: blank ? "" : "has-token", lastActivityAt: NOW });
+      h.migrations.push({ shop, encryptedOldToken: "cipher", tokenFingerprint: "abcd", status: "failed", attempts: 4, startedAt: i >= PURGE_PAGE_SIZE - 1 ? same : new Date(same.getTime() - 1000 * (PURGE_PAGE_SIZE - i)), updatedAt: NOW });
+    }
+    const target = h.migrations[PURGE_PAGE_SIZE];
+    await tick();
+    await tick();
+    expect(target.encryptedOldToken).toBeNull();
+  });
+
   it("envNumber falls back for NaN, empty, below-minimum values", () => {
     expect(envNumber("abc", 600000, 60000)).toBe(600000);
     expect(envNumber("", 5, 1)).toBe(5);

@@ -293,14 +293,14 @@ export class OfflineTokenSweepService {
    * (`startedAt`), which can only be earlier than Shopify's own start — the
    * conservative side.
    */
-  private purgeCursor: Date | null = null;
+  private purgeCursor: { startedAt: Date; shop: string } | null = null;
 
   private async purgeUnrecoverableTokens(now: Date): Promise<void> {
     // Paged oldest-first with a cursor: rows already looked at (and kept because
     // their session still holds the token) are not re-read every tick; when a
     // page comes back short the cursor wraps to the start.
     const page = await listPastWindowTokenShops(now.getTime(), PURGE_PAGE_SIZE, this.purgeCursor);
-    this.purgeCursor = page.length < PURGE_PAGE_SIZE ? null : page[page.length - 1].startedAt;
+    this.purgeCursor = page.length < PURGE_PAGE_SIZE ? null : page[page.length - 1];
     const shops = page.map((r) => r.shop);
     if (shops.length === 0) return;
     const holding = await db.session.findMany({

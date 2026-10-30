@@ -1512,7 +1512,7 @@ describe("m-A: aborts back off; a stale uninstall marker does not destroy the re
     expect(migrationMayBeNeeded(SHOP)).toBe(false); // in-process backoff
     expect(await maybeMigrateToExpiringToken(SHOP)).toBe("backoff");
     expect(d.loadOfflineSession).toHaveBeenCalledTimes(2); // 2nd call did not run again (only the first run's reads)
-    expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).toContain("looks stale");
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).toContain("STALE_UNINSTALL_MARKER");
   });
 
   it("an epoch abort (real re-issue/uninstall) also backs off in-process and deletes the record", async () => {
@@ -1571,5 +1571,77 @@ describe("m-B / m-C: failure bookkeeping", () => {
     expect(h.migrations[0].tokenFingerprint).toMatch(/^[0-9a-f]{16}$/);
     const gaveUp = vi.mocked(logger.error).mock.calls.filter(([m]) => String(m).includes("MIGRATION_GAVE_UP"));
     expect(gaveUp).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hardening round 6
+// ---------------------------------------------------------------------------
+
+describe("final minors", () => {
+  beforeEach(() => {
+    process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS = "true";
+    process.env.SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS = "true";
+    vi.useFakeTimers();
+  });
+  const terminalRow = (over: Record<string, any> = {}) =>
+    row({ status: "failed", attempts: 40, tokenFingerprint: store.fingerprintToken("legacy-token"), encryptedOldToken: null, ...over });
+  const blanked = (d: OfflineAdminDeps) => vi.mocked(d.storeSession).mock.calls.some(([x]) => x.accessToken === undefined);
+
+  it("m1: when rearmTerminal throws the token is NOT blanked and the next 403 tries the re-arm again", async () => {
+    h.migrations.push(terminalRow());
+    const d = deps();
+    configureOfflineAdmin(d);
+    const { db } = await import("~/db.server");
+    const spy = vi.spyOn(db.offlineTokenMigration, "updateMany").mockRejectedValueOnce(new Error("db blip"));
+    reportNonExpiringTokenRejection(SHOP, "legacy-token");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(blanked(d)).toBe(false);
+    expect(d.migrateToExpiringToken).not.toHaveBeenCalled();
+    spy.mockRestore();
+    await vi.advanceTimersByTimeAsync(61_000);
+    reportNonExpiringTokenRejection(SHOP, "legacy-token");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(d.migrateToExpiringToken).toHaveBeenCalledTimes(1); // the re-armed run happened now
+    expect(h.migrations).toHaveLength(0); // and migrated the shop
+  });
+
+  it("m2: a failing record read after the re-armed run is not 'no record' — no blank", async () => {
+    h.migrations.push(terminalRow());
+    const d = deps({ migrateToExpiringToken: vi.fn(async () => Promise.reject(exchangeError(503))) });
+    configureOfflineAdmin(d);
+    const { db } = await import("~/db.server");
+    const orig = db.offlineTokenMigration.findUnique.bind(db.offlineTokenMigration);
+    let n = 0;
+    const spy = vi.spyOn(db.offlineTokenMigration, "findUnique").mockImplementation((async (a: any) => {
+      n++;
+      if (n >= 6) throw new Error("read failed"); // 1 trigger run, 2 heal, 3 re-armed run, 4-5 settle, 6 the heal re-read
+      return orig(a);
+    }) as never);
+    reportNonExpiringTokenRejection(SHOP, "legacy-token");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(d.migrateToExpiringToken).toHaveBeenCalledTimes(4);
+    expect(blanked(d)).toBe(false);
+    spy.mockRestore();
+  });
+
+  it("m3: an early throw on an already-terminal record neither counts nor logs GAVE_UP again", async () => {
+    h.migrations.push(terminalRow({ encryptedOldToken: null }));
+    configureOfflineAdmin(deps({ loadOfflineSession: vi.fn(async () => Promise.reject(new Error("db blip"))) }));
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("failed");
+    expect(h.migrations[0].attempts).toBe(40);
+    const gaveUp = vi.mocked(logger.error).mock.calls.filter(([m]) => String(m).includes("MIGRATION_GAVE_UP"));
+    expect(gaveUp).toHaveLength(0);
+    expect(migrationMayBeNeeded(SHOP)).toBe(false); // still parked
+  });
+
+  it("m5: a stale uninstall marker is logged at ERROR once per shop and process", async () => {
+    h.install.push({ shop: SHOP, uninstalledAt: new Date(Date.now() - 1000) });
+    configureOfflineAdmin(deps());
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("backoff");
+    releaseStaleMigrationBlock(SHOP);
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("backoff");
+    const logs = vi.mocked(logger.error).mock.calls.filter(([m]) => String(m).includes("STALE_UNINSTALL_MARKER"));
+    expect(logs).toHaveLength(1);
   });
 });

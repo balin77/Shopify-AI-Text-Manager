@@ -50,19 +50,24 @@ export function matches(row: Row, where: Row = {}): boolean {
   return true;
 }
 
-function sorted(rows: Row[], orderBy?: Row): Row[] {
+function sorted(rows: Row[], orderBy?: Row | Row[]): Row[] {
   if (!orderBy) return rows;
-  const [[key, dir]] = Object.entries(orderBy);
-  const direction = typeof dir === "string" ? dir : (dir as any).sort;
-  const nullsFirst = typeof dir === "object" && (dir as any).nulls === "first";
-  const sign = direction === "desc" ? -1 : 1;
+  const keys = (Array.isArray(orderBy) ? orderBy : [orderBy]).map((o) => Object.entries(o)[0]);
   return [...rows].sort((a, b) => {
-    const av = a[key] ?? null;
-    const bv = b[key] ?? null;
-    if (av === null && bv === null) return 0;
-    if (av === null) return nullsFirst ? -1 : 1;
-    if (bv === null) return nullsFirst ? 1 : -1;
-    return (av < bv ? -1 : av > bv ? 1 : 0) * sign;
+    for (const [key, dir] of keys) {
+      const direction = typeof dir === "string" ? dir : (dir as any).sort;
+      const nullsFirst = typeof dir === "object" && (dir as any).nulls === "first";
+      const sign = direction === "desc" ? -1 : 1;
+      const av = a[key] ?? null;
+      const bv = b[key] ?? null;
+      let c = 0;
+      if (av === null && bv === null) c = 0;
+      else if (av === null) c = nullsFirst ? -1 : 1;
+      else if (bv === null) c = nullsFirst ? 1 : -1;
+      else c = (av < bv ? -1 : av > bv ? 1 : 0) * sign;
+      if (c !== 0) return c;
+    }
+    return 0;
   });
 }
 

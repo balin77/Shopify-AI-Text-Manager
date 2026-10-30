@@ -144,21 +144,24 @@ export async function rearmTerminal(shop: string): Promise<void> {
 export async function listPastWindowTokenShops(
   now: number,
   limit = 200,
-  after?: Date | null,
+  after?: { startedAt: Date; shop: string } | null,
 ): Promise<Array<{ shop: string; startedAt: Date }>> {
   // Oldest first, and paged by `after` (the last startedAt the caller saw): the
   // rows whose session still holds the token are kept and would otherwise be
   // re-read at the head of the list on every tick, starving the ones behind them.
+  // Composite cursor (startedAt, shop): rows sharing a startedAt across a page
+  // boundary are all visited.
   const rows = (await (await table()).findMany({
     where: {
       status: { in: ["pending", "failed"] },
       encryptedOldToken: { not: null },
-      startedAt: after
-        ? { lt: new Date(now - MIGRATION_RECOVERY_WINDOW_MS), gt: after }
-        : { lt: new Date(now - MIGRATION_RECOVERY_WINDOW_MS) },
+      startedAt: { lt: new Date(now - MIGRATION_RECOVERY_WINDOW_MS) },
+      ...(after
+        ? { OR: [{ startedAt: { gt: after.startedAt } }, { startedAt: after.startedAt, shop: { gt: after.shop } }] }
+        : {}),
     },
     select: { shop: true, startedAt: true },
-    orderBy: { startedAt: "asc" },
+    orderBy: [{ startedAt: "asc" }, { shop: "asc" }],
     take: limit,
   })) as Array<{ shop: string; startedAt: Date }>;
   return rows;
@@ -264,7 +267,8 @@ export async function markMigrationFailed(shop: string, message: string, attempt
   // Restricted to pending/failed: a `needs_reauth` verdict (set while this run
   // was out, or by another path) must never be overwritten by a transient failure.
   await (await table()).updateMany({
-    where: { shop, status: { in: ["pending", "failed"] } },
+    // attempts < cap: a record that is already terminal is never counted further.
+    where: { shop, status: { in: ["pending", "failed"] }, attempts: { lt: MIGRATION_MAX_ATTEMPTS } },
     data: { status: "failed", lastError: clip(message), attempts: { increment: attemptsMade } },
   });
 }
