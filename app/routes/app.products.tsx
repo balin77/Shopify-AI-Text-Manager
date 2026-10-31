@@ -32,7 +32,7 @@ import { logger } from "~/utils/logger.server";
 import { wasRecentlySaved } from "~/utils/translation-timing";
 import { isDefaultTitleOption } from "~/utils/shopify-product.utils";
 import { countsAsSalesChannel } from "~/services/commerce-sync.shared";
-import { splitClearedMetafieldSlots } from "~/services/product-metafields.shared";
+import { hasUnsavedPrimaryMetafieldEdits, splitClearedMetafieldSlots } from "~/services/product-metafields.shared";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import type { FetcherData } from "~/types/content-editor.types";
@@ -778,7 +778,11 @@ export default function ProductsPage() {
   // already left out of that run (`optionTranslationBlockedIds`).
   const hasPrimaryTranslateAllDrafts =
     editor.state.currentLanguage === primaryLocale &&
-    (Object.keys(subResources.state.primaryMetafieldEdits).length > 0 ||
+    (hasUnsavedPrimaryMetafieldEdits(
+      subResources.state.primaryMetafieldEdits,
+      editor.selectedItem?.metafields,
+      editor.selectedItem?.clearedMetafields,
+    ) ||
       (showImageManager && imageManagerState.hasAltTextEdits));
   // A landed primary save whose reload is still out: the item still carries
   // the metafield text from BEFORE it. Blocks too, but is no unsaved change.

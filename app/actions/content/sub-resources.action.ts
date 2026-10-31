@@ -25,6 +25,7 @@ import {
   dropSupersededMetafieldSlots,
   keepClearedMetafieldSlot,
   readLiveSlotMetafields,
+  type LiveSlotState,
 } from "~/services/product-metafield-slots.server";
 import { getFullErrorMessage } from "../../utils/error-handler";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
@@ -1046,6 +1047,33 @@ async function cachedOptionValueIds(
 /** Shopify's per-call input limit for metafieldsSet and metafieldsDelete. */
 const METAFIELDS_PER_CALL = 25;
 
+/**
+ * Mirror a metafield Shopify holds into the cache, under ITS id, for this shop
+ * only. An upsert cannot carry a relation filter in its `where`, so the row is
+ * looked up WITH its product's shop first (same rule as the bulk editor's
+ * apply.server.ts): an id that belongs to another shop's product is never
+ * touched. Returns false then, and the caller treats the mirror as not written.
+ */
+async function upsertShopMetafieldRow(
+  db: ContentActionHandlerContext["db"],
+  shop: string,
+  row: { id: string; productId: string; namespace: string; key: string; value: string; type: string },
+  update: { value: string; type?: string },
+): Promise<boolean> {
+  const existing = await db.productMetafield.findUnique({
+    where: { id: row.id },
+    select: { id: true, product: { select: { shop: true } } },
+  });
+  if (existing && existing.product?.shop !== shop) {
+    logger.error("[UnifiedContent] Metafield cache row belongs to another shop - not written", {
+      context: "UnifiedContent", metafieldId: row.id,
+    });
+    return false;
+  }
+  await db.productMetafield.upsert({ where: { id: row.id }, create: row, update });
+  return true;
+}
+
 export async function handleSavePrimarySubResources(
   ctx: ContentActionHandlerContext,
   formData: FormData,
@@ -1264,7 +1292,11 @@ export async function handleSavePrimarySubResources(
         metafieldId: string;
         /** The row is a cleared slot: this set RE-CREATES the metafield. */
         isSlot: boolean;
-        input: { ownerId: string; namespace: string; key: string; type: string; value: string };
+        input: {
+          ownerId: string; namespace: string; key: string; type: string; value: string;
+          /** `null` on a slot refill = "create only if absent" (see the batching below). */
+          compareDigest?: null;
+        };
       };
       type MetafieldDelete = {
         metafieldId: string;
@@ -1321,7 +1353,18 @@ export async function handleSavePrimarySubResources(
           sets.push({
             metafieldId,
             isSlot,
-            input: { ownerId: productId, namespace: row.namespace, key: row.key, type: row.type, value },
+            input: {
+              ownerId: productId, namespace: row.namespace, key: row.key, type: row.type, value,
+              // CREATE-ONLY for a refilled slot: `compareDigest: null` is
+              // Shopify's guard for "the metafield does not exist yet" (Admin API
+              // MetafieldsSetInput.compareDigest, documented on metafieldsSet
+              // since 2024-07; checked against the 2026-07 reference). The live
+              // read below stays as the friendly path, but it is a separate
+              // request: a value set in the Shopify admin BETWEEN that read and
+              // this write would be overwritten by the upsert. With the guard
+              // Shopify refuses that write instead.
+              ...(isSlot ? { compareDigest: null } : {}),
+            },
           });
         }
       }
@@ -1334,6 +1377,34 @@ export async function handleSavePrimarySubResources(
       // (`metafieldExistsMeanwhile`) so the reload shows the current value; a
       // read that cannot tell refuses the write.
       const slotSets = sets.filter((entry) => entry.isSlot);
+      /** The slot gives way to the real metafield Shopify holds: mirror it
+       *  (shop-checked) and drop the slot; the client re-reads to show it. */
+      const yieldSlotToLive = async (
+        entry: MetafieldSet,
+        live: { id: string; namespace: string; key: string; value: string; type: string },
+      ) => {
+        try {
+          const written = await upsertShopMetafieldRow(
+            db,
+            session.shop,
+            { id: live.id, productId, namespace: live.namespace, key: live.key, value: live.value, type: live.type },
+            { value: live.value, type: live.type },
+          );
+          if (!written) return;
+          await dropSupersededMetafieldSlots(db, {
+            shop: session.shop,
+            productId,
+            namespace: entry.input.namespace,
+            key: entry.input.key,
+            keepId: live.id,
+          });
+        } catch (err) {
+          // Nothing was written to Shopify; the next sync supersedes the slot.
+          logger.error(`[UnifiedContent] Failed to replace cleared metafield ${entry.metafieldId} by the live one`, {
+            context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      };
       if (slotSets.length > 0) {
         const live = await readLiveSlotMetafields(
           (query, options) => gateway.graphql(query, options),
@@ -1362,40 +1433,23 @@ export async function handleSavePrimarySubResources(
             context: "UnifiedContent", metafieldId: entry.metafieldId, liveId: state.metafield.id,
           });
           optionWarnings.push("metafieldExistsMeanwhile");
-          try {
-            await db.productMetafield.upsert({
-              where: { id: state.metafield.id },
-              create: {
-                id: state.metafield.id,
-                productId,
-                namespace: state.metafield.namespace,
-                key: state.metafield.key,
-                value: state.metafield.value,
-                type: state.metafield.type,
-              },
-              update: { value: state.metafield.value, type: state.metafield.type },
-            });
-            await dropSupersededMetafieldSlots(db, {
-              shop: session.shop,
-              productId,
-              namespace: entry.input.namespace,
-              key: entry.input.key,
-              keepId: state.metafield.id,
-            });
-          } catch (err) {
-            // Nothing was written to Shopify; the next sync supersedes the slot.
-            logger.error(`[UnifiedContent] Failed to replace cleared metafield ${entry.metafieldId} by the live one`, {
-              context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
-            });
-          }
+          await yieldSlotToLive(entry, state.metafield);
         }
         if (blocked.size > 0) {
           for (let i = sets.length - 1; i >= 0; i--) if (blocked.has(sets[i])) sets.splice(i, 1);
         }
       }
 
-      for (let start = 0; start < sets.length; start += METAFIELDS_PER_CALL) {
-        const batch = sets.slice(start, start + METAFIELDS_PER_CALL);
+      // Slot refills travel in batches of THEIR OWN: a guarded input that
+      // Shopify refuses fails its whole call (metafieldsSet is atomic), and that
+      // must never take ordinary edits down with it.
+      const setBatches: MetafieldSet[][] = [];
+      for (const group of [sets.filter((entry) => !entry.isSlot), sets.filter((entry) => entry.isSlot)]) {
+        for (let start = 0; start < group.length; start += METAFIELDS_PER_CALL) {
+          setBatches.push(group.slice(start, start + METAFIELDS_PER_CALL));
+        }
+      }
+      for (const batch of setBatches) {
         try {
           const response = await gateway.graphql(METAFIELDS_SET, {
             variables: { metafields: batch.map((entry) => entry.input) },
@@ -1424,7 +1478,33 @@ export async function handleSavePrimarySubResources(
               context: "UnifiedContent",
               errors: userErrors.length > 0 ? userErrors : payload?.errors ?? "no metafieldsSet payload",
             });
-            for (const entry of batch) failedMetafields.push(entry.metafieldId);
+            let refused = batch;
+            const guarded = batch.filter((entry) => entry.isSlot);
+            if (guarded.length > 0) {
+              // A refused create-only call most likely means a metafield of
+              // that key appeared since the read above: ask again and give the
+              // slot the same "exists meanwhile" outcome as the early path.
+              // Whatever the answer is, nothing was written.
+              const again = await readLiveSlotMetafields(
+                (query, options) => gateway.graphql(query, options),
+                productId,
+                guarded.map((entry) => ({ namespace: entry.input.namespace, key: entry.input.key })),
+              );
+              const yielded = new Set<MetafieldSet>();
+              for (let i = 0; i < guarded.length; i++) {
+                if (again[i].kind !== "exists") continue;
+                const state = again[i] as Extract<LiveSlotState, { kind: "exists" }>;
+                yielded.add(guarded[i]);
+                failedMetafields.push(guarded[i].metafieldId);
+                optionWarnings.push("metafieldExistsMeanwhile");
+                logger.warn("[UnifiedContent] Cleared metafield not re-created: Shopify refused the create-only write, a metafield exists now", {
+                  context: "UnifiedContent", metafieldId: guarded[i].metafieldId, liveId: state.metafield.id,
+                });
+                await yieldSlotToLive(guarded[i], state.metafield);
+              }
+              refused = batch.filter((entry) => !yielded.has(entry));
+            }
+            for (const entry of refused) failedMetafields.push(entry.metafieldId);
             continue;
           }
           const echoed = (result.metafields ?? []).filter(
@@ -1466,9 +1546,10 @@ export async function handleSavePrimarySubResources(
                 // between leaves a duplicate the next sync removes rather than
                 // a field that vanished.
                 recreatedMetafieldIds.set(entry.metafieldId, echoedId);
-                await db.productMetafield.upsert({
-                  where: { id: echoedId },
-                  create: {
+                const written = await upsertShopMetafieldRow(
+                  db,
+                  session.shop,
+                  {
                     id: echoedId,
                     productId,
                     namespace: entry.input.namespace,
@@ -1476,15 +1557,20 @@ export async function handleSavePrimarySubResources(
                     value: echo.value,
                     type: echo.type || entry.input.type,
                   },
-                  update: { value: echo.value, ...(echo.type ? { type: echo.type } : {}) },
-                });
-                await dropSupersededMetafieldSlots(db, {
-                  shop: session.shop,
-                  productId,
-                  namespace: entry.input.namespace,
-                  key: entry.input.key,
-                  keepId: echoedId,
-                });
+                  { value: echo.value, ...(echo.type ? { type: echo.type } : {}) },
+                );
+                // Another shop's row under that id: the write IS live on
+                // Shopify, only the mirror is skipped (the next sync fixes it),
+                // and the slot stays until then.
+                if (written) {
+                  await dropSupersededMetafieldSlots(db, {
+                    shop: session.shop,
+                    productId,
+                    namespace: entry.input.namespace,
+                    key: entry.input.key,
+                    keepId: echoedId,
+                  });
+                }
               } else {
                 // Shop-scoped: the ids come from the form.
                 await db.productMetafield.updateMany({

@@ -822,4 +822,43 @@ describe("translating a metafield never sends the text from before the save", ()
     expect(String(message)).toContain("Could not check — nothing saved.");
     expect(tone).toBe("critical");
   });
+  it("after a PARTIAL save only the unsaved edits stay: saved ones are dropped, so a second Save cannot re-send them", () => {
+    const MF2 = "gid://shopify/Metafield/78";
+    const MF3 = "gid://shopify/Metafield/79";
+    const threeMf = {
+      ...itemWithMf,
+      metafields: [
+        ...itemWithMf.metafields,
+        { id: MF2, namespace: "custom", key: "care", value: "Waschen", type: "single_line_text_field" },
+        { id: MF3, namespace: "custom", key: "origin", value: "EU", type: "single_line_text_field" },
+      ],
+    };
+    const { result, rerender } = renderHook(
+      ({ current }: { current: unknown }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          strings: {},
+        } as never),
+      { initialProps: { current: threeMf as unknown } },
+    );
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Leinen")); // saved
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF2, "Trocknen")); // failed, reverted
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF3, "Asien")); // unverified draft
+    act(() => result.current.handlers.saveSubResources());
+    fetcher.data = {
+      success: true,
+      actionType: "savePrimarySubResources",
+      failedOptions: [],
+      failedMetafields: [MF2, MF3],
+      unverifiedMetafields: [MF3],
+      optionWarnings: ["metafieldSlotUnverified"],
+    };
+    rerender({ current: threeMf });
+
+    // Before the fix MF stayed here although Shopify already had it.
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MF3]: "Asien" });
+  });
 });

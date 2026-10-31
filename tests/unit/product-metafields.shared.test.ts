@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   formatListMetafieldLines,
+  hasUnsavedPrimaryMetafieldEdits,
   isMetafieldValueEditable,
   listValueSurvivesLines,
   metafieldDisplayValue,
@@ -164,5 +165,30 @@ describe("storedListMetafieldValueProblem (the server's check)", () => {
     ["list.product_reference", '["gid://shopify/Product/1"]', "unsupportedType"],
   ])("%s %s → %s", (type, value, expected) => {
     expect(storedListMetafieldValueProblem(type, value)).toBe(expected);
+  });
+});
+
+describe("hasUnsavedPrimaryMetafieldEdits", () => {
+  const live = [row("1", "a", "x")];
+  const cleared = [row("2", "b", "")];
+
+  it("counts real differences, not keys", () => {
+    expect(hasUnsavedPrimaryMetafieldEdits({}, live, cleared)).toBe(false);
+    // typed back to the original, and an edit whose field left the item
+    expect(hasUnsavedPrimaryMetafieldEdits({ "1": "x", "9": "gone" }, live, cleared)).toBe(false);
+    expect(hasUnsavedPrimaryMetafieldEdits({ "1": "y" }, live, cleared)).toBe(true);
+  });
+
+  it("looks at cleared slots too (typing into one re-creates the field)", () => {
+    expect(hasUnsavedPrimaryMetafieldEdits({ "2": "" }, live, cleared)).toBe(false);
+    expect(hasUnsavedPrimaryMetafieldEdits({ "2": "new" }, live, cleared)).toBe(true);
+  });
+
+  it("a refused draft (spaces only) is still unsaved", () => {
+    expect(hasUnsavedPrimaryMetafieldEdits({ "1": "  " }, live)).toBe(true);
+  });
+
+  it("copes with an item that carries no metafields", () => {
+    expect(hasUnsavedPrimaryMetafieldEdits({ "1": "y" }, undefined)).toBe(false);
   });
 });

@@ -1262,17 +1262,25 @@ export function useProductSubResources({
             return restored;
           });
 
+          // What stays is what is still UNSAVED: the kept drafts (nothing was
+          // written for them, see above) and anything typed after the save went
+          // out. The failed edits are reverted (dropped) as before; the SAVED
+          // ones are dropped too. Left in, they made a second Save re-send them
+          // (purging and re-translating what the first one had just settled),
+          // kept "Translate all" on "Save first" with nothing unsaved, and
+          // reported a re-created cleared field as "failed, reverted" on the
+          // second attempt although the first had written it.
+          const sentMetafieldIds = new Set<string>(Object.keys(sentPrimary?.metafields ?? {}));
+          const failedMetafieldIds = new Set<string>(failedMetafields.map(String));
           setPrimaryMetafieldEdits(prev => {
-            const restored = { ...prev };
-
-            for (const metafieldId of failedMetafields) {
-              // Kept as a draft: nothing was written (see above).
-              if (unverifiedMetafields.has(String(metafieldId))) continue;
-              // Remove the failed edit to restore original value
-              delete restored[metafieldId];
+            const kept: Record<string, string> = {};
+            for (const [metafieldId, value] of Object.entries(prev)) {
+              const stays =
+                unverifiedMetafields.has(metafieldId) ||
+                (!sentMetafieldIds.has(metafieldId) && !failedMetafieldIds.has(metafieldId));
+              if (stays) kept[metafieldId] = value;
             }
-
-            return restored;
+            return kept;
           });
         }
 

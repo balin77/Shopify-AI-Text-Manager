@@ -358,3 +358,24 @@ export function isPrimaryMetafieldUnsaved(original: MetafieldLike, edit: string 
   if (edit === undefined) return false;
   return primaryMetafieldChange(original, edit).kind !== "unchanged";
 }
+
+/**
+ * Does ANY entry of the card's edit map really differ from the field it edits?
+ *
+ * The map's KEY COUNT is not that answer: an edit that was saved but not yet
+ * dropped, one typed back to the original, or one whose field is no longer on
+ * the item all leave a key behind with nothing unsaved. Counting them kept
+ * "Translate all" on "Save first" with nothing to save. An edit whose field
+ * the item does not carry is ignored, like the save does (it skips it too).
+ */
+export function hasUnsavedPrimaryMetafieldEdits(
+  edits: Readonly<Record<string, string>>,
+  metafields: ReadonlyArray<MetafieldLike & { id: string }> | undefined,
+  clearedMetafields?: ReadonlyArray<MetafieldLike & { id: string }>,
+): boolean {
+  for (const [id, edit] of Object.entries(edits)) {
+    const original = metafields?.find((m) => m.id === id) ?? clearedMetafields?.find((m) => m.id === id);
+    if (original && isPrimaryMetafieldUnsaved(original, edit)) return true;
+  }
+  return false;
+}

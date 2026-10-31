@@ -243,6 +243,8 @@ function makeDb() {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
       upsert: vi.fn().mockResolvedValue({}),
+      // The shop-ownership look-up before a mirror upsert: no row yet by default.
+      findUnique: vi.fn().mockResolvedValue(null),
       // The cached rows the primary save builds its metafieldsSet input from;
       // honours the `id: { in }` filter so each test sees only what it asked for.
       // Asked by namespace/key (the cleared-slot bookkeeping after a confirmed
@@ -1018,7 +1020,8 @@ describe('handleSavePrimarySubResources — the primary metafield write', () => 
       const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
 
       expect(w.of('metafieldsSet')[0].variables.metafields).toEqual([
-        { ownerId: PRODUCT, namespace: 'custom', key: 'k13', type: 'single_line_text_field', value: 'Baumwolle' },
+        // A refilled slot is CREATE-ONLY: compareDigest null = "must not exist".
+        { ownerId: PRODUCT, namespace: 'custom', key: 'k13', type: 'single_line_text_field', value: 'Baumwolle', compareDigest: null },
       ]);
       expect(db.productMetafield.upsert).toHaveBeenCalledWith({
         where: { id: NEW },
@@ -1083,6 +1086,83 @@ describe('handleSavePrimarySubResources — the primary metafield write', () => 
         where: { productId: PRODUCT, product: { shop: SHOP }, namespace: 'custom', key: 'k13', value: '', id: { not: LIVE } },
       });
       expect(result.recreatedMetafields).toBeUndefined();
+    });
+
+    it('a value that appears between the live read and the write is not overwritten: the create-only call is refused and the slot gives way', async () => {
+      const LIVE = 'gid://shopify/Metafield/77';
+      let reads = 0;
+      const w = installAdmin({
+        // First read: still absent. Second read (after the refusal): the merchant set it meanwhile.
+        slotRead: (v) => ({
+          data: {
+            product: {
+              id: v.id,
+              m0: ++reads === 1 ? null : { id: LIVE, namespace: 'custom', key: 'k13', value: 'Leinen', type: 'single_line_text_field' },
+            },
+          },
+        }),
+        metafieldsSet: () => ({
+          data: { metafieldsSet: { metafields: [], userErrors: [{ field: ['metafields', '0'], message: 'The metafield has been modified since it was loaded.' }] } },
+        }),
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+
+      expect(w.of('metafieldsSet')[0].variables.metafields[0]).toMatchObject({ compareDigest: null });
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.savedMetafields).toEqual([]);
+      expect(result.optionWarnings).toContain('metafieldExistsMeanwhile');
+      expect(db.productMetafield.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: LIVE } }),
+      );
+    });
+
+    it('the guarded slot refill travels apart from ordinary edits, so a refusal cannot fail them', async () => {
+      const w = installAdmin({
+        metafieldsSet: (v) => ({
+          data: {
+            metafieldsSet: v.metafields.some((m: any) => m.compareDigest === null)
+              ? { metafields: [], userErrors: [{ message: 'stale' }] }
+              : { userErrors: [], metafields: v.metafields.map((m: any, i: number) => ({ ...m, id: `gid://shopify/Metafield/ok-${i}`, owner: { id: m.ownerId } })) },
+          },
+        }),
+      });
+      const db = slotDb();
+      db.productMetafield.findMany.mockImplementation(async (args: any) =>
+        (args?.where?.id?.in ?? []).map((id: string) => ({
+          id, namespace: 'custom', key: `k${id.split('/').pop()}`, type: 'single_line_text_field', value: id === METAFIELD ? '' : 'old',
+        })),
+      );
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'neu', [MF2]: 'edit' }));
+
+      expect(w.of('metafieldsSet')).toHaveLength(2);
+      expect(result.savedMetafields).toEqual([MF2]);
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+    });
+
+    it('a cache row under the echoed GID that belongs to ANOTHER shop is never overwritten', async () => {
+      const w = recreating();
+      const db = slotDb();
+      db.productMetafield.findUnique.mockResolvedValue({ id: NEW, product: { shop: 'other.myshopify.com' } });
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+      expect(db.productMetafield.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: NEW } }));
+      expect(db.productMetafield.upsert).not.toHaveBeenCalled();
+      expect(db.productMetafield.deleteMany).not.toHaveBeenCalled();
+      // The write is live on Shopify, so it still counts as saved.
+      expect(result.savedMetafields).toEqual([METAFIELD]);
+    });
+
+    it('the live metafield mirrored for an exists-meanwhile slot is shop-checked too', async () => {
+      const LIVE = 'gid://shopify/Metafield/77';
+      const w = installAdmin({
+        slotRead: (v) => ({
+          data: { product: { id: v.id, m0: { id: LIVE, namespace: 'custom', key: 'k13', value: 'Leinen', type: 'single_line_text_field' } } },
+        }),
+      });
+      const db = slotDb();
+      db.productMetafield.findUnique.mockResolvedValue({ id: LIVE, product: { shop: 'other.myshopify.com' } });
+      await save(db, w.admin, { [METAFIELD]: 'Baumwolle' });
+      expect(db.productMetafield.upsert).not.toHaveBeenCalled();
     });
 
     it('a live read that FAILS refuses the write (nothing sent, nothing mirrored)', async () => {
