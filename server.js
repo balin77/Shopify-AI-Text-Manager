@@ -328,7 +328,12 @@ if (viteDevServer) {
 // more aggressive with this caching.
 app.use(express.static("build/client", { maxAge: "1h" }));
 
-app.use(morgan("tiny"));
+// Morgan's "tiny" line, minus the credentials: the full URL of an embedded-app
+// document request carries `id_token` (a session JWT) and `hmac` in its query
+// string. Only the values of sensitive params are redacted (access-log.cjs).
+const { safeUrlToken, ACCESS_LOG_FORMAT } = require("./app/middleware/access-log.cjs");
+morgan.token("safe-url", safeUrlToken);
+app.use(morgan(ACCESS_LOG_FORMAT));
 
 // Health check endpoint for Railway deployment
 // This endpoint is called by Railway to determine if the app is ready to receive traffic
