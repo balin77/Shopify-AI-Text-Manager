@@ -7,6 +7,7 @@ import { AIService, toValidProvider, isProviderKeyRejection, isManagedRefusal } 
 import type { AIProvider } from "../../../src/services/ai.service";
 import { getProviderDisplayName } from "../../utils/api-key-validation";
 import { getTranslation, type Locale } from "../../i18n";
+import { redactString } from "../../utils/sentry-scrub";
 import { tryDecryptApiKey } from "../../utils/encryption.server";
 import {
   PRODUCTS_CONFIG, COLLECTIONS_CONFIG, BLOGS_CONFIG, PAGES_CONFIG, POLICIES_CONFIG,
@@ -156,7 +157,11 @@ export function isRunAbortingAIError(error: unknown): boolean {
  * {@link noAiKeyResponse} but for the invalid- rather than missing-key case, so
  * the client toast can point the merchant to Settings → AI API Access Codes.
  */
-export function aiAuthErrorResponse(error: unknown): DataResponse {
+export function aiAuthErrorResponse(_error: unknown): DataResponse {
+  // No `detail`: the provider's own error text goes to the browser otherwise,
+  // and it can quote the key (OpenAI answers "Incorrect API key provided:
+  // sk-…abcd"). The text stays server-side, see `providerErrorForLog`, which
+  // the caller logs.
   return json(
     {
       success: false,
@@ -164,10 +169,20 @@ export function aiAuthErrorResponse(error: unknown): DataResponse {
       error:
         "Your AI API key was rejected by the provider (invalid or expired). " +
         "Please check your API key in Settings → AI API Access Codes.",
-      detail: errorMessage(error),
     },
     { status: 401 }
   );
+}
+
+/**
+ * A provider error's text for the SERVER log only: known credential shapes are
+ * scrubbed by the shared Sentry scrubber, and any long opaque token (an API key
+ * or a fragment the provider echoed back) is masked on top of that. Bounded, so
+ * a provider that returns a page of HTML cannot flood the log.
+ */
+export function providerErrorForLog(error: unknown): string {
+  const scrubbed = String(redactString(errorMessage(error)));
+  return scrubbed.replace(/[A-Za-z0-9_\-.]{20,}/g, "[redacted-token]").slice(0, 500);
 }
 
 /** Check if an unknown error is a Prisma error with a specific code. */

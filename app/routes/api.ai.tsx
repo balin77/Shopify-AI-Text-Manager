@@ -33,6 +33,7 @@ import {
   managedRefusalResponse,
   noAiKeyResponse,
   aiAuthErrorResponse,
+  providerErrorForLog,
   resolveSeoContext,
 } from "./api-ai-handlers/shared";
 import type { AIActionContext } from "./api-ai-handlers/shared";
@@ -245,7 +246,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (isProviderKeyRejection(error)) {
       logger.error("[API-AI] AI request failed — provider rejected the API key", {
         context: "AI",
-        error: errorMessage(error),
+        // Scrubbed: the provider's text can quote the key. It no longer goes to
+        // the browser (aiAuthErrorResponse), so this log is the only place it lives.
+        error: providerErrorForLog(error),
       });
       return aiAuthErrorResponse(error);
     }

@@ -147,7 +147,18 @@ describe("api.ai catch: what a handler failure is answered with", () => {
     const { status, body } = await run(fields);
     expect(status).toBe(401);
     expect(body).toMatchObject({ success: false, code: "INVALID_AI_KEY" });
+    // The provider's raw text (it can quote the key) never reaches the browser.
+    expect(body).not.toHaveProperty("detail");
+    expect(JSON.stringify(body)).not.toContain("Incorrect API key");
     expect(captureServerError).not.toHaveBeenCalled();
+  });
+
+  it("scrubs key-like tokens from the provider text before it is logged", async () => {
+    const { providerErrorForLog } = await import("~/routes/api-ai-handlers/shared");
+    const text = providerErrorForLog(new Error("401 Incorrect API key provided: sk-proj-abcdefghijklmnop1234567890. Retry."));
+    expect(text).toContain("Incorrect API key provided");
+    expect(text).not.toContain("sk-proj");
+    expect(text).not.toContain("abcdefghijklmnop");
   });
 
   it("does NOT read an unrelated '401 Unauthorized' (e.g. Shopify) as a bad AI key", async () => {
