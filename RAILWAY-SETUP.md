@@ -76,6 +76,55 @@ Orphan-Recovery, der atomare Verbrauch von `ImageOperationCounter`, und die
 **vorher** nach Postgres oder Redis um, nicht danach. Alle Symptome sind still,
 also würde die Ursache erst Wochen später gesucht.
 
+### Zwei Hintergrund-Jobs sind Prozess-Singletons — und der Deploy-Overlap
+
+Zusätzlich zu den Zuständen oben laufen im Web-Prozess zwei Jobs, die **genau
+einmal** laufen dürfen (gestartet in [server.js](server.js)):
+
+- **WebP-Prozessor** ([webp-processor.service.js](webp-processor.service.js)):
+  holt wartende `imageWebpConversionItem`-Zeilen aus der `Task`-Tabelle und
+  ersetzt das Original des Merchants auf Shopify (neues Medium anlegen, Original
+  löschen). Zwei Prozessoren auf derselben Zeile = doppelt konvertiert, doppelt
+  hochgeladen, doppelt gelöscht, verwaiste oder doppelte Medien am Produkt.
+- **Stale-Image-Cleanup** ([stale-image-cleanup.service.js](stale-image-cleanup.service.js)):
+  periodischer Lauf über die lokalen `ProductImage`-Cache-Zeilen. Er löscht nur
+  den App-eigenen Cache, nie etwas auf Shopify; zwei Läufe gleichzeitig erzeugen
+  doppelte Shopify-Abfragen und Löschversuche, keinen Datenverlust.
+
+Beide haben **keine** Leader-Wahl (siehe den Kommentarblock in `server.js`):
+ein zweiter Replica würde beide doppelt starten. Das ist dieselbe Zusage wie
+„eine Instanz“ oben.
+
+**Auch mit einer Instanz gibt es zwei Prozesse — beim Deploy.** Railway
+deployt ohne Downtime: der neue Container bootet und startet seine Jobs, während
+der alte noch bis zum Drain weiterläuft. Für den WebP-Prozessor ist das genau
+die Lage von oben, nur kurz. Behandelt wird sie so:
+
+1. **Atomarer Claim.** Der Prozessor setzt eine Zeile per
+   `updateMany … where { id, status in (pending, queued) }` auf `running`; bei
+   `count: 0` gehört sie schon jemand anderem und wird übersprungen.
+2. **Heartbeat.** Solange die Schritte eines Items laufen (auch nachdem der
+   Prozessor aufgehört hat, auf sie zu *warten*), stempelt er alle 15 s
+   `updatedAt` (`WEBP_ITEM_HEARTBEAT_MS` in [app/config/webp-tasks.js](app/config/webp-tasks.js)).
+3. **Boot-Recovery fasst nur stille Zeilen an.** `recoverRunningWebpTasks`
+   setzt eine `running`-Zeile nur zurück, wenn `updatedAt` älter als 90 s ist
+   (`WEBP_RUNNING_STALE_MS`, sechs Heartbeats); das Zurücksetzen prüft das noch
+   einmal im selben Statement. Eine frische Zeile gehört einem lebenden Worker
+   des alten Containers.
+4. **Zweiter Durchlauf.** Ist der alte Container kurz nach dem Boot gestorben,
+   war seine Zeile beim ersten Durchlauf noch „frisch“. `server.js` ruft die
+   Recovery deshalb ein zweites Mal nach `WEBP_RUNNING_STALE_MS` + 15 s auf; dann
+   wird sie regulär eingeordnet (unter 70 % neu starten, ab 70 % zur manuellen
+   Prüfung) statt vom 10-Minuten-Reaper mit Rückerstattung als Fehler markiert.
+5. **Shutdown wartet kurz** (bis 4 s, `drain`) auf laufende Konvertierungen.
+   Mehr geht nicht: `gracefulShutdown` beendet den Prozess nach 10 s hart.
+
+Restrisiko: Der Claim schützt vor *gleichzeitigem Annehmen*, nicht vor einem
+Worker, der mitten in der Konvertierung hart beendet wird — das fängt weiterhin
+die Fortschrittsgrenze (70 %) der Recovery ab. Und: der Heartbeat läuft im
+Prozess; hängt dessen Event-Loop länger als 90 s, sähe ein Nachbar die Zeile als
+tot. Bei einer Instanz ist das kein realer Fall.
+
 Für das Managed-AI-Key-Modell
 ([docs/plans/PLAN_MANAGED_AI_KEY.md](docs/plans/PLAN_MANAGED_AI_KEY.md)) kommen
 zwei weitere Gründe dazu, und sie sind nicht mehr geplant, sondern gebaut.

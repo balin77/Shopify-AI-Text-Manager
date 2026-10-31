@@ -447,13 +447,30 @@ const server = app.listen(port, host, async () => {
   // not awaited, so with the old order it could already have claimed that very
   // item. Recovery then reset a LIVE conversion, and a later poll ran the
   // destructive sequence on the same image a second time. The ordering is the
-  // fix: a timestamp filter inside the recovery service would be a second
-  // mechanism answering the same question.
+  // fix for THIS process. A conversion in ANOTHER container (the old one, during
+  // a zero-downtime deploy) is invisible to the ordering, so the recovery also
+  // skips `running` rows with a fresh heartbeat (WEBP_RUNNING_STALE_MS) — the
+  // two answer different questions: "is it mine" and "is anybody alive on it".
   try {
     const { TaskRecoveryService } = await import("./task-recovery.service.js");
     const recoveryService = TaskRecoveryService.getInstance();
     const result = await recoveryService.recoverPendingTasks();
     serverLogger.info(`Task recovery: ${result.recovered} recovered, ${result.failed} marked as failed`);
+
+    // Second pass for WebP items the first one had to LEAVE: during a deploy
+    // overlap a `running` row with a fresh heartbeat belongs to the old
+    // container's live worker and is skipped (WEBP_RUNNING_STALE_MS). If that
+    // container then died, nobody heartbeats the row any more — this pass,
+    // one stale window (+ margin) after boot, finds it silent and classifies it
+    // properly (retry under 70%, review from 70%) instead of leaving it to the
+    // 10-minute reaper, which would fail and refund it. A row a live worker
+    // still stamps stays fresh and is skipped again.
+    const { WEBP_RUNNING_STALE_MS } = await import("./app/config/webp-tasks.js");
+    setTimeout(() => {
+      recoveryService.recoverRunningWebpTasks().catch((error) => {
+        serverLogger.error("Delayed WebP recovery failed", { error: String(error) });
+      });
+    }, WEBP_RUNNING_STALE_MS + 15_000).unref();
 
     // Start periodic monitoring for stuck tasks
     recoveryService.startStuckTaskMonitoring();
@@ -549,7 +566,11 @@ async function gracefulShutdown(signal) {
     try {
       // Stop the WebP conversion processor (no new polls; in-flight finishes)
       const { WebPProcessorService } = await import("./webp-processor.service.js");
-      WebPProcessorService.getInstance().stop();
+      const webpProcessor = WebPProcessorService.getInstance();
+      webpProcessor.stop();
+      // Brief grace for conversions already in flight (a deploy is the usual
+      // reason we are here); the 10s force-exit below still bounds everything.
+      await webpProcessor.drain(4000);
       serverLogger.info("WebP processor stopped");
     } catch (error) {
       serverLogger.error("Error stopping WebP processor", { error: String(error) });

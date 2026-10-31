@@ -9,6 +9,7 @@ import { refundImageOperations } from "./image-op-refund.js";
 import {
   WEBP_NON_TERMINAL_STATUS,
   WEBP_PARENT_TASK_TYPE,
+  WEBP_RUNNING_STALE_MS,
   isWebpWorkRow,
   webpWorkRowWhere,
 } from "./app/config/webp-tasks.js";
@@ -297,8 +298,17 @@ export class TaskRecoveryService {
    * flagged here, and the processor's first poll settles the parent from them.
    */
   async recoverRunningWebpTasks() {
+    // DEPLOY OVERLAP: Railway starts the new container before the old one is
+    // gone, so a `running` row may belong to a worker that is converting it
+    // RIGHT NOW. Resetting it would run the destructive sequence (upload, delete
+    // the original) a second time. A live worker heartbeats `updatedAt` every
+    // WEBP_ITEM_HEARTBEAT_MS, so only rows silent for WEBP_RUNNING_STALE_MS are
+    // dead ones (see app/config/webp-tasks.js for the numbers). A row skipped
+    // here because its owner died only moments ago is caught by the second pass
+    // server.js schedules after that window.
+    const staleBefore = new Date(Date.now() - WEBP_RUNNING_STALE_MS);
     const tasks = await prisma.task.findMany({
-      where: webpWorkRowWhere({ status: 'running' }),
+      where: webpWorkRowWhere({ status: 'running', updatedAt: { lt: staleBefore } }),
       select: { id: true, progress: true, retryCount: true, shop: true },
     });
 
@@ -306,8 +316,10 @@ export class TaskRecoveryService {
     let failed = 0;
     for (const t of tasks) {
       if ((t.progress ?? 0) < 70 && (t.retryCount ?? 0) < 3) {
-        await prisma.task.update({
-          where: { id: t.id },
+        // Re-checked IN the write: a worker that stamped the row between the
+        // SELECT and here is alive, and `count: 0` means leave it be.
+        const reset = await prisma.task.updateMany({
+          where: { id: t.id, status: 'running', updatedAt: { lt: staleBefore } },
           data: {
             status: 'pending',
             retryCount: { increment: 1 },
@@ -315,16 +327,17 @@ export class TaskRecoveryService {
             progress: 0,
           },
         });
-        retried++;
+        if (reset.count > 0) retried++;
       } else {
-        await prisma.task.update({
-          where: { id: t.id },
+        const flagged = await prisma.task.updateMany({
+          where: { id: t.id, status: 'running', updatedAt: { lt: staleBefore } },
           data: {
             status: 'failed',
             completedAt: new Date(),
             error: `Server restarted at progress ${t.progress ?? 0} — partial Shopify state, manual review needed`,
           },
         });
+        if (flagged.count === 0) continue;
         failed++;
         // R3-C4: this task consumed an image op at batch creation but
         // produced no result. Refund it (the status:'running' query filter

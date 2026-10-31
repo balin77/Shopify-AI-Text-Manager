@@ -41,6 +41,7 @@ import {
   WEBP_NON_TERMINAL_STATUS,
   WEBP_PARENT_ORPHAN_GRACE_MS,
   WEBP_PARENT_TASK_TYPE,
+  WEBP_ITEM_HEARTBEAT_MS,
   WEBP_EXPIRED_IN_QUEUE_ERROR,
   isWebpItemExpiredInQueue,
   parseTaskResult,
@@ -102,6 +103,10 @@ const SHOPIFY_FETCH_TIMEOUT_MS = 30000;
 // recovery — both of which read the row this leaves behind rather than racing
 // the steps that own it.
 const WEBP_TASK_TIMEOUT_MS = 4 * 60 * 1000;
+
+// The statuses a work item can be CLAIMED from: the waiting ones, i.e. exactly
+// what the poll selects (`running` is deliberately absent).
+const WEBP_CLAIMABLE_STATUS = WEBP_NON_TERMINAL_STATUS.filter((status) => status !== "running");
 
 /**
  * The processor gave up WAITING for an item; the item itself is still running.
@@ -288,6 +293,8 @@ const GLOBAL_MAX_CONCURRENT = 8;
 export class WebPProcessorService {
   static instance = null;
   isRunning = false;
+  /** Work items whose steps are still running (for `drain()` at shutdown). */
+  inFlightItems = new Set();
   /** A poll is running right now (its `processPendingTasks` has not returned). */
   pollInFlight = false;
   /** A wake-up arrived while a poll was in flight: poll again as soon as it ends. */
@@ -320,6 +327,30 @@ export class WebPProcessorService {
     this.nextTick = null;
     this.pollAgain = false;
     if (globalThis.__wakeWebpProcessor) delete globalThis.__wakeWebpProcessor;
+  }
+
+  /**
+   * Shutdown courtesy: after `stop()`, give the conversions already in flight a
+   * few seconds to land before the process exits. Never rejects, never waits
+   * longer than `timeoutMs`.
+   *
+   * Judged worth the six lines, and no more than that: server.js force-exits
+   * 10s after the signal, so this cannot save a long conversion — it saves the
+   * short ones (a small image is download + sharp + four Shopify calls) from
+   * being cut off between "new media created" and "original deleted", which is
+   * the state the boot recovery can only flag for manual review. A conversion
+   * that outlives it is covered by the heartbeat/stale rule instead.
+   */
+  async drain(timeoutMs = 4000) {
+    if (this.inFlightItems.size === 0) return;
+    let timer;
+    await Promise.race([
+      Promise.allSettled([...this.inFlightItems]),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+    clearTimeout(timer);
   }
 
   /**
@@ -695,10 +726,25 @@ export class WebPProcessorService {
       return;
     }
 
+    // Heartbeat for the WHOLE life of the steps, not just of the wait: the
+    // abandon branch below stops waiting after WEBP_TASK_TIMEOUT_MS but the
+    // steps run on, and they must keep looking alive to the boot recovery of a
+    // newer container (WEBP_RUNNING_STALE_MS) and to the reaper. Progress writes
+    // alone are too sparse for that — a download can be silent for two minutes.
+    const steps = this._runWebpSteps(task, taskData);
+    const heartbeat = setInterval(() => this.touchWorkItem(task.id), WEBP_ITEM_HEARTBEAT_MS);
+    heartbeat.unref?.();
+    const stopHeartbeat = () => clearInterval(heartbeat);
+    steps.then(stopHeartbeat, stopHeartbeat);
+    // Tracked for drain() at shutdown; settles when the steps do, whatever the wait did.
+    const tracked = steps.then(() => {}, () => {});
+    this.inFlightItems.add(tracked);
+    tracked.then(() => this.inFlightItems.delete(tracked));
+
     let timeoutTimer;
     try {
       await Promise.race([
-        this._runWebpSteps(task, taskData),
+        steps,
         new Promise((_, reject) => {
           timeoutTimer = setTimeout(
             () => reject(new WebPItemAbandoned(`WebP task still running after ${WEBP_TASK_TIMEOUT_MS}ms`)),
@@ -729,11 +775,19 @@ export class WebPProcessorService {
   async _runWebpSteps(task, taskData) {
     const { sourceUrl, mediaId, productImageId, productId, altText: taskAltText } = taskData;
     try {
-      // Mark as running
-      await db.task.update({
-        where: { id: task.id },
+      // CLAIM the item: an atomic pending/queued -> running. The poll read this
+      // row as waiting some milliseconds (or, in a deploy overlap, a whole other
+      // container) ago; an unguarded update would let two workers both "win" it
+      // and run the destructive sequence twice. `count: 0` means somebody else
+      // holds it, it was reaped or the merchant cancelled it — not ours to run.
+      const claimed = await db.task.updateMany({
+        where: { id: task.id, status: { in: WEBP_CLAIMABLE_STATUS } },
         data: { status: "running", progress: 10 },
       });
+      if (claimed.count === 0) {
+        console.warn(`[WebPProcessor] Task ${task.id} is no longer waiting (claimed elsewhere, reaped or cancelled) — skipping`);
+        return;
+      }
 
       // 1. Download original image
       const sourceBuffer = await downloadImageAsBuffer(sourceUrl);

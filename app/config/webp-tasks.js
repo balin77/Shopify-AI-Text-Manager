@@ -167,3 +167,32 @@ export function isWebpItemExpiredInQueue(createdAt, now = Date.now()) {
   if (!Number.isFinite(created)) return false;
   return now - created > WEBP_QUEUE_MAX_AGE_MS;
 }
+
+/**
+ * How often the processor stamps a work item it is converting (`updatedAt`),
+ * from the moment it picks the item up until its steps have really ended —
+ * independent of the progress boundaries, which can be a long way apart (a
+ * download alone is up to 4 attempts x 30s plus back-off, and a progress write
+ * is a step boundary, not a heartbeat).
+ */
+export const WEBP_ITEM_HEARTBEAT_MS = 15 * 1000;
+
+/**
+ * A `running` work item whose `updatedAt` is younger than this is being worked
+ * on by SOME process and the boot recovery must leave it alone.
+ *
+ * Why it exists: Railway deploys with zero downtime, so the NEW container boots
+ * (and runs `recoverRunningWebpTasks`) while the OLD one may still be converting
+ * an image. Resetting that row to `pending` makes the new worker convert,
+ * upload and delete the original a second time — duplicate or orphaned media on
+ * the merchant's product. The row says who is alive: a live worker stamps it
+ * every WEBP_ITEM_HEARTBEAT_MS.
+ *
+ * 90s = six heartbeats. Clearly above the interval so a slow database round
+ * trip or two missed beats never make a live conversion look dead, and still far
+ * below the 10-minute stuck-task reaper, so a really dead worker is recovered
+ * (with the <70 retry) rather than failed. Rows that are fresh only because the
+ * old container died a moment ago are picked up by the second recovery pass
+ * server.js schedules WEBP_RUNNING_STALE_MS (+ margin) after boot.
+ */
+export const WEBP_RUNNING_STALE_MS = 90 * 1000;
