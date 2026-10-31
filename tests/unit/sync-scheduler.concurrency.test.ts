@@ -229,6 +229,47 @@ describe('runSyncCycle — token migration trigger', () => {
     expect(h.lastActivity).not.toHaveBeenCalled();
   });
 
+  it('WAITS for the migration before the sync starts (the old token is revoked the moment it lands)', async () => {
+    let finishMigration!: (outcome: string) => void;
+    h.migrate.mockImplementationOnce(() => new Promise((res) => { finishMigration = res as (o: string) => void; }));
+    const entry = makeEntry();
+    entry.startedAt = new Date(Date.now() - MIGRATION_SETTLE_MS - 1000);
+    sched.activeTimers.set(shop, entry);
+
+    const p = sched.runSyncCycle(shop, admin);
+    for (let i = 0; i < 50 && h.migrate.mock.calls.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(h.migrate).toHaveBeenCalledTimes(1);
+    // The migration is still out: no sync may have started beside it.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h.syncAll).not.toHaveBeenCalled();
+    expect(entry.isRunning).toBe(true);
+
+    finishMigration('not_needed');
+    await waitForSyncAll();
+    h.resolveSync({ total: 0, duration: 0 });
+    await p;
+    expect(h.syncAll).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['migrated', 'failed', 'needs_reauth'])('skips the sync of this cycle when the migration outcome is %s, and frees the slot', async (outcome) => {
+    h.migrate.mockResolvedValueOnce(outcome);
+    const entry = makeEntry();
+    entry.startedAt = new Date(Date.now() - MIGRATION_SETTLE_MS - 1000);
+    sched.activeTimers.set(shop, entry);
+
+    await sched.runSyncCycle(shop, admin);
+
+    expect(h.syncAll).not.toHaveBeenCalled();
+    expect(entry.isRunning).toBe(false);
+    expect(sched.runningSyncs).toBe(0);
+  });
+
+  it.each(['not_needed', 'backoff', 'disabled', 'no_session'])('still syncs when the migration did nothing (%s)', async (outcome) => {
+    h.migrate.mockResolvedValueOnce(outcome);
+    await runSettledCycle();
+    expect(h.syncAll).toHaveBeenCalledTimes(1);
+  });
+
   it('skips the activity lookup when no migration can be needed', async () => {
     h.mayNeed.mockReturnValue(false);
     await runSettledCycle();
