@@ -76,6 +76,8 @@ const FALLBACK: Record<string, string> = {
     "AI processing has not been confirmed for this shop, so this ran nothing and changed nothing. Confirm it in Settings and try again.",
   managedAiUnavailable:
     "The included AI was temporarily unavailable, so this ran nothing and changed nothing. Please try again later.",
+  serverShuttingDown:
+    "The server was restarted during this run. What was already translated was saved; the rest was not translated. Please run it again.",
   handleRedirectsMissing:
     "{count} URL handle(s) were re-translated, but no redirect could be created for the previous address — add it under URL redirects, or old links will lead nowhere.",
   autoTranslateDailyLimit:
@@ -203,6 +205,10 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
       if (reason === "consentMissing") return phrase(t, "managedAiConsentMissing");
       return phrase(t, "managedAiUnavailable");
     }
+    // The run was cut short by a server restart (deploy): see the bulk-editor
+    // translate runner. Not a failure of the text; the finished part was saved.
+    case "server_shutting_down":
+      return phrase(t, "serverShuttingDown");
     case "rows_failed": {
       const failed = count(parts[1]);
       if (failed === null) return neutral();

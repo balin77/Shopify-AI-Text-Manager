@@ -103,6 +103,24 @@ describe("bulk-editor translate: managed refusal mid-run", () => {
     expect(final.error).toBe("managed_ai_refused:tasterExhausted");
   });
 
+  it("a SHUTDOWN of the AI queue mid-run keeps and WRITES what was translated and ends with its own code", async () => {
+    const { AIQueueShuttingDownError } = await import("../../src/services/ai-queue.service");
+    translateShortFieldsBatch
+      .mockResolvedValueOnce({ en: { title: "Hello" } })
+      .mockRejectedValueOnce(new AIQueueShuttingDownError())
+      .mockResolvedValue({ en: { title: "never" } });
+    const db = makeDb();
+    await run(db, [job("r1"), job("r2"), job("r3")]);
+    expect(translateShortFieldsBatch).toHaveBeenCalledTimes(2);
+    expect(applyBulkDiff).toHaveBeenCalledTimes(1);
+    expect(applyBulkDiff.mock.calls[0][1]).toEqual([
+      expect.objectContaining({ rowId: "r1", value: "Hello" }),
+    ]);
+    const final = finalUpdate(db);
+    expect(final.error).toBe("server_shutting_down");
+    expect(final.status).toBe("completed");
+  });
+
   it("a rejected PROVIDER key still aborts the run without writing", async () => {
     const keyError = Object.assign(new Error("401 invalid x-api-key"), { status: 401, code: "INVALID_AI_KEY" });
     translateShortFieldsBatch

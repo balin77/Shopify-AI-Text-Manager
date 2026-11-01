@@ -10,6 +10,14 @@ import { es } from "~/i18n/es";
  * stores machine codes. These assert the codes never reach the UI raw.
  */
 describe("taskErrorText", () => {
+  it("renders the server-restart stand-down of a bulk run in every locale, never raw", () => {
+    for (const t of [de, en, es] as any[]) {
+      const text = String(taskErrorText("server_shutting_down", t));
+      expect(text).not.toContain("server_shutting_down");
+      expect(text.length).toBeGreaterThan(20);
+    }
+  });
+
   it("translates the stuck-task reaper's timeout code in every locale", () => {
     for (const t of [de, en, es] as any[]) {
       const text = taskErrorText("task_timed_out", t);

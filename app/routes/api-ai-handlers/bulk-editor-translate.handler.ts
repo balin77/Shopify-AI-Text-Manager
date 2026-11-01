@@ -32,6 +32,7 @@
 import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, isManagedRefusal, isRunAbortingAIError } from "./shared";
+import { isAIQueueShuttingDown } from "../../../src/services/ai-queue.service";
 import type { AIService } from "../../../src/services/ai.service";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { getTaskExpirationDate } from "~/config/constants";
@@ -483,6 +484,15 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
   const standsDown = (err: unknown): boolean => {
     if (isManagedRefusal(err)) {
       managedRefusal ??= managedRefusalCode(err);
+      return true;
+    }
+    // The AI queue was stopped for a deploy / restart: every further call would
+    // be rejected the same way, but what the run ALREADY translated is real work
+    // and is still written through applyBulkDiff (a throw here used to skip it,
+    // the outer catch only failing the task). Recorded under its own machine
+    // code, which the Tasks tab renders as "stopped by a server restart".
+    if (isAIQueueShuttingDown(err)) {
+      managedRefusal ??= "server_shutting_down";
       return true;
     }
     if (isRunAbortingAIError(err)) throw err;
