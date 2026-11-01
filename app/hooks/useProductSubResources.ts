@@ -71,6 +71,7 @@ import {
   hasUnsavedPrimaryEdits,
   isOptionEditUnsaved,
   metafieldEditsAfterSave,
+  optionEditsAfterSave,
   type OptionEdit,
 } from "../services/editor/sub-resource-edits.shared";
 import { isBatchTranslatableValueType } from "../services/metaobject-fields.shared";
@@ -1274,12 +1275,12 @@ export function useProductSubResources({
             selectedItem?.metafields?.find((m) => m.id === id) ??
             selectedItem?.clearedMetafields?.find((m) => m.id === id),
         });
-        // Options: failed edits are reverted; the rest stays (as before).
-        keptOptionEdits = Object.fromEntries(
-          Object.entries((pendingNow?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>).filter(
-            ([id]) => !failedOptions.map(String).includes(id),
-          ),
-        );
+        keptOptionEdits = optionEditsAfterSave({
+          edits: (pendingNow?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>,
+          sent: (sentPrimary?.options ?? {}) as Record<string, any>,
+          failedIds: failedOptions.map(String),
+          findOriginal: (id) => selectedItem?.options?.find((o) => o.id === id),
+        });
         setPrimaryOptionEdits(keptOptionEdits);
         setPrimaryMetafieldEdits(keptMetafieldEdits);
 
@@ -1350,7 +1351,12 @@ export function useProductSubResources({
             selectedItem?.metafields?.find((m) => m.id === id) ??
             selectedItem?.clearedMetafields?.find((m) => m.id === id),
         });
-        const keptOkOptions: Record<string, OptionEdit> = {};
+        const keptOkOptions = !sentOk ? {} : optionEditsAfterSave({
+          edits: (pendingOk?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>,
+          sent: (sentOk?.options ?? {}) as Record<string, any>,
+          failedIds: [],
+          findOriginal: (id) => selectedItem?.options?.find((o) => o.id === id),
+        });
         setHasChanges(
           hasUnsavedPrimaryEdits({
             metafieldEdits: keptOkMetafields,

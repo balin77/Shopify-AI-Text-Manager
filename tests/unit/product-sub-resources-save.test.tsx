@@ -965,5 +965,32 @@ describe("translating a metafield never sends the text from before the save", ()
       expect(result.current.state.primaryMetafieldEdits).toEqual({});
       expect(result.current.state.hasChanges).toBe(false);
     });
+
+    it("O3: a SAVED option edit is dropped after a partial save, a retyped one stays, a failed one is reverted", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe")); // saved, then retyped
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(SECOND, "Groesse")); // saved, untouched
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(THIRD, "Stoff")); // fails
+      act(() => result.current.handlers.saveSubResources());
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbton"));
+      fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [THIRD], failedMetafields: [] };
+      rerender({ current: item });
+
+      expect(Object.keys(result.current.state.primaryOptionEdits)).toEqual([OPTION]);
+      expect(result.current.state.primaryOptionEdits[OPTION].name).toBe("Farbton");
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("O3: a clean save keeps a retyped option name and clears the others", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(SECOND, "Groesse"));
+      act(() => result.current.handlers.saveSubResources());
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbton"));
+      fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] };
+      rerender({ current: item });
+      expect(Object.keys(result.current.state.primaryOptionEdits)).toEqual([OPTION]);
+      expect(result.current.state.hasChanges).toBe(true);
+    });
   });
 });
