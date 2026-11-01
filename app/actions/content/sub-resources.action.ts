@@ -39,6 +39,7 @@ import {
 import { getTaskExpirationDate } from "~/config/constants";
 import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import { logger } from "../../utils/logger.server";
+import { withSerialLock } from "../../utils/keyed-serial-lock.server";
 import type { ContentActionHandlerContext } from "./alt-text.action";
 import type { DataResponse } from "~/types/data-response";
 
@@ -1128,7 +1129,28 @@ async function upsertShopMetafieldRow(
   return true;
 }
 
+/**
+ * The primary save of ONE product runs one at a time on the server too: the
+ * client's queue sends them in order, but it can give up on a request that the
+ * server is still working on, and the next one must not start beside it (an older
+ * `metafieldsSet` landing last would overwrite the newer value). See
+ * keyed-serial-lock.server.ts for why the wait is bounded and process-local.
+ * Foreign (translation) saves are NOT serialised: copies and clear-alls send one
+ * per language in parallel and each touches different rows.
+ */
 export async function handleSavePrimarySubResources(
+  ctx: ContentActionHandlerContext,
+  formData: FormData,
+): Promise<DataResponse> {
+  const productId = getFormString(formData, "productId");
+  // No usable id: the inner handler refuses it at once, no lock needed.
+  if (!productId || !isValidShopifyGID(productId)) return handleSavePrimarySubResourcesUnlocked(ctx, formData);
+  return withSerialLock(`primarySave|${ctx.session.shop}|${productId}`, () =>
+    handleSavePrimarySubResourcesUnlocked(ctx, formData),
+  );
+}
+
+async function handleSavePrimarySubResourcesUnlocked(
   ctx: ContentActionHandlerContext,
   formData: FormData,
 ): Promise<DataResponse> {
