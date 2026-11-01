@@ -570,6 +570,7 @@ export default function ProductsPage() {
       optionWarning_metafieldListInvalid: t.products.metafieldListInvalid,
       optionWarning_metafieldExistsMeanwhile: t.products.metafieldWarningExistsMeanwhile,
       optionWarning_metafieldSlotUnverified: t.products.metafieldWarningSlotUnverified,
+      metafieldValueRefused: t.products.metafieldValueRefused,
       metafieldTypeNotTranslatable: t.products.metafieldTypeNotTranslatable,
       metafieldListInvalid: t.products.metafieldListInvalid,
       saveFirstSource: t.common.saveFirstSource,

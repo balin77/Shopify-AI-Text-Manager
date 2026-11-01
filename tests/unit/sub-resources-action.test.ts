@@ -1129,6 +1129,33 @@ describe('handleSavePrimarySubResources — the primary metafield write', () => 
       expect(result.optionWarnings ?? []).not.toContain('metafieldExistsMeanwhile');
     });
 
+    it('a genuinely INVALID value keeps the draft but is reported with Shopify\'s reason, not as "could not check"', async () => {
+      const w = installAdmin({
+        metafieldsSet: () => ({
+          data: { metafieldsSet: { metafields: [], userErrors: [{ field: ['metafields', '0', 'value'], message: 'Value must be an integer.', code: 'INVALID_VALUE' }] } },
+        }),
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'abc' }));
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.unverifiedMetafields).toEqual([METAFIELD]); // typed text survives
+      expect(result.metafieldRefusals).toEqual({ [METAFIELD]: 'Value must be an integer.' });
+      expect(result.optionWarnings ?? []).not.toContain('metafieldSlotUnverified');
+    });
+
+    it('INTERNAL_ERROR and a missing code stay "could not check"; a value code on ANOTHER entry does not leak to this one', async () => {
+      const w = installAdmin({
+        metafieldsSet: () => ({
+          data: { metafieldsSet: { metafields: [], userErrors: [{ field: ['metafields', '0', 'value'], message: 'boom', code: 'INTERNAL_ERROR' }] } },
+        }),
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'x' }));
+      expect(result.metafieldRefusals).toBeUndefined();
+      expect(result.optionWarnings).toContain('metafieldSlotUnverified');
+      expect(result.unverifiedMetafields).toEqual([METAFIELD]);
+    });
+
     it('when ONE raced slot fails the atomic slot batch, the other slot keeps its draft', async () => {
       const LIVE = 'gid://shopify/Metafield/77';
       let reads = 0;

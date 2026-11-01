@@ -993,4 +993,34 @@ describe("translating a metafield never sends the text from before the save", ()
       expect(result.current.state.hasChanges).toBe(true);
     });
   });
+  it("a value Shopify REFUSED is shown with Shopify's reason and no 'save again', the draft is kept", () => {
+    const { result, rerender } = renderHook(
+      ({ current }: { current: unknown }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          strings: { metafieldValueRefused: "Refused: {message}" },
+        } as never),
+      { initialProps: { current: itemWithMf as unknown } },
+    );
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "abc"));
+    act(() => result.current.handlers.saveSubResources());
+    fetcher.data = {
+      success: true,
+      actionType: "savePrimarySubResources",
+      failedOptions: [],
+      failedMetafields: [MF],
+      unverifiedMetafields: [MF],
+      metafieldRefusals: { [MF]: "Value must be an integer." },
+    };
+    rerender({ current: itemWithMf });
+
+    const message = String(showInfoBox.mock.calls.at(-1)?.[0]);
+    expect(message).toContain("Refused: Value must be an integer.");
+    expect(message).not.toMatch(/save again|reverted/i);
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MF]: "abc" });
+    expect(result.current.state.hasChanges).toBe(true);
+  });
 });

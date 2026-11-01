@@ -52,6 +52,7 @@ export const de = {
     optionWarningLastOne: "Die letzte Variante kann nicht entfernt werden.",
     metafieldWarningValueBlank: "Ein Metafeld kann nicht nur aus Leerzeichen bestehen. Leere das Feld ganz, um den Wert zu entfernen.",
     metafieldWarningExistsMeanwhile: "Für ein geleertes Metafeld gibt es auf Shopify inzwischen wieder einen Wert (z. B. im Shopify-Admin oder von einer anderen App gesetzt). Er wurde nicht überschrieben; das Feld zeigt jetzt den aktuellen Wert.",
+    metafieldValueRefused: "Shopify hat den Wert für ein geleertes Metafeld nicht akzeptiert: {message} Es wurde nichts gespeichert; dein Wert bleibt im Feld – bitte passe ihn an.",
     metafieldWarningSlotUnverified: "Für ein geleertes Metafeld konnte nicht geprüft werden, ob Shopify inzwischen schon einen Wert hat. Es wurde nichts gespeichert; dein Wert bleibt im Feld – bitte speichere es noch einmal.",
     metafieldTypeNotTranslatable: "Dieser Metafeld-Typ lässt sich nicht automatisch übersetzen (Zeilenumbrüche oder Listen würden verloren gehen). Bitte gib die Übersetzung von Hand ein.",
     metafieldListInvalid: "Ein Listenfeld enthält Einträge, die nicht zu seinem Typ passen. Korrigiere die markierten Zeilen; es wurde nichts gespeichert.",

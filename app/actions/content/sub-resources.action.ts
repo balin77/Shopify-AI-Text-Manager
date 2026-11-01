@@ -1048,6 +1048,41 @@ async function cachedOptionValueIds(
 const METAFIELDS_PER_CALL = 25;
 
 /**
+ * `MetafieldsSetUserError` codes that say the VALUE (or its type) was refused:
+ * retrying the same text can never work, so the merchant must be told Shopify's
+ * reason instead of "could not check, please save again". Everything else
+ * (INTERNAL_ERROR, STALE_OBJECT, INVALID_COMPARE_DIGEST, permission codes, no
+ * code at all) is "we cannot tell", which is what `metafieldSlotUnverified`
+ * means.
+ */
+const METAFIELD_VALUE_REFUSAL_CODES = new Set([
+  "BLANK",
+  "INCLUSION",
+  "INVALID",
+  "INVALID_TYPE",
+  "INVALID_VALUE",
+  "LESS_THAN_OR_EQUAL_TO",
+  "PRESENT",
+  "TAKEN",
+  "TOO_LONG",
+  "TOO_SHORT",
+]);
+
+/** Batch position -> Shopify's message, for the userErrors that refused a VALUE. */
+function valueRefusalsByIndex(
+  userErrors: Array<{ field?: string[] | string | null; message: string; code?: string | null }>,
+): Map<number, string> {
+  const byIndex = new Map<number, string>();
+  for (const error of userErrors) {
+    if (!error.code || !METAFIELD_VALUE_REFUSAL_CODES.has(error.code)) continue;
+    const path = Array.isArray(error.field) ? error.field : typeof error.field === "string" ? error.field.split(".") : [];
+    const index = Number(path[1]);
+    if (Number.isInteger(index) && !byIndex.has(index)) byIndex.set(index, String(error.message ?? "").slice(0, 300));
+  }
+  return byIndex;
+}
+
+/**
  * Mirror a metafield Shopify holds into the cache, under ITS id, for this shop
  * only. An upsert cannot carry a relation filter in its `where`, so the row is
  * looked up WITH its product's shop first (same rule as the bulk editor's
@@ -1147,6 +1182,10 @@ export async function handleSavePrimarySubResources(
     /** Cleared-slot refills NOT written because Shopify could not be asked
      *  whether a metafield of that key exists (a subset of `failedMetafields`). */
     const unverifiedMetafields: string[] = [];
+    /** Slot refills Shopify refused for their VALUE: id -> Shopify's reason.
+     *  A subset of `failedMetafields` and `unverifiedMetafields` (the typed text
+     *  stays as a draft), but with its own wording and no "save again". */
+    const metafieldRefusals: Record<string, string> = {};
 
     // 1. Options: names, values, and — new — adding, deleting and reordering.
     //
@@ -1504,16 +1543,26 @@ export async function handleSavePrimarySubResources(
               }
               refused = batch.filter((entry) => !yielded.has(entry));
             }
+            const valueRefusals = valueRefusalsByIndex(userErrors);
             for (const entry of refused) {
               failedMetafields.push(entry.metafieldId);
               // A refused CREATE-ONLY call wrote nothing, and metafieldsSet is
-              // atomic: the slots that did not themselves collide (another one
-              // in the batch did, or the re-read could not tell) failed with
-              // it. Their typed text is kept as a draft, like the early path
-              // does when Shopify cannot be asked, instead of being reverted.
+              // atomic. The typed text of a slot is kept as a draft in every
+              // case (nothing is lost), but WHY decides the wording:
+              //  - Shopify refused this very value (INVALID_VALUE, TOO_LONG, ...):
+              //    saving it again can never work -> its own message, no "save
+              //    again" advice;
+              //  - otherwise (INTERNAL_ERROR, no code, or a batch-mate of a slot
+              //    that collided and took the atomic call down with it) we
+              //    cannot tell -> "could not check", a retry is the right step.
               if (entry.isSlot) {
                 unverifiedMetafields.push(entry.metafieldId);
-                optionWarnings.push("metafieldSlotUnverified");
+                const refusal = valueRefusals.get(batch.indexOf(entry));
+                if (refusal !== undefined) {
+                  metafieldRefusals[entry.metafieldId] = refusal;
+                } else {
+                  optionWarnings.push("metafieldSlotUnverified");
+                }
               }
             }
             continue;
@@ -1597,14 +1646,18 @@ export async function handleSavePrimarySubResources(
             }
           }
         } catch (err) {
-          // A schema-level refusal arrives here as a throw (GraphqlQueryError).
+          // A schema-level refusal (GraphqlQueryError) or a transport failure
+          // arrives here as a throw, with NO answer to read a reason from.
           logger.error("[UnifiedContent] Failed to update metafields", {
             context: "UnifiedContent", error: getFullErrorMessage(err),
           });
           for (const entry of batch) {
             failedMetafields.push(entry.metafieldId);
-            // Thrown before any answer: nothing is known to be written. A slot
-            // refill keeps its typed text as a draft (see the refusal above).
+            // No answer: we cannot tell why it failed, and after a transport
+            // failure the create-only write may even have landed. A slot
+            // refill keeps its typed text as a draft with the "could not check"
+            // wording; saving again is right either way (if it did land, the
+            // guarded retry finds the metafield and reports it as existing).
             if (entry.isSlot) {
               unverifiedMetafields.push(entry.metafieldId);
               optionWarnings.push("metafieldSlotUnverified");
@@ -2108,6 +2161,7 @@ export async function handleSavePrimarySubResources(
       savedMetafields,
       failedMetafields,
       ...(unverifiedMetafields.length > 0 ? { unverifiedMetafields } : {}),
+      ...(Object.keys(metafieldRefusals).length > 0 ? { metafieldRefusals } : {}),
       // Cleared metafields Shopify confirmed DELETING (not in savedMetafields:
       // there is no source text left whose translations could be stale).
       ...(removedMetafieldIds.length > 0 ? { removedMetafieldIds } : {}),

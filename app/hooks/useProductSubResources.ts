@@ -104,6 +104,9 @@ interface SubResourceFetcherData {
   /** Cleared-slot refills not written: Shopify could not be asked whether one
    *  exists (`metafieldSlotUnverified`). Kept as drafts, never reverted. */
   unverifiedMetafields?: string[];
+  /** Slot refills Shopify refused for their VALUE: id -> Shopify's reason. Kept
+   *  as drafts like `unverifiedMetafields`, but worded as a refusal. */
+  metafieldRefusals?: Record<string, string>;
   /** Failure CODES from the option write paths; the client owns the wording. */
   optionWarnings?: string[];
   /** Create / delete / reorder failures, which carry no option id. */
@@ -420,6 +423,8 @@ interface UseProductSubResourcesStrings {
   sourceReloading?: string;
   /** Why a metafield that is not single-line text is not translated. */
   metafieldTypeNotTranslatable?: string;
+  /** "{message}" is Shopify's own reason for a value it refused. */
+  metafieldValueRefused?: string;
   /** One per `OptionWriteWarning` code, e.g. `optionWarning_optionLastOne`.
    *  Indexed rather than listed: the server owns the code list, and a missing
    *  entry drops that reason instead of printing an English one. */
@@ -1243,12 +1248,19 @@ export function useProductSubResources({
             .map((code) => strings[`optionWarning_${code}`] || "")
             .filter(Boolean)
             .join(" ");
+          // Shopify's own reason for a value it refused (no "save again").
+          const refusals = Object.values(data.metafieldRefusals ?? {})
+            .map((message) =>
+              (strings.metafieldValueRefused || "Shopify did not accept the value: {message}").replace("{message}", String(message)),
+            )
+            .join(" ");
           showInfoBox(
             [
               revertedCount > 0
                 ? (strings.saveFailedItems || "Failed to save {count} item(s). Changes have been reverted to original values.").replace("{count}", String(revertedCount))
                 : "",
               reasons,
+              refusals,
               partialPurge.unconfirmed
                 ? strings.translationPurgeUnconfirmed ||
                   "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them."
