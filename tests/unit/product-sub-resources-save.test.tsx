@@ -1136,4 +1136,29 @@ describe("translating a metafield never sends the text from before the save", ()
       expect(result.current.state.primaryOptionEdits).toEqual({ [OPTION]: { values: { [BLUE]: "Bleue" } } });
     });
   });
+  it("Shopify's text is inserted literally: `$&` and `$1` in a refusal message are not replacement patterns", () => {
+    const { result, rerender } = renderHook(
+      ({ current }: { current: unknown }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          strings: { metafieldValueRefused: "Refused: {message}" },
+        } as never),
+      { initialProps: { current: itemWithMf as unknown } },
+    );
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "abc"));
+    act(() => result.current.handlers.saveSubResources());
+    fetcher.data = {
+      success: true,
+      actionType: "savePrimarySubResources",
+      failedOptions: [],
+      failedMetafields: [MF],
+      unverifiedMetafields: [MF],
+      metafieldRefusals: { [MF]: "must match $& and $1 and $$" },
+    };
+    rerender({ current: itemWithMf });
+    expect(String(showInfoBox.mock.calls.at(-1)?.[0])).toContain("Refused: must match $& and $1 and $$");
+  });
 });

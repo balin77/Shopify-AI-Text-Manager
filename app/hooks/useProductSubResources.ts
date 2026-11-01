@@ -106,8 +106,8 @@ interface SubResourceFetcherData {
   /** Cleared-slot refills not written: Shopify could not be asked whether one
    *  exists (`metafieldSlotUnverified`). Kept as drafts, never reverted. */
   unverifiedMetafields?: string[];
-  /** Slot refills Shopify refused for their VALUE: id -> Shopify's reason. Kept
-   *  as drafts like `unverifiedMetafields`, but worded as a refusal. */
+  /** Edits Shopify refused for their VALUE: id -> Shopify's reason. Kept as
+   *  drafts like `unverifiedMetafields`, but worded as a refusal. */
   metafieldRefusals?: Record<string, string>;
   /** Cleared slots filled again: slot id -> the GID of the re-created metafield. */
   recreatedMetafields?: Record<string, string>;
@@ -1261,7 +1261,9 @@ export function useProductSubResources({
           // Shopify's own reason for a value it refused (no "save again").
           const refusals = Object.values(data.metafieldRefusals ?? {})
             .map((message) =>
-              (strings.metafieldValueRefused || "Shopify did not accept the value: {message}").replace("{message}", String(message)),
+              // A replacer FUNCTION: Shopify's text is arbitrary and a string
+              // replacement would interpret `$&`, `$1`, `$$` in it.
+              (strings.metafieldValueRefused || "Shopify did not accept the value: {message}").replace("{message}", () => String(message)),
             )
             .join(" ");
           showInfoBox(

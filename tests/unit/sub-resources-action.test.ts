@@ -973,6 +973,57 @@ describe('handleSavePrimarySubResources — the primary metafield write', () => 
     expect(result.failedMetafields).toEqual([METAFIELD]);
   });
 
+  describe('an ORDINARY edit that Shopify refuses (O6)', () => {
+    const refuse = (userErrors: unknown[]) =>
+      installAdmin({ metafieldsSet: () => ({ data: { metafieldsSet: { metafields: [], userErrors } } }) });
+
+    it('keeps the typed text as a draft with Shopify\'s own reason, and not as a generic revert', async () => {
+      const w = refuse([{ field: ['metafields', '0', 'value'], message: 'Value must be an integer.', code: 'INVALID_VALUE' }]);
+      const db = makeDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'abc' }));
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.unverifiedMetafields).toEqual([METAFIELD]);
+      expect(result.metafieldRefusals).toEqual({ [METAFIELD]: 'Value must be an integer.' });
+      expect(result.optionWarnings ?? []).not.toContain('metafieldSlotUnverified');
+    });
+
+    it('maps the error to ITS position in the batch: the refused one keeps its draft, the batch-mate reverts as before', async () => {
+      const w = refuse([{ field: ['metafields', '1', 'value'], message: 'Too long.', code: 'TOO_LONG' }]);
+      const db = makeDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'ok', [MF2]: 'x'.repeat(10) }));
+      expect(result.failedMetafields.sort()).toEqual([METAFIELD, MF2].sort());
+      expect(result.metafieldRefusals).toEqual({ [MF2]: 'Too long.' });
+      expect(result.unverifiedMetafields).toEqual([MF2]);
+    });
+
+    it('fails SAFE: a non-numeric or missing path gives the generic revert, never a wrong mapping', async () => {
+      for (const field of [['metafields', 'x', 'value'], null, 'metafields', ['metafields']]) {
+        const w = refuse([{ field, message: 'Nope.', code: 'INVALID_VALUE' }]);
+        const result = body(await save(makeDb(), w.admin, { [METAFIELD]: 'abc' }));
+        expect(result.failedMetafields).toEqual([METAFIELD]);
+        expect(result.metafieldRefusals).toBeUndefined();
+        expect(result.unverifiedMetafields).toBeUndefined();
+      }
+    });
+
+    it('a non-value code (INTERNAL_ERROR) is not presented as a refusal of the text', async () => {
+      const w = refuse([{ field: ['metafields', '0', 'value'], message: 'boom', code: 'INTERNAL_ERROR' }]);
+      const result = body(await save(makeDb(), w.admin, { [METAFIELD]: 'abc' }));
+      expect(result.metafieldRefusals).toBeUndefined();
+    });
+  });
+
+  it('APP_NOT_AUTHORIZED and CAPABILITY_VIOLATION are refusals too: Shopify\'s message, never "save again"', async () => {
+    for (const code of ['APP_NOT_AUTHORIZED', 'CAPABILITY_VIOLATION']) {
+      const w = installAdmin({
+        metafieldsSet: () => ({ data: { metafieldsSet: { metafields: [], userErrors: [{ field: ['metafields', '0', 'value'], message: `${code} text`, code }] } } }),
+      });
+      const result = body(await save(makeDb(), w.admin, { [METAFIELD]: 'abc' }));
+      expect(result.metafieldRefusals).toEqual({ [METAFIELD]: `${code} text` });
+      expect(result.optionWarnings ?? []).not.toContain('metafieldSlotUnverified');
+    }
+  });
+
   it('an empty value goes through metafieldsDelete (echo-confirmed), KEEPS the row as a cleared slot and drops its translations', async () => {
     const w = installAdmin();
     const db = makeDb();

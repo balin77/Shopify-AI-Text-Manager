@@ -1048,12 +1048,12 @@ async function cachedOptionValueIds(
 const METAFIELDS_PER_CALL = 25;
 
 /**
- * `MetafieldsSetUserError` codes that say the VALUE (or its type) was refused:
- * retrying the same text can never work, so the merchant must be told Shopify's
- * reason instead of "could not check, please save again". Everything else
- * (INTERNAL_ERROR, STALE_OBJECT, INVALID_COMPARE_DIGEST, permission codes, no
- * code at all) is "we cannot tell", which is what `metafieldSlotUnverified`
- * means.
+ * `MetafieldsSetUserError` codes that say the VALUE (or its type, or our right
+ * to write it) was refused: retrying the same thing can never work, so the
+ * merchant must be told Shopify's reason instead of "could not check, please
+ * save again". Everything else (INTERNAL_ERROR, STALE_OBJECT,
+ * INVALID_COMPARE_DIGEST, no code at all) is "we cannot tell", which is what
+ * `metafieldSlotUnverified` means.
  */
 const METAFIELD_VALUE_REFUSAL_CODES = new Set([
   "BLANK",
@@ -1066,6 +1066,10 @@ const METAFIELD_VALUE_REFUSAL_CODES = new Set([
   "TAKEN",
   "TOO_LONG",
   "TOO_SHORT",
+  // Not about the text, but a retry cannot help either: "save again" would be
+  // a lie. Shown with Shopify's own message like a value refusal.
+  "APP_NOT_AUTHORIZED",
+  "CAPABILITY_VIOLATION",
 ]);
 
 /** Batch position -> Shopify's message, for the userErrors that refused a VALUE. */
@@ -1182,9 +1186,10 @@ export async function handleSavePrimarySubResources(
     /** Cleared-slot refills NOT written because Shopify could not be asked
      *  whether a metafield of that key exists (a subset of `failedMetafields`). */
     const unverifiedMetafields: string[] = [];
-    /** Slot refills Shopify refused for their VALUE: id -> Shopify's reason.
-     *  A subset of `failedMetafields` and `unverifiedMetafields` (the typed text
-     *  stays as a draft), but with its own wording and no "save again". */
+    /** Edits Shopify refused for their VALUE (slot refills and ordinary edits):
+     *  id -> Shopify's reason. A subset of `failedMetafields` and
+     *  `unverifiedMetafields` (the typed text stays as a draft), but with its own
+     *  wording and no "save again". */
     const metafieldRefusals: Record<string, string> = {};
 
     // 1. Options: names, values, and — new — adding, deleting and reordering.
@@ -1546,6 +1551,22 @@ export async function handleSavePrimarySubResources(
             const valueRefusals = valueRefusalsByIndex(userErrors);
             for (const entry of refused) {
               failedMetafields.push(entry.metafieldId);
+              // An ORDINARY edit (not a slot) that Shopify refused for its own
+              // value: the typed text is kept as a draft with Shopify's reason,
+              // exactly like a slot refill, so nothing the merchant typed is
+              // lost to a revert and "save again" is not advised. Its
+              // batch-mates (collateral of the atomic call) and refusals without
+              // a readable value code still revert with the generic message, as
+              // before. A `field` that does not name a batch position (any
+              // non-numeric path) maps to nothing, i.e. the generic wording.
+              if (!entry.isSlot) {
+                const own = valueRefusals.get(batch.indexOf(entry));
+                if (own !== undefined) {
+                  unverifiedMetafields.push(entry.metafieldId);
+                  metafieldRefusals[entry.metafieldId] = own;
+                }
+                continue;
+              }
               // A refused CREATE-ONLY call wrote nothing, and metafieldsSet is
               // atomic. The typed text of a slot is kept as a draft in every
               // case (nothing is lost), but WHY decides the wording:
