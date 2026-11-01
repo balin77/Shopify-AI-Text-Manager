@@ -66,7 +66,13 @@ import {
 } from "../services/editor/sub-resource-clear.shared";
 import { retirePurgedMarketResources } from "~/services/editor/sub-resource-market-purge.shared";
 import { appFetch } from "../utils/app-fetch";
-import { isPrimaryMetafieldUnsaved, isSentMetafieldEdit, primaryMetafieldChange } from "../services/product-metafields.shared";
+import { isPrimaryMetafieldUnsaved, primaryMetafieldChange } from "../services/product-metafields.shared";
+import {
+  hasUnsavedPrimaryEdits,
+  isOptionEditUnsaved,
+  metafieldEditsAfterSave,
+  type OptionEdit,
+} from "../services/editor/sub-resource-edits.shared";
 import { isBatchTranslatableValueType } from "../services/metaobject-fields.shared";
 
 /**
@@ -1187,6 +1193,8 @@ export function useProductSubResources({
         // overlay for it exactly like a full success.
         const sentPrimary = pendingPrimarySaveSentRef.current;
         pendingPrimarySaveSentRef.current = null;
+        let keptMetafieldEdits: Record<string, string> = {};
+        let keptOptionEdits: Record<string, OptionEdit> = {};
         const partialPurge = unconfirmedPurgeOf(data as { warnings?: unknown; unconfirmedPurge?: unknown });
         const partialSavedIds = sentPrimary
           ? savedIdsAfterPartialSave(sentPrimary.options, sentPrimary.metafields, failedOptions, failedMetafields)
@@ -1249,53 +1257,31 @@ export function useProductSubResources({
           );
         }
 
-        // Restore original values for failed resources from selectedItem
-        if (selectedItem) {
-          setPrimaryOptionEdits(prev => {
-            const restored = { ...prev };
-
-            for (const optionId of failedOptions) {
-              // Remove the failed edit to restore original value
-              delete restored[optionId];
-            }
-
-            return restored;
-          });
-
-          // What stays is what is still UNSAVED: the kept drafts (nothing was
-          // written for them, see above) and anything typed after the save went
-          // out. The failed edits are reverted (dropped) as before; the SAVED
-          // ones are dropped too. Left in, they made a second Save re-send them
-          // (purging and re-translating what the first one had just settled),
-          // kept "Translate all" on "Save first" with nothing unsaved, and
-          // reported a re-created cleared field as "failed, reverted" on the
-          // second attempt although the first had written it.
-          const sentMetafields = sentPrimary?.metafields ?? {};
-          const failedMetafieldIds = new Set<string>(failedMetafields.map(String));
-          setPrimaryMetafieldEdits(prev => {
-            const kept: Record<string, string> = {};
-            for (const [metafieldId, value] of Object.entries(prev)) {
-              let stays: boolean;
-              if (unverifiedMetafields.has(metafieldId)) {
-                stays = true;
-              } else if (failedMetafieldIds.has(metafieldId)) {
-                stays = false;
-              } else if (!(metafieldId in sentMetafields)) {
-                stays = true; // never sent: typed after the save went out
-              } else {
-                // Sent AND saved. It goes only if the field still holds what
-                // was sent: a field retyped while the save was in flight has a
-                // newer text that no save has carried yet.
-                const original =
-                  selectedItem.metafields?.find(m => m.id === metafieldId) ??
-                  selectedItem.clearedMetafields?.find(m => m.id === metafieldId);
-                stays = original ? !isSentMetafieldEdit(original, value, sentMetafields[metafieldId]) : false;
-              }
-              if (stays) kept[metafieldId] = value;
-            }
-            return kept;
-          });
-        }
+        // What stays in the edit maps is what is still UNSAVED (the rule is in
+        // sub-resource-edits.shared.ts): kept drafts, text typed after the save
+        // went out, and fields retyped while it was in flight. Failed edits are
+        // reverted; SAVED ones are dropped, or a second Save would re-send them
+        // (purging and re-translating what the first had just settled), "Translate
+        // all" would stay on "Save first", and a re-created cleared field would
+        // be reported as "failed, reverted" on the second attempt.
+        const pendingNow = pendingStateRef.current;
+        keptMetafieldEdits = metafieldEditsAfterSave({
+          edits: pendingNow?.primaryMetafieldEdits as Record<string, string> ?? {},
+          sent: sentPrimary?.metafields ?? {},
+          failedIds: failedMetafields.map(String),
+          unverifiedIds: unverifiedMetafields,
+          findOriginal: (id) =>
+            selectedItem?.metafields?.find((m) => m.id === id) ??
+            selectedItem?.clearedMetafields?.find((m) => m.id === id),
+        });
+        // Options: failed edits are reverted; the rest stays (as before).
+        keptOptionEdits = Object.fromEntries(
+          Object.entries((pendingNow?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>).filter(
+            ([id]) => !failedOptions.map(String).includes(id),
+          ),
+        );
+        setPrimaryOptionEdits(keptOptionEdits);
+        setPrimaryMetafieldEdits(keptMetafieldEdits);
 
         // The structural lists go too. Left armed while `hasChanges` is
         // cleared, the card would keep showing a deletion as applied with no
@@ -1312,8 +1298,17 @@ export function useProductSubResources({
         pendingPrimarySaveIdsRef.current = [];
         pendingPrimarySaveSentRef.current = null;
 
-        // A kept draft keeps the save bar up, so the next Save resends it.
-        setHasChanges(unverifiedMetafields.size > 0);
+        // The save bar follows what is REALLY still unsaved (kept drafts and
+        // retypes), so a kept edit always has a Save to click.
+        setHasChanges(
+          hasUnsavedPrimaryEdits({
+            metafieldEdits: keptMetafieldEdits,
+            optionEdits: keptOptionEdits,
+            metafields: selectedItem?.metafields,
+            clearedMetafields: selectedItem?.clearedMetafields,
+            options: selectedItem?.options,
+          }),
+        );
       } else {
         // Saved -- but removing the now-stale foreign translations may not have
         // been confirmed on Shopify. Those are still LIVE: say so, and keep what
@@ -1322,6 +1317,7 @@ export function useProductSubResources({
         // The source text of these resources moved: every language's staged
         // value for them is stale, except where the removal was not confirmed.
         const savedIds = pendingPrimarySaveIdsRef.current;
+        const sentOk = pendingPrimarySaveSentRef.current;
         pendingPrimarySaveIdsRef.current = [];
         pendingPrimarySaveSentRef.current = null;
         updateKeepIds(keepOverlayIdsRef.current, savedIds, purge.resourceIds);
@@ -1340,9 +1336,31 @@ export function useProductSubResources({
             showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success");
           }
         }
-        setHasChanges(false);
-        // Clear primary edits after successful save
-        setPrimaryOptionEdits({});
+        // Clear the edits this save settled -- NOT the whole map: the save bar is
+        // not locked while the request is out, and a field retyped meanwhile
+        // holds text no save has carried yet. hasChanges follows what is kept.
+        const pendingOk = pendingStateRef.current;
+        // No record of what was sent (should not happen): settle everything, as before.
+        const keptOkMetafields = !sentOk ? {} : metafieldEditsAfterSave({
+          edits: pendingOk?.primaryMetafieldEdits as Record<string, string> ?? {},
+          sent: sentOk?.metafields ?? {},
+          failedIds: [],
+          unverifiedIds: new Set<string>(),
+          findOriginal: (id) =>
+            selectedItem?.metafields?.find((m) => m.id === id) ??
+            selectedItem?.clearedMetafields?.find((m) => m.id === id),
+        });
+        const keptOkOptions: Record<string, OptionEdit> = {};
+        setHasChanges(
+          hasUnsavedPrimaryEdits({
+            metafieldEdits: keptOkMetafields,
+            optionEdits: keptOkOptions,
+            metafields: selectedItem?.metafields,
+            clearedMetafields: selectedItem?.clearedMetafields,
+            options: selectedItem?.options,
+          }),
+        );
+        setPrimaryOptionEdits(keptOkOptions);
         // The matrix-changing lists too: a discarded delete that survives the
         // save would fire again on the next one.
         setOptionValuesToAdd({});
@@ -1354,7 +1372,7 @@ export function useProductSubResources({
         setOptionValueOrder({});
         setSavedNonce((n) => n + 1);
 
-        setPrimaryMetafieldEdits({});
+        setPrimaryMetafieldEdits(keptOkMetafields);
 
         // Trigger revalidation to reload fresh data from DB/Shopify
         // This ensures new option value GIDs and updated values are loaded

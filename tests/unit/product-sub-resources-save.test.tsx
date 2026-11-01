@@ -900,4 +900,70 @@ describe("translating a metafield never sends the text from before the save", ()
 
     expect(result.current.state.primaryMetafieldEdits).toEqual({ [MF]: "Hanf" });
   });
+  describe("what a save leaves in the edit maps (MAJ-1, O3)", () => {
+    const MFA = "gid://shopify/Metafield/55";
+    const item = {
+      ...(selectedItem as object),
+      metafields: [{ id: MFA, namespace: "custom", key: "material", value: "Baumwolle", type: "single_line_text_field" }],
+    };
+    const render = () =>
+      renderHook(
+        ({ current }: { current: unknown }) =>
+          useProductSubResources({
+            selectedItem: current,
+            currentLanguage: "de",
+            primaryLocale: "de",
+            showInfoBox,
+            strings: {},
+          } as never),
+        { initialProps: { current: item as unknown } },
+      );
+
+    it("a CLEAN save keeps a field retyped while it was in flight, and the save bar with it", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Hanf")); // typed while the request is out
+      fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] };
+      rerender({ current: item });
+
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Hanf" });
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("a clean save with nothing retyped clears the map and the save bar", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] };
+      rerender({ current: item });
+      expect(result.current.state.primaryMetafieldEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(false);
+    });
+
+    it("a PARTIAL save with a retype keeps the save bar up (a kept edit always has a Save to click)", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe")); // fails
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Hanf"));
+      fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [OPTION], failedMetafields: [] };
+      rerender({ current: item });
+
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Hanf" });
+      expect(result.current.state.primaryOptionEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("a partial save with NOTHING left unsaved turns the save bar off", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe")); // fails
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen")); // saved
+      act(() => result.current.handlers.saveSubResources());
+      fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [OPTION], failedMetafields: [] };
+      rerender({ current: item });
+      expect(result.current.state.primaryMetafieldEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(false);
+    });
+  });
 });
