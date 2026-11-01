@@ -7,7 +7,7 @@ import { AIService, toValidProvider, isProviderKeyRejection, isManagedRefusal } 
 import type { AIProvider } from "../../../src/services/ai.service";
 import { getProviderDisplayName } from "../../utils/api-key-validation";
 import { getTranslation, type Locale } from "../../i18n";
-import { redactString } from "../../utils/sentry-scrub";
+import { scrubProviderErrorText } from "../../utils/provider-error-scrub";
 import { tryDecryptApiKey } from "../../utils/encryption.server";
 import {
   PRODUCTS_CONFIG, COLLECTIONS_CONFIG, BLOGS_CONFIG, PAGES_CONFIG, POLICIES_CONFIG,
@@ -181,8 +181,7 @@ export function aiAuthErrorResponse(_error: unknown): DataResponse {
  * a provider that returns a page of HTML cannot flood the log.
  */
 export function providerErrorForLog(error: unknown): string {
-  const scrubbed = String(redactString(errorMessage(error)));
-  return scrubbed.replace(/[A-Za-z0-9_\-.]{20,}/g, "[redacted-token]").slice(0, 500);
+  return scrubProviderErrorText(errorMessage(error));
 }
 
 /** Check if an unknown error is a Prisma error with a specific code. */

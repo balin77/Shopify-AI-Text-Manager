@@ -7,6 +7,7 @@ import { AIQueueService, MAX_RATE_LIMIT_RETRIES, rateLimitBucket } from './ai-qu
 // (the breaker, the ceiling) stays behind a dynamic import like db.server.
 import { classifyFailover, statusOf } from '../../app/services/ai/managed-failover.shared';
 import { sanitizePromptInput, isValidFieldType } from '../../app/utils/prompt-sanitizer';
+import { scrubProviderErrorText } from '../../app/utils/provider-error-scrub';
 import type { GlossaryRule } from './glossary.service';
 import { loggers } from '../../app/utils/logger.server';
 import { notifyOps } from '../../app/services/ops-alert.server';
@@ -294,7 +295,9 @@ export class MissingAIKeyError extends Error {
 export class InvalidAIKeyError extends Error {
   readonly code = 'INVALID_AI_KEY' as const;
   constructor(message: string) {
-    super(message);
+    // Scrubbed HERE: the provider's text can quote the key, and this error is
+    // logged and written to Task.error by several handlers, not only /api/ai.
+    super(scrubProviderErrorText(message));
     this.name = 'InvalidAIKeyError';
   }
 }

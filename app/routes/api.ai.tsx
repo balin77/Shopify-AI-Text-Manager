@@ -246,8 +246,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (isProviderKeyRejection(error)) {
       logger.error("[API-AI] AI request failed — provider rejected the API key", {
         context: "AI",
-        // Scrubbed: the provider's text can quote the key. It no longer goes to
-        // the browser (aiAuthErrorResponse), so this log is the only place it lives.
+        // The provider's text can quote the key. It no longer goes to the
+        // browser (aiAuthErrorResponse); `InvalidAIKeyError` scrubs it at the
+        // source, and `providerErrorForLog` covers any other error type here.
         error: providerErrorForLog(error),
       });
       return aiAuthErrorResponse(error);

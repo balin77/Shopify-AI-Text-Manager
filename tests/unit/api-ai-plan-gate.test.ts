@@ -153,6 +153,14 @@ describe("api.ai catch: what a handler failure is answered with", () => {
     expect(captureServerError).not.toHaveBeenCalled();
   });
 
+  it("InvalidAIKeyError scrubs the key out of its own message at the source (handlers log it and store it in Task.error)", () => {
+    const err = new InvalidAIKeyError("401 Incorrect API key provided: sk-proj-abcdefghijklmnop1234567890. Retry.");
+    expect(err.message).toContain("Incorrect API key provided");
+    expect(err.message).not.toContain("sk-proj");
+    expect(err.message).not.toContain("abcdefghijklmnop");
+    expect(err.code).toBe("INVALID_AI_KEY");
+  });
+
   it("scrubs key-like tokens from the provider text before it is logged", async () => {
     const { providerErrorForLog } = await import("~/routes/api-ai-handlers/shared");
     const text = providerErrorForLog(new Error("401 Incorrect API key provided: sk-proj-abcdefghijklmnop1234567890. Retry."));
