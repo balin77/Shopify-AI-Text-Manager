@@ -362,6 +362,27 @@ describe('handleSaveSubResourceTranslations', () => {
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
+  it('a foreign failure carries only SHOPIFY\'s text; without one, a code - and a caught error\'s text is not shown', async () => {
+    const refused = installAdmin({
+      register: () => ({ data: { translationsRegister: { userErrors: [{ message: 'Name can\'t be blank' }], translations: [] } } }),
+    });
+    const a = body(await save(makeDb(), refused.admin, { [OPTION]: { name: 'Couleur' } }, { [OPTION]: 'ProductOption' }));
+    expect(a.failureReasons).toEqual({ [OPTION]: 'Name can\'t be blank' });
+    expect(a.failureCodes).toBeUndefined();
+
+    const silent = installAdmin({ register: () => ({ data: { translationsRegister: { userErrors: [], translations: [] } } }) });
+    const b = body(await save(makeDb(), silent.admin, { [OPTION]: { name: 'Couleur' } }, { [OPTION]: 'ProductOption' }));
+    expect(b.failureReasons).toBeUndefined();
+    expect(b.failureCodes).toEqual({ [OPTION]: 'notConfirmed' });
+
+    const boom = installAdmin();
+    boom.admin.graphql.mockRejectedValue(new Error('secret internal detail shpat_abc'));
+    const c = body(await save(makeDb(), boom.admin, { [OPTION]: { name: 'Couleur' } }, { [OPTION]: 'ProductOption' }));
+    expect(c.failureReasons).toBeUndefined();
+    expect(JSON.stringify(c)).not.toContain('secret internal detail');
+    expect(c.failureCodes).toEqual({ [OPTION]: 'error' });
+  });
+
   it('a market-scoped clear removes only that market\'s override', async () => {
     const w = installAdmin();
     const db = makeDb();
@@ -743,6 +764,39 @@ describe('handleSavePrimarySubResources — the primary-change purges', () => {
     expect(result.notConfirmed).toBe(true);
     expect(w.of('metafieldsSet')).toHaveLength(0);
     expect(db.productMetafield.updateMany).not.toHaveBeenCalled();
+  });
+
+  describe('says WHY a metafield failed (reason codes, Shopify text for a refused delete)', () => {
+    it('a refused delete carries Shopify\'s own message', async () => {
+      const w = installAdmin({
+        metafieldsDelete: () => ({ data: { metafieldsDelete: { userErrors: [{ message: 'Definition is pinned' }], deletedMetafields: [] } } }),
+      });
+      const result = body(await save(makeDb(), w.admin, {}, { [METAFIELD]: '' }));
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.metafieldDeleteRefusal).toBe('Definition is pinned');
+    });
+
+    it('a delete with no readable message, or one that throws, carries a code', async () => {
+      const refused = installAdmin({ metafieldsDelete: () => ({ data: { metafieldsDelete: null } }) });
+      expect(body(await save(makeDb(), refused.admin, {}, { [METAFIELD]: '' })).optionWarnings).toContain('metafieldDeleteFailed');
+      const unechoed = installAdmin({ metafieldsDelete: () => ({ data: { metafieldsDelete: { userErrors: [], deletedMetafields: [] } } }) });
+      expect(body(await save(makeDb(), unechoed.admin, {}, { [METAFIELD]: '' })).optionWarnings).toContain('metafieldDeleteNotConfirmed');
+    });
+
+    it('a write Shopify did not echo carries a code', async () => {
+      const w = installAdmin({ metafieldsSet: () => ({ data: { metafieldsSet: { userErrors: [], metafields: [] } } }) });
+      const result = body(await save(makeDb(), w.admin, {}, { [METAFIELD]: 'x' }));
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.optionWarnings).toContain('metafieldNotConfirmed');
+    });
+
+    it('a metafield the cache does not know carries a code', async () => {
+      const w = installAdmin();
+      const db = makeDb();
+      db.productMetafield.findMany = vi.fn().mockResolvedValue([]);
+      const result = body(await save(db, w.admin, {}, { [METAFIELD]: 'x' }));
+      expect(result.optionWarnings).toContain('metafieldNotFound');
+    });
   });
 
   it('two saves of ONE product run one after the other on the server', async () => {

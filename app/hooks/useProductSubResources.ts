@@ -128,6 +128,10 @@ interface SubResourceFetcherData {
   metafieldRefusals?: Record<string, string>;
   /** Foreign saves: why each failed resource failed (server-scrubbed, bounded). */
   failureReasons?: Record<string, string>;
+  /** Foreign saves: failures with no Shopify message - a CODE the client words. */
+  failureCodes?: Record<string, string>;
+  /** Primary save: Shopify's own message when it refused to clear a metafield. */
+  metafieldDeleteRefusal?: string;
   /** The HTTP status of an answer that was refused before the app ran (a non-JSON 4xx). */
   httpStatus?: number;
   /** The outcome is unknown (no answer in time, connection lost, gateway). */
@@ -337,11 +341,21 @@ function failureReasonText(data: SubResourceFetcherData | null, strings: UseProd
   return status && translated ? `${translated} (HTTP ${status})` : translated;
 }
 
-/** Why foreign resources failed (the server's scrubbed reasons), two at most. */
-function foreignReasonsText(data: SubResourceFetcherData | null): string {
-  const reasons = data?.failureReasons;
-  if (!reasons) return "";
-  return [...new Set(Object.values(reasons).filter((r) => typeof r === "string" && r.trim()))].slice(0, 2).join(" ");
+/**
+ * Why foreign resources failed, two reasons at most: Shopify's own message
+ * where it gave one, else the localised sentence for the failure code (the
+ * server never ships English text of its own).
+ */
+function foreignReasonsText(data: SubResourceFetcherData | null, strings: UseProductSubResourcesStrings): string {
+  const texts: string[] = [];
+  for (const reason of Object.values(data?.failureReasons ?? {})) {
+    if (typeof reason === "string" && reason.trim()) texts.push(reason);
+  }
+  for (const code of Object.values(data?.failureCodes ?? {})) {
+    const text = strings[`failureReason_${code}`];
+    if (text) texts.push(text);
+  }
+  return [...new Set(texts)].slice(0, 2).join(" ");
 }
 
 /** The reasons / refusals of a (partly) failed PRIMARY save, as sentences. */
@@ -376,12 +390,15 @@ function primaryFailureDetails(
       ).replace("{message}", () => String(message)),
     )
     .join(" ");
+  const deleteRefusal = data.metafieldDeleteRefusal
+    ? (strings.metafieldDeleteRefused || "Shopify did not remove the metafield: {message}").replace("{message}", () => String(data.metafieldDeleteRefusal))
+    : "";
   const purge = unconfirmedPurgeOf(data as { warnings?: unknown; unconfirmedPurge?: unknown });
   const purgeText = purge.unconfirmed
     ? strings.translationPurgeUnconfirmed ||
       "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them."
     : "";
-  return { reasons, refusals, purge, purgeText };
+  return { reasons: [reasons, deleteRefusal].filter(Boolean).join(" "), refusals, purge, purgeText };
 }
 
 /**
@@ -436,7 +453,7 @@ export function describeSaveForOtherView(
               strings.savePartialOtherProduct ||
                 "Not everything was saved for {title}; what was not saved has to be entered again.",
             ),
-            foreignReasonsText(data),
+            foreignReasonsText(data, strings),
           ].filter(Boolean).join(" "),
           tone: "warning",
         }
@@ -726,6 +743,10 @@ interface UseProductSubResourcesStrings {
    *  Indexed rather than listed: the server owns the code list, and a missing
    *  entry drops that reason instead of printing an English one. */
   [optionWarning: `optionWarning_${string}`]: string | undefined;
+  /** One per foreign failure code (`failureReason_error`, ...). */
+  [failureReason: `failureReason_${string}`]: string | undefined;
+  /** "Shopify did not remove the metafield: {message}". */
+  metafieldDeleteRefused?: string;
 }
 
 interface UseProductSubResourcesProps {
@@ -865,9 +886,9 @@ export function useProductSubResources({
   // Primary locale editing state
   const [primaryOptionEdits, setPrimaryOptionEdits] = useState<Record<string, OptionEdit>>({});
   const [primaryMetafieldEdits, setPrimaryMetafieldEdits] = useState<Record<string, string>>({});
-  /** True from a landed save of the options until the reload that follows it
-   *  has finished — see `optionTranslationBlockedIds`. */
-  const [awaitingOptionReload, setAwaitingOptionReload] = useState(false);
+  /** The product whose landed save is still waiting for its reload - see
+   *  `awaitingOptionReload`. */
+  const [awaitingReloadItemId, setAwaitingReloadItemId] = useState<string | null>(null);
 
   // Shared state
   // translatingFieldIds is now derived from the global AI operations store
@@ -956,7 +977,7 @@ export function useProductSubResources({
    * edit against THIS first - concluding "unchanged" from a stale item (an edit
    * typed back to the original while the save was out) would send nothing, clear
    * the bar and leave Shopify with the other value. Covers the 20 s fallback of
-   * the reload lock as well. Expires after 10 minutes.
+   * the reload lock as well. Expires 10 minutes after the first landing.
    */
   const lastLandedRef = useRef<{
     itemId: string;
@@ -1007,6 +1028,15 @@ export function useProductSubResources({
   // `awaitingOptionReload` is after the answer. Also true on a merchant's return
   // to a product whose save is still on its way.
   const primarySaveOut = saveEntries.some((e) => e.kind === "primary" && e.itemId === (itemId ?? null));
+  // True from a landed save of the options until the reload that follows it
+  // has finished - see `optionTranslationBlockedIds`. Per PRODUCT: a Save of
+  // another product (and a main / gallery / alt save) is not held by it, and the
+  // lock is still there when the merchant comes back to the product.
+  const awaitingOptionReload = awaitingReloadItemId !== null && awaitingReloadItemId === (itemId ?? null);
+  const setAwaitingOptionReload = useCallback(
+    (on: boolean) => setAwaitingReloadItemId(on ? (currentViewRef.current.itemId ?? null) : null),
+    [currentViewRef],
+  );
   const sourceMoving = awaitingOptionReload || primarySaveOut;
   const revalidatorRef = useLatestRef(revalidator);
 
@@ -1224,6 +1254,12 @@ export function useProductSubResources({
   useEffect(() => {
     const armed = rereadArmedRef.current;
     if (!armed || armed.base === selectedItem) return;
+    // A reload is queued behind the one that just ended: this item was read
+    // BEFORE the write, the one that counts is still to come.
+    if (pendingRevalidateRef.current) {
+      armed.base = selectedItem;
+      return;
+    }
     rereadArmedRef.current = null;
     if (hasChangesLatestRef.current) return;
     setRefreshVersion((v) => v + 1);
@@ -1570,7 +1606,7 @@ export function useProductSubResources({
         showInfoBox?.(
           [
             (strings.saveFailedOptions || "Failed to save {count} option(s). Changes have been reverted to original values.").replace("{count}", String(failedResources.length)),
-            foreignReasonsText(data),
+            foreignReasonsText(data, strings),
           ].filter(Boolean).join(" "),
           "critical",
         );
@@ -1655,8 +1691,7 @@ export function useProductSubResources({
     if (sameItem) {
       const landed = lastLandedRef.current && lastLandedRef.current.itemId === entry.itemId && Date.now() - lastLandedRef.current.at < LAST_LANDED_MS
         ? lastLandedRef.current
-        : { itemId: entry.itemId ?? "", at: 0, metafields: {}, options: {} };
-      landed.at = Date.now();
+        : { itemId: entry.itemId ?? "", at: Date.now(), metafields: {}, options: {} };
       const failedMf = new Set(failedMetafields.map(String));
       const failedOpt = new Set(failedOptions.map(String));
       for (const [id, value] of Object.entries(sent.metafields)) {
@@ -2158,6 +2193,7 @@ export function useProductSubResources({
   useEffect(() => {
     if (!awaitingOptionReload) {
       itemWhenAwaitingRef.current = null;
+      deferLockReleaseRef.current = false;
       return;
     }
     if (itemWhenAwaitingRef.current === null) {
@@ -2198,7 +2234,10 @@ export function useProductSubResources({
     const dropped: string[] = [];
     const valuesToAdd: Record<string, string[]> = {};
     for (const [optionId, list] of Object.entries(now.valuesToAdd)) {
-      const existing = new Set((options.find((o) => o.id === optionId)?.values ?? []).map((v) => norm(v.name)));
+      // A match the merchant has queued for DELETION does not count: it is
+      // still there (the save did not land) and goes on being removed.
+      const going = new Set(now.valuesToDelete[optionId] ?? []);
+      const existing = new Set((options.find((o) => o.id === optionId)?.values ?? []).filter((v) => !going.has(v.id)).map((v) => norm(v.name)));
       const carried = unknown.carried.valuesToAdd[optionId] ?? [];
       const keep = list.filter((name) => {
         const already = carried.includes(name) && existing.has(norm(name));
@@ -2207,7 +2246,21 @@ export function useProductSubResources({
       });
       if (keep.length > 0) valuesToAdd[optionId] = keep;
     }
-    const existingOptionNames = new Set(options.map((o) => norm(o.name)));
+    const existingOptionNames = new Set(options.filter((o) => !now.optionsToDelete.includes(o.id)).map((o) => norm(o.name)));
+    const linkedToAdd: Record<string, Array<{ id: string; name: string }>> = {};
+    for (const [optionId, list] of Object.entries(now.linkedToAdd)) {
+      const going = new Set(now.valuesToDelete[optionId] ?? []);
+      const held = new Set(
+        (options.find((o) => o.id === optionId)?.values ?? []).filter((v) => !going.has(v.id) && v.linkedValue).map((v) => v.linkedValue as string),
+      );
+      const carried = unknown.carried.linkedToAdd[optionId] ?? [];
+      const keep = list.filter((entry) => {
+        const already = carried.some((c) => c.id === entry.id) && held.has(entry.id);
+        if (already) dropped.push(entry.name);
+        return !already;
+      });
+      if (keep.length > 0) linkedToAdd[optionId] = keep;
+    }
     const optionsToCreate = now.optionsToCreate.filter((o) => {
       const already = unknown.carried.optionsToCreate.some((c) => c.name === o.name) && existingOptionNames.has(norm(o.name));
       if (already) dropped.push(o.name);
@@ -2228,8 +2281,9 @@ export function useProductSubResources({
       const held = (options.find((o) => o.id === optionId)?.values ?? []).map((v) => v.id);
       if (JSON.stringify(order) !== JSON.stringify(held)) valueOrder[optionId] = order;
     }
-    const left: StructuralLists = { ...now, valuesToAdd, optionsToCreate, valuesToDelete, optionsToDelete, optionOrder, valueOrder };
+    const left: StructuralLists = { ...now, valuesToAdd, linkedToAdd, optionsToCreate, valuesToDelete, optionsToDelete, optionOrder, valueOrder };
     setOptionValuesToAdd(left.valuesToAdd);
+    setOptionLinkedValuesToAdd(left.linkedToAdd);
     setOptionsToCreate(left.optionsToCreate);
     setOptionValuesToDelete(left.valuesToDelete);
     setOptionsToDelete(left.optionsToDelete);
@@ -2241,7 +2295,12 @@ export function useProductSubResources({
       hasKeptEdits(
         (edits?.primaryMetafieldEdits ?? {}) as Record<string, string>,
         (edits?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>,
-      ) || hasStructural(left),
+      ) ||
+        hasStructural(left) ||
+        // Typed translations (foreign tab) are unsaved too.
+        (edits?.dirtyOptionIds?.size ?? 0) > 0 ||
+        (edits?.dirtyOptionValueIds?.size ?? 0) > 0 ||
+        (edits?.dirtyMetafieldIds?.size ?? 0) > 0,
     );
     if (dropped.length > 0) {
       showInfoBox?.(
@@ -2773,18 +2832,18 @@ export function useProductSubResources({
           continue;
         }
 
-        // What Shopify holds: the last landed save's value where there is one (the
-        // loaded item may still be the one from BEFORE it), else the item's.
+        // An edit is SENT when it differs from the loaded item OR from what the
+        // last landed save wrote (the item may still be the one from before it).
+        // An extra send is idempotent; a missed one loses the text.
         const landedHere =
           lastLandedRef.current && lastLandedRef.current.itemId === selectedItem.id && Date.now() - lastLandedRef.current.at < LAST_LANDED_MS
-            ? lastLandedRef.current
-            : null;
-        const heldName = landedHere?.options[optionId]?.name ?? originalOption.name;
-        const heldValue = (valueId: string, itemName: string) => landedHere?.options[optionId]?.values[valueId] ?? itemName;
-        const hasNameChange = edit.name !== undefined && edit.name !== heldName;
-        const hasValuesChange = originalOption.values.some(
-          (v) => edit.values?.[v.id] !== undefined && edit.values[v.id] !== heldValue(v.id, v.name),
-        );
+            ? lastLandedRef.current.options[optionId]
+            : undefined;
+        const differs = (edited: string | undefined, item: string, landed: string | undefined): edited is string =>
+          edited !== undefined && (edited !== item || (landed !== undefined && edited !== landed));
+        const hasNameChange = differs(edit.name, originalOption.name, landedHere?.name);
+        const changedValues = originalOption.values.filter((v) => differs(edit.values?.[v.id], v.name, landedHere?.values[v.id]));
+        const hasValuesChange = changedValues.length > 0;
 
         if (hasNameChange || hasValuesChange) {
           // VALIDATION: Prevent empty option names and values
@@ -2803,18 +2862,11 @@ export function useProductSubResources({
           // empty-value guard below -- a value on its way out is allowed to
           // read blank.
           const deletedHere = new Set(optionValuesToDelete[optionId] ?? []);
-          const survivingEdits = originalOption.values
-            .map((v) => ({ id: v.id, name: edit.values?.[v.id] ?? v.name, original: heldValue(v.id, v.name) }))
+          // Only values the merchant EDITED are looked at: one without an edit
+          // has nothing to send (its name is whatever Shopify holds).
+          const survivingEdits = changedValues
+            .map((v) => ({ id: v.id, name: edit.values?.[v.id] as string }))
             .filter((v) => !deletedHere.has(v.id));
-
-          if (hasValuesChange && survivingEdits.some(v => (v.name ?? "").trim() === "")) {
-            if (showInfoBox) {
-              showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical");
-            } else {
-              alert("Option values cannot be empty");
-            }
-            return;
-          }
 
           optionsChanges[optionId] = {};
           if (hasNameChange) optionsChanges[optionId].name = edit.name as string;
@@ -2822,9 +2874,7 @@ export function useProductSubResources({
           if (hasValuesChange && !originalOption.isLinked) {
             // Only include values that actually changed — and never one that
             // is being deleted in the same save.
-            const updates = survivingEdits
-              .filter((v) => v.name !== v.original)
-              .map((v) => ({ id: v.id, name: v.name }));
+            const updates = survivingEdits;
             if (updates.length > 0) optionsChanges[optionId].valueUpdates = updates;
           }
         }

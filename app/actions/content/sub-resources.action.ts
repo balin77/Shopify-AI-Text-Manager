@@ -301,8 +301,11 @@ export async function handleSaveSubResourceTranslations(
 
     const savedResources: string[] = [];
     const failedResources: string[] = [];
-    /** Why each failed resource failed (the client names it; logs keep the rest). */
+    /** Why each failed resource failed: ONLY Shopify's own userError message
+     *  (scrubbed, bounded). Anything else is a CODE in `failureCodes` - the client
+     *  phrases it in the merchant's language - and the detail goes to the log. */
     const failureReasons: Record<string, string> = {};
+    const failureCodes: Record<string, "notConfirmed" | "removalNotConfirmed" | "error"> = {};
     /** Resources with a key Shopify exposes no digest for: not writable there,
      *  which is a property of the field and not a refused write. */
     const notTranslatable: string[] = [];
@@ -376,8 +379,9 @@ export async function handleSaveSubResourceTranslations(
           }
           if (result.unconfirmedKeys.length > 0) {
             resourceFailed = true;
-            failureReasons[resourceId] =
-              firstUserErrorMessage(result.userErrors) || "Shopify did not confirm the translation.";
+            const shopifyReason = firstUserErrorMessage(result.userErrors);
+            if (shopifyReason) failureReasons[resourceId] = shopifyReason;
+            else failureCodes[resourceId] = "notConfirmed";
             logger.error(`[UnifiedContent] Shopify did not confirm every sub-resource translation for ${resourceId}`, {
               context: "UnifiedContent",
               resourceId,
@@ -416,8 +420,9 @@ export async function handleSaveSubResourceTranslations(
           }
           if (confirmedKeys.length < keysToDelete.length) {
             resourceFailed = true;
-            failureReasons[resourceId] =
-              firstUserErrorMessage(removal.userErrors) || "Shopify did not confirm removing the translation.";
+            const shopifyReason = firstUserErrorMessage(removal.userErrors);
+            if (shopifyReason) failureReasons[resourceId] = shopifyReason;
+            else failureCodes[resourceId] = "removalNotConfirmed";
             logger.error(`[UnifiedContent] Shopify did not confirm removing translations for ${resourceId} — local rows kept`, {
               context: "UnifiedContent",
               resourceId,
@@ -449,7 +454,9 @@ export async function handleSaveSubResourceTranslations(
           error: err instanceof Error ? err.message : String(err),
           stack: err instanceof Error ? err.stack : undefined,
         });
-        failureReasons[resourceId] = scrubProviderErrorText(err instanceof Error ? err.message : String(err)).slice(0, 240);
+        // The detail is in the log above; a caught error's text is not Shopify's
+        // and is not shown.
+        failureCodes[resourceId] = "error";
         failedResources.push(resourceId);
       }
     }
@@ -471,6 +478,7 @@ export async function handleSaveSubResourceTranslations(
       savedResources,
       failedResources,
       ...(Object.keys(failureReasons).length > 0 ? { failureReasons } : {}),
+      ...(Object.keys(failureCodes).length > 0 ? { failureCodes } : {}),
       notTranslatable,
     });
   } catch (error: unknown) {
@@ -1265,6 +1273,8 @@ async function handleSavePrimarySubResourcesUnlocked(
     const metafieldRefusals: Record<string, string> = {};
     /** Refusals that are about permission, not the text (they get their own wording). */
     const permissionRefusals: string[] = [];
+    /** Shopify's own message when it refused to DELETE (clear) a metafield. */
+    let metafieldDeleteRefusal: string | undefined;
 
     // 1. Options: names, values, and — new — adding, deleting and reordering.
     //
@@ -1388,7 +1398,10 @@ async function handleSavePrimarySubResourcesUnlocked(
         (id) => isValidShopifyGID(id) && typeof metafieldChanges[id] === "string",
       );
       for (const id of requestedIds) {
-        if (!addressable.includes(id)) failedMetafields.push(id);
+        if (!addressable.includes(id)) {
+          failedMetafields.push(id);
+          optionWarnings.push("metafieldNotFound");
+        }
       }
 
       let cachedRows: Array<{ id: string; namespace: string; key: string; type: string; value?: string }> = [];
@@ -1429,6 +1442,7 @@ async function handleSavePrimarySubResourcesUnlocked(
             context: "UnifiedContent", metafieldId,
           });
           failedMetafields.push(metafieldId);
+          optionWarnings.push("metafieldNotFound");
           continue;
         }
         const value = metafieldChanges[metafieldId];
@@ -1681,6 +1695,7 @@ async function handleSavePrimarySubResourcesUnlocked(
                 context: "UnifiedContent", metafieldId: entry.metafieldId,
               });
               failedMetafields.push(entry.metafieldId);
+              optionWarnings.push("metafieldNotConfirmed");
               continue;
             }
             const echoedId = typeof echo.id === "string" && isValidShopifyGID(echo.id) ? echo.id : null;
@@ -1692,6 +1707,7 @@ async function handleSavePrimarySubResourcesUnlocked(
                 context: "UnifiedContent", metafieldId: entry.metafieldId,
               });
               failedMetafields.push(entry.metafieldId);
+              optionWarnings.push("metafieldNotConfirmed");
               continue;
             }
             savedMetafields.push(entry.metafieldId);
@@ -1758,6 +1774,8 @@ async function handleSavePrimarySubResourcesUnlocked(
             if (entry.isSlot) {
               unverifiedMetafields.push(entry.metafieldId);
               optionWarnings.push("metafieldSlotUnverified");
+            } else {
+              optionWarnings.push("metafieldWriteFailed");
             }
           }
         }
@@ -1786,6 +1804,10 @@ async function handleSavePrimarySubResourcesUnlocked(
               errors: userErrors.length > 0 ? userErrors : payload?.errors ?? "no metafieldsDelete payload",
             });
             for (const entry of batch) failedMetafields.push(entry.metafieldId);
+            // Shopify's own words where it gave some, else a code.
+            const shopifyReason = firstUserErrorMessage(userErrors);
+            if (shopifyReason) metafieldDeleteRefusal ??= shopifyReason;
+            else optionWarnings.push("metafieldDeleteFailed");
             continue;
           }
           const deleted = (result.deletedMetafields ?? []).filter(
@@ -1803,6 +1825,7 @@ async function handleSavePrimarySubResourcesUnlocked(
                 context: "UnifiedContent", metafieldId: entry.metafieldId,
               });
               failedMetafields.push(entry.metafieldId);
+              optionWarnings.push("metafieldDeleteNotConfirmed");
               continue;
             }
             // Saved, but NOT a changed source text: the metafield is gone, and
@@ -1840,6 +1863,7 @@ async function handleSavePrimarySubResourcesUnlocked(
             context: "UnifiedContent", error: getFullErrorMessage(err),
           });
           for (const entry of batch) failedMetafields.push(entry.metafieldId);
+          optionWarnings.push("metafieldDeleteFailed");
         }
       }
     }
@@ -2260,6 +2284,7 @@ async function handleSavePrimarySubResourcesUnlocked(
       ...(unverifiedMetafields.length > 0 ? { unverifiedMetafields } : {}),
       ...(Object.keys(metafieldRefusals).length > 0 ? { metafieldRefusals } : {}),
       ...(permissionRefusals.length > 0 ? { permissionRefusedMetafields: permissionRefusals } : {}),
+      ...(metafieldDeleteRefusal ? { metafieldDeleteRefusal } : {}),
       // Cleared metafields Shopify confirmed DELETING (not in savedMetafields:
       // there is no source text left whose translations could be stale).
       ...(removedMetafieldIds.length > 0 ? { removedMetafieldIds } : {}),
