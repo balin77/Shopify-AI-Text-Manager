@@ -22,7 +22,23 @@ export interface SubResourcePendingState {
   optionsToDelete: readonly unknown[];
   optionOrder: readonly unknown[] | null;
   optionValueOrder: Readonly<Record<string, readonly unknown[]>>;
+  /**
+   * Whether an edit in `primaryOptionEdits` / `primaryMetafieldEdits` really
+   * differs from the field it edits. Optional: without them the maps count by
+   * KEY, which is what they did before — and which keeps the save bar up for an
+   * edit typed back to its original, or one a save already settled.
+   */
+  optionEditUnsaved?: (id: string, edit: unknown) => boolean;
+  metafieldEditUnsaved?: (id: string, edit: unknown) => boolean;
 }
+
+const anyEdit = (
+  edits: Readonly<Record<string, unknown>>,
+  isUnsaved: ((id: string, edit: unknown) => boolean) | undefined,
+): boolean =>
+  isUnsaved
+    ? Object.entries(edits).some(([id, edit]) => isUnsaved(id, edit))
+    : Object.keys(edits).length > 0;
 
 const anyNonEmpty = (record: Readonly<Record<string, readonly unknown[]>>): boolean =>
   Object.values(record).some((list) => list.length > 0);
@@ -33,8 +49,8 @@ export function hasPendingSubResourceChanges(p: SubResourcePendingState): boolea
     p.dirtyOptionIds.size > 0 ||
     p.dirtyOptionValueIds.size > 0 ||
     p.dirtyMetafieldIds.size > 0 ||
-    Object.keys(p.primaryOptionEdits).length > 0 ||
-    Object.keys(p.primaryMetafieldEdits).length > 0 ||
+    anyEdit(p.primaryOptionEdits, p.optionEditUnsaved) ||
+    anyEdit(p.primaryMetafieldEdits, p.metafieldEditUnsaved) ||
     anyNonEmpty(p.optionValuesToAdd) ||
     anyNonEmpty(p.optionLinkedValuesToAdd) ||
     anyNonEmpty(p.optionValuesToDelete) ||

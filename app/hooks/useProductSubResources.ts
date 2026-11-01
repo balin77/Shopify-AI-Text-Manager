@@ -1509,6 +1509,18 @@ export function useProductSubResources({
     optionsToDelete,
     optionOrder,
     optionValueOrder,
+    // Real differences, not key counts: an edit typed back to its original (or
+    // one a save already settled) is no pending change.
+    optionEditUnsaved: (id, edit) => {
+      const original = selectedItem?.options?.find((o) => o.id === id);
+      return original ? isOptionEditUnsaved(original, edit as OptionEdit) : false;
+    },
+    metafieldEditUnsaved: (id, edit) => {
+      const original =
+        selectedItem?.metafields?.find((m) => m.id === id) ??
+        selectedItem?.clearedMetafields?.find((m) => m.id === id);
+      return original ? isPrimaryMetafieldUnsaved(original, edit as string) : false;
+    },
   };
 
   const handleAddLinkedOptionValue = useCallback(

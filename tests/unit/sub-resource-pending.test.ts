@@ -71,3 +71,29 @@ describe("unconfirmedPurgeOf", () => {
     });
   });
 });
+
+describe("hasPendingSubResourceChanges - real differences, not key counts (O4)", () => {
+  const base = (): SubResourcePendingState => ({
+    ...empty(),
+    metafieldEditUnsaved: (id, edit) => id === "m" && edit !== "orig",
+    optionEditUnsaved: (id, edit) => id === "o" && (edit as { name: string }).name !== "Colour",
+  });
+
+  it("a metafield edit typed back to its original is no pending change", () => {
+    expect(hasPendingSubResourceChanges({ ...base(), primaryMetafieldEdits: { m: "orig" } })).toBe(false);
+    expect(hasPendingSubResourceChanges({ ...base(), primaryMetafieldEdits: { m: "other" } })).toBe(true);
+  });
+
+  it("an option edit typed back to its original is no pending change", () => {
+    expect(hasPendingSubResourceChanges({ ...base(), primaryOptionEdits: { o: { name: "Colour" } } })).toBe(false);
+    expect(hasPendingSubResourceChanges({ ...base(), primaryOptionEdits: { o: { name: "Farbe" } } })).toBe(true);
+  });
+
+  it("an edit whose field is not on the item is not pending", () => {
+    expect(hasPendingSubResourceChanges({ ...base(), primaryMetafieldEdits: { gone: "x" } })).toBe(false);
+  });
+
+  it("without the checks the maps still count by key (unchanged behaviour for other callers)", () => {
+    expect(hasPendingSubResourceChanges({ ...empty(), primaryMetafieldEdits: { m: "orig" } })).toBe(true);
+  });
+});
