@@ -286,4 +286,14 @@ describe("a translate answer", () => {
     await settleLast();
     expect(result.current.state.optionTranslations[OPT].values).toEqual(["Blue", "Crimson"]);
   });
+
+  it("... also when the reset comes BEFORE the reordered item (the real order of a slow loader)", async () => {
+    const { result, rerender } = setup({ it: makeItem(FULL), lang: "en" });
+    act(() => result.current.handlers.translateOptionField(OPT, "value", 0));
+    act(() => result.current.handlers.resetForReload());
+    rerender({ it: makeItem(FULL, [V2, V1]), lang: "en" });
+    expect(result.current.state.optionTranslations[OPT].values).toEqual(["Blue", "Red"]);
+    await settleLast();
+    expect(result.current.state.optionTranslations[OPT].values).toEqual(["Blue", "Crimson"]);
+  });
 });

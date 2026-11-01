@@ -422,7 +422,7 @@ export function OptionsField({
                                 <div className={`ai-editable-field-wrapper ${fallbackResourceIds?.has(optVal.id) ? "bg-fallback" : (translation.values[valueIndex] ? "bg-white" : "bg-untranslated")}`}>
                                   <FieldClearOverlay
                                     onClear={() => onOptionValueChange(option.id, valueIndex, "")}
-                                    hasValue={!!translation.values[valueIndex]}
+                                    hasValue={!!optVal.id && !!translation.values[valueIndex]}
                                   >
                                     <SingleLineTextField
                                       label={
@@ -432,6 +432,10 @@ export function OptionsField({
                                       }
                                       value={translation.values[valueIndex] || ""}
                                       onChange={(newValue) => onOptionValueChange(option.id, valueIndex, newValue)}
+                                      // A value without a Shopify id (a legacy plain-string
+                                      // value) cannot be translated: nothing to address the
+                                      // write to, so no input is offered for it.
+                                      disabled={!optVal.id}
                                     />
                                   </FieldClearOverlay>
                                 </div>

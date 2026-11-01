@@ -1,4 +1,5 @@
 import type { ReloadResourceType } from "../utils/reload-resource-type";
+import { useRef } from "react";
 import { Button, Tooltip } from "@shopify/polaris";
 import { RefreshIcon } from "@shopify/polaris-icons";
 import { startReload, useIsReloading } from "../hooks/useReloadingResources";
@@ -29,6 +30,12 @@ export function ReloadButton({
   tooltip = "Nur die Daten dieses Eintrags von Shopify neu laden",
 }: ReloadButtonProps) {
   const isLoading = useIsReloading(resourceId);
+  // The latest revalidator, read when the reload polls for it to become idle:
+  // React Router hands out a NEW object per state change, so one captured at the
+  // click stays "idle" for ever and the wait ends after its fallback no matter
+  // what the loader is doing.
+  const revalidatorRef = useRef(revalidator);
+  revalidatorRef.current = revalidator;
 
   const handleReload = () => {
     if (isLoading) return;
@@ -38,8 +45,8 @@ export function ReloadButton({
       locale,
       revalidator
         ? {
-            getState: () => revalidator.state,
-            revalidate: () => revalidator.revalidate(),
+            getState: () => revalidatorRef.current?.state ?? "idle",
+            revalidate: () => revalidatorRef.current?.revalidate(),
           }
         : null,
       {

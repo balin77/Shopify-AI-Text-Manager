@@ -229,7 +229,8 @@ describe("an UNKNOWN outcome is never reported as a plain failure (M6)", () => {
 
   it("what PROVES the request was refused before it ran stays a plain failure: a non-JSON 4xx, an expired session", async () => {
     appFetchMock.mockResolvedValue({ ok: false, status: 413, json: async () => { throw new SyntaxError("x"); } });
-    expect(await postSave(form())).toBeNull();
+    // ... and it carries its status, so the merchant is told WHY
+    expect(await postSave(form())).toEqual({ success: false, httpStatus: 413 });
     appFetchMock.mockRejectedValue(Object.assign(new Error("sessionExpired"), { code: "sessionExpired" }));
     expect(await postSave(form())).toEqual({ success: false, error: "sessionExpired" });
   });
@@ -257,5 +258,47 @@ describe("answers with no owner but a newer hook mounted (M5)", () => {
     __setSavePosterForTests(async () => ({ success: false }));
     await enqueueSave(entry("A", { owner: { mounted: false, handle: vi.fn() }, describe: () => ({ text: "enter it again", tone: "critical" }) }));
     expect(toast).toHaveBeenCalledWith("enter it again", { isError: true, duration: 15000 });
+  });
+});
+
+describe("a gateway answer with a JSON body, and a body with no verdict, are UNKNOWN outcomes (#6)", () => {
+  const form = () => new FormData();
+  const jsonResp = (status: number, body: unknown) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+
+  it.each([
+    ["502 with the edge's JSON", 502, { status: "error", code: 502, message: "Application failed to respond" }],
+    ["503 with an error body", 503, { error: "unavailable" }],
+    ["504 claiming success:false", 504, { success: false, error: "timeout" }],
+    ["408", 408, { error: "request timeout" }],
+  ])("%s is not confirmed (badGateway), never 'not saved'", async (_n, status, body) => {
+    appFetchMock.mockResolvedValue(jsonResp(status, body));
+    expect(await postSave(form())).toMatchObject({ notConfirmed: true, notConfirmedReason: "badGateway" });
+  });
+
+  it("... unless the body is the APP's own answer (it names the action it answers for)", async () => {
+    appFetchMock.mockResolvedValue(jsonResp(504, { success: false, actionType: "savePrimarySubResources", error: "Shopify timed out" }));
+    expect(await postSave(form())).toMatchObject({ success: false, error: "Shopify timed out" });
+    expect(await postSave(form())).not.toHaveProperty("notConfirmed");
+  });
+
+  it.each([
+    ["{}", {}],
+    ["[]", []],
+    ["null", null],
+    ["a string", "ok"],
+    ["success as a string", { success: "true" }],
+  ])("a 200 with %s is NOT a clean green save", async (_n, body) => {
+    appFetchMock.mockResolvedValue(jsonResp(200, body));
+    expect(await postSave(form())).toMatchObject({ notConfirmed: true, notConfirmedReason: "badResponse" });
+  });
+
+  it("a 500/400 with a JSON body and no verdict is a failure that keeps its status", async () => {
+    appFetchMock.mockResolvedValue(jsonResp(500, { error: "x" }));
+    expect(await postSave(form())).toMatchObject({ success: false, error: "x", httpStatus: 500 });
+  });
+
+  it("a real verdict passes through", async () => {
+    appFetchMock.mockResolvedValue(jsonResp(200, { success: true, savedResources: ["a"] }));
+    expect(await postSave(form())).toEqual({ success: true, savedResources: ["a"] });
   });
 });

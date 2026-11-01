@@ -305,4 +305,17 @@ describe("several sub-resource translates at once", () => {
 
     expect(result.current.state.optionTranslations[OPT].values[0]).toBe("Red");
   });
+
+  it("... and the REAL order (the reset first, the fresh item after it) gives the same", async () => {
+    const f = deferredFetch();
+    vi.stubGlobal("fetch", f.impl);
+    const { result, rerender } = setup();
+    act(() => result.current.handlers.translateOptionField(OPT, "value", 0));
+    await act(async () => f.pending[0].release());
+    await flush();
+    act(() => result.current.handlers.resetForReload());
+    rerender({ it: makeItem({}) });
+    await flush();
+    expect(result.current.state.optionTranslations[OPT].values[0]).toBe("Red");
+  });
 });

@@ -578,6 +578,12 @@ export default function ProductsPage() {
       saveFailedOtherProduct: t.products.saveFailedOtherProduct,
       saveNotConfirmed: t.products.saveNotConfirmed,
       reloadBeforeSave: t.products.reloadBeforeSave,
+      saveNotConfirmedDetached: t.products.saveNotConfirmedDetached,
+      saveMaybePartial: t.products.saveMaybePartial,
+      fieldsGone: t.products.fieldsGone,
+      alreadyAdded: t.products.alreadyAdded,
+      errorSessionExpired: (t as unknown as { errors?: Record<string, string> }).errors?.sessionExpired,
+      errorReauthorizeRequired: (t as unknown as { errors?: Record<string, string> }).errors?.reauthorizeRequired,
       metafieldRefusedElsewhere: t.products.metafieldRefusedElsewhere,
       metafieldPermissionElsewhere: t.products.metafieldPermissionElsewhere,
       previousProductLabel: t.products.previousProductLabel,
@@ -822,7 +828,9 @@ export default function ProductsPage() {
       // A product-image delete is in flight: saving now could clear variant
       // main images for media that survives a failed delete.
       if (imageManagerStateRef.current.isDeletingImages) return;
-      subResources.handlers.saveSubResources();
+      // Refused (the saved values are still being reloaded): the gallery and alt
+      // saves below must not run and report "saved" over the card's message.
+      if (subResources.handlers.saveSubResources() === "waiting") return "waiting";
       // The gallery half starts FIRST: the alt text of an image this Save is
       // only uploading has no media id yet, so the manager carries it over and
       // sends it once the gallery save has created the image (or reports it as
@@ -1130,11 +1138,9 @@ export default function ProductsPage() {
     if (pendingTranslationSyncRefreshRef.current) {
       pendingTranslationSyncRefreshRef.current = false;
       editor.helpers.triggerDataRefresh();
-      // `refreshTranslations`, NOT `resetForReload`: the reset leaves the load
-      // key emptied, so the NEXT reload (the answer of a save that was started on
-      // another product, say) runs the load effect's full reset and wipes
-      // whatever the merchant typed meanwhile. The refresh re-reads in place and
-      // does nothing while anything is unsaved.
+      // `refreshTranslations`: re-reads in place and does nothing while anything
+      // is unsaved. (`resetForReload` re-reads in place too now, but it also
+      // prunes the overlay and arms a second read for an item still on its way.)
       subResources.handlers.refreshTranslations();
     }
   }, [products]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally fires when products changes after sync
@@ -1144,11 +1150,11 @@ export default function ProductsPage() {
   // `itemId::locale::market`, none of which a revalidation changes, so without
   // this the refreshed sub-resource translations are fetched and never shown.
   //
-  // `refreshTranslations`, NOT `resetForReload`: the reset only empties the
-  // load key, and the bump lands one commit AFTER the fresh item — the load
-  // effect has already run and returned, so nothing was re-read, while the
-  // empty key made the NEXT revalidation run the load effect's full reset and
-  // throw away unsaved option edits.
+  // `refreshTranslations`: the bump lands one commit AFTER the fresh item, which
+  // is what a re-read needs, and it never throws away unsaved edits. (The old
+  // `resetForReload` emptied the load key, so the NEXT revalidation ran the
+  // load effect's full reset and wiped what the merchant had typed meanwhile;
+  // it re-reads in place now, but is meant for an explicit Reload / Discard.)
   useEffect(() => {
     if (editor.helpers.backgroundRefreshVersion === 0) return;
     subResources.handlers.refreshTranslations();

@@ -1757,8 +1757,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   // /api/update-variant-galleries POST (→ Shopify 422 on the
                   // duplicate productCreateMedia for the same staging URL).
                   if (state.isSavingCurrentItem || subResourceState?.isSaving || commerceSave.saving) return;
+                  // The card's Save first: when it REFUSES the press (the values of
+                  // a landed save are still being reloaded) nothing else is saved
+                  // either, so no green "saved" can cover its "press again".
+                  if (subResourceHandlers?.saveSubResources?.() === "waiting") return;
                   handlers.handleSave();
-                  subResourceHandlers?.saveSubResources?.();
                   // Third writer, same button. Its failures surface INSIDE the
                   // panel (a refused stock write names the number that moved),
                   // so nothing is awaited here and nothing can fail the save.

@@ -32,9 +32,12 @@
  *    worked on cannot be overtaken by the next one.
  *  - An unknown outcome is always `notConfirmed` with a reason code: a dropped
  *    connection, an abort while the answer body was still arriving, a gateway
- *    answer (502/503/504) or an HTML body from a proxy. Only an answer that
- *    proves the request was refused before it ran (an expired session, a 4xx) is
- *    a plain failure.
+ *    status (502/503/504/408/524) WITH ANY BODY unless the body carries the app's
+ *    own `actionType`, a body that is not an object with a boolean `success`, or
+ *    HTML from a proxy. Only an answer that proves the request was refused before
+ *    it ran is a plain failure: an expired / re-authorise session (app-fetch.ts
+ *    throws before the request is sent or answers with the library's 401), or a
+ *    non-JSON 4xx.
  *
  * Client-only in practice, but safe to import on the server (no top-level
  * browser access).
@@ -85,8 +88,15 @@ export interface QueuedSave {
   epoch: number;
   formData: FormData;
   owner: SaveOwner;
-  /** The text for an answer that finds no mounted owner. */
-  describe: (data: SaveAnswer | null) => { text: string; tone: "success" | "info" | "warning" | "critical" };
+  /**
+   * The text for an answer that finds no mounted owner or lands elsewhere.
+   * `reloading` says whether a mounted hook is re-reading the product (true) or
+   * nobody is (false: the merchant has to open it again).
+   */
+  describe: (
+    data: SaveAnswer | null,
+    options?: { reloading?: boolean },
+  ) => { text: string; tone: "success" | "info" | "warning" | "critical" };
   /** Anything the owner needs to read the answer (what was sent). Opaque here. */
   sent: any;
 }
@@ -172,21 +182,35 @@ export async function postSave(
       body: setContentEditorPage(fd, "/app/products"),
       signal: controller.signal,
     });
+    const status = typeof resp.status === "number" ? resp.status : 0;
+    const gateway = status === 502 || status === 503 || status === 504 || status === 408 || status === 524;
     let body: SaveAnswer | null;
     try {
       body = (await resp.json()) as SaveAnswer | null;
     } catch (error) {
       // Aborted / reset while the answer was arriving, or not JSON at all.
       if (timedOut || (error as { name?: string } | null)?.name === "AbortError") return notConfirmed(timedOut ? "timeout" : "connectionLost");
-      const status = typeof resp.status === "number" ? resp.status : 0;
-      if (status === 502 || status === 503 || status === 504 || status === 408 || status === 524) return notConfirmed("badGateway");
-      if (status >= 400 && status < 500) return null;
+      if (gateway) return notConfirmed("badGateway");
+      // A non-JSON 4xx: refused by something in front of the app. The status
+      // travels so the merchant is told WHY (413 too large, 429 rate limited...).
+      if (status >= 400 && status < 500) return { success: false, httpStatus: status };
       return notConfirmed(error instanceof SyntaxError ? "badResponse" : "connectionLost");
     }
-    if (!body || typeof body !== "object") return notConfirmed("badResponse");
-    // A 4xx/5xx JSON body that forgot to say `success: false` is still a failure.
-    if (resp.ok === false && body.success !== false) return { ...body, success: false };
-    return body;
+    const isObject = !!body && typeof body === "object" && !Array.isArray(body);
+    // A gateway status is an UNKNOWN outcome whatever the body says, unless the
+    // body is the app's own answer (it carries the action it answers for): an
+    // edge / proxy JSON like {status:"error",code:502} says nothing about the
+    // write.
+    if (gateway && !(isObject && typeof (body as SaveAnswer).actionType === "string")) return notConfirmed("badGateway");
+    if (!isObject) return notConfirmed("badResponse");
+    const answer = body as SaveAnswer;
+    if (typeof answer.success !== "boolean") {
+      // No verdict in it. Refused (4xx/5xx) without one is a failure; a 2xx
+      // without one is NOT a clean save.
+      if (resp.ok === false) return { ...answer, success: false, httpStatus: status };
+      return notConfirmed("badResponse");
+    }
+    return answer;
   } catch (error) {
     const name = (error as { name?: string } | null)?.name;
     if (name === "AbortError" || timedOut) return notConfirmed("timeout");
@@ -208,7 +232,7 @@ export async function postSave(
 
 /** Tell the merchant about an answer nobody mounted can read. */
 function announceDetached(entry: QueuedSave, data: SaveAnswer | null) {
-  const { text, tone } = entry.describe(data);
+  const { text, tone } = entry.describe(data, { reloading: false });
   try {
     // App Bridge toast: lives in the Shopify admin shell, not in our page. Its
     // default lasts 5 s; a message that says text must be entered again, or that
