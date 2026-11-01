@@ -42,6 +42,7 @@ import {
   WEBP_PARENT_ORPHAN_GRACE_MS,
   WEBP_PARENT_TASK_TYPE,
   WEBP_ITEM_HEARTBEAT_MS,
+  WEBP_HEARTBEAT_MAX_MS,
   WEBP_EXPIRED_IN_QUEUE_ERROR,
   isWebpItemExpiredInQueue,
   parseTaskResult,
@@ -99,9 +100,9 @@ const SHOPIFY_FETCH_TIMEOUT_MS = 30000;
 // converted, and got a month's quota back for them.
 //
 // A work item that really is wedged is still caught, by the stuck-task reaper
-// (10 min without a write) and, if the process dies with it, by the boot
-// recovery — both of which read the row this leaves behind rather than racing
-// the steps that own it.
+// (10 min without a write) once its heartbeat has stopped (WEBP_HEARTBEAT_MAX_MS,
+// 75 min) and, if the process dies with it, by the boot recovery — both of which
+// read the row this leaves behind rather than racing the steps that own it.
 const WEBP_TASK_TIMEOUT_MS = 4 * 60 * 1000;
 
 // The statuses a work item can be CLAIMED from: the waiting ones, i.e. exactly
@@ -647,11 +648,11 @@ export class WebPProcessorService {
    * It has no lifetime cap of its own, deliberately. Its reach is bounded by
    * the loop it sits in — one beat per affected variant, and the variant cache
    * stops at 100 (`hasMoreVariants`) — so the worst case is a work item held
-   * open for the length of the work it is actually doing, roughly an hour if
-   * every one of those calls burns its full 30s ceiling. That costs one of the
-   * shop's concurrency slots and delays its batch; capping it instead would
-   * put the reaper back on a LIVE conversion, refund an image that is about to
-   * succeed and report it failed. Slow is the cheaper of the two.
+   * open for the length of the work it is actually doing, roughly 50 minutes
+   * if every one of those calls burns its full 30s ceiling. The interval
+   * heartbeat in `_processTaskItem` IS capped (WEBP_HEARTBEAT_MAX_MS, 75 min),
+   * above that worst case, so a genuinely wedged step eventually goes silent
+   * and the reaper can close it instead of the row holding a slot forever.
    */
   async touchWorkItem(taskId) {
     await db.task
@@ -708,7 +709,7 @@ export class WebPProcessorService {
       console.warn(
         `[WebPProcessor] Task ${task.id} waited in the queue since ${new Date(task.createdAt).toISOString()} — expired, not started`,
       );
-      await this.failTask(task, WEBP_EXPIRED_IN_QUEUE_ERROR);
+      await this.failTask(task, WEBP_EXPIRED_IN_QUEUE_ERROR, WEBP_CLAIMABLE_STATUS);
       return;
     }
 
@@ -716,13 +717,13 @@ export class WebPProcessorService {
     try {
       taskData = JSON.parse(task.result || "{}");
     } catch {
-      await this.failTask(task, "Invalid task data");
+      await this.failTask(task, "Invalid task data", WEBP_CLAIMABLE_STATUS);
       return;
     }
 
     const { sourceUrl, productId } = taskData;
     if (!sourceUrl || !productId) {
-      await this.failTask(task, "Missing sourceUrl or productId");
+      await this.failTask(task, "Missing sourceUrl or productId", WEBP_CLAIMABLE_STATUS);
       return;
     }
 
@@ -732,7 +733,18 @@ export class WebPProcessorService {
     // newer container (WEBP_RUNNING_STALE_MS) and to the reaper. Progress writes
     // alone are too sparse for that — a download can be silent for two minutes.
     const steps = this._runWebpSteps(task, taskData);
-    const heartbeat = setInterval(() => this.touchWorkItem(task.id), WEBP_ITEM_HEARTBEAT_MS);
+    // Capped (WEBP_HEARTBEAT_MAX_MS): a step that never settles must go silent
+    // at some point, or the reaper could not close its row and it would hold
+    // the shop's concurrency slot for as long as the process lives.
+    const heartbeatStart = Date.now();
+    const heartbeat = setInterval(() => {
+      if (Date.now() - heartbeatStart > WEBP_HEARTBEAT_MAX_MS) {
+        clearInterval(heartbeat);
+        console.warn(`[WebPProcessor] Task ${task.id} still running after ${Math.round(WEBP_HEARTBEAT_MAX_MS / 60000)} min — heartbeat stopped, the stuck-task reaper may close it`);
+        return;
+      }
+      this.touchWorkItem(task.id);
+    }, WEBP_ITEM_HEARTBEAT_MS);
     heartbeat.unref?.();
     const stopHeartbeat = () => clearInterval(heartbeat);
     steps.then(stopHeartbeat, stopHeartbeat);
@@ -774,12 +786,17 @@ export class WebPProcessorService {
 
   async _runWebpSteps(task, taskData) {
     const { sourceUrl, mediaId, productImageId, productId, altText: taskAltText } = taskData;
+    // Until the claim has landed the row is not ours: an error before it (the
+    // claim statement itself throwing) must not close a row another worker may
+    // have claimed, so such a failure is guarded on the waiting statuses.
+    let claimedByUs = false;
     try {
       // CLAIM the item: an atomic pending/queued -> running. The poll read this
       // row as waiting some milliseconds (or, in a deploy overlap, a whole other
       // container) ago; an unguarded update would let two workers both "win" it
       // and run the destructive sequence twice. `count: 0` means somebody else
       // holds it, it was reaped or the merchant cancelled it — not ours to run.
+      claimedByUs = false;
       const claimed = await db.task.updateMany({
         where: { id: task.id, status: { in: WEBP_CLAIMABLE_STATUS } },
         data: { status: "running", progress: 10 },
@@ -788,6 +805,7 @@ export class WebPProcessorService {
         console.warn(`[WebPProcessor] Task ${task.id} is no longer waiting (claimed elsewhere, reaped or cancelled) — skipping`);
         return;
       }
+      claimedByUs = true;
 
       // 1. Download original image
       const sourceBuffer = await downloadImageAsBuffer(sourceUrl);
@@ -1138,7 +1156,7 @@ export class WebPProcessorService {
       console.log(`[WebPProcessor] Task ${task.id} completed: ${sourceUrl} → ${resolvedUrl ?? "(URL pending)"}`);
     } catch (err) {
       console.error(`[WebPProcessor] Task ${task.id} failed:`, err);
-      await this.failTask(task, describeError(err));
+      await this.failTask(task, describeError(err), claimedByUs ? undefined : WEBP_CLAIMABLE_STATUS);
     }
   }
 
@@ -1190,7 +1208,7 @@ export class WebPProcessorService {
    * fail on its own, and a failed row whose refund was skipped because a
    * SELECT blinked is the one direction the arithmetic may not err in.
    */
-  async failTask(task, error) {
+  async failTask(task, error, onlyFromStatuses = WEBP_NON_TERMINAL_STATUS) {
     const { id: taskId, shop } = task ?? {};
     if (!taskId || !shop) {
       // Loudly, never quietly: an id with no shop beside it would close the row
@@ -1214,7 +1232,13 @@ export class WebPProcessorService {
         // asked for. Only a pre-split row of the parent type is reachable this
         // way at all: `app.tasks.tsx` hides `imageWebpConversionItem`, and the
         // parent row a merchant can cancel spent nothing of its own.
-        where: { id: taskId, status: { in: WEBP_NON_TERMINAL_STATUS } },
+        //
+        // `onlyFromStatuses` narrows that further for exits BEFORE the claim
+        // (expired in the queue, unreadable job data, a claim that threw): the
+        // row is not ours yet, and `running` there means another worker took it
+        // since the poll read it — failing it would refund an image that is
+        // being converted.
+        where: { id: taskId, status: { in: onlyFromStatuses } },
         data: { status: "failed", completedAt: new Date(), error },
       });
 

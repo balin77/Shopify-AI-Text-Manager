@@ -26,6 +26,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import {
   WEBP_ITEM_TASK_TYPE,
+  WEBP_HEARTBEAT_MAX_MS,
   WEBP_ITEM_HEARTBEAT_MS,
   WEBP_PARENT_TASK_TYPE,
   WEBP_RUNNING_STALE_MS,
@@ -938,5 +939,61 @@ describe("boot recovery of running WebP items", () => {
 
     await expect(recovery.recoverRunningWebpTasks()).resolves.toEqual({ retried: 0, failed: 0 });
     expect(table[0].status).toBe("running");
+  });
+});
+
+describe("the heartbeat has a ceiling", () => {
+  it("goes silent after WEBP_HEARTBEAT_MAX_MS so the reaper can close a wedged step", async () => {
+    vi.useFakeTimers();
+    const table = useTable([workItem("i1", { updatedAt: new Date() })]);
+    const original = processor._runWebpSteps;
+    processor._runWebpSteps = vi.fn(() => new Promise(() => {})); // never settles
+    try {
+      void processor._processTaskItem({ id: "i1", shop: "kumiko.myshopify.com", result: jobInput("p1") });
+      await vi.advanceTimersByTimeAsync(WEBP_HEARTBEAT_MAX_MS + WEBP_ITEM_HEARTBEAT_MS * 2);
+      const stamped = new Date(table[0].updatedAt).getTime();
+      // Still beating shortly before the ceiling, silent after it.
+      expect(stamped).toBeGreaterThan(Date.now() - WEBP_HEARTBEAT_MAX_MS);
+      await vi.advanceTimersByTimeAsync(WEBP_RUNNING_STALE_MS * 2);
+      expect(new Date(table[0].updatedAt).getTime()).toBe(stamped);
+      expect(WEBP_HEARTBEAT_MAX_MS).toBeGreaterThan(60 * 60 * 1000);
+    } finally {
+      processor._runWebpSteps = original;
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("a failure BEFORE the claim never closes a row another worker holds", () => {
+  it("an expired item that another worker claimed meanwhile is left alone, with no refund", async () => {
+    const table = useTable([workItem("i1", { status: "running", progress: 40, createdAt: new Date(Date.now() - 48 * 3600_000) })]);
+    await processor._processTaskItem({ ...row("i1"), status: "pending" });
+    expect(table[0].status).toBe("running");
+    expect(refunds).toEqual([]);
+  });
+
+  it("unreadable job data on a row somebody else holds is left alone", async () => {
+    const table = useTable([workItem("i1", { status: "running", result: "{oops" })]);
+    await processor._processTaskItem({ id: "i1", shop: "kumiko.myshopify.com", result: "{oops", createdAt: new Date() });
+    expect(table[0].status).toBe("running");
+    expect(refunds).toEqual([]);
+  });
+
+  it("the same failures still close a row that is genuinely waiting", async () => {
+    const table = useTable([workItem("i1", { status: "pending", result: "{oops" })]);
+    await processor._processTaskItem({ id: "i1", shop: "kumiko.myshopify.com", result: "{oops", createdAt: new Date() });
+    expect(table[0].status).toBe("failed");
+    expect(refunds).toEqual([{ n: 1, shop: "kumiko.myshopify.com" }]);
+  });
+
+  it("a claim statement that throws fails only a still-waiting row", async () => {
+    const table = useTable([workItem("i1", { status: "running", progress: 40 })]);
+    taskUpdateMany.mockRejectedValueOnce(new Error("db blip"));
+    await processor._runWebpSteps(
+      { id: "i1", shop: "kumiko.myshopify.com", result: jobInput("p1") },
+      JSON.parse(jobInput("p1")),
+    );
+    expect(table[0].status).toBe("running");
+    expect(refunds).toEqual([]);
   });
 });

@@ -462,20 +462,10 @@ const server = app.listen(port, host, async () => {
     const result = await recoveryService.recoverPendingTasks();
     serverLogger.info(`Task recovery: ${result.recovered} recovered, ${result.failed} marked as failed`);
 
-    // Second pass for WebP items the first one had to LEAVE: during a deploy
-    // overlap a `running` row with a fresh heartbeat belongs to the old
-    // container's live worker and is skipped (WEBP_RUNNING_STALE_MS). If that
-    // container then died, nobody heartbeats the row any more — this pass,
-    // one stale window (+ margin) after boot, finds it silent and classifies it
-    // properly (retry under 70%, review from 70%) instead of leaving it to the
-    // 10-minute reaper, which would fail and refund it. A row a live worker
-    // still stamps stays fresh and is skipped again.
-    const { WEBP_RUNNING_STALE_MS } = await import("./app/config/webp-tasks.js");
-    setTimeout(() => {
-      recoveryService.recoverRunningWebpTasks().catch((error) => {
-        serverLogger.error("Delayed WebP recovery failed", { error: String(error) });
-      });
-    }, WEBP_RUNNING_STALE_MS + 15_000).unref();
+    // No one-shot second pass for the WebP items the boot pass had to LEAVE (a
+    // fresh heartbeat = the old container's live worker): the stuck monitor
+    // below runs `recoverRunningWebpTasks` on every tick, so an old container
+    // that dies at ANY later moment is still classified before the reaper.
 
     // Start periodic monitoring for stuck tasks
     recoveryService.startStuckTaskMonitoring();
@@ -568,14 +558,18 @@ async function gracefulShutdown(signal) {
       serverLogger.error("Error stopping stale image cleanup service", { error: String(error) });
     }
 
+    let webpDrain = Promise.resolve();
     try {
       // Stop the WebP conversion processor (no new polls; in-flight finishes)
       const { WebPProcessorService } = await import("./webp-processor.service.js");
       const webpProcessor = WebPProcessorService.getInstance();
       webpProcessor.stop();
       // Brief grace for conversions already in flight (a deploy is the usual
-      // reason we are here); the 10s force-exit below still bounds everything.
-      await webpProcessor.drain(4000);
+      // reason we are here). STARTED here, awaited together with the AI queue
+      // drain below: run one after the other they would eat each other's share
+      // of the 10s bound. railway.json's drainingSeconds (15) has to stay above
+      // that bound, or SIGKILL arrives before any of this gets its time.
+      webpDrain = webpProcessor.drain(4000);
       serverLogger.info("WebP processor stopped");
     } catch (error) {
       serverLogger.error("Error stopping WebP processor", { error: String(error) });
@@ -592,9 +586,10 @@ async function gracefulShutdown(signal) {
       const aiQueue = globalThis.__aiQueue;
       if (aiQueue) {
         aiQueue.stop();
-        await aiQueue.drain(8000);
+        await Promise.all([aiQueue.drain(8000), webpDrain]);
         serverLogger.info("AI queue drained");
       } else {
+        await webpDrain;
         serverLogger.info("AI queue not initialized — nothing to drain");
       }
     } catch (error) {

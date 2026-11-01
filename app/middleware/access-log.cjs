@@ -31,6 +31,15 @@ const SENSITIVE_PARAMS = new Set([
   "key",
   "secret",
   "password",
+  // URL-VALUED params: the library's session-token bounce puts the WHOLE
+  // original request in `shopify-reload` (url-encoded, so its `hmac`, `session`
+  // and `id_token` are invisible to a top-level name check). The value goes as
+  // one piece.
+  "shopify-reload",
+  "exitiframe",
+  "return_to",
+  "redirect_uri",
+  "redirect_to",
 ]);
 
 function decodeName(raw) {

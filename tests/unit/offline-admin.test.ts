@@ -38,6 +38,7 @@ import {
   isNonExpiringTokenRejectedError,
   isMigrationConfigError,
   isPermanentMigrationError,
+  MIGRATION_ATTEMPT_TIMEOUT_MS,
   MIGRATION_RETRY_DELAYS_MS,
   REFRESH_FAILED_TTL_MS,
   releaseStaleMigrationBlock,
@@ -491,6 +492,36 @@ describe("durable migration (both switches on)", () => {
     expect(h.migrations).toHaveLength(0);
     // A retry is not an hour away: the shop is settled, not in backoff.
     expect(await maybeMigrateToExpiringToken(SHOP)).toBe("not_needed");
+  });
+
+  it("an exchange that never answers is cut off per attempt (transient), the record is KEPT, and a later replay recovers", async () => {
+    const migrate = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise(() => {})) // black-holed endpoint
+      .mockResolvedValueOnce(NEW_PAIR()); // the repeat returns the same pair (7-day replay)
+    const d = deps({ migrateToExpiringToken: migrate });
+    configureOfflineAdmin(d);
+    const run = maybeMigrateToExpiringToken(SHOP);
+    await vi.advanceTimersByTimeAsync(MIGRATION_ATTEMPT_TIMEOUT_MS - 1);
+    expect(migrate).toHaveBeenCalledTimes(1);
+    // The old token is persisted for the whole wait: that is what makes the repeat possible.
+    expect(decryptToken(h.migrations[0].encryptedOldToken)).toBe("legacy-token");
+    await vi.advanceTimersByTimeAsync(1 + MIGRATION_RETRY_DELAYS_MS[0] + 10);
+    expect(await run).toBe("migrated");
+    expect(migrate).toHaveBeenCalledTimes(2);
+    expect(migrate.mock.calls[1][0].nonExpiringOfflineAccessToken).toBe("legacy-token");
+  });
+
+  it("when EVERY attempt hangs the run ends in `failed` within the bounded time, token kept", async () => {
+    const d = deps({ migrateToExpiringToken: vi.fn(() => new Promise<never>(() => {})) });
+    configureOfflineAdmin(d);
+    const run = maybeMigrateToExpiringToken(SHOP);
+    const attempts = MIGRATION_RETRY_DELAYS_MS.length + 1;
+    const bound = attempts * MIGRATION_ATTEMPT_TIMEOUT_MS + MIGRATION_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0);
+    await vi.advanceTimersByTimeAsync(bound + 100);
+    expect(await run).toBe("failed");
+    expect(bound).toBeLessThan(4 * 60 * 1000);
+    expect(decryptToken(h.migrations[0].encryptedOldToken)).toBe("legacy-token");
   });
 
   it("an exchange without a usable body is a transient failure too", async () => {

@@ -194,19 +194,31 @@ class SyncSchedulerService {
           // sync started beside it (this used to be `void`) carried the dead
           // token into its reads: on dev the in-flight sync took 401s and the
           // raw CookieBanner fetch lost four translation reads that cycle. The
-          // call never throws and returns within seconds (prompt retries, then
-          // a back-off), and `isRunning` keeps the next tick from stacking.
+          // call never throws and is bounded (each attempt is cut off after
+          // MIGRATION_ATTEMPT_TIMEOUT_MS, at most four attempts with 2/5/15 s
+          // pauses, about two minutes in the worst case), and `isRunning` keeps
+          // the next tick from stacking.
           //
           // Skipped for "migrated", "failed" and "needs_reauth", not only
           // "migrated": after a failed or refused exchange we cannot tell
           // whether the old token still lives, and a sync on an unknown token is
-          // the very 401 burst above. The next cycle (minutes away) syncs with
-          // the settled token; the cost is one delayed cycle, once per shop.
+          // the very 401 burst above. The next cycle (SYNC_INTERVAL_MS, 60 s by
+          // default) syncs with the settled token; the cost is one delayed
+          // cycle, once per shop.
           // The quiet outcomes ("not_needed", "disabled", "backoff",
           // "no_session") changed nothing, so the sync goes ahead.
           const outcome = await maybeMigrateToExpiringToken(shop);
           if (outcome === "migrated" || outcome === "failed" || outcome === "needs_reauth") {
             logger.info(`[SyncScheduler] Token migration ran for ${shop} (${outcome}) - sync deferred to the next cycle`);
+            return;
+          }
+          // The wait can outlast this cycle's timer entry: the scheduler may
+          // have been stopped or restarted (upgrade trigger, force re-sync,
+          // multi-tab) meanwhile. The cycle of a REPLACED entry must not run a
+          // sync beside the new one. `finally` still releases what it holds
+          // (and, by the identity check there, never touches the live entry).
+          if (this.activeTimers.get(shop) !== syncTimer) {
+            logger.debug(`[SyncScheduler] Timer for ${shop} was replaced or stopped during the token migration - cycle abandoned`);
             return;
           }
         }

@@ -27,6 +27,15 @@ describe("redactUrl", () => {
     );
   });
 
+  it("redacts the nested credentials of the library's session-token bounce (shopify-reload)", () => {
+    const inner = "https://app.example.com/app/products?embedded=1&hmac=SECRETHMAC&id_token=SECRETJWT&session=SECRETSESSION&shop=k.myshopify.com";
+    const url = `/auth/session-token?shop=k.myshopify.com&host=YWRtaW4&shopify-reload=${encodeURIComponent(inner)}`;
+    const out = redactUrl(url);
+    expect(out).toBe("/auth/session-token?shop=k.myshopify.com&host=YWRtaW4&shopify-reload=[redacted]");
+    expect(out).not.toMatch(/SECRET/);
+    expect(redactUrl("/x?exitIframe=%2Fapp%3Fhmac%3Dabc&return_to=%2Fa%3Fid_token%3Dz")).toBe("/x?exitIframe=[redacted]&return_to=[redacted]");
+  });
+
   it("leaves a URL without a query alone and drops a fragment", () => {
     expect(redactUrl("/health")).toBe("/health");
     expect(redactUrl("/app#id_token=x")).toBe("/app");

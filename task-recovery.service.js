@@ -144,6 +144,18 @@ export class TaskRecoveryService {
 
     this.stuckCheckInterval = setInterval(async () => {
       try {
+        // WebP items first, and on EVERY tick (not only at boot): during a
+        // deploy overlap the boot pass skips a `running` row whose old
+        // container was still stamping it. If that container died later than
+        // one stale window after the boot, nothing stamps the row any more and
+        // only this pass can classify it (retry under 70%, review from 70%)
+        // before the blanket reaper below fails and refunds it. A row a live
+        // worker stamps stays fresh and is skipped, so this is safe to repeat.
+        try {
+          await this.recoverRunningWebpTasks();
+        } catch (error) {
+          console.error('[TaskRecovery] Periodic WebP recovery failed:', error);
+        }
         const stuckCount = await this.markStuckTasksAsFailed();
         if (stuckCount > 0) {
           console.log(`[TaskRecovery] Periodic check: marked ${stuckCount} stuck task(s) as failed`);

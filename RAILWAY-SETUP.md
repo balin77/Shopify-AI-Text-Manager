@@ -13,7 +13,7 @@ je Service unter Settings → Config-as-Code hinterlegt.
 
 | Service | Config-Datei | Inhalt |
 |---|---|---|
-| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` |
+| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health`, `drainingSeconds` 15 |
 | Db Space Checker (Cron, nur production) | [railway.dbalert.json](railway.dbalert.json) | Dockerfile-Builder, `node scripts/db-alert.mjs`, alle 15 Min, kein Restart |
 | Db Backup (Cron, production **und** development) | [railway.dbbackup.json](railway.dbbackup.json) | Dockerfile-Builder, `node scripts/db-backup.mjs`, täglich 02:00 UTC, kein Restart |
 
@@ -111,13 +111,25 @@ die Lage von oben, nur kurz. Behandelt wird sie so:
    (`WEBP_RUNNING_STALE_MS`, sechs Heartbeats); das Zurücksetzen prüft das noch
    einmal im selben Statement. Eine frische Zeile gehört einem lebenden Worker
    des alten Containers.
-4. **Zweiter Durchlauf.** Ist der alte Container kurz nach dem Boot gestorben,
-   war seine Zeile beim ersten Durchlauf noch „frisch“. `server.js` ruft die
-   Recovery deshalb ein zweites Mal nach `WEBP_RUNNING_STALE_MS` + 15 s auf; dann
-   wird sie regulär eingeordnet (unter 70 % neu starten, ab 70 % zur manuellen
-   Prüfung) statt vom 10-Minuten-Reaper mit Rückerstattung als Fehler markiert.
-5. **Shutdown wartet kurz** (bis 4 s, `drain`) auf laufende Konvertierungen.
-   Mehr geht nicht: `gracefulShutdown` beendet den Prozess nach 10 s hart.
+4. **Laufende Nachprüfung.** Ist der alte Container irgendwann nach dem Boot
+   gestorben, war seine Zeile beim ersten Durchlauf noch „frisch“. Der
+   5-Minuten-Monitor für hängende Tasks ruft `recoverRunningWebpTasks` deshalb
+   bei **jedem** Tick vor dem Reaper auf; dann wird die Zeile regulär
+   eingeordnet (unter 70 % neu starten, ab 70 % zur manuellen Prüfung) statt vom
+   10-Minuten-Reaper mit Rückerstattung als Fehler markiert. Lebende Zeilen
+   bleiben frisch und werden übersprungen, die Wiederholung ist also sicher.
+5. **Shutdown wartet kurz** (bis 4 s, `drain`, parallel zum Drain der
+   AI-Queue von bis zu 8 s) auf laufende Konvertierungen. `gracefulShutdown`
+   beendet den Prozess nach 10 s hart. Damit dieses Fenster überhaupt existiert,
+   steht in [railway.json](railway.json) `deploy.drainingSeconds: 15` (laut
+   Railway-Schema: Zeit zwischen SIGTERM und SIGKILL des alten Deploys; der
+   Standard ist 0, im Manifest stand `null`, d. h. SIGKILL folgte sofort und
+   weder dieser Drain noch der der AI-Queue bekam Zeit). Der Wert muss über der
+   10-s-Grenze in `server.js` bleiben.
+6. **Der Heartbeat ist gedeckelt** (`WEBP_HEARTBEAT_MAX_MS`, 75 min, über der
+   dokumentierten Worst-Case-Dauer von rund 50–60 min): ein Schritt, der nie
+   zurückkehrt, wird irgendwann still, damit der Reaper die Zeile schließen kann
+   und der Concurrency-Slot des Shops nicht bis zum Neustart blockiert bleibt.
 
 Restrisiko: Der Claim schützt vor *gleichzeitigem Annehmen*, nicht vor einem
 Worker, der mitten in der Konvertierung hart beendet wird — das fängt weiterhin

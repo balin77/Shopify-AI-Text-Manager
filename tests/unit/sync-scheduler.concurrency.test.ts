@@ -264,6 +264,43 @@ describe('runSyncCycle — token migration trigger', () => {
     expect(sched.runningSyncs).toBe(0);
   });
 
+  it('abandons the cycle when its timer entry was replaced or stopped during the migration, and does not touch the live entry', async () => {
+    let finishMigration!: (outcome: string) => void;
+    h.migrate.mockImplementationOnce(() => new Promise((res) => { finishMigration = res as (o: string) => void; }));
+    const entryA = makeEntry();
+    entryA.startedAt = new Date(Date.now() - MIGRATION_SETTLE_MS - 1000);
+    sched.activeTimers.set(shop, entryA);
+
+    const p = sched.runSyncCycle(shop, admin);
+    for (let i = 0; i < 50 && h.migrate.mock.calls.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+
+    // startSyncForShop-style replacement while the migration is out.
+    const entryB = makeEntry();
+    entryB.isRunning = true;
+    sched.activeTimers.set(shop, entryB);
+
+    finishMigration('not_needed'); // a quiet outcome: would normally go on to sync
+    await p;
+
+    expect(h.syncAll).not.toHaveBeenCalled();
+    expect(entryB.isRunning).toBe(true); // the live entry is not released by the old cycle
+    expect(sched.runningSyncs).toBe(0);
+  });
+
+  it('abandons the cycle (and frees nothing it does not own) when the scheduler was stopped during the migration', async () => {
+    let finishMigration!: (outcome: string) => void;
+    h.migrate.mockImplementationOnce(() => new Promise((res) => { finishMigration = res as (o: string) => void; }));
+    const entry = makeEntry();
+    entry.startedAt = new Date(Date.now() - MIGRATION_SETTLE_MS - 1000);
+    sched.activeTimers.set(shop, entry);
+    const p = sched.runSyncCycle(shop, admin);
+    for (let i = 0; i < 50 && h.migrate.mock.calls.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    sched.activeTimers.delete(shop);
+    finishMigration('migrated');
+    await p;
+    expect(h.syncAll).not.toHaveBeenCalled();
+  });
+
   it.each(['not_needed', 'backoff', 'disabled', 'no_session'])('still syncs when the migration did nothing (%s)', async (outcome) => {
     h.migrate.mockResolvedValueOnce(outcome);
     await runSettledCycle();

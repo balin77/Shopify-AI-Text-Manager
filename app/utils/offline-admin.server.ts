@@ -657,6 +657,17 @@ export const MIGRATION_BACKOFF_MS = 10 * 60 * 1000;
  * 5xx, 429, a body without the expiring token, `storeSession()` returning false.
  */
 export const MIGRATION_RETRY_DELAYS_MS: readonly number[] = [2_000, 5_000, 15_000];
+
+/**
+ * One exchange attempt is given this long. Without it only undici's 300 s
+ * default bounds a token endpoint that accepts the connection and never
+ * answers — per attempt, four attempts, so the sync scheduler (which now AWAITS
+ * the migration) could sit on one shop's `isRunning` for about 20 minutes. A
+ * timed-out attempt is a TRANSIENT failure: the old token stays persisted, and
+ * if the exchange did in fact succeed at Shopify the repeat with that token
+ * returns the SAME pair (7-day replay), which is how such an attempt recovers.
+ */
+export const MIGRATION_ATTEMPT_TIMEOUT_MS = 30_000;
 /** Exchange attempts in one run (the first plus one per retry delay). */
 const attemptsPerRun = () => MIGRATION_RETRY_DELAYS_MS.length + 1;
 /**
@@ -1111,7 +1122,24 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
     attempts++;
     let session: Session | undefined;
     try {
-      ({ session } = await d.migrateToExpiringToken({ shop, nonExpiringOfflineAccessToken: oldToken }));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const exchange = d.migrateToExpiringToken({ shop, nonExpiringOfflineAccessToken: oldToken });
+      // A late answer (or failure) of an attempt we gave up on must not surface
+      // as an unhandled rejection.
+      exchange.catch(() => {});
+      try {
+        ({ session } = await Promise.race([
+          exchange,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error(`token exchange did not answer within ${MIGRATION_ATTEMPT_TIMEOUT_MS} ms`)),
+              MIGRATION_ATTEMPT_TIMEOUT_MS,
+            );
+          }),
+        ]));
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (error) {
       if (isPermanentMigrationError(error)) {
         const why = `Shopify refused the stored token (HTTP ${exchangeStatus(error) ?? "?"} ${exchangeErrorCode(error)})`;

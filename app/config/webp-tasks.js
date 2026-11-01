@@ -192,7 +192,17 @@ export const WEBP_ITEM_HEARTBEAT_MS = 15 * 1000;
  * trip or two missed beats never make a live conversion look dead, and still far
  * below the 10-minute stuck-task reaper, so a really dead worker is recovered
  * (with the <70 retry) rather than failed. Rows that are fresh only because the
- * old container died a moment ago are picked up by the second recovery pass
- * server.js schedules WEBP_RUNNING_STALE_MS (+ margin) after boot.
+ * old container died a moment ago are picked up by the stuck-task monitor's periodic recovery (every tick).
  */
 export const WEBP_RUNNING_STALE_MS = 90 * 1000;
+
+/**
+ * The heartbeat of ONE work item stops after this long, whatever its steps are
+ * doing. The longest honest conversion is about an hour (step 8 makes one
+ * 30s-bounded Shopify call per affected variant, at most 100 of them = 50 min,
+ * plus download, convert and the other steps), so 75 minutes leaves a margin and
+ * still ends: a step that is WEDGED (a promise that never settles) must
+ * eventually look silent, or the stuck-task reaper could never close the row and
+ * it would hold one of the shop's concurrency slots until the process restarts.
+ */
+export const WEBP_HEARTBEAT_MAX_MS = 75 * 60 * 1000;
