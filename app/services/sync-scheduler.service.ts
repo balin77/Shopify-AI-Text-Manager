@@ -202,9 +202,14 @@ class SyncSchedulerService {
           // Skipped for "migrated", "failed" and "needs_reauth", not only
           // "migrated": after a failed or refused exchange we cannot tell
           // whether the old token still lives, and a sync on an unknown token is
-          // the very 401 burst above. The next cycle (SYNC_INTERVAL_MS, 60 s by
-          // default) syncs with the settled token; the cost is one delayed
-          // cycle, once per shop.
+          // the very 401 burst above. This only spares THIS cycle: only after
+          // "migrated" is the next cycle (SYNC_INTERVAL_MS, 60 s by default)
+          // on a settled token. After "failed" the migration is in back-off and
+          // later cycles sync during it (their migration call answers "backoff",
+          // a quiet outcome) on a token that may be revoked, until a retry
+          // lands; after "needs_reauth" the dead token was blanked and they
+          // fail with no_token until the merchant opens the app. Both end in
+          // the migration retry / the merchant's next visit, not in this skip.
           // The quiet outcomes ("not_needed", "disabled", "backoff",
           // "no_session") changed nothing, so the sync goes ahead.
           const outcome = await maybeMigrateToExpiringToken(shop);

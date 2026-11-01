@@ -516,6 +516,47 @@ async function gracefulShutdown(signal) {
   shutdownInProgress = true;
   serverLogger.info(`${signal} received. Starting graceful shutdown...`);
 
+  // Stop the workers NOW, on the signal, not inside the server.close callback:
+  // that callback only fires once every open connection has ended, and a
+  // request still in flight past the force-exit bound would mean the WebP
+  // processor keeps claiming rows (and the AI queue keeps dispatching) until
+  // the process is killed. Both drains are STARTED here and awaited together
+  // before the DB is closed, so neither eats the other's share of the 10s
+  // bound. railway.json's drainingSeconds (15) has to stay above that bound, or
+  // SIGKILL arrives before any of this gets its time. Each step has its own
+  // try/catch: a failing stop() of one must not skip the other, and never
+  // skips the wait before $disconnect.
+  let webpDrain = Promise.resolve();
+  let aiDrain = Promise.resolve();
+  try {
+    const { WebPProcessorService } = await import("./webp-processor.service.js");
+    const webpProcessor = WebPProcessorService.getInstance();
+    webpProcessor.stop();
+    // Brief grace for conversions already in flight (a deploy is the usual reason).
+    webpDrain = webpProcessor.drain(4000);
+    serverLogger.info("WebP processor stopped");
+  } catch (error) {
+    serverLogger.error("Error stopping WebP processor", { error: String(error) });
+  }
+  try {
+    // The singleton lives inside the React Router bundle, so it is reached via
+    // the process-wide globalThis bridge (set in AIQueueService.getInstance()),
+    // not a module import. If no AI request ran yet, __aiQueue is undefined and
+    // there is nothing to drain.
+    const aiQueue = globalThis.__aiQueue;
+    if (aiQueue) {
+      aiQueue.stop();
+      aiDrain = Promise.resolve(aiQueue.drain(8000)).catch((error) => {
+        serverLogger.error("Error draining AI queue", { error: String(error) });
+      });
+      serverLogger.info("AI queue stopped, draining");
+    } else {
+      serverLogger.info("AI queue not initialized — nothing to drain");
+    }
+  } catch (error) {
+    serverLogger.error("Error stopping AI queue", { error: String(error) });
+  }
+
   // Stop accepting new connections
   server.close(async () => {
     serverLogger.info("HTTP server closed");
@@ -558,42 +599,16 @@ async function gracefulShutdown(signal) {
       serverLogger.error("Error stopping stale image cleanup service", { error: String(error) });
     }
 
-    let webpDrain = Promise.resolve();
     try {
-      // Stop the WebP conversion processor (no new polls; in-flight finishes)
-      const { WebPProcessorService } = await import("./webp-processor.service.js");
-      const webpProcessor = WebPProcessorService.getInstance();
-      webpProcessor.stop();
-      // Brief grace for conversions already in flight (a deploy is the usual
-      // reason we are here). STARTED here, awaited together with the AI queue
-      // drain below: run one after the other they would eat each other's share
-      // of the 10s bound. railway.json's drainingSeconds (15) has to stay above
-      // that bound, or SIGKILL arrives before any of this gets its time.
-      webpDrain = webpProcessor.drain(4000);
-      serverLogger.info("WebP processor stopped");
+      // The workers were stopped on the SIGNAL (above, outside this callback);
+      // wait for what they still have in flight BEFORE closing the DB, or a
+      // running AI job / conversion keeps writing to a $disconnect()-ed Prisma
+      // client and its task stays "running". allSettled: a drain that failed
+      // must not skip the disconnect, and one that failed must not hide the other.
+      await Promise.allSettled([webpDrain, aiDrain]);
+      serverLogger.info("WebP processor and AI queue drained");
     } catch (error) {
-      serverLogger.error("Error stopping WebP processor", { error: String(error) });
-    }
-
-    try {
-      // Stop AI queue dispatch + cancel retry timers, then drain in-flight
-      // provider calls BEFORE closing the DB. Otherwise running AI jobs keep
-      // writing to a $disconnect()-ed Prisma client and tasks stay "running".
-      // The singleton lives inside the React Router bundle, so it's reached via the
-      // process-wide globalThis bridge (set in AIQueueService.getInstance()),
-      // not a module import. If no AI request ran yet, __aiQueue is undefined
-      // and there is nothing to drain.
-      const aiQueue = globalThis.__aiQueue;
-      if (aiQueue) {
-        aiQueue.stop();
-        await Promise.all([aiQueue.drain(8000), webpDrain]);
-        serverLogger.info("AI queue drained");
-      } else {
-        await webpDrain;
-        serverLogger.info("AI queue not initialized — nothing to drain");
-      }
-    } catch (error) {
-      serverLogger.error("Error draining AI queue", { error: String(error) });
+      serverLogger.error("Error waiting for the drains", { error: String(error) });
     }
 
     try {

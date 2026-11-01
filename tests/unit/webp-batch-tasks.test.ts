@@ -943,7 +943,7 @@ describe("boot recovery of running WebP items", () => {
 });
 
 describe("the heartbeat has a ceiling", () => {
-  it("goes silent after WEBP_HEARTBEAT_MAX_MS so the reaper can close a wedged step", async () => {
+  it("goes silent after WEBP_HEARTBEAT_MAX_MS so the stuck-task reaper can close a wedged step", async () => {
     vi.useFakeTimers();
     const table = useTable([workItem("i1", { updatedAt: new Date() })]);
     const original = processor._runWebpSteps;
@@ -995,5 +995,101 @@ describe("a failure BEFORE the claim never closes a row another worker holds", (
     );
     expect(table[0].status).toBe("running");
     expect(refunds).toEqual([]);
+  });
+});
+
+describe("recovery never resets a row THIS process is converting (m1)", () => {
+  const ago = (ms: number) => new Date(Date.now() - ms);
+  afterEach(() => {
+    delete (globalThis as any).__webpInFlightTaskIds;
+  });
+
+  it("skips an own in-flight row however silent it is, and still recovers a foreign silent one", async () => {
+    // e.g. a Postgres outage longer than the stale window: the heartbeat failed quietly.
+    const stale = ago(WEBP_RUNNING_STALE_MS + 60_000);
+    const table = useTable([
+      workItem("mine", { progress: 30, retryCount: 0, updatedAt: stale }),
+      workItem("theirs", { progress: 30, retryCount: 0, updatedAt: stale }),
+    ]);
+    (globalThis as any).__webpInFlightTaskIds = () => new Set(["mine"]);
+
+    await expect(recovery.recoverRunningWebpTasks()).resolves.toEqual({ retried: 1, failed: 0 });
+
+    expect(row("mine").status).toBe("running");
+    expect(row("theirs").status).toBe("pending");
+    expect(table).toHaveLength(2);
+  });
+
+  it("the worker publishes its in-flight ids while the steps run and withdraws them when they end", async () => {
+    vi.useFakeTimers();
+    useTable([workItem("i1", { updatedAt: new Date() })]);
+    let finish!: () => void;
+    const original = processor._runWebpSteps;
+    processor._runWebpSteps = vi.fn(() => new Promise<void>((r) => (finish = r)));
+    try {
+      (globalThis as any).__webpInFlightTaskIds = () => new Set(processor.inFlightIds);
+      const inFlight = processor._processTaskItem({ id: "i1", shop: "kumiko.myshopify.com", result: jobInput("p1") });
+      await vi.advanceTimersByTimeAsync(10);
+      expect((globalThis as any).__webpInFlightTaskIds().has("i1")).toBe(true);
+      finish();
+      await inFlight;
+      await vi.advanceTimersByTimeAsync(10);
+      expect((globalThis as any).__webpInFlightTaskIds().has("i1")).toBe(false);
+    } finally {
+      processor._runWebpSteps = original;
+      vi.useRealTimers();
+    }
+  });
+
+  it("without the hook (worker not started, as at boot) nothing is treated as own", async () => {
+    useTable([workItem("i1", { progress: 30, retryCount: 0, updatedAt: ago(WEBP_RUNNING_STALE_MS + 60_000) })]);
+    await expect(recovery.recoverRunningWebpTasks()).resolves.toEqual({ retried: 1, failed: 0 });
+  });
+
+  it("a row flagged for review says 'Worker stopped', true for a restart and for a lost worker", async () => {
+    useTable([workItem("late", { progress: 80, retryCount: 0, updatedAt: ago(WEBP_RUNNING_STALE_MS + 5_000) })]);
+    await recovery.recoverRunningWebpTasks();
+    expect(row("late").error).toMatch(/^Worker stopped at progress 80/);
+  });
+});
+
+describe("the stuck monitor runs the WebP recovery on every tick, before the reaper (m2)", () => {
+  it("calls recoverRunningWebpTasks, then markStuckTasksAsFailed", async () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    const r1 = vi.spyOn(recovery, "recoverRunningWebpTasks").mockImplementation(async () => {
+      order.push("recover");
+      return { retried: 0, failed: 0 };
+    });
+    const r2 = vi.spyOn(recovery, "markStuckTasksAsFailed").mockImplementation(async () => {
+      order.push("reap");
+      return 0;
+    });
+    try {
+      recovery.startStuckTaskMonitoring();
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 10);
+      expect(order.slice(0, 2)).toEqual(["recover", "reap"]);
+    } finally {
+      recovery.stopStuckTaskMonitoring();
+      r1.mockRestore();
+      r2.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("a recovery that throws does not stop the reaper", async () => {
+    vi.useFakeTimers();
+    const r1 = vi.spyOn(recovery, "recoverRunningWebpTasks").mockRejectedValue(new Error("db down"));
+    const r2 = vi.spyOn(recovery, "markStuckTasksAsFailed").mockResolvedValue(0);
+    try {
+      recovery.startStuckTaskMonitoring();
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 10);
+      expect(r2).toHaveBeenCalled();
+    } finally {
+      recovery.stopStuckTaskMonitoring();
+      r1.mockRestore();
+      r2.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });

@@ -316,13 +316,28 @@ export class TaskRecoveryService {
     // the original) a second time. A live worker heartbeats `updatedAt` every
     // WEBP_ITEM_HEARTBEAT_MS, so only rows silent for WEBP_RUNNING_STALE_MS are
     // dead ones (see app/config/webp-tasks.js for the numbers). A row skipped
-    // here because its owner died only moments ago is caught by the second pass
-    // server.js schedules after that window.
+    // here because its owner died only moments ago is caught by the next tick of
+    // the stuck monitor, which runs this method every time.
+    //
+    // Rows THIS process is converting are never touched, however silent they are
+    // (a database outage longer than the stale window makes its heartbeat fail
+    // quietly): the worker exposes the ids it has in flight. A wedged step of
+    // ours that stopped heartbeating (WEBP_HEARTBEAT_MAX_MS) is closed by the
+    // reaper instead (failed + refunded, never reset and run a second time).
+    // Absent hook (the worker not started yet, as at boot): nothing is ours.
     const staleBefore = new Date(Date.now() - WEBP_RUNNING_STALE_MS);
-    const tasks = await prisma.task.findMany({
+    let ownIds = new Set();
+    try {
+      const ids = globalThis.__webpInFlightTaskIds?.();
+      if (ids) ownIds = new Set(ids);
+    } catch {
+      ownIds = new Set();
+    }
+    const candidates = await prisma.task.findMany({
       where: webpWorkRowWhere({ status: 'running', updatedAt: { lt: staleBefore } }),
       select: { id: true, progress: true, retryCount: true, shop: true },
     });
+    const tasks = candidates.filter((t) => !ownIds.has(t.id));
 
     let retried = 0;
     let failed = 0;
@@ -346,7 +361,7 @@ export class TaskRecoveryService {
           data: {
             status: 'failed',
             completedAt: new Date(),
-            error: `Server restarted at progress ${t.progress ?? 0} — partial Shopify state, manual review needed`,
+            error: `Worker stopped at progress ${t.progress ?? 0} (server restart or a lost worker) — partial Shopify state, manual review needed`,
           },
         });
         if (flagged.count === 0) continue;

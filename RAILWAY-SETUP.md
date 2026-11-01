@@ -121,15 +121,22 @@ die Lage von oben, nur kurz. Behandelt wird sie so:
 5. **Shutdown wartet kurz** (bis 4 s, `drain`, parallel zum Drain der
    AI-Queue von bis zu 8 s) auf laufende Konvertierungen. `gracefulShutdown`
    beendet den Prozess nach 10 s hart. Damit dieses Fenster überhaupt existiert,
-   steht in [railway.json](railway.json) `deploy.drainingSeconds: 15` (laut
-   Railway-Schema: Zeit zwischen SIGTERM und SIGKILL des alten Deploys; der
-   Standard ist 0, im Manifest stand `null`, d. h. SIGKILL folgte sofort und
+   steht in [railway.json](railway.json) `deploy.drainingSeconds: 15` (das
+   Feld ist im Railway-Schema definiert als Zeit zwischen SIGTERM und SIGKILL
+   des alten Deploys; dass der Standard 0 ist, steht in Railways Doku, nicht im
+   Schema. Im Manifest stand `null`, d. h. SIGKILL folgte sofort und
    weder dieser Drain noch der der AI-Queue bekam Zeit). Der Wert muss über der
    10-s-Grenze in `server.js` bleiben.
 6. **Der Heartbeat ist gedeckelt** (`WEBP_HEARTBEAT_MAX_MS`, 75 min, über der
-   dokumentierten Worst-Case-Dauer von rund 50–60 min): ein Schritt, der nie
-   zurückkehrt, wird irgendwann still, damit der Reaper die Zeile schließen kann
-   und der Concurrency-Slot des Shops nicht bis zum Neustart blockiert bleibt.
+   Worst-Case-Dauer von rund 59 min: 100 Varianten × 30 s = 50 min, dazu etwa
+   6 min Download/Konvertierung/Upload davor und etwa 2,5 min danach): ein
+   Schritt, der nie zurückkehrt, wird irgendwann still. Danach schließt der
+   10-Minuten-Reaper die Zeile (fehlgeschlagen + Rückerstattung). Die Recovery
+   fasst Zeilen, die dieser Prozess noch in Arbeit hat, nie an (sie fragt den
+   Worker nach seinen laufenden IDs); die Aufgabe wird also nie auf „pending“
+   zurückgesetzt und nie ein zweites Mal konvertiert. Dasselbe gilt für einen
+   Postgres-Ausfall von mehr als 90 s mitten in einer Konvertierung: die Zeile
+   bleibt unangetastet.
 
 Restrisiko: Der Claim schützt vor *gleichzeitigem Annehmen*, nicht vor einem
 Worker, der mitten in der Konvertierung hart beendet wird — das fängt weiterhin

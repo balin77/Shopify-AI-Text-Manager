@@ -524,6 +524,32 @@ describe("durable migration (both switches on)", () => {
     expect(decryptToken(h.migrations[0].encryptedOldToken)).toBe("legacy-token");
   });
 
+  it("a late answer (or failure) of an attempt that timed out is ignored: nothing stored from it, no unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    let lateReject!: (e: Error) => void;
+    const migrate = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise((_, reject) => (lateReject = reject)))
+      .mockResolvedValueOnce(NEW_PAIR());
+    const d = deps({ migrateToExpiringToken: migrate });
+    configureOfflineAdmin(d);
+    try {
+      const run = maybeMigrateToExpiringToken(SHOP);
+      await vi.advanceTimersByTimeAsync(MIGRATION_ATTEMPT_TIMEOUT_MS + MIGRATION_RETRY_DELAYS_MS[0] + 10);
+      expect(await run).toBe("migrated");
+      // The abandoned attempt now fails, long after it was given up on.
+      lateReject(new Error("socket hang up"));
+      await vi.advanceTimersByTimeAsync(10);
+      await Promise.resolve();
+      expect(unhandled).toEqual([]);
+      expect(d.storeSession).toHaveBeenCalledTimes(1);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("an exchange without a usable body is a transient failure too", async () => {
     const migrate = vi
       .fn()

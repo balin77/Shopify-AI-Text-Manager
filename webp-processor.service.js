@@ -99,10 +99,11 @@ const SHOPIFY_FETCH_TIMEOUT_MS = 30000;
 // against ever being recounted. A merchant was told images failed that in fact
 // converted, and got a month's quota back for them.
 //
-// A work item that really is wedged is still caught, by the stuck-task reaper
-// (10 min without a write) once its heartbeat has stopped (WEBP_HEARTBEAT_MAX_MS,
-// 75 min) and, if the process dies with it, by the boot recovery — both of which
-// read the row this leaves behind rather than racing the steps that own it.
+// A work item that really is wedged is still caught: once its heartbeat has
+// stopped (WEBP_HEARTBEAT_MAX_MS, 75 min) the stuck-task reaper closes the row
+// after 10 min of silence, and if the process dies with it the recovery of the
+// next one (boot or the stuck monitor) classifies it — both read the row this
+// leaves behind rather than racing the steps that own it.
 const WEBP_TASK_TIMEOUT_MS = 4 * 60 * 1000;
 
 // The statuses a work item can be CLAIMED from: the waiting ones, i.e. exactly
@@ -296,6 +297,8 @@ export class WebPProcessorService {
   isRunning = false;
   /** Work items whose steps are still running (for `drain()` at shutdown). */
   inFlightItems = new Set();
+  /** Ids of the work items whose steps this process is running (for the boot/monitor recovery). */
+  inFlightIds = new Set();
   /** A poll is running right now (its `processPendingTasks` has not returned). */
   pollInFlight = false;
   /** A wake-up arrived while a poll was in flight: poll again as soon as it ends. */
@@ -318,6 +321,11 @@ export class WebPProcessorService {
     // created the task rows, so a conversion starts at once instead of waiting
     // for the next 10s tick. Same pattern as `globalThis.__getShopAccessToken`.
     globalThis.__wakeWebpProcessor = () => this.wake();
+    // The recovery (task-recovery.service.js) must never reset a row THIS
+    // process is converting, however silent the row has become (a database
+    // outage longer than the stale window makes the heartbeat fail quietly).
+    // Not removed by stop(): conversions in flight at shutdown are still ours.
+    globalThis.__webpInFlightTaskIds = () => new Set(this.inFlightIds);
     this.poll();
     console.log("[WebPProcessor] Service started, polling every", POLL_INTERVAL_MS / 1000, "seconds");
   }
@@ -340,7 +348,8 @@ export class WebPProcessorService {
    * short ones (a small image is download + sharp + four Shopify calls) from
    * being cut off between "new media created" and "original deleted", which is
    * the state the boot recovery can only flag for manual review. A conversion
-   * that outlives it is covered by the heartbeat/stale rule instead.
+   * that outlives it is covered by the heartbeat/stale rule instead (a row
+   * whose owner is gone goes silent and the recovery classifies it).
    */
   async drain(timeoutMs = 4000) {
     if (this.inFlightItems.size === 0) return;
@@ -648,11 +657,12 @@ export class WebPProcessorService {
    * It has no lifetime cap of its own, deliberately. Its reach is bounded by
    * the loop it sits in — one beat per affected variant, and the variant cache
    * stops at 100 (`hasMoreVariants`) — so the worst case is a work item held
-   * open for the length of the work it is actually doing, roughly 50 minutes
-   * if every one of those calls burns its full 30s ceiling. The interval
+   * open for the length of the work it is actually doing: about 59 minutes in
+   * the worst case (100 x 30s = 50 min here, about 6 min of download, convert
+   * and upload before, about 2.5 min of Shopify calls after). The interval
    * heartbeat in `_processTaskItem` IS capped (WEBP_HEARTBEAT_MAX_MS, 75 min),
-   * above that worst case, so a genuinely wedged step eventually goes silent
-   * and the reaper can close it instead of the row holding a slot forever.
+   * above that, so a genuinely wedged step eventually goes silent and the
+   * stuck-task reaper closes the row instead of it holding a slot forever.
    */
   async touchWorkItem(taskId) {
     await db.task
@@ -729,18 +739,25 @@ export class WebPProcessorService {
 
     // Heartbeat for the WHOLE life of the steps, not just of the wait: the
     // abandon branch below stops waiting after WEBP_TASK_TIMEOUT_MS but the
-    // steps run on, and they must keep looking alive to the boot recovery of a
-    // newer container (WEBP_RUNNING_STALE_MS) and to the reaper. Progress writes
+    // steps run on, and they must keep looking alive to the recovery of a newer
+    // container (WEBP_RUNNING_STALE_MS) and to the reaper. Progress writes
     // alone are too sparse for that — a download can be silent for two minutes.
     const steps = this._runWebpSteps(task, taskData);
     // Capped (WEBP_HEARTBEAT_MAX_MS): a step that never settles must go silent
-    // at some point, or the reaper could not close its row and it would hold
-    // the shop's concurrency slot for as long as the process lives.
+    // at some point, or nothing could close its row and it would hold the
+    // shop's concurrency slot for as long as the process lives. What closes it
+    // is the STUCK-TASK REAPER (10 min of silence): it fails the row with
+    // `task_timed_out` and refunds the image. The recovery does not take it —
+    // it skips rows this process still has in flight (`inFlightIds`) — so the
+    // item is never reset to pending and never converted a second time. If the
+    // wedged step wakes up later it finishes its Shopify writes, but the row
+    // keeps the reaper's verdict (the guarded completion write; see the R4-DI9
+    // note in task-recovery.service.js).
     const heartbeatStart = Date.now();
     const heartbeat = setInterval(() => {
       if (Date.now() - heartbeatStart > WEBP_HEARTBEAT_MAX_MS) {
         clearInterval(heartbeat);
-        console.warn(`[WebPProcessor] Task ${task.id} still running after ${Math.round(WEBP_HEARTBEAT_MAX_MS / 60000)} min — heartbeat stopped, the stuck-task reaper may close it`);
+        console.warn(`[WebPProcessor] Task ${task.id} still running after ${Math.round(WEBP_HEARTBEAT_MAX_MS / 60000)} min — heartbeat stopped, the stuck-task reaper will close the row`);
         return;
       }
       this.touchWorkItem(task.id);
@@ -751,7 +768,11 @@ export class WebPProcessorService {
     // Tracked for drain() at shutdown; settles when the steps do, whatever the wait did.
     const tracked = steps.then(() => {}, () => {});
     this.inFlightItems.add(tracked);
-    tracked.then(() => this.inFlightItems.delete(tracked));
+    this.inFlightIds.add(task.id);
+    tracked.then(() => {
+      this.inFlightItems.delete(tracked);
+      this.inFlightIds.delete(task.id);
+    });
 
     let timeoutTimer;
     try {
@@ -796,7 +817,6 @@ export class WebPProcessorService {
       // container) ago; an unguarded update would let two workers both "win" it
       // and run the destructive sequence twice. `count: 0` means somebody else
       // holds it, it was reaped or the merchant cancelled it — not ours to run.
-      claimedByUs = false;
       const claimed = await db.task.updateMany({
         where: { id: task.id, status: { in: WEBP_CLAIMABLE_STATUS } },
         data: { status: "running", progress: 10 },
@@ -1268,7 +1288,7 @@ export class WebPProcessorService {
         //
         // The row carrying OUR error is the evidence. Every other verdict
         // names itself (the reaper's `task_timed_out`, the boot recovery's
-        // "Server restarted at progress …"), and a SECOND failTask for this
+        // "Worker stopped at progress …"), and a SECOND failTask for this
         // row cannot reach this branch at all: its first statement would have
         // answered zero without throwing.
         const after = await db.task
