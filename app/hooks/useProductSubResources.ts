@@ -109,6 +109,8 @@ interface SubResourceFetcherData {
   /** Edits Shopify refused for their VALUE: id -> Shopify's reason. Kept as
    *  drafts like `unverifiedMetafields`, but worded as a refusal. */
   metafieldRefusals?: Record<string, string>;
+  /** Ids from `metafieldRefusals` that are about PERMISSION, not the text. */
+  permissionRefusedMetafields?: string[];
   /** Cleared slots filled again: slot id -> the GID of the re-created metafield. */
   recreatedMetafields?: Record<string, string>;
   /** Failure CODES from the option write paths; the client owns the wording. */
@@ -253,7 +255,7 @@ const RECENT_TRANSLATE_KEEP_MS = 2 * 60 * 1000;
 export interface SubResourceState {
   /** Option translations keyed by option GID → { name, values[] } */
   optionTranslations: Record<string, OptionTranslation>;
-  /** Metafield translations keyed by metafield GID → translated value */
+  /** Primary locale option edits keyed by option GID → { name?, values: { [valueGid]: renamed text } } (id-keyed, never positional) */
   metafieldTranslations: Record<string, string>;
   /** Primary locale option edits keyed by option GID → { name, values[] } */
   primaryOptionEdits: Record<string, OptionEdit>;
@@ -430,6 +432,11 @@ interface UseProductSubResourcesStrings {
   metafieldTypeNotTranslatable?: string;
   /** "{message}" is Shopify's own reason for a value it refused. */
   metafieldValueRefused?: string;
+  /** Same, for a refusal about permission (the text was not the problem). */
+  metafieldPermissionRefused?: string;
+  /** The save of the PREVIOUS product finished while another one is shown. */
+  savedOtherProduct?: string;
+  savePartialOtherProduct?: string;
   /** One per `OptionWriteWarning` code, e.g. `optionWarning_optionLastOne`.
    *  Indexed rather than listed: the server owns the code list, and a missing
    *  entry drops that reason instead of printing an English one. */
@@ -661,6 +668,8 @@ export function useProductSubResources({
     metafields: Record<string, unknown>;
     /** The exact edits that went out - what the answer settles them against. */
     snapshot: PrimarySaveSnapshot;
+    /** The product the save was sent for. */
+    itemId: string | null;
   } | null>(null);
   // The item/language/market a translate was REQUESTED for; its answer is
   // staged there, never into whatever is showing when it arrives.
@@ -833,6 +842,12 @@ export function useProductSubResources({
     // product -- shown in the card and locking its translate button behind a
     // "save first" nothing could satisfy.
     setPrimaryOptionEdits({});
+    // The metafield edits are the same case: `hasChanges` is reset above, so a
+    // draft left here had no save bar, yet a LATER save on this item would
+    // write it (and purge its translations). This effect returns early on the
+    // same key, so a draft kept by a save on the SAME item/locale/market is
+    // never touched by it.
+    setPrimaryMetafieldEdits({});
     // Note: translatingFieldIds is now in the global AI operations store
     // and should NOT be cleared on item change — it's resource-specific.
 
@@ -849,7 +864,10 @@ export function useProductSubResources({
       overlayStampsRef.current = new Map();
       pendingForeignSaveRef.current = null;
       pendingPrimarySaveIdsRef.current = [];
-      pendingPrimarySaveSentRef.current = null;
+      // NOT pendingPrimarySaveSentRef: a save of the previous product may still
+      // be out, and its answer has to find the snapshot (tagged with the item it
+      // was sent for) to recognise itself as foreign instead of settling the
+      // edits typed on THIS product. The answer clears it.
     }
 
     if (!itemId || isPrimaryLocale || subResourceIds.length === 0) {
@@ -1191,6 +1209,25 @@ export function useProductSubResources({
       // Offered whatever the outcome: a save can fail for one option and still
       // have started the repair for the others.
       onSaveResponse?.(data);
+      // The answer of a save sent for ANOTHER product (the merchant switched
+      // while it was out). The edits, lists and save bar on screen belong to the
+      // product now shown and must not be settled, cleared or reported as saved
+      // by it. The fact that the other product's save landed is not lost: it is
+      // said once, neutrally, and its data is re-read when that product is opened.
+      const sentFor = pendingPrimarySaveSentRef.current;
+      if (sentFor && sentFor.itemId !== (selectedItem?.id ?? null)) {
+        pendingPrimarySaveSentRef.current = null;
+        const otherFailed =
+          (data.failedOptions?.length ?? 0) + (data.failedMetafields?.length ?? 0) + (data.structuralFailures ?? 0) > 0;
+        showInfoBox?.(
+          otherFailed
+            ? strings.savePartialOtherProduct ||
+                "The save of the previous product finished, but not everything was saved. Open it again to check."
+            : strings.savedOtherProduct || "The previous product was saved.",
+          otherFailed ? "warning" : "success",
+        );
+        return;
+      }
       // The save's purge removed these resources' MARKET overrides on Shopify;
       // the loaded item carries the old rows until it is re-read.
       if (Array.isArray(data.marketPurgedResourceIds)) {
@@ -1259,11 +1296,18 @@ export function useProductSubResources({
             .filter(Boolean)
             .join(" ");
           // Shopify's own reason for a value it refused (no "save again").
-          const refusals = Object.values(data.metafieldRefusals ?? {})
-            .map((message) =>
+          const permissionIds = new Set<string>((data.permissionRefusedMetafields ?? []).map(String));
+          const refusals = Object.entries(data.metafieldRefusals ?? {})
+            .map(([id, message]) =>
               // A replacer FUNCTION: Shopify's text is arbitrary and a string
-              // replacement would interpret `$&`, `$1`, `$$` in it.
-              (strings.metafieldValueRefused || "Shopify did not accept the value: {message}").replace("{message}", () => String(message)),
+              // replacement would interpret `$&`, `$1`, `$$` in it. A refusal
+              // about PERMISSION gets its own wording: "adjust your value" cannot
+              // help when the text was never the problem.
+              (permissionIds.has(id)
+                ? strings.metafieldPermissionRefused ||
+                  "Shopify does not allow this app to write this metafield: {message} Nothing was saved; your value stays in the field."
+                : strings.metafieldValueRefused || "Shopify did not accept the value: {message}"
+              ).replace("{message}", () => String(message)),
             )
             .join(" ");
           showInfoBox(
@@ -2374,6 +2418,7 @@ export function useProductSubResources({
 
       pendingPrimarySaveIdsRef.current = changedIdsOfPrimarySave(optionsChanges, metafieldChanges);
       pendingPrimarySaveSentRef.current = {
+        itemId: selectedItem.id ?? null,
         options: optionsChanges,
         metafields: metafieldChanges,
         snapshot: snapshotPrimaryEdits({

@@ -571,6 +571,9 @@ export default function ProductsPage() {
       optionWarning_metafieldExistsMeanwhile: t.products.metafieldWarningExistsMeanwhile,
       optionWarning_metafieldSlotUnverified: t.products.metafieldWarningSlotUnverified,
       metafieldValueRefused: t.products.metafieldValueRefused,
+      metafieldPermissionRefused: t.products.metafieldPermissionRefused,
+      savedOtherProduct: t.products.savedOtherProduct,
+      savePartialOtherProduct: t.products.savePartialOtherProduct,
       metafieldTypeNotTranslatable: t.products.metafieldTypeNotTranslatable,
       metafieldListInvalid: t.products.metafieldListInvalid,
       saveFirstSource: t.common.saveFirstSource,
@@ -877,7 +880,9 @@ export default function ProductsPage() {
   // confirmation, so the merchant is never asked and then refused.
   const refuseSwitchWhileSaving = (): boolean => {
     const altSaveOut = showImageManager && imageManagerState.isSavingImmediateAltTexts;
-    if (!editor.helpers.isOwnSaveInFlight() && !altSaveOut) return false;
+    // The sub-resource card's own save (options, metafields) counts too: its
+    // answer settles the edits on screen, and a switch would hand them to it.
+    if (!editor.helpers.isOwnSaveInFlight() && !altSaveOut && !subResources.state.isSaving) return false;
     showInfoBox(
       String(t.common?.switchWhileSaving || "Still saving \u2013 please wait a moment and then switch again."),
       "info",

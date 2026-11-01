@@ -1216,7 +1216,7 @@ export function VariantOptionsEditor({
                             labelHidden
                             value={value.name}
                             onChange={(next) => {
-                              // Only SAVED values are renamed positionally —
+                              // Only SAVED values are renamed (addressed by their GID) —
                               // a pending add has no id to rename against, so
                               // it is replaced in the pending list instead.
                               if (!value.id) {

@@ -1161,4 +1161,114 @@ describe("translating a metafield never sends the text from before the save", ()
     rerender({ current: itemWithMf });
     expect(String(showInfoBox.mock.calls.at(-1)?.[0])).toContain("Refused: must match $& and $1 and $$");
   });
+  describe("an answer for ANOTHER product (F1) and drafts across a switch (F2)", () => {
+    const MFA = "gid://shopify/Metafield/55";
+    const MFB = "gid://shopify/Metafield/56";
+    const productA = {
+      ...(selectedItem as object),
+      id: "gid://shopify/Product/1",
+      metafields: [{ id: MFA, namespace: "custom", key: "material", value: "Baumwolle", type: "single_line_text_field" }],
+    } as any;
+    const productB = {
+      ...(selectedItem as object),
+      id: "gid://shopify/Product/2",
+      metafields: [{ id: MFB, namespace: "custom", key: "material", value: "Wolle", type: "single_line_text_field" }],
+    } as any;
+    const render = (strings: Record<string, string> = {}) =>
+      renderHook(
+        ({ current }: { current: unknown }) =>
+          useProductSubResources({ selectedItem: current, currentLanguage: "de", primaryLocale: "de", showInfoBox, strings } as never),
+        { initialProps: { current: productA as unknown } },
+      );
+
+    it("A's answer lands while B is shown: B's edits, lists and save bar survive, and there is no green 'saved' toast for B", () => {
+      const { result, rerender } = render({ savedOtherProduct: "Previous product saved." });
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+
+      rerender({ current: productB }); // the merchant switched while A's save was out
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFB, "Seide"));
+      act(() => result.current.handlers.handleAddOptionValue(OPTION, "Green"));
+      showInfoBox.mockClear();
+
+      fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] };
+      rerender({ current: productB });
+
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFB]: "Seide" });
+      expect(result.current.state.optionValuesToAdd).toEqual({ [OPTION]: ["Green"] });
+      expect(result.current.state.hasChanges).toBe(true);
+      // The fact that A's save landed is said, neutrally - not the generic success of B's card.
+      expect(showInfoBox).toHaveBeenCalledTimes(1);
+      expect(showInfoBox.mock.calls[0]).toEqual(["Previous product saved.", "success"]);
+      expect(revalidator.revalidate).not.toHaveBeenCalled();
+    });
+
+    it("a PARTIAL failure of A's save is reported as such, still without touching B", () => {
+      const { result, rerender } = render({ savePartialOtherProduct: "Previous product: not everything saved." });
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      rerender({ current: productB });
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFB, "Seide"));
+      showInfoBox.mockClear();
+      fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [MFA] };
+      rerender({ current: productB });
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFB]: "Seide" });
+      expect(result.current.state.hasChanges).toBe(true);
+      expect(showInfoBox.mock.calls[0]).toEqual(["Previous product: not everything saved.", "warning"]);
+    });
+
+    it("an answer for the SAME product is still processed normally", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] };
+      rerender({ current: productA });
+      expect(result.current.state.primaryMetafieldEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(false);
+    });
+
+    it("F2: a forgotten metafield draft does not follow the merchant to another product (no save bar, yet a later save would write it)", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      rerender({ current: productB });
+      expect(result.current.state.primaryMetafieldEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(false);
+    });
+
+    it("F2: a draft is NOT touched by a reload of the same item/locale/market", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      rerender({ current: { ...productA } }); // a new object, same key
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Leinen" });
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+  });
+  it("a PERMISSION refusal gets its own wording, not 'please adjust your value'", () => {
+    const { result, rerender } = renderHook(
+      ({ current }: { current: unknown }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          strings: { metafieldValueRefused: "Adjust: {message}", metafieldPermissionRefused: "Not allowed: {message}" },
+        } as never),
+      { initialProps: { current: itemWithMf as unknown } },
+    );
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "abc"));
+    act(() => result.current.handlers.saveSubResources());
+    fetcher.data = {
+      success: true,
+      actionType: "savePrimarySubResources",
+      failedOptions: [],
+      failedMetafields: [MF],
+      unverifiedMetafields: [MF],
+      metafieldRefusals: { [MF]: "Owned by another app." },
+      permissionRefusedMetafields: [MF],
+    };
+    rerender({ current: itemWithMf });
+    const message = String(showInfoBox.mock.calls.at(-1)?.[0]);
+    expect(message).toContain("Not allowed: Owned by another app.");
+    expect(message).not.toContain("Adjust:");
+  });
 });
