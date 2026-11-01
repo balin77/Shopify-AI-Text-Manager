@@ -1,0 +1,24 @@
+# Text files are LF in the repository AND in every working copy, whatever
+# core.autocrlf a machine has. Several tests read source files and match them
+# with LF-only patterns (ai-key-preservation, seo-404-beacon,
+# variant-gallery-*), and failed on a CRLF checkout.
+* text=auto eol=lf
+
+# Binary types: never touched by line-ending conversion.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.avif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.mp4 binary
+*.webm binary
+*.mp3 binary
+*.pdf binary
+*.zip binary
