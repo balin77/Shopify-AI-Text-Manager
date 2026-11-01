@@ -1291,15 +1291,26 @@ async function handleSavePrimarySubResourcesUnlocked(
       reorderOptions,
     } = await import("~/services/product-options.server");
 
+    /** Shopify's own words for option writes it refused (scrubbed, capped, deduped). */
+    const optionRefusals: string[] = [];
+    const refusalOf = () => ({
+      sink: {} as { message?: string },
+      take() {
+        if (this.sink.message && !optionRefusals.includes(this.sink.message)) optionRefusals.push(this.sink.message);
+      },
+    });
     /** Order matters: create before reorder, so a new option can be placed;
      *  delete before reorder, so the order does not name a gone option. */
     for (const create of optionsToCreate) {
+      const why = refusalOf();
       const warning = await createOption(admin, db, session.shop, {
         productId,
         name: create.name,
         values: create.values,
+        refusal: why.sink,
       });
       if (warning) {
+        why.take();
         optionWarnings.push(warning);
         structuralFailures++;
       }
@@ -1310,9 +1321,11 @@ async function handleSavePrimarySubResourcesUnlocked(
       // Read the value ids BEFORE the delete: afterwards the cache row is gone
       // and nothing could name the translation rows they leave behind.
       const cachedValueIds = await cachedOptionValueIds(db, session.shop, optionId);
+      const why = refusalOf();
       const warning = await deleteOption(admin, db, session.shop, {
         productId,
         optionId,
+        refusal: why.sink,
         // Counted from the CACHE, which is the server's own state — a client
         // that under-reports it could talk this into deleting the last option.
         // Keyed by the GID: that is what `Product.id` holds, and a numeric id
@@ -1321,6 +1334,7 @@ async function handleSavePrimarySubResourcesUnlocked(
         remainingCount: await db.productOption.count({ where: { productId, product: { shop: session.shop } } }),
       });
       if (warning) {
+        why.take();
         optionWarnings.push(warning);
         structuralFailures++;
       } else {
@@ -1334,9 +1348,11 @@ async function handleSavePrimarySubResourcesUnlocked(
 
     for (const [optionId, changes] of Object.entries(optionsChanges)) {
       if (!isValidShopifyGID(optionId)) continue;
+      const why = refusalOf();
       const warning = await applyOptionChange(admin, db, session.shop, {
         productId,
         optionId,
+        refusal: why.sink,
         name: changes.name,
         values: {
           toUpdate: changes.valueUpdates,
@@ -1346,6 +1362,7 @@ async function handleSavePrimarySubResourcesUnlocked(
         },
       });
       if (warning) {
+        why.take();
         optionWarnings.push(warning);
         failedOptions.push(optionId);
       } else {
@@ -1358,12 +1375,15 @@ async function handleSavePrimarySubResourcesUnlocked(
     // whenever EITHER half moved, so a pure value reorder still has a list of
     // options to hang its values on.
     if (optionOrder.length > 0 && (optionOrder.length > 1 || Object.keys(optionValueOrder).length > 0)) {
+      const why = refusalOf();
       const warning = await reorderOptions(admin, db, session.shop, {
         productId,
+        refusal: why.sink,
         orderedIds: optionOrder.filter(isValidShopifyGID),
         valueOrder: optionValueOrder,
       });
       if (warning) {
+        why.take();
         optionWarnings.push(warning);
         structuralFailures++;
       }
@@ -2285,6 +2305,7 @@ async function handleSavePrimarySubResourcesUnlocked(
       ...(Object.keys(metafieldRefusals).length > 0 ? { metafieldRefusals } : {}),
       ...(permissionRefusals.length > 0 ? { permissionRefusedMetafields: permissionRefusals } : {}),
       ...(metafieldDeleteRefusal ? { metafieldDeleteRefusal } : {}),
+      ...(optionRefusals.length > 0 ? { optionRefusals: optionRefusals.slice(0, 2) } : {}),
       // Cleared metafields Shopify confirmed DELETING (not in savedMetafields:
       // there is no source text left whose translations could be stale).
       ...(removedMetafieldIds.length > 0 ? { removedMetafieldIds } : {}),

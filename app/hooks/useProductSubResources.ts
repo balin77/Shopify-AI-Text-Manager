@@ -132,6 +132,8 @@ interface SubResourceFetcherData {
   failureCodes?: Record<string, string>;
   /** Primary save: Shopify's own message when it refused to clear a metafield. */
   metafieldDeleteRefusal?: string;
+  /** Primary save: Shopify's own messages when it refused an option write (two at most). */
+  optionRefusals?: string[];
   /** The HTTP status of an answer that was refused before the app ran (a non-JSON 4xx). */
   httpStatus?: number;
   /** The outcome is unknown (no answer in time, connection lost, gateway). */
@@ -301,6 +303,18 @@ let viewEpochCounter = 0;
 /** How long what the last landed save wrote is trusted over a possibly stale item. */
 const LAST_LANDED_MS = 10 * 60 * 1000;
 
+interface LandedRecord {
+  at: number;
+  metafields: Record<string, string>;
+  options: Record<string, { name?: string; values: Record<string, string> }>;
+}
+
+/** What the last landed saves of one product wrote, while that is still worth trusting. */
+function landedFor(map: Map<string, LandedRecord>, itemId: string | null | undefined): LandedRecord | undefined {
+  const record = itemId ? map.get(itemId) : undefined;
+  return record && Date.now() - record.at < LAST_LANDED_MS ? record : undefined;
+}
+
 /** A "clear all" is plain writes; one that has not answered after this is given up on. */
 const CLEAR_ALL_TIMEOUT_MS = 240_000;
 
@@ -393,12 +407,15 @@ function primaryFailureDetails(
   const deleteRefusal = data.metafieldDeleteRefusal
     ? (strings.metafieldDeleteRefused || "Shopify did not remove the metafield: {message}").replace("{message}", () => String(data.metafieldDeleteRefusal))
     : "";
+  const optionRefusal = (data.optionRefusals ?? [])
+    .map((message) => (strings.optionRefusedByShopify || "Shopify said: {message}").replace("{message}", () => String(message)))
+    .join(" ");
   const purge = unconfirmedPurgeOf(data as { warnings?: unknown; unconfirmedPurge?: unknown });
   const purgeText = purge.unconfirmed
     ? strings.translationPurgeUnconfirmed ||
       "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them."
     : "";
-  return { reasons: [reasons, deleteRefusal].filter(Boolean).join(" "), refusals, purge, purgeText };
+  return { reasons: [reasons, optionRefusal, deleteRefusal].filter(Boolean).join(" "), refusals, purge, purgeText };
 }
 
 /**
@@ -747,6 +764,8 @@ interface UseProductSubResourcesStrings {
   [failureReason: `failureReason_${string}`]: string | undefined;
   /** "Shopify did not remove the metafield: {message}". */
   metafieldDeleteRefused?: string;
+  /** "Shopify said: {message}" - Shopify's own reason for a refused option write. */
+  optionRefusedByShopify?: string;
 }
 
 interface UseProductSubResourcesProps {
@@ -886,9 +905,10 @@ export function useProductSubResources({
   // Primary locale editing state
   const [primaryOptionEdits, setPrimaryOptionEdits] = useState<Record<string, OptionEdit>>({});
   const [primaryMetafieldEdits, setPrimaryMetafieldEdits] = useState<Record<string, string>>({});
-  /** The product whose landed save is still waiting for its reload - see
-   *  `awaitingOptionReload`. */
-  const [awaitingReloadItemId, setAwaitingReloadItemId] = useState<string | null>(null);
+  /** The products whose landed save is still waiting for its reload - see
+   *  `awaitingOptionReload`. A set: a merchant can leave A for B while A's save
+   *  is out, and both answers lock their own product. */
+  const [awaitingReloadItemIds, setAwaitingReloadItemIds] = useState<ReadonlySet<string>>(new Set());
 
   // Shared state
   // translatingFieldIds is now derived from the global AI operations store
@@ -977,14 +997,9 @@ export function useProductSubResources({
    * edit against THIS first - concluding "unchanged" from a stale item (an edit
    * typed back to the original while the save was out) would send nothing, clear
    * the bar and leave Shopify with the other value. Covers the 20 s fallback of
-   * the reload lock as well. Expires 10 minutes after the first landing.
+   * the reload lock as well. Per product, keyed on the answer's own item whichever view is showing; expires 10 minutes after the first landing.
    */
-  const lastLandedRef = useRef<{
-    itemId: string;
-    at: number;
-    metafields: Record<string, string>;
-    options: Record<string, { name?: string; values: Record<string, string> }>;
-  } | null>(null);
+  const lastLandedRef = useRef<Map<string, LandedRecord>>(new Map());
   const viewEpochRef = useRef(0);
   if (viewEpochRef.current === 0) viewEpochRef.current = ++viewEpochCounter;
   /** Reads the answer of a save pressed by a hook instance that is gone. */
@@ -1030,13 +1045,26 @@ export function useProductSubResources({
   const primarySaveOut = saveEntries.some((e) => e.kind === "primary" && e.itemId === (itemId ?? null));
   // True from a landed save of the options until the reload that follows it
   // has finished - see `optionTranslationBlockedIds`. Per PRODUCT: a Save of
-  // another product (and a main / gallery / alt save) is not held by it, and the
-  // lock is still there when the merchant comes back to the product.
-  const awaitingOptionReload = awaitingReloadItemId !== null && awaitingReloadItemId === (itemId ?? null);
-  const setAwaitingOptionReload = useCallback(
-    (on: boolean) => setAwaitingReloadItemId(on ? (currentViewRef.current.itemId ?? null) : null),
-    [currentViewRef],
-  );
+  // another product (and a main / gallery / alt save) is not held by it, and
+  // the lock is set by the answer's own product whichever view is showing, so
+  // it is there when the merchant comes back to a product whose save answered
+  // meanwhile.
+  const awaitingOptionReload = !!itemId && awaitingReloadItemIds.has(itemId);
+  const lockReload = useCallback((id: string | null | undefined) => {
+    if (!id) return;
+    setAwaitingReloadItemIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }, []);
+  /** One product's lock, or (no id) every lock. */
+  const releaseReload = useCallback((id?: string | null) => {
+    setAwaitingReloadItemIds((prev) => {
+      if (prev.size === 0) return prev;
+      if (id == null) return new Set();
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
   const sourceMoving = awaitingOptionReload || primarySaveOut;
   const revalidatorRef = useLatestRef(revalidator);
 
@@ -1445,8 +1473,8 @@ export function useProductSubResources({
       // keep the structural ADDITIONS this save carried (a re-press would create
       // the option / value a second time if the first landed). Text edits are
       // idempotent and stay.
+      lockReload(entry.itemId);
       if (sameItem) {
-        setAwaitingOptionReload(true);
         requestRevalidate();
         if (lateReloadTimerRef.current) clearTimeout(lateReloadTimerRef.current);
         lateReloadTimerRef.current = setTimeout(() => {
@@ -1490,7 +1518,7 @@ export function useProductSubResources({
         typeof (data as { httpStatus?: unknown }).httpStatus !== "number" &&
         !["gated", "sessionExpired", "reauthorizeRequired", "Invalid product ID"].includes(String(data.error));
       if (maybePartial) {
-        if (sameItem) setAwaitingOptionReload(true);
+        lockReload(entry.itemId);
         requestRevalidate();
       }
       const partialNote = maybePartial
@@ -1688,10 +1716,13 @@ export function useProductSubResources({
     const savedIds = partial
       ? savedIdsAfterPartialSave(sent.options, sent.metafields, failedOptions, failedMetafields)
       : sent.ids;
-    if (sameItem) {
-      const landed = lastLandedRef.current && lastLandedRef.current.itemId === entry.itemId && Date.now() - lastLandedRef.current.at < LAST_LANDED_MS
-        ? lastLandedRef.current
-        : { itemId: entry.itemId ?? "", at: Date.now(), metafields: {}, options: {} };
+    // What Shopify holds now, recorded under the answer's OWN product: this
+    // answer may land while another product is showing, and the merchant can
+    // come back to the stale item before its reload does.
+    if (entry.itemId) {
+      const book = lastLandedRef.current;
+      for (const [id, rec] of book) if (Date.now() - rec.at >= LAST_LANDED_MS) book.delete(id);
+      const landed = book.get(entry.itemId) ?? { at: Date.now(), metafields: {}, options: {} };
       const failedMf = new Set(failedMetafields.map(String));
       const failedOpt = new Set(failedOptions.map(String));
       for (const [id, value] of Object.entries(sent.metafields)) {
@@ -1704,7 +1735,9 @@ export function useProductSubResources({
         for (const u of change?.valueUpdates ?? []) rec.values[u.id] = u.name;
         landed.options[id] = rec;
       }
-      lastLandedRef.current = landed;
+      book.set(entry.itemId, landed);
+    }
+    if (sameItem) {
       updateKeepIds(keepOverlayIdsRef.current, savedIds, details.purge.resourceIds);
       if (dropOverlayForPrimaryChange(localSubResourceOverlayRef.current, savedIds, keepOverlayIdsRef.current)) {
         touchOverlay();
@@ -1720,7 +1753,7 @@ export function useProductSubResources({
     // `savedIds` cannot see them), and a missed reload leaves a new option
     // invisible and a re-create would collide with it.
     if (partial || revalidator) {
-      if (sameItem) setAwaitingOptionReload(true);
+      lockReload(entry.itemId);
       requestRevalidate();
     }
 
@@ -2040,13 +2073,19 @@ export function useProductSubResources({
     // one a save already settled) is no pending change.
     optionEditUnsaved: (id, edit) => {
       const original = selectedItem?.options?.find((o) => o.id === id);
-      return original ? isOptionEditUnsaved(original, edit as OptionEdit) : false;
+      return original
+        ? isOptionEditUnsaved(original, edit as OptionEdit, landedFor(lastLandedRef.current, selectedItem?.id)?.options[id])
+        : false;
     },
     metafieldEditUnsaved: (id, edit) => {
       const original =
         selectedItem?.metafields?.find((m) => m.id === id) ??
         selectedItem?.clearedMetafields?.find((m) => m.id === id);
-      return original ? isPrimaryMetafieldUnsaved(original, edit as string) : false;
+      if (!original) return false;
+      // Same rule as the press: typed back to the item's value while Shopify
+      // holds another one is still to be sent.
+      const landed = landedFor(lastLandedRef.current, selectedItem?.id)?.metafields[id];
+      return isPrimaryMetafieldUnsaved(original, edit as string) || (landed !== undefined && landed !== original.value);
     },
   };
 
@@ -2173,7 +2212,7 @@ export function useProductSubResources({
       // A reload that was already RUNNING when the answer arrived read before the
       // write; the one asked for meanwhile (`pendingRevalidateRef`) is the one
       // that counts. Releasing now would let a Save compare with a pre-save item.
-      if (!pendingRevalidateRef.current) setAwaitingOptionReload(false);
+      if (!pendingRevalidateRef.current) releaseReload();
     }
     // A reload asked for while one was running (`requestRevalidate`).
     if (revalidatorState === "idle" && pendingRevalidateRef.current) {
@@ -2183,7 +2222,7 @@ export function useProductSubResources({
       deferLockReleaseRef.current = true;
       revalidatorRef.current?.revalidate();
     }
-  }, [revalidatorState, revalidatorRef]);
+  }, [revalidatorState, revalidatorRef, releaseReload]);
 
   // Two more ways out, because a lock nothing releases is worse than the bug
   // it prevents: the item the reload brings back is a NEW object (if React
@@ -2204,15 +2243,17 @@ export function useProductSubResources({
         deferLockReleaseRef.current = false;
         itemWhenAwaitingRef.current = selectedItem;
       } else {
-        setAwaitingOptionReload(false);
+        releaseReload(selectedItem?.id);
       }
     }
-  }, [awaitingOptionReload, selectedItem, revalidatorRef]);
+  }, [awaitingOptionReload, selectedItem, revalidatorRef, releaseReload]);
+  // One bound for all locks (a new lock restarts it); runs whichever product is
+  // showing, and is cleaned up on unmount.
   useEffect(() => {
-    if (!awaitingOptionReload) return;
-    const timer = setTimeout(() => setAwaitingOptionReload(false), 20_000);
+    if (awaitingReloadItemIds.size === 0) return;
+    const timer = setTimeout(() => releaseReload(), 20_000);
     return () => clearTimeout(timer);
-  }, [awaitingOptionReload]);
+  }, [awaitingReloadItemIds, releaseReload]);
 
   // After a save of UNKNOWN outcome the reload has landed (the lock released):
   // drop, from what the merchant still has queued, only what the fresh item
@@ -2835,10 +2876,7 @@ export function useProductSubResources({
         // An edit is SENT when it differs from the loaded item OR from what the
         // last landed save wrote (the item may still be the one from before it).
         // An extra send is idempotent; a missed one loses the text.
-        const landedHere =
-          lastLandedRef.current && lastLandedRef.current.itemId === selectedItem.id && Date.now() - lastLandedRef.current.at < LAST_LANDED_MS
-            ? lastLandedRef.current.options[optionId]
-            : undefined;
+        const landedHere = landedFor(lastLandedRef.current, selectedItem.id)?.options[optionId];
         const differs = (edited: string | undefined, item: string, landed: string | undefined): edited is string =>
           edited !== undefined && (edited !== item || (landed !== undefined && edited !== landed));
         const hasNameChange = differs(edit.name, originalOption.name, landedHere?.name);
@@ -2867,6 +2905,17 @@ export function useProductSubResources({
           const survivingEdits = changedValues
             .map((v) => ({ id: v.id, name: edit.values?.[v.id] as string }))
             .filter((v) => !deletedHere.has(v.id));
+
+          // A blanked value is refused HERE, nothing at all is sent: the server
+          // would fail the whole option and the client would drop its edits.
+          if (hasValuesChange && survivingEdits.some((v) => v.name.trim() === "")) {
+            if (showInfoBox) {
+              showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical");
+            } else {
+              alert("Option values cannot be empty");
+            }
+            return;
+          }
 
           optionsChanges[optionId] = {};
           if (hasNameChange) optionsChanges[optionId].name = edit.name as string;
@@ -2921,10 +2970,7 @@ export function useProductSubResources({
         let change = primaryMetafieldChange(originalMetafield, editValue);
         // "Unchanged" against the loaded item is only real if Shopify still holds
         // the item's value: after a landed save it may hold another one.
-        const landedValue =
-          lastLandedRef.current && lastLandedRef.current.itemId === selectedItem.id && Date.now() - lastLandedRef.current.at < LAST_LANDED_MS
-            ? lastLandedRef.current.metafields[metafieldId]
-            : undefined;
+        const landedValue = landedFor(lastLandedRef.current, selectedItem.id)?.metafields[metafieldId];
         if (change.kind === "unchanged" && landedValue !== undefined && landedValue !== originalMetafield.value) {
           change = { kind: "value", value: originalMetafield.value };
         }

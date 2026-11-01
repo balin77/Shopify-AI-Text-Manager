@@ -74,6 +74,7 @@ export const es: Translation = {
     metafieldWarningDeleteFailed: "Falló la eliminación de un metacampo (sin respuesta utilizable de Shopify), por lo que se restableció. Inténtalo de nuevo.",
     metafieldWarningDeleteNotConfirmed: "Shopify no confirmó la eliminación de un metacampo, por lo que se restableció. Compruébalo en Shopify antes de intentarlo de nuevo.",
     metafieldDeleteRefused: "Shopify no eliminó el metacampo: {message}",
+    optionRefusedByShopify: "Shopify indicó: {message}",
     failureReasonNotConfirmed: "Shopify no confirmó la traducción.",
     failureReasonRemovalNotConfirmed: "Shopify no confirmó la eliminación de la traducción.",
     failureReasonError: "Se produjo un error al guardar.",

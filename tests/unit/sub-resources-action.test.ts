@@ -776,11 +776,49 @@ describe('handleSavePrimarySubResources — the primary-change purges', () => {
       expect(result.metafieldDeleteRefusal).toBe('Definition is pinned');
     });
 
-    it('a delete with no readable message, or one that throws, carries a code', async () => {
+    it('a delete with no readable message, or one Shopify did not echo, carries a code', async () => {
       const refused = installAdmin({ metafieldsDelete: () => ({ data: { metafieldsDelete: null } }) });
       expect(body(await save(makeDb(), refused.admin, {}, { [METAFIELD]: '' })).optionWarnings).toContain('metafieldDeleteFailed');
       const unechoed = installAdmin({ metafieldsDelete: () => ({ data: { metafieldsDelete: { userErrors: [], deletedMetafields: [] } } }) });
       expect(body(await save(makeDb(), unechoed.admin, {}, { [METAFIELD]: '' })).optionWarnings).toContain('metafieldDeleteNotConfirmed');
+    });
+
+    it('a delete or a write that THROWS carries a code', async () => {
+      const del = installAdmin();
+      const delInner = del.admin.graphql.getMockImplementation()!;
+      del.admin.graphql.mockImplementation(async (q: string, o?: any) => {
+        if (q.includes('metafieldsDelete')) throw new Error('socket hang up');
+        return delInner(q, o);
+      });
+      const a = body(await save(makeDb(), del.admin, {}, { [METAFIELD]: '' }));
+      expect(a.failedMetafields).toEqual([METAFIELD]);
+      expect(a.optionWarnings).toContain('metafieldDeleteFailed');
+
+      const set = installAdmin();
+      const setInner = set.admin.graphql.getMockImplementation()!;
+      set.admin.graphql.mockImplementation(async (q: string, o?: any) => {
+        if (q.includes('metafieldsSet')) throw new Error('socket hang up');
+        return setInner(q, o);
+      });
+      const b = body(await save(makeDb(), set.admin, {}, { [METAFIELD]: 'x' }));
+      expect(b.failedMetafields).toEqual([METAFIELD]);
+      expect(b.optionWarnings).toContain('metafieldWriteFailed');
+      expect(JSON.stringify(b)).not.toContain('socket hang up');
+    });
+
+    it('a refused option write passes Shopify\'s message on, deduped', async () => {
+      const { applyOptionChange } = await import('~/services/product-options.server');
+      vi.mocked(applyOptionChange).mockImplementation((async (_a: any, _d: any, _s: any, params: any) => {
+        params.refusal.message = 'Option name is too long';
+        return 'optionsFailed';
+      }) as any);
+      try {
+        const result = body(await save(makeDb(), installAdmin().admin, { [OPTION]: { name: 'Farbe' }, [`${OPTION}9`]: { name: 'Grösse' } }, {}));
+        expect(result.optionWarnings).toContain('optionsFailed');
+        expect(result.optionRefusals).toEqual(['Option name is too long']);
+      } finally {
+        vi.mocked(applyOptionChange).mockImplementation((async () => null) as any);
+      }
     });
 
     it('a write Shopify did not echo carries a code', async () => {

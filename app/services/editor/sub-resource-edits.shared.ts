@@ -84,11 +84,19 @@ export function snapshotPrimaryEdits(args: {
 }
 
 /** Does this option edit differ from the option it edits (name or any renamed value)? */
-export function isOptionEditUnsaved(original: OptionLike, edit: OptionEdit): boolean {
-  if (edit.name !== undefined && edit.name !== original.name) return true;
+export function isOptionEditUnsaved(
+  original: OptionLike,
+  edit: OptionEdit,
+  /** What the last landed saves wrote while the item may still be older: an edit
+   *  that differs from THIS is still to be sent (the press sends it too). */
+  landed?: { name?: string; values: Record<string, string> },
+): boolean {
+  if (edit.name !== undefined && (edit.name !== original.name || (landed?.name !== undefined && edit.name !== landed.name))) return true;
   return Object.entries(edit.values ?? {}).some(([valueId, name]) => {
     const value = original.values.find((v) => v.id === valueId);
-    return !!value && value.name !== name;
+    if (!value) return false;
+    const held = landed?.values[valueId];
+    return value.name !== name || (held !== undefined && held !== name);
   });
 }
 

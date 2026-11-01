@@ -31,6 +31,7 @@
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 import { logger } from "~/utils/logger.server";
+import { scrubProviderErrorText } from "~/utils/provider-error-scrub";
 // Re-exported so server callers keep one import, while the CLIENT can reach
 // the same key without pulling Prisma in behind it.
 import { variantCountKey } from "./product-options.shared";
@@ -60,6 +61,11 @@ export interface EchoedOption {
   optionValues: Array<{ id: string; name: string; linkedMetafieldValue?: string | null }>;
 }
 
+/** Filled with Shopify's own (scrubbed, capped) userError message when it refuses a write. */
+export interface OptionRefusalSink {
+  message?: string;
+}
+
 interface MutationOutcome {
   warning?: OptionWriteWarning;
   options?: EchoedOption[];
@@ -78,6 +84,7 @@ async function runOptionMutation(
   document: string,
   variables: Record<string, unknown>,
   field: string,
+  refusal?: OptionRefusalSink,
 ): Promise<MutationOutcome> {
   try {
     const response = await admin.graphql(document, { variables });
@@ -107,6 +114,8 @@ async function runOptionMutation(
       logger.warn("[ProductOptions] userErrors", {
         context: "ProductOptions", shop, field, error: payload.userErrors[0]?.message,
       });
+      const text = payload.userErrors[0]?.message;
+      if (refusal && typeof text === "string" && text.trim()) refusal.message = scrubProviderErrorText(text).slice(0, 240);
       return { warning: "optionsFailed" };
     }
     const options = payload?.product?.options;
@@ -228,7 +237,7 @@ export async function applyOptionChange(
   admin: AdminApiContext,
   db: PrismaClient,
   shop: string,
-  params: { productId: string; optionId: string; name?: string; values?: OptionValueChange },
+  params: { productId: string; optionId: string; name?: string; values?: OptionValueChange; refusal?: OptionRefusalSink },
 ): Promise<OptionWriteWarning | undefined> {
   const option: { id: string; name?: string } = { id: params.optionId };
   if (params.name !== undefined) {
@@ -269,7 +278,7 @@ export async function applyOptionChange(
   // request per option and most of them are untouched.
   if (params.name === undefined && !changesMatrix && toUpdate.length === 0) return undefined;
 
-  const outcome = await runOptionMutation(admin, shop, PRODUCT_OPTION_UPDATE, variables, "productOptionUpdate");
+  const outcome = await runOptionMutation(admin, shop, PRODUCT_OPTION_UPDATE, variables, "productOptionUpdate", params.refusal);
   if (outcome.warning) return outcome.warning;
 
   // The ECHO decides, and `userErrors: []` is not the echo.
@@ -312,7 +321,7 @@ export async function createOption(
   admin: AdminApiContext,
   db: PrismaClient,
   shop: string,
-  params: { productId: string; name: string; values: string[] },
+  params: { productId: string; name: string; values: string[]; refusal?: OptionRefusalSink },
 ): Promise<OptionWriteWarning | undefined> {
   const name = params.name.trim();
   if (!name) return "optionNameEmpty";
@@ -325,6 +334,7 @@ export async function createOption(
     PRODUCT_OPTIONS_CREATE,
     { productId: params.productId, options: [{ name, values: values.map((v) => ({ name: v })) }] },
     "productOptionsCreate",
+    params.refusal,
   );
   if (outcome.warning) return outcome.warning;
   await mirrorOptions(db, params.productId, outcome.options ?? []);
@@ -342,7 +352,7 @@ export async function deleteOption(
   admin: AdminApiContext,
   db: PrismaClient,
   shop: string,
-  params: { productId: string; optionId: string; remainingCount: number },
+  params: { productId: string; optionId: string; remainingCount: number; refusal?: OptionRefusalSink },
 ): Promise<OptionWriteWarning | undefined> {
   if (params.remainingCount <= 1) return "optionLastOne";
 
@@ -352,6 +362,7 @@ export async function deleteOption(
     PRODUCT_OPTIONS_DELETE,
     { productId: params.productId, options: [params.optionId] },
     "productOptionsDelete",
+    params.refusal,
   );
   if (outcome.warning) return outcome.warning;
   await mirrorOptions(db, params.productId, outcome.options ?? []);
@@ -382,6 +393,7 @@ export async function reorderOptions(
     /** Value GIDs in their new order, per option id. Omit an option to leave
      *  its values alone. */
     valueOrder?: Record<string, string[]>;
+    refusal?: OptionRefusalSink;
   },
 ): Promise<OptionWriteWarning | undefined> {
   const outcome = await runOptionMutation(
@@ -403,6 +415,7 @@ export async function reorderOptions(
       }),
     },
     "productOptionsReorder",
+    params.refusal,
   );
   if (outcome.warning) return outcome.warning;
   await mirrorOptions(db, params.productId, outcome.options ?? []);

@@ -577,6 +577,7 @@ export default function ProductsPage() {
       optionWarning_metafieldDeleteFailed: t.products.metafieldWarningDeleteFailed,
       optionWarning_metafieldDeleteNotConfirmed: t.products.metafieldWarningDeleteNotConfirmed,
       metafieldDeleteRefused: t.products.metafieldDeleteRefused,
+      optionRefusedByShopify: t.products.optionRefusedByShopify,
       failureReason_notConfirmed: t.products.failureReasonNotConfirmed,
       failureReason_removalNotConfirmed: t.products.failureReasonRemovalNotConfirmed,
       failureReason_error: t.products.failureReasonError,

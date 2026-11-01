@@ -73,6 +73,7 @@ export const de = {
     metafieldWarningDeleteFailed: "Das Entfernen eines Metafelds ist fehlgeschlagen (keine brauchbare Antwort von Shopify), es wurde zurückgesetzt. Bitte versuche es erneut.",
     metafieldWarningDeleteNotConfirmed: "Shopify hat das Entfernen eines Metafelds nicht bestätigt, es wurde zurückgesetzt. Prüfe es auf Shopify, bevor du es erneut versuchst.",
     metafieldDeleteRefused: "Shopify hat das Metafeld nicht entfernt: {message}",
+    optionRefusedByShopify: "Shopify meldet: {message}",
     failureReasonNotConfirmed: "Shopify hat die Übersetzung nicht bestätigt.",
     failureReasonRemovalNotConfirmed: "Shopify hat das Entfernen der Übersetzung nicht bestätigt.",
     failureReasonError: "Beim Speichern ist ein Fehler aufgetreten.",

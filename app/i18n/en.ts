@@ -78,6 +78,7 @@ export const en: Translation = {
     metafieldWarningDeleteFailed: "Removing a metafield failed (no usable answer from Shopify), so it was reset. Please try again.",
     metafieldWarningDeleteNotConfirmed: "Shopify did not confirm removing a metafield, so it was reset. Check it on Shopify before you try again.",
     metafieldDeleteRefused: "Shopify did not remove the metafield: {message}",
+    optionRefusedByShopify: "Shopify said: {message}",
     failureReasonNotConfirmed: "Shopify did not confirm the translation.",
     failureReasonRemovalNotConfirmed: "Shopify did not confirm removing the translation.",
     failureReasonError: "An error occurred while saving.",

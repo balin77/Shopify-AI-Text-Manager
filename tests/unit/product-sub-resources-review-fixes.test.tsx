@@ -37,6 +37,8 @@ const STRINGS = {
   alreadyAdded: "Already added: {names}",
   optionsSavedSuccess: "SAVED-OK",
   metafieldDeleteRefused: "Not removed: {message}",
+  optionRefusedByShopify: "Shopify said: {message}",
+  optionValuesEmpty: "VALUES-EMPTY",
   optionWarning_metafieldWriteFailed: "WRITE-FAILED",
 };
 const OKP = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] };
@@ -65,6 +67,14 @@ const press = async (result: any) => {
   });
   await saves.flush();
   return out;
+};
+
+/** A reload that started after the answer runs and delivers `item`. */
+const reloadLands = (rerender: (props: { current: any; lang: string }) => void, item: any, lang = "de") => {
+  rv = { ...rv, state: "loading" };
+  rerender({ current: item, lang });
+  rv = { ...rv, state: "idle" };
+  rerender({ current: item, lang });
 };
 
 beforeEach(() => {
@@ -116,7 +126,7 @@ describe("compare against what Shopify holds (F1, F2)", () => {
     await press(result);
     rerender({ current: Q, lang: "de" });
     await saves.settle({ ...OKP });
-    rerender({ current: withOpt("BBB"), lang: "de" });
+    reloadLands(rerender, withOpt("BBB"));
     act(() => result.current.handlers.handlePrimaryOptionNameChange(OPT, "AAA"));
     await press(result);
     expect(saves.sent).toHaveLength(3);
@@ -133,7 +143,7 @@ describe("compare against what Shopify holds (F1, F2)", () => {
     await press(result);
     rerender({ current: Q, lang: "de" });
     await saves.settle({ ...OKP });
-    rerender({ current: withOpt("Colour", "BBB"), lang: "de" });
+    reloadLands(rerender, withOpt("Colour", "BBB"));
     act(() => result.current.handlers.handlePrimaryOptionValueChange(OPT, V1, "AAA"));
     act(() => result.current.handlers.handlePrimaryOptionValueChange(OPT, V2, "Navy"));
     await press(result);
@@ -346,7 +356,110 @@ describe("Discard then typing (P8)", () => {
   });
 });
 
+describe("a blanked value is refused before anything is sent", () => {
+  it("name + value edits + an add: nothing goes out and every edit stays", async () => {
+    const { result } = render();
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPT, "Farbe"));
+    act(() => result.current.handlers.handlePrimaryOptionValueChange(OPT, V1, "Crimson"));
+    act(() => result.current.handlers.handlePrimaryOptionValueChange(OPT, V2, ""));
+    act(() => result.current.handlers.handleAddOptionValue(OPT, "Green"));
+    await press(result);
+    expect(saves.sent).toHaveLength(0);
+    expect(showInfoBox).toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+    expect(result.current.state.primaryOptionEdits[OPT].values[V2]).toBe("");
+    expect(result.current.state.optionValuesToAdd[OPT]).toEqual(["Green"]);
+    expect(result.current.state.hasChanges).toBe(true);
+  });
+
+  it("a blank value that is being deleted does not block the save", async () => {
+    const { result } = render();
+    act(() => result.current.handlers.handlePrimaryOptionValueChange(OPT, V2, ""));
+    act(() => result.current.handlers.handleRemoveOptionValue(OPT, V2));
+    act(() => result.current.handlers.handlePrimaryOptionValueChange(OPT, V1, "Crimson"));
+    await press(result);
+    expect(saves.sent).toHaveLength(1);
+    expect(JSON.parse(saves.fields(0).optionsChanges)[OPT].valueUpdates).toEqual([{ id: V1, name: "Crimson" }]);
+  });
+});
+
+describe("returning to a product before its reload lands", () => {
+  const fresh = (text: string) => mk(P.id, "Shirt", { metafields: [{ id: MFA, namespace: "c", key: "a", value: text, type: "single_line_text_field" }] });
+
+  it("A answered while B showed: back on A the lock is there and the Save waits", async () => {
+    const { result, rerender } = render();
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+    await press(result);
+    rerender({ current: Q, lang: "de" });
+    await saves.settle({ ...OKP });
+    rv = { ...rv, state: "loading" };
+    rerender({ current: Q, lang: "de" });
+    rerender({ current: P, lang: "de" }); // the stale item
+    expect(result.current.state.metafieldTranslationBlocked).toBe(true);
+    expect(result.current.state.optionTranslationBlockedIds.size).toBeGreaterThan(0);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Baumwolle")); // the old text typed back
+    expect(await press(result)).toBe("waiting");
+    expect(saves.sent).toHaveLength(1);
+    expect(result.current.state.hasChanges).toBe(true);
+    rv = { ...rv, state: "idle" };
+    rerender({ current: fresh("Leinen"), lang: "de" });
+    await press(result);
+    expect(JSON.parse(saves.fields(1).metafieldChanges)).toEqual({ [MFA]: "Baumwolle" });
+  });
+
+  it("A and B both answered: the lock and the record of A survive B's answer", async () => {
+    const { result, rerender } = render();
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+    await press(result);
+    await saves.settle({ ...OKP });
+    rv = { ...rv, state: "loading" };
+    rerender({ current: P, lang: "de" });
+    rerender({ current: Q, lang: "de" });
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Seide"));
+    await press(result);
+    await saves.settle({ ...OKP });
+    rerender({ current: P, lang: "de" });
+    expect(result.current.state.metafieldTranslationBlocked).toBe(true);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Wolle"));
+    expect(await press(result)).toBe("waiting");
+  });
+
+  it("the locks give up after 20 s even when the product is not showing, and the bar follows the send rule", async () => {
+    vi.useFakeTimers();
+    const { result, rerender } = render();
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+    await press(result);
+    rerender({ current: Q, lang: "de" });
+    await saves.settle({ ...OKP });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_100);
+    });
+    rerender({ current: P, lang: "de" }); // still the stale item, lock gone
+    expect(result.current.state.metafieldTranslationBlocked).toBe(false);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Baumwolle"));
+    expect(result.current.state.hasChanges).toBe(true);
+    await press(result);
+    expect(JSON.parse(saves.fields(1).metafieldChanges)).toEqual({ [MFA]: "Baumwolle" });
+  });
+});
+
 describe("failure reasons reach the merchant", () => {
+  it("Shopify's reason for a refused option write is shown, intact view and elsewhere", async () => {
+    const { result, rerender } = render();
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPT, "Farbe"));
+    await press(result);
+    showInfoBox.mockClear();
+    await saves.settle({ ...OKP, failedOptions: [OPT], optionWarnings: ["optionsFailed"], optionRefusals: ["Option name is too long"] });
+    expect(String(showInfoBox.mock.calls[0]?.[0])).toContain("Option name is too long");
+
+    reloadLands(rerender, P);
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPT, "Couleur"));
+    await press(result);
+    rerender({ current: Q, lang: "de" });
+    showInfoBox.mockClear();
+    await saves.settle({ ...OKP, failedOptions: [OPT], optionWarnings: ["optionsFailed"], optionRefusals: ["Option name is too long"] });
+    expect(String(showInfoBox.mock.calls[0]?.[0])).toContain("Option name is too long");
+  });
+
   it("a refused clear names Shopify's message; a code names its sentence", async () => {
     const { result } = render();
     act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, ""));
