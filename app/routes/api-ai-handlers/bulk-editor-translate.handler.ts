@@ -774,7 +774,9 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     const result: TranslateResultJson = { saved, failed, skippedHandles, failures };
     const failedRows = new Set(failures.map((f) => f.rowId)).size;
     if (managedRefusal) {
-      logger.warn("[API-AI] Bulk-editor translate: stood down on a managed-AI refusal", {
+      // A managed-AI refusal OR a queue shutdown (`server_shutting_down`): the
+      // code says which.
+      logger.warn("[API-AI] Bulk-editor translate: stood down", {
         context: "AI", taskId, refusal: managedRefusal, saved,
       });
     }

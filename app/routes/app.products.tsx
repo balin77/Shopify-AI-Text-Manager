@@ -576,6 +576,7 @@ export default function ProductsPage() {
       savedOtherProduct: t.products.savedOtherProduct,
       savePartialOtherProduct: t.products.savePartialOtherProduct,
       saveFailedOtherProduct: t.products.saveFailedOtherProduct,
+      saveNotConfirmed: t.products.saveNotConfirmed,
       previousProductLabel: t.products.previousProductLabel,
       metafieldTypeNotTranslatable: t.products.metafieldTypeNotTranslatable,
       metafieldListInvalid: t.products.metafieldListInvalid,
@@ -903,6 +904,19 @@ export default function ProductsPage() {
     return true;
   };
 
+  // A "clear all" must not be overtaken by a save of the same product that is
+  // still out or waiting in the save queue (the clear goes out at once on its own
+  // request, the queued save later: it would write the cleared text back).
+  const refuseClearWhileSubResourcesSave = (): boolean => {
+    const itemId = editor.state.selectedItemId;
+    if (!itemId || !subResources.handlers.isSaveInFlight(itemId, editor.state.currentLanguage)) return false;
+    showInfoBox(
+      String(t.common?.clearWhileSaving || "Still saving – please wait a moment and then clear again."),
+      "info",
+    );
+    return true;
+  };
+
   // A "translate all" must not race the card's own saves either (its "clear
   // all", the options & metafields save): refused like the editor's own.
   const refuseTranslateWhileSubResourcesSave = (locale: string): boolean => {
@@ -947,13 +961,13 @@ export default function ProductsPage() {
       // all" of the language they are being written into waits for them, like
       // the editor's own fields do (useFieldHandlers).
       handleClearAllForLocaleClick: () => {
-        if (refuseClearWhileSubResourcesTranslate()) return;
+        if (refuseClearWhileSubResourcesTranslate() || refuseClearWhileSubResourcesSave()) return;
         editor.handlers.handleClearAllForLocaleClick();
       },
       // Checked again on confirm (a run may have started while the dialog was
       // open); a refusal clears neither half.
       handleClearAllForLocaleConfirm: () => {
-        if (refuseClearWhileSubResourcesTranslate()) {
+        if (refuseClearWhileSubResourcesTranslate() || refuseClearWhileSubResourcesSave()) {
           editor.handlers.handleClearAllCancel();
           return false;
         }
@@ -1113,7 +1127,12 @@ export default function ProductsPage() {
     if (pendingTranslationSyncRefreshRef.current) {
       pendingTranslationSyncRefreshRef.current = false;
       editor.helpers.triggerDataRefresh();
-      subResources.handlers.resetForReload();
+      // `refreshTranslations`, NOT `resetForReload`: the reset leaves the load
+      // key emptied, so the NEXT reload (the answer of a save that was started on
+      // another product, say) runs the load effect's full reset and wipes
+      // whatever the merchant typed meanwhile. The refresh re-reads in place and
+      // does nothing while anything is unsaved.
+      subResources.handlers.refreshTranslations();
     }
   }, [products]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally fires when products changes after sync
 

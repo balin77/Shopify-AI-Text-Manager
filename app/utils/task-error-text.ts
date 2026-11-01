@@ -77,7 +77,7 @@ const FALLBACK: Record<string, string> = {
   managedAiUnavailable:
     "The included AI was temporarily unavailable, so this ran nothing and changed nothing. Please try again later.",
   serverShuttingDown:
-    "The server was restarted during this run. What was already translated was saved; the rest was not translated. Please run it again.",
+    "The server was restarted during this run. Entries translated before that were saved where possible; the rest was not translated. Please check the result and run it again.",
   handleRedirectsMissing:
     "{count} URL handle(s) were re-translated, but no redirect could be created for the previous address — add it under URL redirects, or old links will lead nowhere.",
   autoTranslateDailyLimit:
