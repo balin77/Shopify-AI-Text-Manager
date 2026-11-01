@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { AIQueueService } from '../../src/services/ai-queue.service';
+import { AIQueueService, isAIQueueShuttingDown } from '../../src/services/ai-queue.service';
 import type { AIProvider } from '../../src/services/ai.service';
 
 // Mock the database
@@ -414,6 +414,26 @@ describe('AIQueueService', () => {
       await queueService.drain(1000);
       await rejection;
       expect(execute).not.toHaveBeenCalled();
+    });
+
+    it('enqueue after stop() rejects at once with a CODED error instead of waiting forever', async () => {
+      queueService.stop();
+      const execute = vi.fn().mockResolvedValue('SHOULD-NOT-RUN');
+      const pending = queueService.enqueue('shopLate', 'task-late', 'openai', 10, execute);
+      await expect(pending).rejects.toMatchObject({ code: 'AI_QUEUE_SHUTTING_DOWN', name: 'AIQueueShuttingDownError' });
+      expect(isAIQueueShuttingDown(await pending.catch((e) => e))).toBe(true);
+      expect((queueService as any).queues.get('shopLate')?.length ?? 0).toBe(0);
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+    it('enqueueFromTask after stop() rejects the same way', async () => {
+      queueService.stop();
+      await expect(
+        queueService.enqueueFromTask(
+          { id: 't', shop: 's', prompt: 'p', provider: 'openai', estimatedTokens: 10, retryCount: 0 },
+          { provider: 'openai' } as any,
+        ),
+      ).rejects.toMatchObject({ code: 'AI_QUEUE_SHUTTING_DOWN' });
     });
 
     it('never runs more than MAX_GLOBAL_CONCURRENCY executes at once', async () => {

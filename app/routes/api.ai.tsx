@@ -275,6 +275,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         displayName: getProviderDisplayName(error.provider),
       });
     }
+    // The queue was stopped for shutdown (the signal arrived while this request
+    // was still open): not a crash, nothing to report - the client retries
+    // against the next container.
+    if ((error as { code?: string } | null)?.code === "AI_QUEUE_SHUTTING_DOWN") {
+      logger.warn("[API-AI] AI queue is shutting down - request not processed", { context: "AI" });
+      return json(
+        { success: false, code: "AI_QUEUE_SHUTTING_DOWN", error: "The server is restarting. Please try again in a moment." },
+        { status: 503 },
+      );
+    }
     // A real crash. It no longer escapes to `handleError` (the handlers are
     // awaited inside this try), so report it to Sentry here — and only here,
     // not for the control-flow branches above.

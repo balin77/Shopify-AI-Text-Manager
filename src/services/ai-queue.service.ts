@@ -68,6 +68,26 @@ export const MAX_RATE_LIMIT_RETRIES = 3;
  * would let a BYO shop's configured limits decide how fast the operator's key
  * may be spent.
  */
+/**
+ * Thrown (as a rejection) by `enqueue` once `stop()` has run. Since the server
+ * stops the queue ON the shutdown signal while HTTP is still open, a request
+ * that reaches the queue after that moment would otherwise be spliced into a
+ * queue nobody dispatches any more, never settle, hold the connection open and
+ * keep `server.close` waiting until the force-exit. Coded, so a route can
+ * answer 503 instead of reporting a crash.
+ */
+export class AIQueueShuttingDownError extends Error {
+  readonly code = 'AI_QUEUE_SHUTTING_DOWN' as const;
+  constructor() {
+    super('Server shutting down — request not processed');
+    this.name = 'AIQueueShuttingDownError';
+  }
+}
+
+export function isAIQueueShuttingDown(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === 'AI_QUEUE_SHUTTING_DOWN';
+}
+
 export function rateLimitBucket(source: QueueCredentialSource, provider: AIProvider): string {
   return `${source}:${provider}`;
 }
@@ -368,6 +388,10 @@ export class AIQueueService {
     servedBucket?: () => string
   ): Promise<T> {
     return new Promise((resolve, reject) => {
+      if (this.shuttingDown) {
+        reject(new AIQueueShuttingDownError());
+        return;
+      }
       const request: QueuedRequest = {
         id: `${Date.now()}-${Math.random()}`,
         shop,
@@ -797,6 +821,9 @@ export class AIQueueService {
     },
     aiSettings: AIServiceConfig
   ): Promise<void> {
+    // Checked first: no service is built (and no key resolved) for a request
+    // the stopped queue would only reject.
+    if (this.shuttingDown) throw new AIQueueShuttingDownError();
     const provider = task.provider as AIProvider;
     const estimatedTokens = task.estimatedTokens || 2500; // Default estimate
 
@@ -813,6 +840,10 @@ export class AIQueueService {
 
     // Enqueue the task (fire and forget - result handling is done by the original caller)
     return new Promise((resolve, reject) => {
+      if (this.shuttingDown) {
+        reject(new AIQueueShuttingDownError());
+        return;
+      }
       const request: QueuedRequest = {
         id: `recovery-${Date.now()}-${Math.random()}`,
         shop: task.shop,

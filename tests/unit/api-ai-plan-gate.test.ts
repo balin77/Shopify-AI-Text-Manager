@@ -85,6 +85,15 @@ describe("api.ai content-type plan gate", () => {
     expect(captureServerError).not.toHaveBeenCalled();
   });
 
+  it("answers 503 (not a reported crash) when the queue was stopped for shutdown", async () => {
+    aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "pro" });
+    translateField.mockRejectedValueOnce(Object.assign(new Error("Server shutting down — request not processed"), { code: "AI_QUEUE_SHUTTING_DOWN" }));
+    const { status, body } = await run({ action: "translateField", contentType: "templates", fieldType: "title" });
+    expect(status).toBe(503);
+    expect(body).toMatchObject({ success: false, code: "AI_QUEUE_SHUTTING_DOWN" });
+    expect(captureServerError).not.toHaveBeenCalled();
+  });
+
   it("still answers a generic 500 for a non-Response failure", async () => {
     aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "pro" });
     translateField.mockRejectedValueOnce(new Error("boom"));
