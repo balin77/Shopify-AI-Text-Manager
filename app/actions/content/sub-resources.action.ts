@@ -1465,7 +1465,7 @@ export async function handleSavePrimarySubResources(
                   type?: string;
                   owner?: { id?: string } | null;
                 } | null> | null;
-                userErrors?: Array<{ field?: string[] | string | null; message: string }>;
+                userErrors?: Array<{ field?: string[] | string | null; message: string; code?: string | null }>;
               } | null;
             } | null;
             errors?: unknown;
@@ -1504,7 +1504,18 @@ export async function handleSavePrimarySubResources(
               }
               refused = batch.filter((entry) => !yielded.has(entry));
             }
-            for (const entry of refused) failedMetafields.push(entry.metafieldId);
+            for (const entry of refused) {
+              failedMetafields.push(entry.metafieldId);
+              // A refused CREATE-ONLY call wrote nothing, and metafieldsSet is
+              // atomic: the slots that did not themselves collide (another one
+              // in the batch did, or the re-read could not tell) failed with
+              // it. Their typed text is kept as a draft, like the early path
+              // does when Shopify cannot be asked, instead of being reverted.
+              if (entry.isSlot) {
+                unverifiedMetafields.push(entry.metafieldId);
+                optionWarnings.push("metafieldSlotUnverified");
+              }
+            }
             continue;
           }
           const echoed = (result.metafields ?? []).filter(
@@ -1590,7 +1601,15 @@ export async function handleSavePrimarySubResources(
           logger.error("[UnifiedContent] Failed to update metafields", {
             context: "UnifiedContent", error: getFullErrorMessage(err),
           });
-          for (const entry of batch) failedMetafields.push(entry.metafieldId);
+          for (const entry of batch) {
+            failedMetafields.push(entry.metafieldId);
+            // Thrown before any answer: nothing is known to be written. A slot
+            // refill keeps its typed text as a draft (see the refusal above).
+            if (entry.isSlot) {
+              unverifiedMetafields.push(entry.metafieldId);
+              optionWarnings.push("metafieldSlotUnverified");
+            }
+          }
         }
       }
 

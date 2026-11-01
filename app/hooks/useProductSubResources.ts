@@ -66,7 +66,7 @@ import {
 } from "../services/editor/sub-resource-clear.shared";
 import { retirePurgedMarketResources } from "~/services/editor/sub-resource-market-purge.shared";
 import { appFetch } from "../utils/app-fetch";
-import { isPrimaryMetafieldUnsaved, primaryMetafieldChange } from "../services/product-metafields.shared";
+import { isPrimaryMetafieldUnsaved, isSentMetafieldEdit, primaryMetafieldChange } from "../services/product-metafields.shared";
 import { isBatchTranslatableValueType } from "../services/metaobject-fields.shared";
 
 /**
@@ -1270,14 +1270,27 @@ export function useProductSubResources({
           // kept "Translate all" on "Save first" with nothing unsaved, and
           // reported a re-created cleared field as "failed, reverted" on the
           // second attempt although the first had written it.
-          const sentMetafieldIds = new Set<string>(Object.keys(sentPrimary?.metafields ?? {}));
+          const sentMetafields = sentPrimary?.metafields ?? {};
           const failedMetafieldIds = new Set<string>(failedMetafields.map(String));
           setPrimaryMetafieldEdits(prev => {
             const kept: Record<string, string> = {};
             for (const [metafieldId, value] of Object.entries(prev)) {
-              const stays =
-                unverifiedMetafields.has(metafieldId) ||
-                (!sentMetafieldIds.has(metafieldId) && !failedMetafieldIds.has(metafieldId));
+              let stays: boolean;
+              if (unverifiedMetafields.has(metafieldId)) {
+                stays = true;
+              } else if (failedMetafieldIds.has(metafieldId)) {
+                stays = false;
+              } else if (!(metafieldId in sentMetafields)) {
+                stays = true; // never sent: typed after the save went out
+              } else {
+                // Sent AND saved. It goes only if the field still holds what
+                // was sent: a field retyped while the save was in flight has a
+                // newer text that no save has carried yet.
+                const original =
+                  selectedItem.metafields?.find(m => m.id === metafieldId) ??
+                  selectedItem.clearedMetafields?.find(m => m.id === metafieldId);
+                stays = original ? !isSentMetafieldEdit(original, value, sentMetafields[metafieldId]) : false;
+              }
               if (stays) kept[metafieldId] = value;
             }
             return kept;

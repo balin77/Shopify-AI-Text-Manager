@@ -1117,6 +1117,57 @@ describe('handleSavePrimarySubResources — the primary metafield write', () => 
       );
     });
 
+    it('a refused create-only call that the re-read cannot explain keeps the typed text as a DRAFT (nothing was written)', async () => {
+      const w = installAdmin({
+        metafieldsSet: () => ({ data: { metafieldsSet: { metafields: [], userErrors: [{ message: 'nope', code: 'STALE_OBJECT' }] } } }),
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.unverifiedMetafields).toEqual([METAFIELD]);
+      expect(result.optionWarnings).toContain('metafieldSlotUnverified');
+      expect(result.optionWarnings ?? []).not.toContain('metafieldExistsMeanwhile');
+    });
+
+    it('when ONE raced slot fails the atomic slot batch, the other slot keeps its draft', async () => {
+      const LIVE = 'gid://shopify/Metafield/77';
+      let reads = 0;
+      const w = installAdmin({
+        slotRead: (v) => {
+          reads++;
+          const product: Record<string, unknown> = { id: v.id };
+          // First read: both absent. Re-read: slot 0 (k13) now exists, slot 1 (k14) does not.
+          product.m0 = reads === 1 ? null : { id: LIVE, namespace: 'custom', key: 'k13', value: 'Leinen', type: 'single_line_text_field' };
+          if ('ns1' in v) product.m1 = null;
+          return { data: { product } };
+        },
+        metafieldsSet: () => ({ data: { metafieldsSet: { metafields: [], userErrors: [{ message: 'stale', code: 'STALE_OBJECT' }] } } }),
+      });
+      const db = slotDb();
+      db.productMetafield.findMany.mockImplementation(async (args: any) =>
+        (args?.where?.id?.in ?? []).map((id: string) => ({
+          id, namespace: 'custom', key: `k${id.split('/').pop()}`, type: 'single_line_text_field', value: '',
+        })),
+      );
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'A', [MF2]: 'B' }));
+      expect(result.failedMetafields.sort()).toEqual([METAFIELD, MF2].sort());
+      expect(result.optionWarnings).toContain('metafieldExistsMeanwhile');
+      expect(result.unverifiedMetafields).toEqual([MF2]);
+    });
+
+    it('a THROWN slot refill keeps its draft too', async () => {
+      const w = installAdmin();
+      const original = w.admin.graphql.getMockImplementation()!;
+      w.admin.graphql.mockImplementation(async (q: string, o?: any) => {
+        if (q.includes('mutation metafieldsSet')) throw new Error('GraphqlQueryError');
+        return original(q, o);
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.unverifiedMetafields).toEqual([METAFIELD]);
+    });
+
     it('the guarded slot refill travels apart from ordinary edits, so a refusal cannot fail them', async () => {
       const w = installAdmin({
         metafieldsSet: (v) => ({

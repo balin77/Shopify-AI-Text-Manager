@@ -861,4 +861,43 @@ describe("translating a metafield never sends the text from before the save", ()
     // Before the fix MF stayed here although Shopify already had it.
     expect(result.current.state.primaryMetafieldEdits).toEqual({ [MF3]: "Asien" });
   });
+  it("a field RETYPED while the save was in flight keeps its newer text; one still holding the sent text is dropped", () => {
+    const MF2 = "gid://shopify/Metafield/78";
+    const MF3 = "gid://shopify/Metafield/79";
+    const threeMf = {
+      ...itemWithMf,
+      metafields: [
+        ...itemWithMf.metafields,
+        { id: MF2, namespace: "custom", key: "care", value: "Waschen", type: "single_line_text_field" },
+        { id: MF3, namespace: "custom", key: "origin", value: "EU", type: "single_line_text_field" },
+      ],
+    };
+    const { result, rerender } = renderHook(
+      ({ current }: { current: unknown }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          strings: {},
+        } as never),
+      { initialProps: { current: threeMf as unknown } },
+    );
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Leinen")); // retyped below
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF2, "Trocknen")); // saved, untouched
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF3, "Asien")); // fails
+    act(() => result.current.handlers.saveSubResources());
+    // Typed while the request is out:
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Hanf"));
+    fetcher.data = {
+      success: true,
+      actionType: "savePrimarySubResources",
+      failedOptions: [],
+      failedMetafields: [MF3],
+      optionWarnings: [],
+    };
+    rerender({ current: threeMf });
+
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MF]: "Hanf" });
+  });
 });
