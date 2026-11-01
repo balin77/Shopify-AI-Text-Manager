@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
+import { installSaves } from "../helpers/sub-resource-save-harness";
 
 const submit = vi.fn();
 const fetcher: { state: string; data: unknown; submit: typeof submit; load: () => void; Form: () => null } = {
@@ -242,23 +243,21 @@ describe("the Phase-2 load", () => {
     expect(loadSubmits()[0][0]).toMatchObject({ locale: "en" });
   });
 
-  it("a save that aborted a load in flight re-sends it afterwards", () => {
+  it("a save pressed while a load is in flight leaves the load alone (saves no longer use its fetcher)", async () => {
+    const saves = installSaves();
     const { result, rerender } = setup({ it: makeItem(EN_ONLY), lang: "en" });
     expect(loadSubmits()).toHaveLength(1);
+    fetcher.state = "loading";
+    rerender({ it: makeItem(EN_ONLY), lang: "en" });
     act(() => result.current.handlers.handleMetafieldChange(MF, "Linen"));
     act(() => result.current.handlers.saveSubResources());
-    expect(submit).toHaveBeenCalledTimes(2);
-
-    act(() => {
-      fetcher.state = "submitting";
-      rerender({ it: makeItem(EN_ONLY), lang: "en" });
-    });
-    act(() => {
-      fetcher.state = "idle";
-      fetcher.data = { success: true, actionType: "saveSubResourceTranslations", savedResources: [MF], failedResources: [] };
-      rerender({ it: makeItem(EN_ONLY), lang: "en" });
-    });
-    expect(loadSubmits()).toHaveLength(2);
+    await saves.flush();
+    // The save went out on its own request; the load fetcher was not touched,
+    // and the load is not re-sent (it was never aborted).
+    expect(saves.sent).toHaveLength(1);
+    expect(submit).toHaveBeenCalledTimes(1);
+    await saves.settle({ success: true, actionType: "saveSubResourceTranslations", savedResources: [MF], failedResources: [] });
+    expect(loadSubmits()).toHaveLength(1);
   });
 });
 

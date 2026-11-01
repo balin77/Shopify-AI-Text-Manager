@@ -4,8 +4,12 @@ import {
   isOptionEditUnsaved,
   metafieldEditsAfterSave,
   optionEditsAfterSave,
+  hasStructural,
+  retypedForeignIds,
   snapshotPrimaryEdits,
+  structuralAfterSave,
   type OptionEdit,
+  type StructuralLists,
 } from "../../app/services/editor/sub-resource-edits.shared";
 
 const option = {
@@ -17,8 +21,9 @@ const option = {
   ],
 };
 
+const EMPTY_STRUCTURAL = { valuesToAdd: {}, linkedToAdd: {}, valuesToDelete: {}, optionsToCreate: [], optionsToDelete: [], optionOrder: null, valueOrder: {} };
 const snap = (over: Partial<Parameters<typeof snapshotPrimaryEdits>[0]> = {}) =>
-  snapshotPrimaryEdits({ metafieldEdits: {}, optionEdits: {}, optionsToDelete: [], valuesToDelete: {}, ...over });
+  snapshotPrimaryEdits({ metafieldEdits: {}, optionEdits: {}, optionsToDelete: [], valuesToDelete: {}, structural: EMPTY_STRUCTURAL, ...over });
 
 describe("metafieldEditsAfterSave - settles against the SNAPSHOT, never against an item", () => {
   it("drops what still equals its snapshot (saved or reverted), keeps retypes, drafts and late edits", () => {
@@ -135,5 +140,61 @@ describe("helpers", () => {
     expect(hasKeptEdits({}, {})).toBe(false);
     expect(hasKeptEdits({ a: "x" }, {})).toBe(true);
     expect(hasKeptEdits({}, { o: {} })).toBe(true);
+  });
+});
+
+describe("structuralAfterSave - only what the save carried leaves", () => {
+  const lists = (over: Partial<StructuralLists> = {}): StructuralLists => ({ ...EMPTY_STRUCTURAL, ...over });
+
+  it("keeps a value added AFTER the press, removes the carried one (by value, once)", () => {
+    const carried = lists({ valuesToAdd: { o1: ["Blue"] } });
+    const current = lists({ valuesToAdd: { o1: ["Blue", "Green"] } });
+    expect(structuralAfterSave(current, carried).valuesToAdd).toEqual({ o1: ["Green"] });
+    // two pending adds of the same text: only the carried one goes
+    expect(structuralAfterSave(lists({ valuesToAdd: { o1: ["X", "X"] } }), lists({ valuesToAdd: { o1: ["X"] } })).valuesToAdd).toEqual({ o1: ["X"] });
+  });
+
+  it("deletes, linked entries and created options likewise", () => {
+    const carried = lists({
+      valuesToDelete: { o1: ["v1"] },
+      linkedToAdd: { o1: [{ id: "m1", name: "A" }] },
+      optionsToCreate: [{ name: "Material", values: ["Cotton"] }],
+      optionsToDelete: ["o9"],
+    });
+    const current = lists({
+      valuesToDelete: { o1: ["v1", "v2"] },
+      linkedToAdd: { o1: [{ id: "m1", name: "A" }, { id: "m2", name: "B" }] },
+      optionsToCreate: [{ name: "Material", values: ["Cotton"] }, { name: "Finish", values: ["Matte"] }],
+      optionsToDelete: ["o9", "o8"],
+    });
+    const rest = structuralAfterSave(current, carried);
+    expect(rest.valuesToDelete).toEqual({ o1: ["v2"] });
+    expect(rest.linkedToAdd).toEqual({ o1: [{ id: "m2", name: "B" }] });
+    expect(rest.optionsToCreate).toEqual([{ name: "Finish", values: ["Matte"] }]);
+    expect(rest.optionsToDelete).toEqual(["o8"]);
+  });
+
+  it("an order the merchant changed after the press stays; the carried one goes", () => {
+    expect(structuralAfterSave(lists({ optionOrder: ["a", "b"] }), lists({ optionOrder: ["a", "b"] })).optionOrder).toBeNull();
+    expect(structuralAfterSave(lists({ optionOrder: ["b", "a"] }), lists({ optionOrder: ["a", "b"] })).optionOrder).toEqual(["b", "a"]);
+    const rest = structuralAfterSave(lists({ valueOrder: { o1: ["v2", "v1"], o2: ["x"] } }), lists({ valueOrder: { o1: ["v2", "v1"] } }));
+    expect(rest.valueOrder).toEqual({ o2: ["x"] });
+  });
+
+  it("nothing carried -> nothing removed; everything carried -> nothing left", () => {
+    const all = lists({ valuesToAdd: { o1: ["A"] }, optionsToDelete: ["o"] });
+    expect(structuralAfterSave(all, EMPTY_STRUCTURAL)).toEqual(all);
+    expect(hasStructural(structuralAfterSave(all, all))).toBe(false);
+    expect(hasStructural(all)).toBe(true);
+  });
+});
+
+describe("retypedForeignIds", () => {
+  it("names the carried ids whose text differs now, and only those", () => {
+    const sent = { a: { value: "one" }, b: { name: "two" }, c: { value: "three" } };
+    const now: Record<string, string> = { a: "one", b: "two!", c: "three" };
+    expect(retypedForeignIds(sent, (id) => now[id])).toEqual(new Set(["b"]));
+    // an unreadable field is not "retyped"
+    expect(retypedForeignIds(sent, () => undefined)).toEqual(new Set());
   });
 });

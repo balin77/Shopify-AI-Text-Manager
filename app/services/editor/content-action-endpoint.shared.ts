@@ -35,6 +35,11 @@ export const CONTENT_EDITOR_EXTRA_ACTIONS: Readonly<Record<string, readonly stri
     "translateSubResources",
     "translateSubResourceToAllLocales",
     "saveSubResourceTranslations",
+    // The options & metafields card's primary Save. It runs through the module-
+    // scope save queue (plain fetch), not the page fetcher, so that a queued
+    // save survives the merchant leaving the page. The page's own action is the
+    // one that runs it: same auth, plan gate and handler as the fetcher path.
+    "savePrimarySubResources",
     // "Images per language" card: load / set / remove one replacement.
     "localizedMediaLoad",
     "localizedMediaSet",

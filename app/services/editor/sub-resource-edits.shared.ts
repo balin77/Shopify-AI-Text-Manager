@@ -58,6 +58,8 @@ export interface PrimarySaveSnapshot {
   /** Options deleted by this save, and values removed from the surviving ones. */
   optionsToDelete: readonly string[];
   valuesToDelete: Readonly<Record<string, readonly string[]>>;
+  /** Every structural list as it went out (what the answer may clear). */
+  structural: StructuralLists;
 }
 
 /** A deep copy: later state updates must not reach into what was sent. */
@@ -66,6 +68,7 @@ export function snapshotPrimaryEdits(args: {
   optionEdits: Readonly<Record<string, OptionEdit>>;
   optionsToDelete: readonly string[];
   valuesToDelete: Readonly<Record<string, readonly string[]>>;
+  structural: StructuralLists;
 }): PrimarySaveSnapshot {
   const optionEdits: Record<string, OptionEdit> = {};
   for (const [id, edit] of Object.entries(args.optionEdits)) {
@@ -76,6 +79,7 @@ export function snapshotPrimaryEdits(args: {
     optionEdits,
     optionsToDelete: [...args.optionsToDelete],
     valuesToDelete: Object.fromEntries(Object.entries(args.valuesToDelete).map(([k, v]) => [k, [...v]])),
+    structural: snapshotStructural(args.structural),
   };
 }
 
@@ -162,4 +166,100 @@ export function hasUnsavedPrimaryEdits(args: {
     if (original && isOptionEditUnsaved(original, edit)) return true;
   }
   return false;
+}
+
+// ============================================================================
+// Structural lists and foreign (translation) edits: settle only what a save carried
+// ============================================================================
+//
+// The same rule as the text edits above, for the rest of what a Save sends. The
+// answer used to clear EVERY structural list and EVERY dirty id wholesale, so an
+// option value added, a field typed or a translation changed AFTER the press was
+// dropped with a green toast. Now an answer removes exactly what its own payload
+// carried (taken at press time) and leaves the rest.
+
+export interface StructuralLists {
+  valuesToAdd: Record<string, string[]>;
+  linkedToAdd: Record<string, Array<{ id: string; name: string }>>;
+  valuesToDelete: Record<string, string[]>;
+  optionsToCreate: Array<{ name: string; values: string[] }>;
+  optionsToDelete: string[];
+  optionOrder: string[] | null;
+  valueOrder: Record<string, string[]>;
+}
+
+export function snapshotStructural(lists: StructuralLists): StructuralLists {
+  return JSON.parse(JSON.stringify(lists)) as StructuralLists;
+}
+
+/** `current` minus `carried`, each carried item removed ONCE (a multiset), by `key`. */
+function minusOnce<T>(current: readonly T[], carried: readonly T[], key: (item: T) => string): T[] {
+  const left = new Map<string, number>();
+  for (const item of carried) left.set(key(item), (left.get(key(item)) ?? 0) + 1);
+  const rest: T[] = [];
+  for (const item of current) {
+    const k = key(item);
+    const n = left.get(k) ?? 0;
+    if (n > 0) left.set(k, n - 1);
+    else rest.push(item);
+  }
+  return rest;
+}
+
+/** What is left of the structural lists once the save that carried `carried` has answered. */
+export function structuralAfterSave(current: StructuralLists, carried: StructuralLists): StructuralLists {
+  const perOption = <T,>(cur: Record<string, T[]>, was: Record<string, T[]>, key: (item: T) => string) => {
+    const out: Record<string, T[]> = {};
+    for (const [optionId, list] of Object.entries(cur)) {
+      const rest = minusOnce(list, was[optionId] ?? [], key);
+      if (rest.length > 0) out[optionId] = rest;
+    }
+    return out;
+  };
+  const sameOrder = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const valueOrder: Record<string, string[]> = {};
+  for (const [optionId, order] of Object.entries(current.valueOrder)) {
+    if (!sameOrder(order, carried.valueOrder[optionId])) valueOrder[optionId] = order;
+  }
+  return {
+    valuesToAdd: perOption(current.valuesToAdd, carried.valuesToAdd, (v) => v),
+    linkedToAdd: perOption(current.linkedToAdd, carried.linkedToAdd, (v) => v.id),
+    valuesToDelete: perOption(current.valuesToDelete, carried.valuesToDelete, (v) => v),
+    optionsToCreate: minusOnce(current.optionsToCreate, carried.optionsToCreate, (o) => JSON.stringify(o)),
+    optionsToDelete: minusOnce(current.optionsToDelete, carried.optionsToDelete, (o) => o),
+    optionOrder: sameOrder(current.optionOrder, carried.optionOrder) ? null : current.optionOrder,
+    valueOrder,
+  };
+}
+
+export function hasStructural(lists: StructuralLists): boolean {
+  const any = (r: Record<string, unknown[]>) => Object.values(r).some((l) => l.length > 0);
+  return (
+    any(lists.valuesToAdd) ||
+    any(lists.linkedToAdd) ||
+    any(lists.valuesToDelete) ||
+    lists.optionsToCreate.length > 0 ||
+    lists.optionsToDelete.length > 0 ||
+    lists.optionOrder !== null ||
+    Object.keys(lists.valueOrder).length > 0
+  );
+}
+
+/**
+ * The ids of a foreign save whose text was changed AFTER the press: what the
+ * field holds now differs from what was sent. They stay dirty (and are neither
+ * reverted nor marked saved); everything else the save carried is settled.
+ */
+export function retypedForeignIds(
+  sent: Readonly<Record<string, Record<string, string>>>,
+  currentText: (resourceId: string, key: string) => string | undefined,
+): Set<string> {
+  const retyped = new Set<string>();
+  for (const [resourceId, fields] of Object.entries(sent)) {
+    for (const [key, text] of Object.entries(fields)) {
+      const now = currentText(resourceId, key);
+      if (now !== undefined && now !== text) retyped.add(resourceId);
+    }
+  }
+  return retyped;
 }

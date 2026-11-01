@@ -56,8 +56,9 @@ export const es: Translation = {
     metafieldValueRefused: "Shopify no aceptó el valor de un metacampo: {message} Tu texto sigue en el campo; no se guardó nada para él. Otros metacampos enviados en el mismo guardado pueden haberse restablecido, y otras partes del guardado pueden haberse realizado. Ajusta el valor o descarta el cambio.",
     metafieldPermissionRefused: "Shopify no permite que esta app escriba este metacampo: {message} Tu texto sigue en el campo; no se guardó nada para él. Puedes descartar el cambio. Otros metacampos enviados en el mismo guardado pueden haberse restablecido, y otras partes del guardado pueden haberse realizado.",
     savedOtherProduct: "Guardado: {title}",
-    savePartialOtherProduct: "No todo se guardó en {title}. Ábrelo de nuevo para comprobarlo.",
-    saveFailedOtherProduct: "No se pudo guardar {title}. Ábrelo de nuevo para comprobarlo.",
+    savePartialOtherProduct: "No todo se guardó en {title}. Lo que no se guardó hay que volver a introducirlo; abre el producto para comprobarlo.",
+    saveFailedOtherProduct: "No se pudo guardar {title}: lo que introdujiste no se guardó y hay que volver a introducirlo.",
+    saveNotConfirmed: "No llegó una respuesta a tiempo para {title}. Abre el producto de nuevo para comprobar si se guardó.",
     previousProductLabel: "el producto anterior",
     metafieldWarningSlotUnverified: "En un metacampo vaciado no se pudo comprobar si Shopify ya tiene un valor. No se ha guardado nada; tu valor sigue en el campo; vuelve a guardar.",
     metafieldTypeNotTranslatable: "Este tipo de metacampo no se puede traducir automáticamente (se perderían los saltos de línea o las listas). Introduce la traducción a mano.",
@@ -2169,6 +2170,7 @@ export const es: Translation = {
     switchWhileSaving: "Todavía se está guardando: espera un momento y vuelve a cambiar.",
     clearWhileTranslating: "Todavía se está traduciendo a este idioma: espera a que termine la traducción y luego borra.",
     translateWhileSaving: "Todavía se está guardando: espera un momento y vuelve a traducir.",
+    clearWhileSaving: "Todavía se está guardando: espera un momento y vuelve a vaciar.",
     saveWaitsForTranslation: "Esperando a que termine la traducción; después se guarda.",
     translateRunTimedOut: "La traducción está tardando más de lo esperado. Vuelve a cargar la página más tarde para ver lo que se guardó.",
     translateRunTimedOutSaveKept: "Es posible que la traducción siga en curso en el servidor. Tus cambios aún no se han guardado; vuelve a guardar en un momento.",
@@ -2391,7 +2393,7 @@ export const es: Translation = {
       managedAiUnavailable:
         "La IA incluida no estuvo disponible temporalmente, así que no se ejecutó ni se cambió nada. Inténtalo más tarde.",
       serverShuttingDown:
-        "El servidor se reinició durante esta ejecución. Lo que ya estaba traducido se guardó; el resto no se tradujo. Vuelve a ejecutarla.",
+        "El servidor se reinició durante esta ejecución. Lo traducido antes se guardó en lo posible; el resto no se tradujo. Revisa el resultado y vuelve a ejecutarla.",
     },
     translationCompleted: "Traducción completada para \"{title}\"",
     fieldTranslationCompleted: "Traducción para {field} en \"{title}\" completada",

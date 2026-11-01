@@ -60,8 +60,9 @@ export const en: Translation = {
     metafieldValueRefused: "Shopify did not accept the value for a metafield: {message} Your text stays in the field; nothing was saved for it. Other metafields sent in the same save may have been reset, and other parts of the save may have gone through. Adjust the value or discard the change.",
     metafieldPermissionRefused: "Shopify does not allow this app to write this metafield: {message} Your text stays in the field; nothing was saved for it. You can discard the change. Other metafields sent in the same save may have been reset, and other parts of the save may have gone through.",
     savedOtherProduct: "Saved: {title}",
-    savePartialOtherProduct: "Not everything was saved for {title}. Open it again to check.",
-    saveFailedOtherProduct: "{title} could not be saved. Open it again to check.",
+    savePartialOtherProduct: "Not everything was saved for {title}. What was not saved has to be entered again – open the product to check.",
+    saveFailedOtherProduct: "{title} could not be saved: what you entered was not saved and has to be entered again.",
+    saveNotConfirmed: "No answer for {title} arrived in time. Open the product again to check whether it was saved.",
     previousProductLabel: "the previous product",
     metafieldWarningSlotUnverified: "For a cleared metafield we could not check whether Shopify already holds a value. Nothing was saved; your value stays in the field — please save again.",
     metafieldTypeNotTranslatable: "This metafield type cannot be translated automatically (line breaks or lists would be lost). Please enter the translation by hand.",
@@ -2189,6 +2190,7 @@ export const en: Translation = {
     switchWhileSaving: "Still saving – please wait a moment and then switch again.",
     clearWhileTranslating: "A translation into this language is still running – please wait until it has finished and then clear.",
     translateWhileSaving: "Still saving – please wait a moment and then translate again.",
+    clearWhileSaving: "Still saving – please wait a moment and then clear again.",
     saveWaitsForTranslation: "Waiting until the translation has finished – then it is saved.",
     translateRunTimedOut: "The translation is taking longer than expected. Reload the page later to see what was stored.",
     translateRunTimedOutSaveKept: "The translation may still be running on the server. Your changes were not saved yet – please save again in a moment.",
@@ -2409,7 +2411,7 @@ export const en: Translation = {
       managedAiUnavailable:
         "The included AI was temporarily unavailable, so this ran nothing and changed nothing. Please try again later.",
       serverShuttingDown:
-        "The server was restarted during this run. What was already translated was saved; the rest was not translated. Please run it again.",
+        "The server was restarted during this run. Entries translated before that were saved where possible; the rest was not translated. Please check the result and run it again.",
     },
     translationCompleted: "Translation completed for \"{title}\"",
     fieldTranslationCompleted: "Translation for {field} in \"{title}\" completed",

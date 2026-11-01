@@ -93,7 +93,7 @@ describe("api.content-editor-action", () => {
     expect(response.init?.status).toBe(400);
   });
 
-  it.each(["translateSubResources", "translateSubResourceToAllLocales", "saveSubResourceTranslations"])(
+  it.each(["translateSubResources", "translateSubResourceToAllLocales", "saveSubResourceTranslations", "savePrimarySubResources"])(
     "lets the product page's sub-resource action %s through to the products action",
     async (name) => {
       await post({ action: name, _page: "/app/products" });

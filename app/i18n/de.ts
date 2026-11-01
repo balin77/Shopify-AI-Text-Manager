@@ -55,8 +55,9 @@ export const de = {
     metafieldValueRefused: "Shopify hat den Wert für ein Metafeld nicht akzeptiert: {message} Dein Text bleibt im Feld; dafür wurde nichts gespeichert. Andere Metafelder, die mit demselben Speichern gesendet wurden, können zurückgesetzt worden sein, und andere Teile des Speicherns können durchgegangen sein. Passe den Wert an oder verwirf die Änderung.",
     metafieldPermissionRefused: "Shopify erlaubt dieser App nicht, dieses Metafeld zu schreiben: {message} Dein Text bleibt im Feld; dafür wurde nichts gespeichert. Du kannst die Änderung verwerfen. Andere Metafelder, die mit demselben Speichern gesendet wurden, können zurückgesetzt worden sein, und andere Teile des Speicherns können durchgegangen sein.",
     savedOtherProduct: "Gespeichert: {title}",
-    savePartialOtherProduct: "Bei {title} wurde nicht alles gespeichert. Öffne das Produkt erneut, um es zu prüfen.",
-    saveFailedOtherProduct: "{title} konnte nicht gespeichert werden. Öffne das Produkt erneut, um es zu prüfen.",
+    savePartialOtherProduct: "Bei {title} wurde nicht alles gespeichert. Was nicht gespeichert wurde, musst du erneut eingeben – öffne das Produkt, um es zu prüfen.",
+    saveFailedOtherProduct: "{title} konnte nicht gespeichert werden: Was du eingegeben hast, wurde nicht gespeichert und muss erneut eingegeben werden.",
+    saveNotConfirmed: "Für {title} kam keine Antwort rechtzeitig an. Öffne das Produkt erneut, um zu prüfen, ob es gespeichert wurde.",
     previousProductLabel: "das vorherige Produkt",
     metafieldWarningSlotUnverified: "Für ein geleertes Metafeld konnte nicht geprüft werden, ob Shopify inzwischen schon einen Wert hat. Es wurde nichts gespeichert; dein Wert bleibt im Feld – bitte speichere es noch einmal.",
     metafieldTypeNotTranslatable: "Dieser Metafeld-Typ lässt sich nicht automatisch übersetzen (Zeilenumbrüche oder Listen würden verloren gehen). Bitte gib die Übersetzung von Hand ein.",
@@ -2190,6 +2191,7 @@ export const de = {
     switchWhileSaving: "Wird noch gespeichert – bitte einen Moment warten und dann erneut wechseln.",
     clearWhileTranslating: "In diese Sprache wird gerade noch übersetzt – bitte warten, bis die Übersetzung fertig ist, und dann löschen.",
     translateWhileSaving: "Wird noch gespeichert – bitte einen Moment warten und dann erneut übersetzen.",
+    clearWhileSaving: "Wird noch gespeichert – bitte einen Moment warten und dann erneut leeren.",
     saveWaitsForTranslation: "Wartet, bis die Übersetzung fertig ist – danach wird gespeichert.",
     translateRunTimedOut: "Die Übersetzung dauert länger als erwartet. Laden Sie die Seite später neu, um zu sehen, was gespeichert wurde.",
     translateRunTimedOutSaveKept: "Die Übersetzung läuft möglicherweise noch auf dem Server. Ihre Änderungen wurden noch nicht gespeichert – bitte in einem Moment erneut speichern.",
@@ -2412,7 +2414,7 @@ export const de = {
       managedAiUnavailable:
         "Die enthaltene KI war vorübergehend nicht erreichbar, deshalb wurde nichts ausgeführt und nichts geändert. Bitte später erneut versuchen.",
       serverShuttingDown:
-        "Der Server wurde während dieses Laufs neu gestartet. Was schon übersetzt war, wurde gespeichert; der Rest wurde nicht übersetzt. Bitte starte den Lauf erneut.",
+        "Der Server wurde während dieses Laufs neu gestartet. Was vorher übersetzt war, wurde soweit möglich gespeichert; der Rest wurde nicht übersetzt. Bitte prüfe das Ergebnis und starte den Lauf erneut.",
     },
     translationCompleted: "Übersetzung abgeschlossen für \"{title}\"",
     fieldTranslationCompleted: "Übersetzung für {field} in \"{title}\" abgeschlossen",
