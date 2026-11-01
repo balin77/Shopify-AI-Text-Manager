@@ -19,6 +19,7 @@ import { useAppNavigation } from "../../hooks/useAppNavigation";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import type { ShopLocale } from "../../types/content-editor.types";
 import { VariantOptionsEditor } from "./VariantOptionsEditor";
+import type { OptionEdit } from "../../services/editor/sub-resource-edits.shared";
 import "../../styles/AIEditableField.css";
 
 export interface OptionValueData {
@@ -92,11 +93,11 @@ interface OptionsFieldProps {
   /** Callback when primary option name changes (optional, for primary locale editing) */
   onPrimaryOptionNameChange?: (optionId: string, value: string) => void;
 
-  /** Callback when primary option values change (optional, for primary locale editing) */
-  onPrimaryOptionValuesChange?: (optionId: string, values: string[]) => void;
+  /** Callback when ONE primary option value is renamed, addressed by its GID (optional, for primary locale editing) */
+  onPrimaryOptionValueChange?: (optionId: string, valueId: string, name: string) => void;
 
   /** Primary option data (indexed by option ID) - used when editing primary locale */
-  primaryOptions?: Record<string, { name: string; values: string[] }>;
+  primaryOptions?: Record<string, OptionEdit>;
 
   /** Bumped on every landed save, so the card can drop cached variant counts. */
   savedNonce?: number;
@@ -211,7 +212,7 @@ export function OptionsField({
   onOptionNameChange,
   onOptionValueChange,
   onPrimaryOptionNameChange,
-  onPrimaryOptionValuesChange,
+  onPrimaryOptionValueChange,
   primaryOptions = {},
   productId = "",
   savedNonce = 0,
@@ -284,7 +285,7 @@ export function OptionsField({
         optionsToCreate={optionsToCreate}
         optionsToDelete={optionsToDelete}
         onNameChange={(id, value) => onPrimaryOptionNameChange?.(id, value)}
-        onValuesChange={(id, values) => onPrimaryOptionValuesChange?.(id, values)}
+        onValueChange={(id, valueId, name) => onPrimaryOptionValueChange?.(id, valueId, name)}
         onAddValue={(id, name) => onAddOptionValue?.(id, name)}
         onAddLinkedValue={(id, entry) => onAddLinkedOptionValue?.(id, entry)}
         onRemoveLinkedValue={(id, entryId) => onRemoveLinkedOptionValue?.(id, entryId)}

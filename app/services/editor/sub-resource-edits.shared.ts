@@ -8,19 +8,35 @@
  * is in flight), and after a partial save the SAVED edits stayed behind, were
  * re-sent by the next Save and kept "Translate all" on "Save first".
  *
- * One rule for both, in one place: an edit goes when the save settled it
- * (saved with the value the field still holds, or failed and is reverted); it
- * stays when it is still unsaved (a kept draft, something typed after the save
- * went out, or a retype of a field that was sent).
+ * THE RULE, and why it never looks at the item. At submit the hook snapshots
+ * the exact edits it sent. When the answer lands, an edit is SETTLED if it still
+ * equals its snapshot, whatever the answer was for it (saved, or failed and
+ * reverted): it goes. It STAYS if it differs from the snapshot (the merchant
+ * retyped it while the request was out), if it has no snapshot (typed after
+ * submit), or if it is a kept draft (nothing was written for it, see
+ * `unverifiedIds`). Comparing against `selectedItem` instead cannot work: React
+ * Router commits the fetcher's `idle` and the reloaded loader data in the SAME
+ * update, so by the time the answer is processed the item is usually already
+ * POST-save, and an edit then reads as "unchanged" (never settled) or, for a
+ * reordered option, as a mismatch.
+ *
+ * Option edits are keyed by the value's stable GID, not by position: a save
+ * that adds, removes or reorders values renumbers the list under a positional
+ * edit and would pair a name with the wrong value.
  *
  * Client-safe, imports only another shared module.
  */
 
-import { isSentMetafieldEdit, hasUnsavedPrimaryMetafieldEdits } from "../product-metafields.shared";
+import { hasUnsavedPrimaryMetafieldEdits } from "../product-metafields.shared";
 
+/**
+ * One option's pending text edit. `name` is set only if the merchant touched it;
+ * `values` holds ONLY the values they renamed, keyed by the value's GID (a value
+ * that exists only locally has no GID and lives in `optionValuesToAdd`).
+ */
 export interface OptionEdit {
-  name: string;
-  values: string[];
+  name?: string;
+  values: Record<string, string>;
 }
 
 export interface OptionLike {
@@ -35,82 +51,104 @@ interface MetafieldOriginal {
   value: string;
 }
 
-/** The sent shape of one option (see `optionsChanges` in the hook's save). */
-export interface SentOptionChange {
-  name?: string;
-  valueUpdates?: Array<{ id: string; name: string }>;
-  valuesToAdd?: unknown;
-  valuesToDelete?: unknown;
-  valuesToAddLinked?: unknown;
+/** The exact edits a save sent, captured at submit. */
+export interface PrimarySaveSnapshot {
+  metafieldEdits: Readonly<Record<string, string>>;
+  optionEdits: Readonly<Record<string, OptionEdit>>;
+  /** Options deleted by this save, and values removed from the surviving ones. */
+  optionsToDelete: readonly string[];
+  valuesToDelete: Readonly<Record<string, readonly string[]>>;
 }
 
-/** Does this option edit differ from the option it edits (name or any value)? */
+/** A deep copy: later state updates must not reach into what was sent. */
+export function snapshotPrimaryEdits(args: {
+  metafieldEdits: Readonly<Record<string, string>>;
+  optionEdits: Readonly<Record<string, OptionEdit>>;
+  optionsToDelete: readonly string[];
+  valuesToDelete: Readonly<Record<string, readonly string[]>>;
+}): PrimarySaveSnapshot {
+  const optionEdits: Record<string, OptionEdit> = {};
+  for (const [id, edit] of Object.entries(args.optionEdits)) {
+    optionEdits[id] = { ...(edit.name !== undefined ? { name: edit.name } : {}), values: { ...edit.values } };
+  }
+  return {
+    metafieldEdits: { ...args.metafieldEdits },
+    optionEdits,
+    optionsToDelete: [...args.optionsToDelete],
+    valuesToDelete: Object.fromEntries(Object.entries(args.valuesToDelete).map(([k, v]) => [k, [...v]])),
+  };
+}
+
+/** Does this option edit differ from the option it edits (name or any renamed value)? */
 export function isOptionEditUnsaved(original: OptionLike, edit: OptionEdit): boolean {
   if (edit.name !== undefined && edit.name !== original.name) return true;
-  if (edit.values === undefined) return false;
-  return original.values.some((v, i) => (edit.values[i] ?? v.name) !== v.name);
+  return Object.entries(edit.values ?? {}).some(([valueId, name]) => {
+    const value = original.values.find((v) => v.id === valueId);
+    return !!value && value.name !== name;
+  });
 }
 
 export function metafieldEditsAfterSave(args: {
   edits: Readonly<Record<string, string>>;
-  /** metafieldId -> the value the save sent (`primaryMetafieldChange`'s value). */
-  sent: Readonly<Record<string, unknown>>;
-  failedIds: readonly string[];
+  snapshot: Readonly<Record<string, string>>;
   /** Failed, but nothing was written and the text stays as a draft. */
   unverifiedIds: ReadonlySet<string>;
-  findOriginal: (id: string) => MetafieldOriginal | undefined;
+  /**
+   * Cleared slots this save filled again: the slot's old id -> the GID Shopify
+   * gave the re-created metafield. The old id is gone from the item after the
+   * save, so a retype of such a field is re-keyed to the new one.
+   */
+  recreated?: Readonly<Record<string, string>>;
 }): Record<string, string> {
-  const failed = new Set(args.failedIds.map(String));
   const kept: Record<string, string> = {};
   for (const [id, value] of Object.entries(args.edits)) {
-    let stays: boolean;
+    const target = args.recreated?.[id] ?? id;
     if (args.unverifiedIds.has(id)) {
-      stays = true;
-    } else if (failed.has(id)) {
-      stays = false; // reverted
-    } else if (!(id in args.sent)) {
-      stays = true; // never sent: typed after the save went out
-    } else {
-      const original = args.findOriginal(id);
-      // Saved: it goes unless the field was retyped since.
-      stays = original ? !isSentMetafieldEdit(original, value, args.sent[id]) : false;
+      kept[id] = value; // nothing was written: the id is unchanged
+      continue;
     }
-    if (stays) kept[id] = value;
+    const snap = args.snapshot[id];
+    if (snap === undefined || value !== snap) kept[target] = value; // typed after submit / retyped
   }
   return kept;
 }
 
 export function optionEditsAfterSave(args: {
   edits: Readonly<Record<string, OptionEdit>>;
-  sent: Readonly<Record<string, SentOptionChange>>;
-  failedIds: readonly string[];
-  findOriginal: (id: string) => OptionLike | undefined;
+  snapshot: PrimarySaveSnapshot;
 }): Record<string, OptionEdit> {
-  const failed = new Set(args.failedIds.map(String));
   const kept: Record<string, OptionEdit> = {};
-  for (const [id, edit] of Object.entries(args.edits)) {
-    const original = args.findOriginal(id);
-    if (!original || failed.has(id)) continue; // reverted / gone
-    const change = args.sent[id];
-    if (!change) {
-      // Not part of the save: it stays only if it is a real, unsaved edit.
-      if (isOptionEditUnsaved(original, edit)) kept[id] = edit;
-      continue;
+  const deletedOptions = new Set(args.snapshot.optionsToDelete);
+  for (const [optionId, edit] of Object.entries(args.edits)) {
+    if (deletedOptions.has(optionId)) continue; // the option itself is gone
+    const snap = args.snapshot.optionEdits[optionId];
+    const removed = new Set(args.snapshot.valuesToDelete[optionId] ?? []);
+    const next: OptionEdit = { values: {} };
+    // Name: stays only if retyped (or typed after submit).
+    if (edit.name !== undefined && (!snap || snap.name === undefined || edit.name !== snap.name)) {
+      next.name = edit.name;
     }
-    // Values were added or removed in the same save: the reload re-numbers the
-    // option's values, so a positional edit cannot be carried across it.
-    if (change.valuesToAdd || change.valuesToDelete || change.valuesToAddLinked) continue;
-    const renamed = new Map((change.valueUpdates ?? []).map((u) => [u.id, u.name]));
-    const expectedName = change.name ?? original.name;
-    const holdsSent =
-      edit.name === expectedName &&
-      original.values.every((v, i) => (edit.values?.[i] ?? v.name) === (renamed.get(v.id) ?? v.name));
-    if (!holdsSent) kept[id] = edit; // retyped while the save was out
+    // Values: each by its OWN id, so adds / removals / reorders in the same
+    // save change nothing about which value an edit belongs to.
+    for (const [valueId, name] of Object.entries(edit.values ?? {})) {
+      if (removed.has(valueId)) continue; // that value no longer exists
+      const sentName = snap?.values[valueId];
+      if (sentName === undefined || name !== sentName) next.values[valueId] = name;
+    }
+    if (next.name !== undefined || Object.keys(next.values).length > 0) kept[optionId] = next;
   }
   return kept;
 }
 
-/** Is anything in the two edit maps still a real difference from the item? */
+/** Anything left in the maps after a save is, by construction, still unsaved. */
+export function hasKeptEdits(
+  metafieldEdits: Readonly<Record<string, unknown>>,
+  optionEdits: Readonly<Record<string, unknown>>,
+): boolean {
+  return Object.keys(metafieldEdits).length > 0 || Object.keys(optionEdits).length > 0;
+}
+
+/** Is anything in the two edit maps a real difference from the item? (item-relative; for the live card) */
 export function hasUnsavedPrimaryEdits(args: {
   metafieldEdits: Readonly<Record<string, string>>;
   optionEdits: Readonly<Record<string, OptionEdit>>;

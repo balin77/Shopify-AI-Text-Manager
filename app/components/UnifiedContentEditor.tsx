@@ -2371,7 +2371,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onOptionNameChange={subResourceHandlers.handleOptionNameChange}
                       onOptionValueChange={subResourceHandlers.handleOptionValueChange}
                       onPrimaryOptionNameChange={subResourceHandlers.handlePrimaryOptionNameChange}
-                      onPrimaryOptionValuesChange={subResourceHandlers.handlePrimaryOptionValuesChange}
+                      onPrimaryOptionValueChange={subResourceHandlers.handlePrimaryOptionValueChange}
                       primaryOptions={subResourceState.primaryOptionEdits}
                       productId={selectedItem.id}
                       savedNonce={subResourceState.savedNonce}

@@ -121,6 +121,7 @@ import {
   type OptionValueSwatch,
 } from "../../services/product-option-swatch.shared";
 import type { OptionData } from "./OptionsField";
+import type { OptionEdit } from "../../services/editor/sub-resource-edits.shared";
 import { appFetch } from "../../utils/app-fetch";
 import "../../styles/AIEditableField.css";
 
@@ -304,7 +305,7 @@ export interface VariantOptionsEditorProps {
   productId: string;
   options: OptionData[];
   /** Pending text edits, keyed by option id. */
-  primaryOptions: Record<string, { name: string; values: string[] }>;
+  primaryOptions: Record<string, OptionEdit>;
   /** Values added but not yet saved, per option id. */
   valuesToAdd: Record<string, string[]>;
   /** Metaobject entries queued on a LINKED option, per option id. */
@@ -317,7 +318,8 @@ export interface VariantOptionsEditorProps {
   optionsToDelete: string[];
 
   onNameChange: (optionId: string, name: string) => void;
-  onValuesChange: (optionId: string, values: string[]) => void;
+  /** Rename ONE saved value, addressed by its GID (never by position). */
+  onValueChange: (optionId: string, valueId: string, name: string) => void;
   onAddValue: (optionId: string, name: string) => void;
   /** Queue a metaobject entry on a LINKED option. */
   onAddLinkedValue?: (optionId: string, entry: { id: string; name: string }) => void;
@@ -372,7 +374,7 @@ export function VariantOptionsEditor({
   optionsToCreate,
   optionsToDelete,
   onNameChange,
-  onValuesChange,
+  onValueChange,
   onAddValue,
   onAddLinkedValue,
   onRemoveLinkedValue,
@@ -618,7 +620,7 @@ export function VariantOptionsEditor({
     `ai-editable-field-wrapper ${id && text && missingTranslationIds?.has(id) ? "bg-missing-translation" : ""}`;
 
   const nameOf = (option: OptionData) =>
-    primaryOptions[option.id]?.name !== undefined ? primaryOptions[option.id].name : option.name;
+    primaryOptions[option.id]?.name ?? option.name;
 
   /** The values as they currently READ: saved ones minus pending deletes, plus
    *  pending adds. Rendering the saved list alone would make a removal look
@@ -634,7 +636,7 @@ export function VariantOptionsEditor({
     const removed = new Set(valuesToDelete[option.id] ?? []);
     const edited = primaryOptions[option.id]?.values;
     const existing = option.values
-      .map((v, index) => ({ id: v.id, name: edited?.[index] ?? v.name, linked: v.linked }))
+      .map((v) => ({ id: v.id, name: edited?.[v.id] ?? v.name, linked: v.linked }))
       .filter((v) => !removed.has(v.id));
 
     // The dragged order, when there is one. Anything the order does not
@@ -1223,13 +1225,10 @@ export function VariantOptionsEditor({
                                 }
                                 return;
                               }
-                              const all = option.values.map(
-                                (v, i) => primaryOptions[option.id]?.values?.[i] ?? v.name,
-                              );
-                              const target = option.values.findIndex((v) => v.id === value.id);
-                              if (target < 0) return;
-                              all[target] = next;
-                              onValuesChange(option.id, all);
+                              // Addressed by the value's GID: the list can be
+                              // re-numbered (reorder, add, delete) under an edit.
+                              if (!option.values.some((v) => v.id === value.id)) return;
+                              onValueChange(option.id, value.id, next);
                             }}
                           />
                         </div>

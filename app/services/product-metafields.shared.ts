@@ -360,18 +360,6 @@ export function isPrimaryMetafieldUnsaved(original: MetafieldLike, edit: string 
 }
 
 /**
- * Is this edit still exactly what a save SENT for the field? Compared as the
- * save compares: the edit is turned into the value it would send
- * (`primaryMetafieldChange`, so a list's display form and its stored JSON meet)
- * and that is held against the value that went out. An edit typed (or retyped)
- * while the save was in flight differs, and must survive the answer.
- */
-export function isSentMetafieldEdit(original: MetafieldLike, edit: string, sentValue: unknown): boolean {
-  const change = primaryMetafieldChange(original, edit);
-  return change.kind === "value" && change.value === sentValue;
-}
-
-/**
  * Does ANY entry of the card's edit map really differ from the field it edits?
  *
  * The map's KEY COUNT is not that answer: an edit that was saved but not yet

@@ -68,11 +68,13 @@ import { retirePurgedMarketResources } from "~/services/editor/sub-resource-mark
 import { appFetch } from "../utils/app-fetch";
 import { isPrimaryMetafieldUnsaved, primaryMetafieldChange } from "../services/product-metafields.shared";
 import {
-  hasUnsavedPrimaryEdits,
+  hasKeptEdits,
   isOptionEditUnsaved,
   metafieldEditsAfterSave,
   optionEditsAfterSave,
+  snapshotPrimaryEdits,
   type OptionEdit,
+  type PrimarySaveSnapshot,
 } from "../services/editor/sub-resource-edits.shared";
 import { isBatchTranslatableValueType } from "../services/metaobject-fields.shared";
 
@@ -107,6 +109,8 @@ interface SubResourceFetcherData {
   /** Slot refills Shopify refused for their VALUE: id -> Shopify's reason. Kept
    *  as drafts like `unverifiedMetafields`, but worded as a refusal. */
   metafieldRefusals?: Record<string, string>;
+  /** Cleared slots filled again: slot id -> the GID of the re-created metafield. */
+  recreatedMetafields?: Record<string, string>;
   /** Failure CODES from the option write paths; the client owns the wording. */
   optionWarnings?: string[];
   /** Create / delete / reorder failures, which carry no option id. */
@@ -252,7 +256,7 @@ export interface SubResourceState {
   /** Metafield translations keyed by metafield GID → translated value */
   metafieldTranslations: Record<string, string>;
   /** Primary locale option edits keyed by option GID → { name, values[] } */
-  primaryOptionEdits: Record<string, { name: string; values: string[] }>;
+  primaryOptionEdits: Record<string, OptionEdit>;
   /** Pending structural edits, so the card can render them before the save. */
   optionValuesToAdd: Record<string, string[]>;
   /** Metaobject entries queued on a LINKED option: its values are entries, not
@@ -325,7 +329,8 @@ export interface SubResourceHandlers {
   handleOptionValueChange: (optionId: string, valueIndex: number, value: string) => void;
   handleMetafieldChange: (metafieldId: string, value: string) => void;
   handlePrimaryOptionNameChange: (optionId: string, value: string) => void;
-  handlePrimaryOptionValuesChange: (optionId: string, values: string[]) => void;
+  /** Rename ONE value, addressed by its GID (never by position). */
+  handlePrimaryOptionValueChange: (optionId: string, valueId: string, name: string) => void;
   /** A value the merchant added. Shopify assigns its GID on save. */
   handleAddOptionValue: (optionId: string, name: string) => void;
   /** Queue a metaobject entry on a LINKED option. */
@@ -566,7 +571,7 @@ export function useProductSubResources({
   const [dirtyMetafieldIds, setDirtyMetafieldIds] = useState<Set<string>>(new Set());
 
   // Primary locale editing state
-  const [primaryOptionEdits, setPrimaryOptionEdits] = useState<Record<string, { name: string; values: string[] }>>({});
+  const [primaryOptionEdits, setPrimaryOptionEdits] = useState<Record<string, OptionEdit>>({});
   const [primaryMetafieldEdits, setPrimaryMetafieldEdits] = useState<Record<string, string>>({});
   /** True from a landed save of the options until the reload that follows it
    *  has finished — see `optionTranslationBlockedIds`. */
@@ -651,7 +656,12 @@ export function useProductSubResources({
   } | null>(null);
   const pendingPrimarySaveIdsRef = useRef<string[]>([]);
   // What the primary save SENT, so a partial failure can still settle the saved subset.
-  const pendingPrimarySaveSentRef = useRef<{ options: Record<string, any>; metafields: Record<string, unknown> } | null>(null);
+  const pendingPrimarySaveSentRef = useRef<{
+    options: Record<string, any>;
+    metafields: Record<string, unknown>;
+    /** The exact edits that went out - what the answer settles them against. */
+    snapshot: PrimarySaveSnapshot;
+  } | null>(null);
   // The item/language/market a translate was REQUESTED for; its answer is
   // staged there, never into whatever is showing when it arrives.
   const translateAllTargetRef = useRef<TranslateTarget | null>(null);
@@ -1271,27 +1281,24 @@ export function useProductSubResources({
         }
 
         // What stays in the edit maps is what is still UNSAVED (the rule is in
-        // sub-resource-edits.shared.ts): kept drafts, text typed after the save
-        // went out, and fields retyped while it was in flight. Failed edits are
-        // reverted; SAVED ones are dropped, or a second Save would re-send them
-        // (purging and re-translating what the first had just settled), "Translate
-        // all" would stay on "Save first", and a re-created cleared field would
-        // be reported as "failed, reverted" on the second attempt.
+        // sub-resource-edits.shared.ts, and compares against the SNAPSHOT of
+        // what was sent, never against `selectedItem`, which may already be the
+        // reloaded one): kept drafts, text typed after the save went out, and
+        // fields retyped while it was in flight. Everything the save settled is
+        // dropped - saved, or failed and reverted - or a second Save would
+        // re-send it, "Translate all" would stay on "Save first", and a
+        // re-created cleared field would be reported as "failed, reverted".
         const pendingNow = pendingStateRef.current;
-        keptMetafieldEdits = metafieldEditsAfterSave({
-          edits: pendingNow?.primaryMetafieldEdits as Record<string, string> ?? {},
-          sent: sentPrimary?.metafields ?? {},
-          failedIds: failedMetafields.map(String),
+        // No record of what was sent (should not happen): settle everything.
+        keptMetafieldEdits = !sentPrimary ? {} : metafieldEditsAfterSave({
+          edits: (pendingNow?.primaryMetafieldEdits ?? {}) as Record<string, string>,
+          snapshot: sentPrimary.snapshot.metafieldEdits,
           unverifiedIds: unverifiedMetafields,
-          findOriginal: (id) =>
-            selectedItem?.metafields?.find((m) => m.id === id) ??
-            selectedItem?.clearedMetafields?.find((m) => m.id === id),
+          recreated: (data.recreatedMetafields ?? {}) as Record<string, string>,
         });
-        keptOptionEdits = optionEditsAfterSave({
+        keptOptionEdits = !sentPrimary ? {} : optionEditsAfterSave({
           edits: (pendingNow?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>,
-          sent: (sentPrimary?.options ?? {}) as Record<string, any>,
-          failedIds: failedOptions.map(String),
-          findOriginal: (id) => selectedItem?.options?.find((o) => o.id === id),
+          snapshot: sentPrimary.snapshot,
         });
         setPrimaryOptionEdits(keptOptionEdits);
         setPrimaryMetafieldEdits(keptMetafieldEdits);
@@ -1311,17 +1318,11 @@ export function useProductSubResources({
         pendingPrimarySaveIdsRef.current = [];
         pendingPrimarySaveSentRef.current = null;
 
-        // The save bar follows what is REALLY still unsaved (kept drafts and
-        // retypes), so a kept edit always has a Save to click.
-        setHasChanges(
-          hasUnsavedPrimaryEdits({
-            metafieldEdits: keptMetafieldEdits,
-            optionEdits: keptOptionEdits,
-            metafields: selectedItem?.metafields,
-            clearedMetafields: selectedItem?.clearedMetafields,
-            options: selectedItem?.options,
-          }),
-        );
+        // The save bar follows what was KEPT: by construction that is exactly
+        // what no save has carried yet (kept drafts and retypes), so a kept edit
+        // always has a Save to click - also one typed back to the old value
+        // during the save, which differs from what Shopify holds now.
+        setHasChanges(hasKeptEdits(keptMetafieldEdits, keptOptionEdits));
       } else {
         // Saved -- but removing the now-stale foreign translations may not have
         // been confirmed on Shopify. Those are still LIVE: say so, and keep what
@@ -1351,33 +1352,22 @@ export function useProductSubResources({
         }
         // Clear the edits this save settled -- NOT the whole map: the save bar is
         // not locked while the request is out, and a field retyped meanwhile
-        // holds text no save has carried yet. hasChanges follows what is kept.
+        // holds text no save has carried yet. Settled = still equal to the
+        // snapshot taken at submit (see sub-resource-edits.shared.ts: never
+        // compared with the item, which is usually already the reloaded one).
         const pendingOk = pendingStateRef.current;
-        // No record of what was sent (should not happen): settle everything, as before.
+        // No record of what was sent (should not happen): settle everything.
         const keptOkMetafields = !sentOk ? {} : metafieldEditsAfterSave({
-          edits: pendingOk?.primaryMetafieldEdits as Record<string, string> ?? {},
-          sent: sentOk?.metafields ?? {},
-          failedIds: [],
+          edits: (pendingOk?.primaryMetafieldEdits ?? {}) as Record<string, string>,
+          snapshot: sentOk.snapshot.metafieldEdits,
           unverifiedIds: new Set<string>(),
-          findOriginal: (id) =>
-            selectedItem?.metafields?.find((m) => m.id === id) ??
-            selectedItem?.clearedMetafields?.find((m) => m.id === id),
+          recreated: (data.recreatedMetafields ?? {}) as Record<string, string>,
         });
         const keptOkOptions = !sentOk ? {} : optionEditsAfterSave({
           edits: (pendingOk?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>,
-          sent: (sentOk?.options ?? {}) as Record<string, any>,
-          failedIds: [],
-          findOriginal: (id) => selectedItem?.options?.find((o) => o.id === id),
+          snapshot: sentOk.snapshot,
         });
-        setHasChanges(
-          hasUnsavedPrimaryEdits({
-            metafieldEdits: keptOkMetafields,
-            optionEdits: keptOkOptions,
-            metafields: selectedItem?.metafields,
-            clearedMetafields: selectedItem?.clearedMetafields,
-            options: selectedItem?.options,
-          }),
-        );
+        setHasChanges(hasKeptEdits(keptOkMetafields, keptOkOptions));
         setPrimaryOptionEdits(keptOkOptions);
         // The matrix-changing lists too: a discarded delete that survives the
         // save would fire again on the next one.
@@ -1618,38 +1608,26 @@ export function useProductSubResources({
   }, []);
 
   const handlePrimaryOptionNameChange = useCallback((optionId: string, value: string) => {
-    setPrimaryOptionEdits(prev => {
-      // If this option hasn't been edited yet, get the original values from selectedItem
-      const originalOption = selectedItem?.options?.find(o => o.id === optionId);
-      const originalValues = originalOption?.values.map(v => v.name) || [];
+    setPrimaryOptionEdits(prev => ({
+      ...prev,
+      [optionId]: { ...(prev[optionId] ?? { values: {} }), name: value },
+    }));
+    setHasChanges(true);
+  }, []);
 
+  // Keyed by the value's GID: the list can be re-numbered under an edit (a
+  // reorder, an add, a delete - this save's or another's) and a positional edit
+  // would then pair the text with the wrong value.
+  const handlePrimaryOptionValueChange = useCallback((optionId: string, valueId: string, name: string) => {
+    setPrimaryOptionEdits(prev => {
+      const current = prev[optionId];
       return {
         ...prev,
-        [optionId]: {
-          name: value,
-          values: prev[optionId]?.values || originalValues,
-        },
+        [optionId]: { ...(current ?? {}), values: { ...(current?.values ?? {}), [valueId]: name } },
       };
     });
     setHasChanges(true);
-  }, [selectedItem]);
-
-  const handlePrimaryOptionValuesChange = useCallback((optionId: string, values: string[]) => {
-    setPrimaryOptionEdits(prev => {
-      // If this option hasn't been edited yet, get the original name from selectedItem
-      const originalOption = selectedItem?.options?.find(o => o.id === optionId);
-      const originalName = originalOption?.name || "";
-
-      return {
-        ...prev,
-        [optionId]: {
-          name: prev[optionId]?.name || originalName,
-          values,
-        },
-      };
-    });
-    setHasChanges(true);
-  }, [selectedItem]);
+  }, []);
 
   const handlePrimaryMetafieldChange = useCallback((metafieldId: string, value: string) => {
     setPrimaryMetafieldEdits(prev => ({ ...prev, [metafieldId]: value }));
@@ -1713,10 +1691,7 @@ export function useProductSubResources({
         continue;
       }
       const edit = primaryOptionEdits[opt.id];
-      const textChanged = !!edit && (
-        edit.name !== opt.name ||
-        opt.values.some((v, i) => (edit.values[i] ?? v.name) !== v.name)
-      );
+      const textChanged = !!edit && isOptionEditUnsaved(opt, edit);
       if (
         textChanged ||
         (optionValuesToAdd[opt.id]?.length ?? 0) > 0 ||
@@ -2209,13 +2184,13 @@ export function useProductSubResources({
         }
 
         const hasNameChange = edit.name !== undefined && edit.name !== originalOption.name;
-        const hasValuesChange =
-          edit.values !== undefined &&
-          JSON.stringify(edit.values) !== JSON.stringify(originalOption.values.map(v => v.name));
+        const hasValuesChange = originalOption.values.some(
+          (v) => edit.values?.[v.id] !== undefined && edit.values[v.id] !== v.name,
+        );
 
         if (hasNameChange || hasValuesChange) {
           // VALIDATION: Prevent empty option names and values
-          if (hasNameChange && edit.name.trim() === "") {
+          if (hasNameChange && (edit.name ?? "").trim() === "") {
             if (showInfoBox) {
               showInfoBox(strings.optionNameEmpty || "Option name cannot be empty", "critical");
             } else {
@@ -2231,7 +2206,7 @@ export function useProductSubResources({
           // read blank.
           const deletedHere = new Set(optionValuesToDelete[optionId] ?? []);
           const survivingEdits = originalOption.values
-            .map((v, i) => ({ id: v.id, name: edit.values[i], original: v.name }))
+            .map((v) => ({ id: v.id, name: edit.values?.[v.id] ?? v.name, original: v.name }))
             .filter((v) => !deletedHere.has(v.id));
 
           if (hasValuesChange && survivingEdits.some(v => (v.name ?? "").trim() === "")) {
@@ -2244,7 +2219,7 @@ export function useProductSubResources({
           }
 
           optionsChanges[optionId] = {};
-          if (hasNameChange) optionsChanges[optionId].name = edit.name;
+          if (hasNameChange) optionsChanges[optionId].name = edit.name as string;
           // For metaobject-linked options, only save name changes (not values)
           if (hasValuesChange && !originalOption.isLinked) {
             // Only include values that actually changed — and never one that
@@ -2396,7 +2371,16 @@ export function useProductSubResources({
       }
 
       pendingPrimarySaveIdsRef.current = changedIdsOfPrimarySave(optionsChanges, metafieldChanges);
-      pendingPrimarySaveSentRef.current = { options: optionsChanges, metafields: metafieldChanges };
+      pendingPrimarySaveSentRef.current = {
+        options: optionsChanges,
+        metafields: metafieldChanges,
+        snapshot: snapshotPrimaryEdits({
+          metafieldEdits: primaryMetafieldEdits,
+          optionEdits: primaryOptionEdits,
+          optionsToDelete,
+          valuesToDelete: optionValuesToDelete,
+        }),
+      };
       yieldLoadToSave();
       fetcher.submit(formData, { method: "POST", action: "/app/products" });
     } else {
@@ -2941,7 +2925,7 @@ export function useProductSubResources({
       handleOptionValueChange,
       handleMetafieldChange,
       handlePrimaryOptionNameChange,
-      handlePrimaryOptionValuesChange,
+      handlePrimaryOptionValueChange,
       handleAddOptionValue,
       handleAddLinkedOptionValue,
       handleRemoveLinkedOptionValue,

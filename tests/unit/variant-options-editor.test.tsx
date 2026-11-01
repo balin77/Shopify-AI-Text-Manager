@@ -53,7 +53,7 @@ const options = [
 
 const handlers = () => ({
   onNameChange: vi.fn(),
-  onValuesChange: vi.fn(),
+  onValueChange: vi.fn(),
   onAddValue: vi.fn(),
   onRemoveValue: vi.fn(),
   onEditPendingValue: vi.fn(),
@@ -275,7 +275,7 @@ describe("VariantOptionsEditor", () => {
   it("counts under the SAVED name, not the one being typed", async () => {
     // The map is keyed on what Shopify reports in `selectedOptions`, so looking
     // it up under a pending rename made every count read as unavailable.
-    const { spies } = ui({ primaryOptions: { [OPTION]: { name: "Colour", values: ["Crimson", "Blue"] } } });
+    const { spies } = ui({ primaryOptions: { [OPTION]: { name: "Colour", values: { "gid://shopify/ProductOptionValue/1": "Crimson" } } } });
     fireEvent.click(screen.getByText("Colour"));
     await screen.findByDisplayValue("Crimson");
 

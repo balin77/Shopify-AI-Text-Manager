@@ -221,7 +221,7 @@ describe("a value renamed and deleted in the same save", () => {
     // that would take the merchant's other renames on the same option with it.
     const { result } = setup();
 
-    act(() => result.current.handlers.handlePrimaryOptionValuesChange(OPTION, ["Crimson", "Blue"]));
+    act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, "gid://shopify/ProductOptionValue/1", "Crimson"));
     act(() =>
       result.current.handlers.handleRemoveOptionValue(OPTION, "gid://shopify/ProductOptionValue/1"),
     );
@@ -465,7 +465,7 @@ describe("translating an option never sends the text the merchant replaced", () 
   it("refuses while a rename is unsaved — name or value", () => {
     const { result } = setupWithReload();
     act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
-    act(() => result.current.handlers.handlePrimaryOptionValuesChange(SECOND, ["M"]));
+    act(() => result.current.handlers.handlePrimaryOptionValueChange(SECOND, "gid://shopify/ProductOptionValue/2", "M"));
 
     expect([...result.current.state.optionTranslationBlockedIds].sort()).toEqual([OPTION, SECOND].sort());
     act(() => result.current.handlers.translateOption(OPTION));
@@ -1022,5 +1022,118 @@ describe("translating a metafield never sends the text from before the save", ()
     expect(message).not.toMatch(/save again|reverted/i);
     expect(result.current.state.primaryMetafieldEdits).toEqual({ [MF]: "abc" });
     expect(result.current.state.hasChanges).toBe(true);
+  });
+  // The answer effect usually sees the RELOADED item: React Router commits the
+  // fetcher's `idle` and the new loader data in the same update. The edits are
+  // therefore settled against a snapshot of what was sent, never against the
+  // item - and these tests rerender with the post-save item in the SAME step as
+  // the answer (and keep a pre-save variant, since the timing is not guaranteed).
+  describe.each([
+    ["post-save item (same step as the answer)", true],
+    ["pre-save item", false],
+  ])("settling edits - %s", (_label, postSave) => {
+    const MFA = "gid://shopify/Metafield/55";
+    const RED = "gid://shopify/ProductOptionValue/1";
+    const BLUE = "gid://shopify/ProductOptionValue/1b";
+    const base = {
+      ...(selectedItem as object),
+      metafields: [{ id: MFA, namespace: "custom", key: "material", value: "Baumwolle", type: "single_line_text_field" }],
+    } as any;
+    const after = (over: { metafield?: string; colourValues?: Array<{ id: string; name: string }> }) => ({
+      ...base,
+      metafields: [{ ...base.metafields[0], value: over.metafield ?? base.metafields[0].value }],
+      options: base.options.map((o: any) => (o.id === OPTION && over.colourValues ? { ...o, values: over.colourValues } : o)),
+    });
+    const render = () =>
+      renderHook(
+        ({ current }: { current: unknown }) =>
+          useProductSubResources({ selectedItem: current, currentLanguage: "de", primaryLocale: "de", showInfoBox, strings: {} } as never),
+        { initialProps: { current: base as unknown } },
+      );
+    const answer = (result: any, rerender: any, next: unknown, extra: Record<string, unknown> = {}) => {
+      fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [], ...extra };
+      rerender({ current: postSave ? next : base });
+    };
+
+    it("a metafield saved cleanly is settled (the post-save item no longer reads as 'unchanged' and sticks)", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      answer(result, rerender, after({ metafield: "Leinen" }));
+      expect(result.current.state.primaryMetafieldEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(false);
+    });
+
+    it("a retype during the save survives, and so does the save bar", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Hanf"));
+      answer(result, rerender, after({ metafield: "Leinen" }));
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Hanf" });
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("typed BACK to the old value during the save: kept, and the save bar agrees", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Baumwolle"));
+      answer(result, rerender, after({ metafield: "Leinen" }));
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Baumwolle" });
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("a retype of a field whose sent value FAILED is kept, not reverted over the new text", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "zu lang"));
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe")); // keeps the answer partial
+      act(() => result.current.handlers.saveSubResources());
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "kurz"));
+      answer(result, rerender, base, { failedMetafields: [MFA] });
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "kurz" });
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("rename + REORDER: the answer settles the option edit and the card never pairs a name with the wrong value", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, RED, "Rouge"));
+      act(() => result.current.handlers.handleReorderOptionValues(OPTION, [BLUE, RED]));
+      act(() => result.current.handlers.saveSubResources());
+      answer(result, rerender, after({ colourValues: [{ id: BLUE, name: "Blue" }, { id: RED, name: "Rouge" }] }));
+      expect(result.current.state.primaryOptionEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(false);
+    });
+
+    it("rename + reorder with a retype of the renamed value during the save: only that retype is kept, on its own value", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, RED, "Rouge"));
+      act(() => result.current.handlers.handleReorderOptionValues(OPTION, [BLUE, RED]));
+      act(() => result.current.handlers.saveSubResources());
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, RED, "Rot"));
+      answer(result, rerender, after({ colourValues: [{ id: BLUE, name: "Blue" }, { id: RED, name: "Rouge" }] }));
+      expect(result.current.state.primaryOptionEdits).toEqual({ [OPTION]: { values: { [RED]: "Rot" } } });
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("rename + ADD with a retype of another value during the save survives, keyed by its id", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, RED, "Rouge"));
+      act(() => result.current.handlers.handleAddOptionValue(OPTION, "Green"));
+      act(() => result.current.handlers.saveSubResources());
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, BLUE, "Bleu"));
+      answer(result, rerender, after({ colourValues: [{ id: RED, name: "Rouge" }, { id: BLUE, name: "Blue" }, { id: "gid://shopify/ProductOptionValue/new", name: "Green" }] }));
+      expect(result.current.state.primaryOptionEdits).toEqual({ [OPTION]: { values: { [BLUE]: "Bleu" } } });
+    });
+
+    it("rename + DELETE: an edit of the deleted value is gone, a retype of a surviving value stays", () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, BLUE, "Bleu"));
+      act(() => result.current.handlers.handleRemoveOptionValue(OPTION, RED));
+      act(() => result.current.handlers.saveSubResources());
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, BLUE, "Bleue"));
+      answer(result, rerender, after({ colourValues: [{ id: BLUE, name: "Bleu" }] }));
+      expect(result.current.state.primaryOptionEdits).toEqual({ [OPTION]: { values: { [BLUE]: "Bleue" } } });
+    });
   });
 });
