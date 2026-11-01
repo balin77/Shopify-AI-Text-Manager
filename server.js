@@ -516,6 +516,14 @@ async function gracefulShutdown(signal) {
   shutdownInProgress = true;
   serverLogger.info(`${signal} received. Starting graceful shutdown...`);
 
+  // Force shutdown after 10 seconds. ARMED FIRST, before the first `await`
+  // below (dynamic imports, drains): the bound is unconditional, so a hanging
+  // import or a stop() that never returns cannot push the exit past it.
+  setTimeout(() => {
+    serverLogger.error("Forced shutdown after timeout");
+    process.exit(1);
+  }, 10000);
+
   // Stop the workers NOW, on the signal, not inside the server.close callback:
   // that callback only fires once every open connection has ended, and a
   // request still in flight past the force-exit bound would mean the WebP
@@ -625,11 +633,6 @@ async function gracefulShutdown(signal) {
     process.exit(0);
   });
 
-  // Force shutdown after 10 seconds
-  setTimeout(() => {
-    serverLogger.error("Forced shutdown after timeout");
-    process.exit(1);
-  }, 10000);
 }
 
 // Handle shutdown signals
