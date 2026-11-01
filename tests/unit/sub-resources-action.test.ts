@@ -1006,6 +1006,34 @@ describe('handleSavePrimarySubResources — the primary metafield write', () => 
       }
     });
 
+    it('a malformed index ("", null, missing, negative, "1.5") is never attributed to entry 0', async () => {
+      for (const idx of ['', null, undefined, '-1', '1.5', ' 0']) {
+        const w = refuse([{ field: ['metafields', idx, 'value'], message: 'Nope.', code: 'INVALID_VALUE' }]);
+        const result = body(await save(makeDb(), w.admin, { [METAFIELD]: 'abc' }));
+        expect(result.metafieldRefusals, JSON.stringify(idx)).toBeUndefined();
+        expect(result.unverifiedMetafields, JSON.stringify(idx)).toBeUndefined();
+      }
+    });
+
+    it('an index in a SECOND batch is relative to THAT batch', async () => {
+      const ids = Array.from({ length: 26 }, (_, i) => `gid://shopify/Metafield/${100 + i}`);
+      let call = 0;
+      const w = installAdmin({
+        metafieldsSet: (v) => {
+          call++;
+          if (call === 1) {
+            return { data: { metafieldsSet: { userErrors: [], metafields: v.metafields.map((m: any, i: number) => ({ ...m, id: `gid://shopify/Metafield/ok-${i}`, owner: { id: m.ownerId } })) } } };
+          }
+          // second batch holds ONE entry (the 26th): position 0 of that batch
+          return { data: { metafieldsSet: { metafields: [], userErrors: [{ field: ['metafields', '0', 'value'], message: 'Too long.', code: 'TOO_LONG' }] } } };
+        },
+      });
+      const result = body(await save(makeDb(), w.admin, Object.fromEntries(ids.map((id) => [id, 'v']))));
+      expect(w.of('metafieldsSet')).toHaveLength(2);
+      expect(result.failedMetafields).toEqual([ids[25]]);
+      expect(result.metafieldRefusals).toEqual({ [ids[25]]: 'Too long.' });
+    });
+
     it('a non-value code (INTERNAL_ERROR) is not presented as a refusal of the text', async () => {
       const w = refuse([{ field: ['metafields', '0', 'value'], message: 'boom', code: 'INTERNAL_ERROR' }]);
       const result = body(await save(makeDb(), w.admin, { [METAFIELD]: 'abc' }));
@@ -1020,6 +1048,7 @@ describe('handleSavePrimarySubResources — the primary metafield write', () => 
       });
       const result = body(await save(makeDb(), w.admin, { [METAFIELD]: 'abc' }));
       expect(result.metafieldRefusals).toEqual({ [METAFIELD]: `${code} text` });
+      expect(result.permissionRefusedMetafields).toEqual([METAFIELD]);
       expect(result.optionWarnings ?? []).not.toContain('metafieldSlotUnverified');
     }
   });

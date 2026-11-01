@@ -85,6 +85,14 @@ describe("api.ai content-type plan gate", () => {
     expect(captureServerError).not.toHaveBeenCalled();
   });
 
+  it("isRunAbortingAIError includes the shutdown error, so multi-locale loops abort instead of recording per-locale failures", async () => {
+    const { isRunAbortingAIError } = await import("~/routes/api-ai-handlers/shared");
+    const { AIQueueShuttingDownError } = await import("../../src/services/ai-queue.service");
+    expect(isRunAbortingAIError(new AIQueueShuttingDownError())).toBe(true);
+    expect(isRunAbortingAIError(Object.assign(new Error("x"), { code: "AI_QUEUE_SHUTTING_DOWN" }))).toBe(true);
+    expect(isRunAbortingAIError(new Error("boom"))).toBe(false);
+  });
+
   it("answers 503 (not a reported crash) when the queue was stopped for shutdown", async () => {
     aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "pro" });
     translateField.mockRejectedValueOnce(Object.assign(new Error("Server shutting down — request not processed"), { code: "AI_QUEUE_SHUTTING_DOWN" }));

@@ -715,7 +715,7 @@ export class AIQueueService {
     // Reject everything still waiting in the queues — it never started.
     for (const [shop, queue] of this.queues.entries()) {
       for (const req of queue.splice(0)) {
-        req.reject(new Error('Server shutting down — request not processed'));
+        req.reject(new AIQueueShuttingDownError());
       }
       this.queues.delete(shop);
     }

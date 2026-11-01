@@ -426,6 +426,17 @@ describe('AIQueueService', () => {
       expect(execute).not.toHaveBeenCalled();
     });
 
+    it('drain() rejects a request queued at SIGTERM with the CODED error too (503, not 500 + Sentry)', async () => {
+      // Fill the shop's slot so a second request stays queued, then stop + drain.
+      queueService.stop();
+      (queueService as any).shuttingDown = false; // queued before the signal
+      const pending = queueService.enqueue('shopQ', 'task-q', 'openai', 10, vi.fn());
+      queueService.stop();
+      const rejection = expect(pending).rejects.toMatchObject({ code: 'AI_QUEUE_SHUTTING_DOWN' });
+      await queueService.drain(1000);
+      await rejection;
+    });
+
     it('enqueueFromTask after stop() rejects the same way', async () => {
       queueService.stop();
       await expect(

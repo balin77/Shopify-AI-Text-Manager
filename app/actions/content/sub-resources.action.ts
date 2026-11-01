@@ -1072,16 +1072,31 @@ const METAFIELD_VALUE_REFUSAL_CODES = new Set([
   "CAPABILITY_VIOLATION",
 ]);
 
-/** Batch position -> Shopify's message, for the userErrors that refused a VALUE. */
+/** The two codes that are about our right to write, not about the text. */
+const METAFIELD_PERMISSION_CODES = new Set(["APP_NOT_AUTHORIZED", "CAPABILITY_VIOLATION"]);
+
+/**
+ * Batch position -> Shopify's message, for the userErrors that refused a VALUE.
+ * The position is read from `field[1]` and ONLY accepted as a real non-negative
+ * integer string: `Number("")` and `Number(null)` are 0 and would blame the
+ * first entry of the batch for a malformed path.
+ */
 function valueRefusalsByIndex(
   userErrors: Array<{ field?: string[] | string | null; message: string; code?: string | null }>,
-): Map<number, string> {
-  const byIndex = new Map<number, string>();
+): Map<number, { message: string; permission: boolean }> {
+  const byIndex = new Map<number, { message: string; permission: boolean }>();
   for (const error of userErrors) {
     if (!error.code || !METAFIELD_VALUE_REFUSAL_CODES.has(error.code)) continue;
     const path = Array.isArray(error.field) ? error.field : typeof error.field === "string" ? error.field.split(".") : [];
-    const index = Number(path[1]);
-    if (Number.isInteger(index) && !byIndex.has(index)) byIndex.set(index, String(error.message ?? "").slice(0, 300));
+    const raw = path[1];
+    if (typeof raw !== "string" || !/^\d+$/.test(raw)) continue;
+    const index = Number(raw);
+    if (!byIndex.has(index)) {
+      byIndex.set(index, {
+        message: String(error.message ?? "").slice(0, 300),
+        permission: METAFIELD_PERMISSION_CODES.has(error.code),
+      });
+    }
   }
   return byIndex;
 }
@@ -1191,6 +1206,8 @@ export async function handleSavePrimarySubResources(
      *  `unverifiedMetafields` (the typed text stays as a draft), but with its own
      *  wording and no "save again". */
     const metafieldRefusals: Record<string, string> = {};
+    /** Refusals that are about permission, not the text (they get their own wording). */
+    const permissionRefusals: string[] = [];
 
     // 1. Options: names, values, and — new — adding, deleting and reordering.
     //
@@ -1563,7 +1580,8 @@ export async function handleSavePrimarySubResources(
                 const own = valueRefusals.get(batch.indexOf(entry));
                 if (own !== undefined) {
                   unverifiedMetafields.push(entry.metafieldId);
-                  metafieldRefusals[entry.metafieldId] = own;
+                  metafieldRefusals[entry.metafieldId] = own.message;
+                  if (own.permission) permissionRefusals.push(entry.metafieldId);
                 }
                 continue;
               }
@@ -1580,7 +1598,8 @@ export async function handleSavePrimarySubResources(
                 unverifiedMetafields.push(entry.metafieldId);
                 const refusal = valueRefusals.get(batch.indexOf(entry));
                 if (refusal !== undefined) {
-                  metafieldRefusals[entry.metafieldId] = refusal;
+                  metafieldRefusals[entry.metafieldId] = refusal.message;
+                  if (refusal.permission) permissionRefusals.push(entry.metafieldId);
                 } else {
                   optionWarnings.push("metafieldSlotUnverified");
                 }
@@ -2183,6 +2202,7 @@ export async function handleSavePrimarySubResources(
       failedMetafields,
       ...(unverifiedMetafields.length > 0 ? { unverifiedMetafields } : {}),
       ...(Object.keys(metafieldRefusals).length > 0 ? { metafieldRefusals } : {}),
+      ...(permissionRefusals.length > 0 ? { permissionRefusedMetafields: permissionRefusals } : {}),
       // Cleared metafields Shopify confirmed DELETING (not in savedMetafields:
       // there is no source text left whose translations could be stale).
       ...(removedMetafieldIds.length > 0 ? { removedMetafieldIds } : {}),

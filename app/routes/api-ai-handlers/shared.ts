@@ -5,6 +5,7 @@
 import { data as json } from "react-router";
 import { AIService, toValidProvider, isProviderKeyRejection, isManagedRefusal } from "../../../src/services/ai.service";
 import type { AIProvider } from "../../../src/services/ai.service";
+import { isAIQueueShuttingDown } from "../../../src/services/ai-queue.service";
 import { getProviderDisplayName } from "../../utils/api-key-validation";
 import { getTranslation, type Locale } from "../../i18n";
 import { scrubProviderErrorText } from "../../utils/provider-error-scrub";
@@ -146,9 +147,15 @@ export { isProviderKeyRejection };
  */
 export { isManagedRefusal };
 
-/** Either of the two errors that must stop a whole run rather than one item. */
+/**
+ * Any of the errors that must stop a whole run rather than one item: a rejected
+ * key, a managed refusal, and the queue being stopped for shutdown (every later
+ * item would be rejected the same way, and recording each as a per-locale
+ * failure would read as "this one failed" - it is not a verdict on the text).
+ * The handlers rethrow it; /api/ai answers it with a 503.
+ */
 export function isRunAbortingAIError(error: unknown): boolean {
-  return isProviderKeyRejection(error) || isManagedRefusal(error);
+  return isProviderKeyRejection(error) || isManagedRefusal(error) || isAIQueueShuttingDown(error);
 }
 
 /**
