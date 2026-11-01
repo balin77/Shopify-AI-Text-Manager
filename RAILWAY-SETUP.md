@@ -67,6 +67,16 @@ kommt der Breaker als fünfter dazu — siehe unten):
 | Deduplizierung der detached Re-Translation-Läufe (`retranslationsInFlight`) | [app/services/translations/stale-translation-sync.server.ts](app/services/translations/stale-translation-sync.server.ts) | derselbe Lauf startet zweimal: jede Sprache wird doppelt übersetzt und doppelt registriert — auf dem KI-Key des Merchants auch doppelt bezahlt |
 | Fünf `setInterval`-Sweeps (Audit, Crawl, Translation-Drift, llms.txt, IndexNow) | gestartet in [app/shopify.server.ts](app/shopify.server.ts) | sie laufen pro Prozess. Der DB-Stempel (`lastAutoRunAt` & Co.) fängt das meiste ab, aber nicht alles: zwischen „Shop als fällig lesen" und „Stempel schreiben" liegt ein Fenster, in dem beide Instanzen denselben Shop greifen |
 
+Dazu kommt eine **Seriensperre pro Produkt**
+([app/utils/keyed-serial-lock.server.ts](app/utils/keyed-serial-lock.server.ts)):
+`savePrimarySubResources` (Optionen und Metafelder eines Produkts) läuft pro
+Shop+Produkt nacheinander, weil der Browser einen Request aufgeben kann
+(Zeitlimit, Verbindungsabbruch), den der Server noch abarbeitet, und ein älteres
+`metafieldsSet` sonst nach dem neueren landen könnte. Die Sperre ist
+prozesslokal und ihre Wartezeit auf 5 Minuten begrenzt: mit einer zweiten Instanz
+(oder im kurzen Deploy-Overlap) fällt sie auf das alte Verhalten zurück, sie
+blockiert nie dauerhaft.
+
 Ehrlichkeitshalber die Gegenliste — **nicht** betroffen ist alles, was seinen
 Zustand in Postgres hält: die Single-Flight-Logik des Crawls samt
 Orphan-Recovery, der atomare Verbrauch von `ImageOperationCounter`, und die

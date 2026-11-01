@@ -1132,8 +1132,9 @@ async function upsertShopMetafieldRow(
 /**
  * The primary save of ONE product runs one at a time on the server too: the
  * client's queue sends them in order, but it can give up on a request that the
- * server is still working on, and the next one must not start beside it (an older
- * `metafieldsSet` landing last would overwrite the newer value). See
+ * server is still working on (the abort signal reaches the door but not this
+ * handler, which runs to its end), and the next one must not start beside it (an
+ * older `metafieldsSet` landing last would overwrite the newer value). See
  * keyed-serial-lock.server.ts for why the wait is bounded and process-local.
  * Foreign (translation) saves are NOT serialised: copies and clear-alls send one
  * per language in parallel and each touches different rows.

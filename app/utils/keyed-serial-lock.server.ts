@@ -6,9 +6,11 @@
  * (its cut-off, a closed tab, a lost connection) while the server keeps
  * writing, and the next save then starts beside it - an older `metafieldsSet`
  * can land last and overwrite the newer value. Aborting a fetch does not cancel
- * the handler: the content-editor door rebuilds the Request for the page action,
- * so the client's abort signal never reaches it, and the handler does not look at
- * a signal anyway.
+ * the handler. TRACED: the content-editor door DOES hand `request.signal` on to
+ * the page action (api.content-editor-action.tsx), but the save handler never
+ * reads it and its Shopify calls take none - and cancelling it half-way would
+ * leave a half-applied save, so it is deliberately not made cancellable. The
+ * handler therefore runs to its end, and the next save has to wait for it here.
  *
  * So the server serialises the writes of ONE product itself. Railway runs this
  * app as a single web instance (RAILWAY-SETUP s.0), so a process-local lock is

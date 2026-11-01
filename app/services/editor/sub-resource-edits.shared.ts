@@ -14,11 +14,11 @@
  * reverted): it goes. It STAYS if it differs from the snapshot (the merchant
  * retyped it while the request was out), if it has no snapshot (typed after
  * submit), or if it is a kept draft (nothing was written for it, see
- * `unverifiedIds`). Comparing against `selectedItem` instead cannot work: React
- * Router commits the fetcher's `idle` and the reloaded loader data in the SAME
- * update, so by the time the answer is processed the item is usually already
- * POST-save, and an edit then reads as "unchanged" (never settled) or, for a
- * reordered option, as a mismatch.
+ * `unverifiedIds`). Comparing against `selectedItem` instead cannot work: when
+ * the answer is processed the item may be PRE-save or already the reloaded
+ * POST-save one (the reload is asked for by the answer itself and lands later,
+ * but a background refresh can beat it), and an edit then reads as "unchanged"
+ * (never settled) or, for a reordered option, as a mismatch.
  *
  * Option edits are keyed by the value's stable GID, not by position: a save
  * that adds, removes or reorders values renumbers the list under a positional

@@ -7,6 +7,10 @@
  * 2. Shopify fetch: Hook triggers fetcher POST → server loads from Shopify for any missing
  *    → merges into state (catches translations from Translate & Adapt)
  *
+ * The fetcher is for that Phase-2 LOAD only. The card's SAVES run in a module-
+ * scope queue over plain fetch (sub-resource-save-queue.ts) and are read by
+ * `handleSaveAnswer` against what each request carried; see CLAUDE.md.
+ *
  * Manages:
  * - Reading pre-loaded translations from item data (DB pipeline)
  * - Fetching from Shopify for translations not yet in DB
@@ -83,6 +87,7 @@ import {
 import {
   enqueueSave,
   getSaveEntries,
+  observeFinishedSaves,
   subscribeSaves,
   SAVE_NOT_CONFIRMED_CODE,
   type QueuedSave,
@@ -187,11 +192,17 @@ export function __resetSubResourceSpinnerHolds(): void {
  * back as `null`, which every caller treats as a failed request -- the spinner
  * is settled by the caller's `finally` either way.
  */
-async function postSubResourceRequest(fd: FormData): Promise<SubResourceFetcherData | null> {
+async function postSubResourceRequest(fd: FormData, timeoutMs?: number): Promise<SubResourceFetcherData | null> {
+  // Optional cut-off. Translates run AI calls for minutes and have none; a
+  // "clear all" is plain writes, and one that never answered would hold
+  // `clearsOutRef` (and with it clear-all and translate-all) for good.
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
     const resp = await appFetch(SUB_RESOURCE_ENDPOINT, {
       method: "POST",
       body: setContentEditorPage(fd, "/app/products"),
+      ...(controller ? { signal: controller.signal } : {}),
     });
     const data = (await resp.json().catch(() => null)) as SubResourceFetcherData | null;
     if (!data || typeof data !== "object") return null;
@@ -200,6 +211,8 @@ async function postSubResourceRequest(fd: FormData): Promise<SubResourceFetcherD
     return data;
   } catch {
     return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -268,6 +281,32 @@ type Tone = "success" | "info" | "warning" | "critical";
  * market (switching either resets the primary edits); a foreign one to the
  * product, language and market.
  */
+/**
+ * View generations, unique across hook instances. A reset of the view (the load
+ * effect's full reset on a product / language / market switch) takes a new one;
+ * a save remembers the generation it was pressed in.
+ */
+let viewEpochCounter = 0;
+
+/** A "clear all" is plain writes; one that has not answered after this is given up on. */
+const CLEAR_ALL_TIMEOUT_MS = 240_000;
+
+/** How long after an answer of unknown outcome the second re-read is asked for. */
+const LATE_RELOAD_MS = 8000;
+
+/** The structural lists out of the pending state. */
+function structuralOf(p: SubResourcePendingState | null): StructuralLists {
+  return {
+    valuesToAdd: (p?.optionValuesToAdd ?? {}) as Record<string, string[]>,
+    linkedToAdd: (p?.optionLinkedValuesToAdd ?? {}) as Record<string, Array<{ id: string; name: string }>>,
+    valuesToDelete: (p?.optionValuesToDelete ?? {}) as Record<string, string[]>,
+    optionsToCreate: (p?.optionsToCreate ?? []) as StructuralLists["optionsToCreate"],
+    optionsToDelete: (p?.optionsToDelete ?? []) as string[],
+    optionOrder: (p?.optionOrder ?? null) as string[] | null,
+    valueOrder: (p?.optionValueOrder ?? {}) as Record<string, string[]>,
+  };
+}
+
 function saveViewKey(isPrimary: boolean, itemId: string, language: string, marketId: string): string {
   return isPrimary ? `${itemId}::primary::${marketId}` : `${itemId}::${buildLocaleKey(language, marketId)}`;
 }
@@ -285,7 +324,12 @@ function failureReasonText(data: SubResourceFetcherData | null, strings: UseProd
 }
 
 /** The reasons / refusals of a (partly) failed PRIMARY save, as sentences. */
-function primaryFailureDetails(data: SubResourceFetcherData, strings: UseProductSubResourcesStrings) {
+function primaryFailureDetails(
+  data: SubResourceFetcherData,
+  strings: UseProductSubResourcesStrings,
+  /** The answer lands where the typed text is NOT on screen: no "stays in the field". */
+  elsewhere = false,
+) {
   // The warning codes carry the only specific reason there is (the last option
   // cannot go, an empty name, an unconfirmed write), and the generic count
   // alone leaves the merchant guessing.
@@ -301,9 +345,13 @@ function primaryFailureDetails(data: SubResourceFetcherData, strings: UseProduct
       // PERMISSION gets its own wording: "adjust your value" cannot help when
       // the text was never the problem.
       (permissionIds.has(id)
-        ? strings.metafieldPermissionRefused ||
-          "Shopify does not allow this app to write this metafield: {message} Nothing was saved; your value stays in the field."
-        : strings.metafieldValueRefused || "Shopify did not accept the value: {message}"
+        ? elsewhere
+          ? strings.metafieldPermissionElsewhere || "Shopify does not allow this app to write this metafield: {message}"
+          : strings.metafieldPermissionRefused ||
+            "Shopify does not allow this app to write this metafield: {message} Nothing was saved; your value stays in the field."
+        : elsewhere
+          ? strings.metafieldRefusedElsewhere || "Shopify did not accept the value for a metafield: {message}"
+          : strings.metafieldValueRefused || "Shopify did not accept the value: {message}"
       ).replace("{message}", () => String(message)),
     )
     .join(" ");
@@ -364,7 +412,7 @@ export function describeSaveForOtherView(
   }
   const failedAny =
     (data.failedOptions?.length ?? 0) + (data.failedMetafields?.length ?? 0) + (data.structuralFailures ?? 0) > 0;
-  const details = primaryFailureDetails(data, strings);
+  const details = primaryFailureDetails(data, strings, true);
   return {
     text: [
       fill(
@@ -619,6 +667,11 @@ interface UseProductSubResourcesStrings {
   saveFailedOtherProduct?: string;
   /** No answer in time ({title}): the write may or may not have landed. */
   saveNotConfirmed?: string;
+  /** The same two refusals, worded for a view where the typed text is NOT on screen. */
+  metafieldRefusedElsewhere?: string;
+  metafieldPermissionElsewhere?: string;
+  /** A Save pressed while the saved values are still being reloaded. */
+  reloadBeforeSave?: string;
   /** Used for {title} when the product has none ("the previous product"). */
   previousProductLabel?: string;
   /** One per `OptionWriteWarning` code, e.g. `optionWarning_optionLastOne`.
@@ -781,8 +834,8 @@ export function useProductSubResources({
   }, []);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Own fetcher for the Shopify load (Phase 2) and the save bar's save -- the
-  // two requests of which there is only ever one at a time. Must NOT be shared
+  // Own fetcher for the Shopify load (Phase 2) ONLY -- one load at a time. The
+  // card's saves do not use it (module-scope queue, plain fetch). Must NOT be shared
   // with the main editor (its safeSubmit queue vs. direct submit here). Every
   // translate and every copy goes through its OWN plain fetch instead (see
   // `postSubResourceRequest`): a second `submit()` on one fetcher aborts the
@@ -808,8 +861,8 @@ export function useProductSubResources({
   const itemLoadedAtRef = useRef(0);
   // The view a Phase-2 load was submitted for (and the ids it asked), so its
   // answer is applied only while that view still shows. `deferredLoadRef`
-  // holds a load that could not go out (the shared fetcher was busy with a
-  // save, or a save aborted it) until the fetcher is idle again.
+  // holds a load that could not go out (the load fetcher was busy with another
+  // load) until the fetcher is idle again.
   const pendingLoadRef = useRef<(TranslateTarget & { resourceIds: string[] }) | null>(null);
   const deferredLoadRef = useRef<(TranslateTarget & { resourceIds: string[] }) | null>(null);
   // A reload asked for while the revalidator was busy: the run in flight may
@@ -847,17 +900,26 @@ export function useProductSubResources({
   // shared slot an earlier or later request could overwrite.
   const [saveTrackVersion, setSaveTrackVersion] = useState(0);
   const saveOwnerRef = useRef<SaveOwner>({ mounted: false, handle: () => {} });
+  const viewEpochRef = useRef(0);
+  if (viewEpochRef.current === 0) viewEpochRef.current = ++viewEpochCounter;
+  /** Reads the answer of a save pressed by a hook instance that is gone. */
+  const detachedAnswerRef = useRef<(entry: QueuedSave, data: Record<string, any> | null) => void>(() => {});
+  /** A "late" reload after an answer whose outcome was unknown. */
+  const lateReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const owner = saveOwnerRef.current;
     owner.mounted = true;
     const bump = () => setSaveTrackVersion((v) => v + 1);
     const unsubscribe = subscribeSaves(bump);
+    const stopObserving = observeFinishedSaves((entry, data) => detachedAnswerRef.current(entry, data));
     bump();
     return () => {
       // After this the owner never touches state again: answers that arrive go
-      // to a toast instead (the queue checks `mounted`).
+      // to the newest mounted hook, or to a toast (the queue checks `mounted`).
       owner.mounted = false;
       unsubscribe();
+      stopObserving();
+      if (lateReloadTimerRef.current) clearTimeout(lateReloadTimerRef.current);
     };
   }, []);
   // The item/language/market a translate was REQUESTED for; its answer is
@@ -1020,6 +1082,9 @@ export function useProductSubResources({
     if (loadedForRef.current === loadKey) return;
 
     // Reset state — unsaved edits belong to the previous item/locale/market.
+    // A new view generation: a save pressed before this reset can tell, when it
+    // answers, that what is on screen is no longer what it carried.
+    viewEpochRef.current = ++viewEpochCounter;
     setHasChanges(false);
     setDirtyOptionIds(new Set());
     setDirtyOptionValueIds(new Set());
@@ -1083,27 +1148,28 @@ export function useProductSubResources({
   const [refreshVersion, setRefreshVersion] = useState(0);
   useEffect(() => {
     if (refreshVersion === 0) return;
-    // Unsaved input wins, always. The page does not start a background refresh
-    // while this card is dirty, but an edit can land between that decision and
-    // this pass.
-    if (hasChanges) return;
     // A different item/locale/market is the load effect's job, with its full
     // reset; this pass only re-reads what is already on screen.
     if (loadedForRef.current !== `${itemId}::${currentLanguage}::${selectedMarketId}`) return;
-    if (!itemId || isPrimaryLocale || subResourceIds.length === 0) return;
     // The server has just rewritten these languages; a staged copy would
     // otherwise keep winning over the fresh loader value. The overlay only ever
     // holds values that were already saved, which the fresh item carries too --
     // except a translate answer from the last moments, which the loader may
-    // have read before its write (see `overlayResetKeepIds`).
+    // have read before its write (see `overlayResetKeepIds`). Done even when the
+    // re-read below is skipped: a stale overlay shadows synced values for minutes.
     localSubResourceOverlayRef.current = overlayKeepingOnly(
       localSubResourceOverlayRef.current,
       overlayResetKeepIds(),
     );
     pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
     touchOverlay();
-    // Phase 2 goes through the SAME fetcher as a save; while it is busy the
-    // Shopify supplement is deferred until it is idle (`submitPhase2Load`).
+    // Unsaved input wins, always. The page does not start a background refresh
+    // while this card is dirty, but an edit can land between that decision and
+    // this pass.
+    if (hasChanges) return;
+    if (!itemId || isPrimaryLocale || subResourceIds.length === 0) return;
+    // If a Phase-2 load is out, the Shopify supplement is deferred until the
+    // load fetcher is idle (`submitPhase2Load`).
     readTranslationsFromItem();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the bump alone; reads the render it runs in
   }, [refreshVersion]);
@@ -1112,7 +1178,7 @@ export function useProductSubResources({
     setRefreshVersion((v) => v + 1);
   }, []);
 
-  // A request that failed as a whole, from either fetcher. The plan refusal
+  // A request that failed as a whole (the load fetcher, or a save). The plan refusal
   // arrives as the code "gated" and goes through the editor's one translator so
   // it reads as the upgrade message; a managed-AI refusal already carries a
   // localised sentence. A save that failed still hands its task ids (a repair
@@ -1247,6 +1313,54 @@ export function useProductSubResources({
     const sameView =
       sameItem && entry.viewKey === saveViewKey(isPrimaryLocale, entry.itemId ?? "", currentLanguage, selectedMarketId);
     const kind = entry.kind;
+    // The view the save was pressed for AND not reset since: only then are the
+    // edits / fields on screen the ones this save carried. Returning to the same
+    // product re-reads it from the item (the load effect's reset), so the same
+    // key is not the same view - what was typed before leaving is gone.
+    const viewIntact = sameView && entry.epoch === viewEpochRef.current;
+    const notConfirmed = !!(data as { notConfirmed?: boolean } | null)?.notConfirmed;
+
+    // ---- the outcome is UNKNOWN (no answer in time, connection lost, gateway) ----
+    if (notConfirmed) {
+      // The write may or may not have landed: re-read now and once more a little
+      // later, hold the translate lock until the reload has landed, and do NOT
+      // keep the structural ADDITIONS this save carried (a re-press would create
+      // the option / value a second time if the first landed). Text edits are
+      // idempotent and stay.
+      if (sameItem) {
+        setAwaitingOptionReload(true);
+        requestRevalidate();
+        if (lateReloadTimerRef.current) clearTimeout(lateReloadTimerRef.current);
+        lateReloadTimerRef.current = setTimeout(() => {
+          lateReloadTimerRef.current = null;
+          if (saveOwnerRef.current.mounted) requestRevalidate();
+        }, LATE_RELOAD_MS);
+      } else {
+        requestRevalidate();
+      }
+      if (viewIntact && kind === "primary") {
+        const sentNotConfirmed = entry.sent as { snapshot: PrimarySaveSnapshot };
+        const now = pendingStateRef.current;
+        const left = structuralAfterSave(structuralOf(now), sentNotConfirmed.snapshot.structural);
+        setOptionValuesToAdd(left.valuesToAdd);
+        setOptionLinkedValuesToAdd(left.linkedToAdd);
+        setOptionValuesToDelete(left.valuesToDelete);
+        setOptionsToCreate(left.optionsToCreate);
+        setOptionsToDelete(left.optionsToDelete);
+        setOptionOrder(left.optionOrder);
+        setOptionValueOrder(left.valueOrder);
+        setSavedNonce((n) => n + 1);
+        setHasChanges(
+          hasKeptEdits(
+            (now?.primaryMetafieldEdits ?? {}) as Record<string, string>,
+            (now?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>,
+          ) || hasStructural(left),
+        );
+      }
+      const described = entry.describe(data);
+      showInfoBox?.(described.text, described.tone);
+      return;
+    }
 
     // ---- the whole request failed ----------------------------------------------
     if (!data || data.success === false) {
@@ -1255,14 +1369,13 @@ export function useProductSubResources({
         success: false,
         actionType: kind === "primary" ? "savePrimarySubResources" : "saveSubResourceTranslations",
       };
-      if (sameView && !(data as { notConfirmed?: boolean } | null)?.notConfirmed) {
+      if (viewIntact) {
         // Nothing was settled: the edits are still here and the Save can be pressed again.
         reportFailedRequest(failed);
       } else {
-        // Not this view's: say WHICH product, why (the server's reason), and that
-        // what was typed there was not saved - no draft is kept for a view that
-        // is gone. A save that merely got no answer in time says so instead of
-        // claiming a failure: it may have landed.
+        // Not this view's, or the same product re-read since: say WHICH product,
+        // why (the server's reason), and that what was typed there was not saved -
+        // no draft is kept for a view that is gone.
         if (Array.isArray(data?.retranslationTaskIds) && data.retranslationTaskIds.length > 0) onSaveResponse?.(data);
         const described = entry.describe(failed);
         showInfoBox?.(described.text, described.tone);
@@ -1302,7 +1415,15 @@ export function useProductSubResources({
             ([resourceId, fields]) =>
               !failedResources.includes(resourceId) && Object.values(fields || {}).some((value) => value === ""),
           );
-        if (removedMarketOverride) requestRevalidate();
+        // The saved text is in Shopify now but not in the loaded item: re-read,
+        // or leaving the view and coming back (or any later re-read of the item)
+        // shows the OLD text. The overlay holds the saved values on screen until
+        // the item has caught up. This used to be the fetcher's automatic
+        // revalidation after an action; a plain fetch has none.
+        const savedSomething = Object.keys(sent.values).some(
+          (id) => !failedResources.includes(id) && !notTranslatable.includes(id),
+        );
+        if (removedMarketOverride || savedSomething) requestRevalidate();
       } else {
         // Its data changed on Shopify: re-read, so it is fresh when reopened.
         requestRevalidate();
@@ -1338,7 +1459,13 @@ export function useProductSubResources({
       const carried = Object.keys(sent.values);
       const settled = carried.filter((id) => !retyped.has(id));
 
-      if (failedResources.length > 0) {
+      if (failedResources.length > 0 && !viewIntact) {
+        // Re-read since the press: nothing typed before leaving is on screen, so
+        // "reverted to original values" would describe something that did not
+        // happen. Name the product instead.
+        const described = entry.describe(data);
+        showInfoBox?.(described.text, described.tone);
+      } else if (failedResources.length > 0) {
         showInfoBox?.(
           (strings.saveFailedOptions || "Failed to save {count} option(s). Changes have been reverted to original values.").replace("{count}", String(failedResources.length)),
           "critical",
@@ -1365,8 +1492,13 @@ export function useProductSubResources({
         savedText[id] = sent.values[id];
       }
       if (selectedItem && Object.keys(savedText).length > 0) {
-        setOptionTranslations((prev) => mergeOptionTranslations(prev, selectedItem, savedText));
-        setMetafieldTranslations((prev) => mergeMetafieldTranslations(prev, selectedItem, savedText));
+        // The merges skip empty values, so a saved CLEAR is applied explicitly.
+        setOptionTranslations((prev) =>
+          applyStagedOptionClears(mergeOptionTranslations(prev, selectedItem, savedText), selectedItem, savedText),
+        );
+        setMetafieldTranslations((prev) =>
+          applyStagedMetafieldClears(mergeMetafieldTranslations(prev, selectedItem, savedText), savedText),
+        );
       }
 
       // Dirty ids: only the settled ones leave. Anything typed after the press
@@ -1427,19 +1559,21 @@ export function useProductSubResources({
     // cleared field found filled meanwhile was replaced by the live one. Until
     // the reload lands the item still carries the old text, which a translate
     // would send - keyed on the save itself, never on the tab now showing.
-    const needsReload =
-      !partial ||
-      savedIds.length > 0 ||
-      (data.marketPurgedResourceIds ?? []).length > 0 ||
-      (data.optionWarnings ?? []).includes("metafieldExistsMeanwhile");
-    if (needsReload) {
-      if (sameItem && (partial ? savedIds.length > 0 : !!revalidator)) setAwaitingOptionReload(true);
-      if (partial || revalidator) requestRevalidate();
+    // ANY answer that reached the handler reloads: a partial answer may have
+    // landed creates, deletes or reorders that carry no resource id (so
+    // `savedIds` cannot see them), and a missed reload leaves a new option
+    // invisible and a re-create would collide with it.
+    if (partial || revalidator) {
+      if (sameItem) setAwaitingOptionReload(true);
+      requestRevalidate();
     }
 
-    if (!sameView) {
-      // Another product, or the same product on another tab/market: nothing of
-      // what is on screen is this answer's. Name the product.
+    if (!viewIntact && (partial || !sameView)) {
+      // Another product, another tab/market of this one, or this view re-read
+      // since the press: nothing of what is on screen is this answer's (a clean
+      // answer on a re-read view still settles below, against the snapshot).
+      // Name the product.
+      if (sameItem) setSavedNonce((n) => n + 1);
       const described = entry.describe(data);
       showInfoBox?.(described.text, described.tone);
       return;
@@ -1520,6 +1654,11 @@ export function useProductSubResources({
   };
   // Always the latest render's closure (state, strings, item), read by the queue.
   saveOwnerRef.current.handle = handleSaveAnswer as SaveOwner["handle"];
+  // The answer of a save pressed by a hook instance that is gone (the merchant
+  // left for Settings and came back): never "this view" - this instance did not
+  // press it and its epoch differs - but the product may be on screen, and then
+  // it reloads, locks and hands the task ids to the watcher.
+  detachedAnswerRef.current = (entry, answer) => handleSaveAnswer(entry, answer);
 
   // ============================================================================
   // Handle fetcher responses -- the Phase-2 LOAD only. The card's saves no longer
@@ -2381,6 +2520,20 @@ export function useProductSubResources({
 
     if (isPrimaryLocale) {
       // PRIMARY LOCALE: Save primary values (options + metafields)
+      //
+      // While the reload that follows a landed save is still out, `selectedItem`
+      // is the item from BEFORE it. Comparing an edit with it would read "typed
+      // back to the old value" as UNCHANGED - nothing sent, the bar cleared -
+      // while Shopify holds the new value and the field shows the old one. So the
+      // press waits for the reload (seconds; the lock releases on its own after
+      // 20 s) instead of concluding anything from a stale item.
+      if (awaitingOptionReload) {
+        showInfoBox?.(
+          strings.reloadBeforeSave || "The saved values are still being reloaded - please press Save again in a moment.",
+          "info",
+        );
+        return;
+      }
       const optionsChanges: Record<
         string,
         {
@@ -2606,6 +2759,7 @@ export function useProductSubResources({
         itemId: selectedItem.id ?? null,
         title: primaryTitle,
         viewKey: saveViewKey(true, selectedItem.id ?? "", currentLanguage, selectedMarketId),
+        epoch: viewEpochRef.current,
         locale: "",
         fingerprint: primaryFingerprint({
           metafieldEdits: primaryMetafieldEdits,
@@ -2667,7 +2821,16 @@ export function useProductSubResources({
         }
       }
 
-      if (Object.keys(translationsData).length === 0) return;
+      if (Object.keys(translationsData).length === 0) {
+        // The dirty ids name resources this item no longer has (deleted, or the
+        // item was reloaded): there is nothing to send and nothing left to save -
+        // a silent return left the bar up for good.
+        setDirtyOptionIds(new Set());
+        setDirtyOptionValueIds(new Set());
+        setDirtyMetafieldIds(new Set());
+        setHasChanges(false);
+        return;
+      }
 
       const foreignLocaleKey = buildLocaleKey(currentLanguage, selectedMarketId);
       const foreignTitle = (selectedItem as { title?: string }).title ?? null;
@@ -2683,6 +2846,7 @@ export function useProductSubResources({
         itemId: selectedItem.id ?? null,
         title: foreignTitle,
         viewKey: saveViewKey(false, selectedItem.id ?? "", currentLanguage, selectedMarketId),
+        epoch: viewEpochRef.current,
         locale: currentLanguage,
         fingerprint: foreignFingerprint({
           item: selectedItem,
@@ -2702,7 +2866,7 @@ export function useProductSubResources({
         },
       });
     }
-  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder, optionValueOrder, stringsRef]);
+  }, [hasChanges, awaitingOptionReload, strings.reloadBeforeSave, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder, optionValueOrder, stringsRef]);
 
   const clearAllForLocale = useCallback(() => {
     if (!selectedItem || isPrimaryLocale) return;
@@ -2748,8 +2912,8 @@ export function useProductSubResources({
 
     if (Object.keys(translationsData).length === 0) return;
 
-    // Its OWN request, like every translate and copy: on the shared fetcher it
-    // aborted a Phase-2 load or the save bar's save (and was aborted by them),
+    // Its OWN request, like every translate and copy: on the load fetcher it
+    // would abort a Phase-2 load (and be aborted by the next one),
     // and its answer was then read as theirs.
     //
     // While it is in flight the cleared fields are STAGED EMPTY values in the
@@ -2789,7 +2953,8 @@ export function useProductSubResources({
     void (async () => {
       let data: Awaited<ReturnType<typeof postSubResourceRequest>>;
       try {
-        data = await postSubResourceRequest(fd);
+        // Bounded: a hung clear must not block clear-all / translate-all for good.
+        data = await postSubResourceRequest(fd, CLEAR_ALL_TIMEOUT_MS);
       } finally {
         clearDone();
       }
@@ -2900,13 +3065,16 @@ export function useProductSubResources({
     // Note: translatingFieldIds in global store is cleared per-resource,
     // no need to clear here — the operation will finish naturally.
 
-    // Force reload from DB/Shopify on next render
-    loadedForRef.current = "";
+    // Re-read the view that is showing IN PLACE (the refresh effect), instead of
+    // emptying the load key. An emptied key made the NEXT unrelated reload (the
+    // answer of a save of another product, a background refresh) run the load
+    // effect's full reset and wipe whatever the merchant had typed after the
+    // discard - with no message - and left the foreign fields blank in between.
+    setRefreshVersion((v) => v + 1);
   }, []);
 
   /** Force re-load on next render (called after revalidation delivers fresh DB data) */
   const resetForReload = useCallback(() => {
-    loadedForRef.current = "";
     // Fresh data is about to be applied: staged values must not shadow it
     // (unconfirmed-purge resources excepted, their translations are still live;
     // and a translate answer from the last moments, which the reload may have
@@ -2917,6 +3085,9 @@ export function useProductSubResources({
     );
     pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
     touchOverlay();
+    // Re-read in place (never by emptying the load key, see `resetChanges`): the
+    // refresh does nothing while something is unsaved, which is the merchant's.
+    setRefreshVersion((v) => v + 1);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- overlayResetKeepIds reads refs only
   }, [touchOverlay]);
 

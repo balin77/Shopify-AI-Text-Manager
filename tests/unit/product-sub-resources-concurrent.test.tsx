@@ -186,9 +186,9 @@ describe("several sub-resource translates at once", () => {
     const f = deferredFetch();
     vi.stubGlobal("fetch", f.impl);
     const { result } = setup();
-    // Discard empties the card state; the option has no entry until a reload.
+    // Discard empties the card state and re-reads the view in place (it used to
+    // leave the fields blank until a reload); a value answer lands either way.
     act(() => result.current.handlers.resetChanges());
-    expect(result.current.state.optionTranslations[OPT]).toBeUndefined();
 
     act(() => result.current.handlers.translateOptionField(OPT, "value", 1));
     await act(async () => f.pending[0].release());
@@ -298,8 +298,9 @@ describe("several sub-resource translates at once", () => {
 
     // The page reloads (e.g. a sync finished) with an item whose loader read
     // predates the write -- it carries no translation for that value.
-    act(() => result.current.handlers.resetForReload());
+    // (The reload lands first, then the page asks the card to re-read in place.)
     rerender({ it: makeItem({}) });
+    act(() => result.current.handlers.resetForReload());
     await flush();
 
     expect(result.current.state.optionTranslations[OPT].values[0]).toBe("Red");

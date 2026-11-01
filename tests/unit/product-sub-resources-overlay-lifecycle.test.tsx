@@ -279,8 +279,8 @@ describe("a translate answer", () => {
     const { result, rerender } = setup({ it: makeItem(FULL), lang: "en" });
     act(() => result.current.handlers.translateOptionField(OPT, "value", 0));
     // A reload reorders the values before the answer lands.
-    act(() => result.current.handlers.resetForReload());
     rerender({ it: makeItem(FULL, [V2, V1]), lang: "en" });
+    act(() => result.current.handlers.resetForReload());
     expect(result.current.state.optionTranslations[OPT].values).toEqual(["Blue", "Red"]);
 
     await settleLast();

@@ -63,7 +63,8 @@ const STRINGS = {
   savePartialOtherProduct: "Partly saved: {title}",
   saveFailedOtherProduct: "Could not save {title}; enter it again.",
   saveNotConfirmed: "No answer for {title}.",
-  metafieldValueRefused: "Shopify refused: {message}",
+  metafieldValueRefused: "Shopify refused: {message} Your text stays in the field.",
+  metafieldRefusedElsewhere: "Shopify refused: {message}",
 };
 
 let saves: ReturnType<typeof installSaves>;
@@ -150,6 +151,8 @@ describe("save A, switch to B", () => {
     expect(
       await run({ ...OKP, failedMetafields: [MFA], unverifiedMetafields: [MFA], metafieldRefusals: { [MFA]: "Must be an integer." } }),
     ).toEqual(["Partly saved: Shirt Shopify refused: Must be an integer.", "warning"]);
+    // ... and never claims the text stays in a field that is not on screen
+    expect(String(showInfoBox.mock.calls.at(-1)?.[0])).not.toContain("stays in the field");
     // whole request failed: named, "enter it again", and the server's reason
     const failed = await run({ success: false, actionType: "savePrimarySubResources", error: "Plan limit reached." });
     expect(failed?.[1]).toBe("critical");
@@ -250,7 +253,7 @@ describe("leaving the page with saves out or waiting (unmount)", () => {
     unmount();
     await saves.settle({ success: false, actionType: "savePrimarySubResources", error: "boom" });
     expect(String(toast.mock.calls[0][0])).toContain("Could not save Shirt");
-    expect(toast.mock.calls[0][1]).toEqual({ isError: true });
+    expect(toast.mock.calls[0][1]).toEqual({ isError: true, duration: 15000 });
   });
 
   it("a hook that mounts again sees the saves still out (Save busy, no double send)", async () => {
@@ -354,7 +357,7 @@ describe("a FOREIGN save answers for exactly what it carried (C2, M4)", () => {
 
 describe("structural edits after the press (C2: P3)", () => {
   it("a value added AFTER the press survives the answer, and the save bar with it", async () => {
-    const { result } = render(A, "de");
+    const { result, rerender } = render(A, "de");
     act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
     act(() => result.current.handlers.handleAddOptionValue(OPT, "Blue"));
     await press(result);
@@ -363,7 +366,11 @@ describe("structural edits after the press (C2: P3)", () => {
     await saves.settle({ ...OKP });
     expect(result.current.state.optionValuesToAdd).toEqual({ [OPT]: ["Green"] });
     expect(result.current.state.hasChanges).toBe(true);
-    // The carried value is gone; the next save sends only the new one.
+    // The next save waits for the reload (a Save pressed against the stale item
+    // could conclude "unchanged"), then sends only the new value.
+    await press(result);
+    expect(saves.sent).toHaveLength(1);
+    rerender({ current: { ...A }, lang: "de" });
     await press(result);
     expect(JSON.parse(JSON.parse(saves.fields(1).optionsChanges)[OPT] ? saves.fields(1).optionsChanges : "{}")[OPT].valuesToAdd).toEqual(["Green"]);
   });
@@ -426,8 +433,8 @@ describe("a background refresh of the loader (M2)", () => {
       return result.current.state.primaryMetafieldEdits;
     };
     expect(run("refreshTranslations")).toEqual({ [MFA]: "typed on B" });
-    // The trap the page used to fall into: the reset empties the load key, so the next reload wipes the typed edit.
-    expect(run("resetForReload")).toEqual({});
+    // resetForReload no longer empties the load key either: a later reload keeps what was typed.
+    expect(run("resetForReload")).toEqual({ [MFA]: "typed on B" });
   });
 });
 
@@ -487,5 +494,286 @@ describe("the unsaved-changes confirm only asks for edits NO save carries", () =
     expect(shouldConfirmSubResourceSwitch(true, false)).toBe(true);
     expect(shouldConfirmSubResourceSwitch(false, false)).toBe(false);
     expect(shouldConfirmSubResourceSwitch(true, true)).toBe(false);
+  });
+});
+
+// ============================================================================
+// Review round: leaving and returning, discard, type-back, reloads, unknown outcomes
+// ============================================================================
+
+/** The reloaded item a revalidation would deliver: same product, a new object carrying `rows`. */
+const reloaded = (item: any, rows: Record<string, Array<{ key: string; value: string; locale: string }>>) => ({
+  ...item,
+  subResourceTranslations: { ...(item.subResourceTranslations ?? {}), ...rows },
+});
+
+describe("leaving and returning to the product before the answer (C-A)", () => {
+  const leaveAndReturn = (rerender: any, item: any, lang: string) => {
+    rerender({ current: B, lang });
+    rerender({ current: item, lang });
+  };
+
+  it.each([
+    ["no answer at all", null],
+    ["a server reason", { success: false, error: "Shopify exploded" }],
+  ])("a failure (%s) says WHICH product and that the text must be entered again - never 'your edits are kept'", async (_n, answer) => {
+    const { result, rerender } = render();
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+    await press(result);
+    leaveAndReturn(rerender, A, "de");
+    expect(result.current.state.primaryMetafieldEdits).toEqual({}); // the draft is gone
+    showInfoBox.mockClear();
+    await saves.settle(answer);
+    const [message, tone] = showInfoBox.mock.calls.at(-1) ?? [];
+    expect(String(message)).toContain("Could not save Shirt; enter it again.");
+    expect(String(message)).not.toMatch(/edits are kept/i);
+    expect(tone).toBe("critical");
+    expect(result.current.state.hasChanges).toBe(false);
+    if (answer && "error" in answer) expect(String(message)).toContain("Shopify exploded");
+  });
+
+  it("a REFUSED value does not claim 'your text stays in the field'", async () => {
+    const { result, rerender } = render();
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+    await press(result);
+    leaveAndReturn(rerender, A, "de");
+    showInfoBox.mockClear();
+    await saves.settle({ ...OKP, failedMetafields: [MFA], unverifiedMetafields: [MFA], metafieldRefusals: { [MFA]: "Must be int." } });
+    const message = String(showInfoBox.mock.calls.at(-1)?.[0]);
+    expect(message).toContain("Shopify refused: Must be int.");
+    expect(message).not.toContain("stays in the field");
+    expect(result.current.state.primaryMetafieldEdits).toEqual({});
+  });
+
+  it("a foreign failure on a re-entered view names the product instead of 'reverted to original values'", async () => {
+    const { result, rerender } = render(A, "en");
+    loadAnswer(rerender, A, { ...LOAD }, "en");
+    act(() => result.current.handlers.handleOptionNameChange(OPT, "NeuName"));
+    await press(result);
+    leaveAndReturn(rerender, A, "en");
+    showInfoBox.mockClear();
+    await saves.settle({ success: true, actionType: "saveSubResourceTranslations", failedResources: [OPT], savedResources: [] });
+    expect(showInfoBox.mock.calls.at(-1)).toEqual(["Partly saved: Shirt", "warning"]);
+  });
+
+  it("a CLEAN answer on a re-read view still settles (nothing is lost, nothing is shown as failed)", async () => {
+    const { result, rerender } = render();
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+    await press(result);
+    leaveAndReturn(rerender, A, "de");
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Hanf")); // typed after the return
+    await saves.settle({ ...OKP });
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Hanf" });
+  });
+});
+
+describe("discard and reload re-read in place, never by emptying the load key (C-B)", () => {
+  it("discard, type, then ANY later reload keeps the typed text (primary)", async () => {
+    const { result, rerender } = render();
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "X"));
+    act(() => result.current.handlers.resetChanges());
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Typed after discard"));
+    rerender({ current: { ...A }, lang: "de" });
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Typed after discard" });
+    expect(result.current.state.hasChanges).toBe(true);
+  });
+
+  it("a foreign discard re-reads the fields from the item instead of leaving them blank, and typing after it survives a reload", async () => {
+    const rows = { [OPT]: [{ key: "name", value: "AltName", locale: "en" }] };
+    const withRows = reloaded(A, rows);
+    const { result, rerender } = render(withRows, "en");
+    expect(result.current.state.optionTranslations[OPT]?.name).toBe("AltName");
+    act(() => result.current.handlers.handleOptionNameChange(OPT, "X"));
+    act(() => result.current.handlers.resetChanges());
+    expect(result.current.state.optionTranslations[OPT]?.name).toBe("AltName"); // not blank
+    act(() => result.current.handlers.handleOptionNameChange(OPT, "Typed after discard"));
+    rerender({ current: { ...withRows }, lang: "en" });
+    expect(result.current.state.optionTranslations[OPT]?.name).toBe("Typed after discard");
+    expect(result.current.state.hasChanges).toBe(true);
+  });
+
+  it("A's answer reloading the item after a discard on B does not wipe what was typed on B", async () => {
+    const { result, rerender } = render();
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+    await press(result);
+    rerender({ current: B, lang: "de" });
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFB, "to be discarded"));
+    act(() => result.current.handlers.resetChanges());
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFB, "typed after"));
+    await saves.settle({ ...OKP });
+    rerender({ current: { ...B }, lang: "de" }); // the reload A's answer asked for
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFB]: "typed after" });
+  });
+});
+
+describe("a Save pressed before the reload has landed (C-C)", () => {
+  it("typing back to the old value during the save, then Save against the stale item: waits for the reload, then sends", async () => {
+    const { result, rerender } = render();
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+    await press(result);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Baumwolle")); // the ORIGINAL value
+    await saves.settle({ ...OKP });
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Baumwolle" });
+    expect(result.current.state.hasChanges).toBe(true);
+
+    showInfoBox.mockClear();
+    await press(result); // the item is still the old one: Baumwolle would read as "unchanged"
+    expect(saves.sent).toHaveLength(1); // nothing sent...
+    expect(result.current.state.hasChanges).toBe(true); // ...and the bar is NOT cleared
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Baumwolle" });
+    expect(String(showInfoBox.mock.calls.at(-1)?.[0])).toMatch(/reload/i);
+
+    // The reload lands: the item now holds Leinen, Baumwolle IS a change.
+    rerender({ current: mk(A.id, "Shirt", { metafields: [{ id: MFA, namespace: "c", key: "a", value: "Leinen", type: "single_line_text_field" }, A.metafields[1]] }), lang: "de" });
+    await press(result);
+    expect(saves.sent).toHaveLength(2);
+    expect(JSON.parse(saves.fields(1).metafieldChanges)).toEqual({ [MFA]: "Baumwolle" });
+  });
+});
+
+describe("a foreign save reloads the item, or the saved text reverts on screen (M1)", () => {
+  it("asks for a reload, and the saved text is still there after leaving and returning once it landed", async () => {
+    const { result, rerender } = render(A, "en");
+    loadAnswer(rerender, A, { ...LOAD }, "en");
+    act(() => result.current.handlers.handleOptionNameChange(OPT, "NeuName"));
+    await press(result);
+    await saves.settle(OKF([OPT]));
+    expect(revalidator.revalidate).toHaveBeenCalled();
+    // The reload lands carrying the saved row.
+    const fresh = reloaded(A, { [OPT]: [{ key: "name", value: "NeuName", locale: "en" }] });
+    rerender({ current: fresh, lang: "en" });
+    rerender({ current: B, lang: "en" });
+    rerender({ current: fresh, lang: "en" });
+    expect(result.current.state.optionTranslations[OPT]?.name).toBe("NeuName");
+  });
+
+  it("a saved CLEAR shows as empty when the view was re-entered while the save was out", async () => {
+    const withRow = reloaded(A, { [OPT]: [{ key: "name", value: "OldName", locale: "en" }] });
+    const { result, rerender } = render(withRow, "en");
+    act(() => result.current.handlers.handleOptionNameChange(OPT, ""));
+    await press(result);
+    rerender({ current: B, lang: "en" });
+    rerender({ current: withRow, lang: "en" });
+    expect(result.current.state.optionTranslations[OPT]?.name).toBe("OldName");
+    await saves.settle(OKF([OPT]));
+    expect(result.current.state.optionTranslations[OPT]?.name).toBe("");
+  });
+});
+
+describe("a partial save reloads (M2)", () => {
+  it("a create landed but a reorder failed: the item is re-read and the translate source locked", async () => {
+    const { result } = render();
+    act(() => result.current.handlers.handleCreateOption("Material", ["Silk"]));
+    await press(result);
+    await saves.settle({ ...OKP, structuralFailures: 1 });
+    expect(revalidator.revalidate).toHaveBeenCalled();
+    expect(result.current.state.metafieldTranslationBlocked).toBe(true);
+  });
+});
+
+describe("an outcome nobody knows (M3, M6)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("not confirmed: reloads now and once more later, locks until it lands, and does not re-create what may have landed", async () => {
+    vi.useFakeTimers();
+    const { result, rerender } = render();
+    act(() => result.current.handlers.handleCreateOption("Material", ["Silk"]));
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+    await press(result);
+    showInfoBox.mockClear();
+    await saves.settle({ success: false, error: "saveNotConfirmed", notConfirmed: true, notConfirmedReason: "connectionLost" });
+    expect(String(showInfoBox.mock.calls.at(-1)?.[0])).toContain("No answer for Shirt.");
+    expect(showInfoBox.mock.calls.at(-1)?.[1]).toBe("warning");
+    expect(revalidator.revalidate).toHaveBeenCalledTimes(1);
+    expect(result.current.state.metafieldTranslationBlocked).toBe(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8100);
+    });
+    expect(revalidator.revalidate).toHaveBeenCalledTimes(2);
+    // The queued CREATE is dropped (it may have landed); the text edit is idempotent and stays.
+    expect(result.current.state.optionsToCreate).toEqual([]);
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Leinen" });
+    rerender({ current: { ...A }, lang: "de" }); // the reload lands
+    await press(result);
+    expect(saves.sent).toHaveLength(2);
+    expect(saves.fields(1).optionsToCreate).toBeUndefined();
+  });
+
+  it("a foreign unknown outcome reloads too", async () => {
+    const { result, rerender } = render(A, "en");
+    loadAnswer(rerender, A, { ...LOAD }, "en");
+    act(() => result.current.handlers.handleOptionNameChange(OPT, "NeuName"));
+    await press(result);
+    await saves.settle({ success: false, error: "saveNotConfirmed", notConfirmed: true, notConfirmedReason: "badGateway" });
+    expect(revalidator.revalidate).toHaveBeenCalled();
+  });
+});
+
+describe("the same product mounts again before the answer (M5)", () => {
+  it("the new hook reloads, locks, tracks the tasks and reads purged market rows - nothing is dropped", async () => {
+    const first = render();
+    act(() => first.result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+    await press(first.result);
+    first.unmount();
+    const second = render();
+    expect(second.result.current.state.metafieldTranslationBlocked).toBe(true); // a save of this product is out
+    await saves.settle({ ...OKP, retranslationTaskIds: ["t1"], marketPurgedResourceIds: [MFA] });
+    expect(revalidator.revalidate).toHaveBeenCalled();
+    expect(onSaveResponse).toHaveBeenCalled();
+    expect(second.result.current.state.metafieldTranslationBlocked).toBe(true); // locked until the reload lands
+    second.rerender({ current: { ...A }, lang: "de" });
+    expect(second.result.current.state.metafieldTranslationBlocked).toBe(false);
+    // and it did not claim a "saved" for a view it never pressed
+    expect(second.result.current.state.hasChanges).toBe(false);
+  });
+});
+
+describe("answers of a save while another view shows (ports of the first queue tests)", () => {
+  it("lands after the switch: B's dirty ids and typed translations survive, A is named", async () => {
+    const { result, rerender } = render(A, "fr");
+    loadAnswer(rerender, A, { ...LOAD }, "fr");
+    act(() => result.current.handlers.handleOptionNameChange(OPT, "Couleur"));
+    await press(result);
+    rerender({ current: B, lang: "fr" });
+    act(() => result.current.handlers.handleOptionNameChange(OPT, "Teinte"));
+    showInfoBox.mockClear();
+    await saves.settle(OKF([OPT]));
+    expect(result.current.state.hasChanges).toBe(true);
+    expect(result.current.state.optionTranslations[OPT]?.name).toBe("Teinte");
+    expect(showInfoBox.mock.calls.at(-1)).toEqual(["Saved: Shirt", "success"]);
+  });
+
+  it("a FAILED resource of A is not restored onto B's fields", async () => {
+    const { result, rerender } = render(A, "fr");
+    loadAnswer(rerender, A, { ...LOAD }, "fr");
+    act(() => result.current.handlers.handleOptionNameChange(OPT, "Couleur"));
+    await press(result);
+    rerender({ current: B, lang: "fr" });
+    act(() => result.current.handlers.handleOptionNameChange(OPT, "Teinte"));
+    showInfoBox.mockClear();
+    await saves.settle({ success: true, actionType: "saveSubResourceTranslations", failedResources: [OPT], savedResources: [] });
+    expect(result.current.state.optionTranslations[OPT]?.name).toBe("Teinte");
+    expect(result.current.state.hasChanges).toBe(true);
+    expect(showInfoBox.mock.calls.at(-1)).toEqual(["Partly saved: Shirt", "warning"]);
+  });
+
+  it("the primary answer on another tab of the same product re-numbers the card's local order state", async () => {
+    const { result, rerender } = render(A, "de");
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+    await press(result);
+    rerender({ current: A, lang: "fr" });
+    const before = result.current.state.savedNonce;
+    await saves.settle({ ...OKP });
+    expect(result.current.state.savedNonce).toBeGreaterThan(before);
+  });
+
+  it("a foreign field that cannot be sent any more does not leave a stuck save bar", async () => {
+    const { result, rerender } = render(A, "fr");
+    loadAnswer(rerender, A, { ...LOAD }, "fr");
+    act(() => result.current.handlers.handleOptionNameChange("gid://shopify/ProductOption/gone", "Orphan"));
+    expect(result.current.state.hasChanges).toBe(true);
+    await press(result);
+    expect(saves.sent).toHaveLength(0);
+    expect(result.current.state.hasChanges).toBe(false);
   });
 });
