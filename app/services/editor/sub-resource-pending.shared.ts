@@ -61,6 +61,18 @@ export function hasPendingSubResourceChanges(p: SubResourcePendingState): boolea
   );
 }
 
+/**
+ * Does a view switch (product, language, market) have to ask first because of
+ * the options & metafields card? Only for UNSENT changes: edits a save is
+ * already carrying (in flight or queued) are not lost by switching - the save
+ * has its own copy and its answer is tagged with the view it was sent for - so
+ * asking "unsaved changes?" while a save runs would be a false alarm. The
+ * editor's own `hasChanges` asks on its own path, so it is not asked twice.
+ */
+export function shouldConfirmSubResourceSwitch(subResourceHasUnsent: boolean, editorHasChanges: boolean): boolean {
+  return subResourceHasUnsent && !editorHasChanges;
+}
+
 /** A copy of `set` without `ids` (the resources a save just confirmed). */
 export function withoutIds(set: ReadonlySet<string>, ids: Iterable<string>): Set<string> {
   const next = new Set(set);

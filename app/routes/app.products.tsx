@@ -14,6 +14,7 @@
 import { makeContentRouteAction } from "~/utils/content-route-action.server";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation, useSearchParams } from "react-router";
 import { confirmNavigation } from "../hooks/useSaveBar";
+import { shouldConfirmSubResourceSwitch } from "../services/editor/sub-resource-pending.shared";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { useProductSubResources } from "../hooks/useProductSubResources";
@@ -574,6 +575,8 @@ export default function ProductsPage() {
       metafieldPermissionRefused: t.products.metafieldPermissionRefused,
       savedOtherProduct: t.products.savedOtherProduct,
       savePartialOtherProduct: t.products.savePartialOtherProduct,
+      saveFailedOtherProduct: t.products.saveFailedOtherProduct,
+      previousProductLabel: t.products.previousProductLabel,
       metafieldTypeNotTranslatable: t.products.metafieldTypeNotTranslatable,
       metafieldListInvalid: t.products.metafieldListInvalid,
       saveFirstSource: t.common.saveFirstSource,
@@ -880,9 +883,7 @@ export default function ProductsPage() {
   // confirmation, so the merchant is never asked and then refused.
   const refuseSwitchWhileSaving = (): boolean => {
     const altSaveOut = showImageManager && imageManagerState.isSavingImmediateAltTexts;
-    // The sub-resource card's own save (options, metafields) counts too: its
-    // answer settles the edits on screen, and a switch would hand them to it.
-    if (!editor.helpers.isOwnSaveInFlight() && !altSaveOut && !subResources.state.isSaving) return false;
+    if (!editor.helpers.isOwnSaveInFlight() && !altSaveOut) return false;
     showInfoBox(
       String(t.common?.switchWhileSaving || "Still saving \u2013 please wait a moment and then switch again."),
       "info",
@@ -972,13 +973,20 @@ export default function ProductsPage() {
       // UNSENT alt drafts ask -- the same rule for both switches.
       handleLanguageChange: async (locale: string) => {
         if (refuseSwitchWhileSaving()) return;
-        if (showImageManager && imageManagerState.hasAltTextEdits && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges) {
+        if (shouldConfirmSubResourceSwitch(subResources.state.hasUnsentChanges, editor.state.hasChanges) ||
+            (showImageManager && imageManagerState.hasAltTextEdits && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges)) {
           await confirmNavigation();
         }
         editor.handlers.handleLanguageChange(locale);
       },
       handleMarketChange: async (marketId: string) => {
         if (marketId !== editor.state.selectedMarketId && refuseSwitchWhileSaving()) return;
+        // Unsent options / metafields drafts are dropped by a market switch (the
+        // card resets on it), so they ask, once and only for a real switch.
+        if (marketId !== editor.state.selectedMarketId &&
+            shouldConfirmSubResourceSwitch(subResources.state.hasUnsentChanges, editor.state.hasChanges)) {
+          await confirmNavigation();
+        }
         // Primary alt texts are global: a market change in the primary
         // language keeps them, so it has nothing to ask about.
         if (showImageManager && imageManagerState.hasAltTextEdits && !!editor.state.currentLanguage && editor.state.currentLanguage !== primaryLocale && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges && marketId !== editor.state.selectedMarketId) {
@@ -992,7 +1000,8 @@ export default function ProductsPage() {
       // silently drop them.
       handleItemSelect: async (itemId: string) => {
         if (refuseSwitchWhileSaving()) return;
-        if ((hasPendingImageChanges || localizedDraftsPendingRef.current) && !editor.state.hasChanges) {
+        if (shouldConfirmSubResourceSwitch(subResources.state.hasUnsentChanges, editor.state.hasChanges) ||
+            ((hasPendingImageChanges || localizedDraftsPendingRef.current) && !editor.state.hasChanges)) {
           await confirmNavigation();
         }
         editor.handlers.handleItemSelect(itemId);

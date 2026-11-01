@@ -249,15 +249,55 @@ interface CopyRecord {
   previous: string | undefined;
 }
 
+/**
+ * One save of the card, as the queue sees it. `dispatch` sets the refs the
+ * answer is read against (they describe THIS request, so they are set when it
+ * goes out, never when it is pressed) and submits it.
+ */
+interface SaveEntry {
+  kind: "primary" | "foreign";
+  itemId: string | null;
+  /** The product's title, so an answer that lands elsewhere can name it. */
+  title: string | null;
+  /** primary: the product; foreign: product + language + market. */
+  viewKey: string;
+  /** What the press carried (see `hasUnsentChanges`). */
+  fingerprint: string;
+  /** foreign only: the language it writes (for the translate-all race check). */
+  locale: string;
+  dispatch: () => void;
+}
+
+const primaryFingerprint = (s: {
+  metafieldEdits: unknown;
+  optionEdits: unknown;
+  valuesToAdd: unknown;
+  linkedToAdd: unknown;
+  valuesToDelete: unknown;
+  optionsToCreate: unknown;
+  optionsToDelete: unknown;
+  optionOrder: unknown;
+  valueOrder: unknown;
+}): string => JSON.stringify([s.metafieldEdits, s.optionEdits, s.valuesToAdd, s.linkedToAdd, s.valuesToDelete, s.optionsToCreate, s.optionsToDelete, s.optionOrder, s.valueOrder]);
+
+const foreignFingerprint = (s: {
+  dirtyOptions: ReadonlySet<string>;
+  dirtyValues: ReadonlySet<string>;
+  dirtyMetafields: ReadonlySet<string>;
+  optionTranslations: unknown;
+  metafieldTranslations: unknown;
+}): string =>
+  JSON.stringify([[...s.dirtyOptions].sort(), [...s.dirtyValues].sort(), [...s.dirtyMetafields].sort(), s.optionTranslations, s.metafieldTranslations]);
+
 /** How long a translate answer stays protected from a reload's overlay reset. */
 const RECENT_TRANSLATE_KEEP_MS = 2 * 60 * 1000;
 
 export interface SubResourceState {
   /** Option translations keyed by option GID → { name, values[] } */
   optionTranslations: Record<string, OptionTranslation>;
-  /** Primary locale option edits keyed by option GID → { name?, values: { [valueGid]: renamed text } } (id-keyed, never positional) */
+  /** Metafield translations keyed by metafield GID → translated value */
   metafieldTranslations: Record<string, string>;
-  /** Primary locale option edits keyed by option GID → { name, values[] } */
+  /** Primary locale option edits keyed by option GID → { name?, values: { [valueGid]: renamed text } } (id-keyed, never positional) */
   primaryOptionEdits: Record<string, OptionEdit>;
   /** Pending structural edits, so the card can render them before the save. */
   optionValuesToAdd: Record<string, string[]>;
@@ -322,8 +362,19 @@ export interface SubResourceState {
   overlayVersion: number;
   /** Whether translations are loading from Shopify */
   isLoading: boolean;
-  /** Whether sub-resources are currently being saved */
+  /**
+   * Whether a save of THIS product is out (in flight or queued), or a Phase-2
+   * load is. A save of ANOTHER product does not count: switching products while
+   * one saves is allowed, and the next product's Save must stay usable.
+   */
   isSaving: boolean;
+  /**
+   * Changes that NO save carries yet. Equal to `hasChanges`, except while a save
+   * of this very view is out: what it carries is not "unsaved" (switching away
+   * loses nothing), only edits typed after it went out count. Drives the
+   * unsaved-changes confirm of the page's switches.
+   */
+  hasUnsentChanges: boolean;
 }
 
 export interface SubResourceHandlers {
@@ -437,6 +488,10 @@ interface UseProductSubResourcesStrings {
   /** The save of the PREVIOUS product finished while another one is shown. */
   savedOtherProduct?: string;
   savePartialOtherProduct?: string;
+  /** The whole request for the PREVIOUS product failed ({title}). */
+  saveFailedOtherProduct?: string;
+  /** Used for {title} when the product has none ("the previous product"). */
+  previousProductLabel?: string;
   /** One per `OptionWriteWarning` code, e.g. `optionWarning_optionLastOne`.
    *  Indexed rather than listed: the server owns the code list, and a missing
    *  entry drops that reason instead of printing an English one. */
@@ -657,10 +712,43 @@ export function useProductSubResources({
   // What the last foreign save / primary save SENT, so the answer can settle
   // the overlay for exactly those resources (the answer does not echo values).
   const pendingForeignSaveRef = useRef<{
+    /** The product the save was sent for. */
+    itemId: string | null;
     localeKey: string;
     marketLayer?: boolean;
     values: Record<string, Record<string, string>>;
   } | null>(null);
+  // The card's saves go through ONE fetcher, and a second submit() on a busy
+  // fetcher aborts the first request client-side (its answer is lost and the
+  // server write may or may not land). Now that switching products while a save
+  // runs is wanted, a second Save (of the next product) can come while the first
+  // is out. So saves are SERIALISED: one is in flight, the others wait in a FIFO
+  // queue and go out when the previous answer has been handled. Nothing is lost
+  // or sent twice, each answer finds the refs set for ITS request (they are set
+  // at dispatch, not at press), and a Phase-2 load neither aborts a save nor is
+  // aborted by one. A queue was chosen over one fetcher per save because hooks
+  // cannot be created per request, and a fixed pool of fetchers would split the
+  // one answer effect that all of this relies on.
+  const saveInFlightRef = useRef<SaveEntry | null>(null);
+  const saveQueueRef = useRef<SaveEntry[]>([]);
+  const [saveTrackVersion, setSaveTrackVersion] = useState(0);
+  const bumpSaveTrack = useCallback(() => setSaveTrackVersion((v) => v + 1), []);
+  /** The fetcher has been seen busy with the save that is in flight. */
+  const sawBusyRef = useRef(false);
+  /**
+   * The request on the fetcher has ended (its answer was handled, or it ended
+   * without one): the next waiting save goes out. Idempotent per request.
+   */
+  const advanceSaveQueue = useCallback(() => {
+    saveInFlightRef.current = null;
+    sawBusyRef.current = false;
+    const next = saveQueueRef.current.shift();
+    if (next) {
+      saveInFlightRef.current = next;
+      next.dispatch();
+    }
+    bumpSaveTrack();
+  }, [bumpSaveTrack]);
   const pendingPrimarySaveIdsRef = useRef<string[]>([]);
   // What the primary save SENT, so a partial failure can still settle the saved subset.
   const pendingPrimarySaveSentRef = useRef<{
@@ -786,7 +874,9 @@ export function useProductSubResources({
    * abort it): it is deferred until the fetcher is idle again.
    */
   const submitPhase2Load = (load: TranslateTarget & { resourceIds: string[] }) => {
-    if (fetcher.state !== "idle") {
+    // A save in flight OR waiting counts as busy even in the render before the
+    // fetcher reports it: a load submitted now would abort it.
+    if (fetcher.state !== "idle" || saveInFlightRef.current || saveQueueRef.current.length > 0) {
       deferredLoadRef.current = load;
       setIsLoading(true);
       return;
@@ -862,12 +952,11 @@ export function useProductSubResources({
       keepOverlayIdsRef.current = new Set();
       recentlyStagedRef.current = new Map();
       overlayStampsRef.current = new Map();
-      pendingForeignSaveRef.current = null;
-      pendingPrimarySaveIdsRef.current = [];
-      // NOT pendingPrimarySaveSentRef: a save of the previous product may still
-      // be out, and its answer has to find the snapshot (tagged with the item it
-      // was sent for) to recognise itself as foreign instead of settling the
-      // edits typed on THIS product. The answer clears it.
+      // NOT pendingForeignSaveRef / pendingPrimarySaveSentRef / pendingPrimarySaveIdsRef:
+      // a save of the previous product may still be out, and its answer has to
+      // find what was sent (tagged with the product it was sent for) to
+      // recognise itself as foreign instead of settling the edits typed on THIS
+      // product. The answer clears them.
     }
 
     if (!itemId || isPrimaryLocale || subResourceIds.length === 0) {
@@ -913,6 +1002,30 @@ export function useProductSubResources({
   const refreshTranslations = useCallback(() => {
     setRefreshVersion((v) => v + 1);
   }, []);
+
+  // ---- answers that land on a view the merchant has left -----------------
+  /** Is the save that is out for the view now showing (product; foreign: + language/market)? */
+  const flightIsForCurrentView = (flight: SaveEntry): boolean =>
+    flight.itemId === (itemId ?? null) &&
+    (flight.kind === "primary" ||
+      flight.viewKey === `${itemId ?? ""}::${buildLocaleKey(currentLanguage, selectedMarketId)}`);
+  const flightTitle = (): string | null => saveInFlightRef.current?.title ?? null;
+  /**
+   * The toast for a save whose answer lands elsewhere. It names the product
+   * (known at press time, no server change needed): the merchant is looking at
+   * something else, and "saved" without a name would read as being about that.
+   */
+  const otherProductMessage = (kind: "saved" | "partial" | "failed", title: string | null): string => {
+    const name = title && title.trim() ? title : strings.previousProductLabel || "the previous product";
+    const template =
+      kind === "saved"
+        ? strings.savedOtherProduct || "Saved: {title}"
+        : kind === "partial"
+          ? strings.savePartialOtherProduct || "Not everything was saved for {title}. Open it again to check."
+          : strings.saveFailedOtherProduct || "{title} could not be saved. Open it again to check.";
+    // A replacer function: a product title may contain `$&`.
+    return template.replace("{title}", () => name);
+  };
 
   // A request that failed as a whole, from either fetcher. The plan refusal
   // arrives as the code "gated" and goes through the editor's one translator so
@@ -1048,6 +1161,7 @@ export function useProductSubResources({
     if (data === lastProcessedDataRef.current) return;
     lastProcessedDataRef.current = data;
 
+    try {
     if (!data.success) {
       // The fetcher serves one request at a time, so ANY failed answer ends a
       // load that may have been in flight - including one with no `actionType`
@@ -1062,7 +1176,17 @@ export function useProductSubResources({
       // translate hung until the store's ten-minute timeout and the merchant
       // heard nothing. Edits stay PENDING (nothing here touches the dirty sets
       // or `hasChanges`) so the save can simply be pressed again.
-      reportFailedRequest(data);
+      const failedFlight = saveInFlightRef.current;
+      const isSaveAnswer =
+        data.actionType === "savePrimarySubResources" || data.actionType === "saveSubResourceTranslations";
+      if (failedFlight && isSaveAnswer && !flightIsForCurrentView(failedFlight)) {
+        // The save that failed was sent for a view the merchant has left: "your
+        // edits are kept, try again" would be false here (this view's edits are
+        // someone else's). Say which product could not be saved.
+        showInfoBox?.(otherProductMessage("failed", failedFlight.title), "critical");
+      } else {
+        reportFailedRequest(data);
+      }
       pendingForeignSaveRef.current = null;
       pendingPrimarySaveIdsRef.current = [];
       pendingPrimarySaveSentRef.current = null;
@@ -1144,6 +1268,18 @@ export function useProductSubResources({
       // excluded), or an earlier staged translate keeps shadowing them.
       const sentSave = pendingForeignSaveRef.current;
       pendingForeignSaveRef.current = null;
+      const foreignLandedOn = flightTitle();
+      // Tagged with the product + language + market it was sent for: an answer
+      // for a view the merchant has left must not clear THIS view's dirty sets,
+      // restore its fields or announce a success for it.
+      const sameItem = !sentSave || sentSave.itemId === (selectedItem?.id ?? null);
+      const sameView =
+        sameItem && (!sentSave || sentSave.localeKey === buildLocaleKey(currentLanguage, selectedMarketId));
+      if (sentSave && !sameItem) {
+        const failedAny = (data.failedResources?.length ?? 0) > 0;
+        showInfoBox?.(otherProductMessage(failedAny ? "partial" : "saved", foreignLandedOn), failedAny ? "warning" : "success");
+        return;
+      }
       if (sentSave) {
         if (
           recordConfirmedForeignSave(
@@ -1169,6 +1305,17 @@ export function useProductSubResources({
               Object.values(fields || {}).some((value) => value === ""),
           );
         if (removedMarketOverride) requestRevalidate();
+      }
+
+      if (!sameView) {
+        // Same product, another language/market than the one showing: the
+        // overlay above is keyed by it and is right; the visible state is not
+        // this answer's to touch.
+        showInfoBox?.(
+          otherProductMessage(failedResources.length > 0 ? "partial" : "saved", foreignLandedOn),
+          failedResources.length > 0 ? "warning" : "success",
+        );
+        return;
       }
 
       if (failedResources.length > 0) {
@@ -1217,15 +1364,26 @@ export function useProductSubResources({
       const sentFor = pendingPrimarySaveSentRef.current;
       if (sentFor && sentFor.itemId !== (selectedItem?.id ?? null)) {
         pendingPrimarySaveSentRef.current = null;
+        pendingPrimarySaveIdsRef.current = [];
         const otherFailed =
           (data.failedOptions?.length ?? 0) + (data.failedMetafields?.length ?? 0) + (data.structuralFailures ?? 0) > 0;
+        const otherPurge = unconfirmedPurgeOf(data as { warnings?: unknown; unconfirmedPurge?: unknown });
+        // A green toast would be wrong whenever something was not fully
+        // settled: failures, or translations of the new text that could not be
+        // removed on Shopify.
+        const needsAttention = otherFailed || otherPurge.unconfirmed;
         showInfoBox?.(
-          otherFailed
-            ? strings.savePartialOtherProduct ||
-                "The save of the previous product finished, but not everything was saved. Open it again to check."
-            : strings.savedOtherProduct || "The previous product was saved.",
-          otherFailed ? "warning" : "success",
+          [
+            otherProductMessage(otherFailed ? "partial" : "saved", flightTitle()),
+            otherPurge.unconfirmed
+              ? strings.translationPurgeUnconfirmed ||
+                "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them."
+              : "",
+          ].filter(Boolean).join(" "),
+          needsAttention ? "warning" : "success",
         );
+        // Its data changed on Shopify: re-read, so it is fresh when reopened.
+        requestRevalidate();
         return;
       }
       // The save's purge removed these resources' MARKET overrides on Shopify;
@@ -1335,14 +1493,15 @@ export function useProductSubResources({
         // re-send it, "Translate all" would stay on "Save first", and a
         // re-created cleared field would be reported as "failed, reverted".
         const pendingNow = pendingStateRef.current;
-        // No record of what was sent (should not happen): settle everything.
-        keptMetafieldEdits = !sentPrimary ? {} : metafieldEditsAfterSave({
+        // No record of what was sent (should not happen): KEEP the edits, never
+        // settle what cannot be shown to be saved.
+        keptMetafieldEdits = !sentPrimary ? ((pendingNow?.primaryMetafieldEdits ?? {}) as Record<string, string>) : metafieldEditsAfterSave({
           edits: (pendingNow?.primaryMetafieldEdits ?? {}) as Record<string, string>,
           snapshot: sentPrimary.snapshot.metafieldEdits,
           unverifiedIds: unverifiedMetafields,
           recreated: (data.recreatedMetafields ?? {}) as Record<string, string>,
         });
-        keptOptionEdits = !sentPrimary ? {} : optionEditsAfterSave({
+        keptOptionEdits = !sentPrimary ? ((pendingNow?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>) : optionEditsAfterSave({
           edits: (pendingNow?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>,
           snapshot: sentPrimary.snapshot,
         });
@@ -1402,14 +1561,15 @@ export function useProductSubResources({
         // snapshot taken at submit (see sub-resource-edits.shared.ts: never
         // compared with the item, which is usually already the reloaded one).
         const pendingOk = pendingStateRef.current;
-        // No record of what was sent (should not happen): settle everything.
-        const keptOkMetafields = !sentOk ? {} : metafieldEditsAfterSave({
+        // No record of what was sent (should not happen): KEEP the edits, never
+        // settle what cannot be shown to be saved.
+        const keptOkMetafields = !sentOk ? ((pendingOk?.primaryMetafieldEdits ?? {}) as Record<string, string>) : metafieldEditsAfterSave({
           edits: (pendingOk?.primaryMetafieldEdits ?? {}) as Record<string, string>,
           snapshot: sentOk.snapshot.metafieldEdits,
           unverifiedIds: new Set<string>(),
           recreated: (data.recreatedMetafields ?? {}) as Record<string, string>,
         });
-        const keptOkOptions = !sentOk ? {} : optionEditsAfterSave({
+        const keptOkOptions = !sentOk ? ((pendingOk?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>) : optionEditsAfterSave({
           edits: (pendingOk?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>,
           snapshot: sentOk.snapshot,
         });
@@ -1443,6 +1603,11 @@ export function useProductSubResources({
         }
       }
     }
+    } finally {
+      // Whatever the answer was (and however it returned early), the request it
+      // belongs to has ended: the next waiting save goes out.
+      advanceSaveQueue();
+    }
   }, [fetcher.state, fetcher.data, selectedItem, selectedMarketId, currentLanguage]);
 
   // A Phase-2 load that waited for the save bar's save (or was aborted by it)
@@ -1450,7 +1615,17 @@ export function useProductSubResources({
   // Declared AFTER the answer effect: both read the same render, so the save's
   // answer is processed before this submit replaces `fetcher.data`.
   useEffect(() => {
-    if (fetcher.state !== "idle") return;
+    if (fetcher.state !== "idle") {
+      if (saveInFlightRef.current) sawBusyRef.current = true;
+      return;
+    }
+    // A save that was seen busy and is idle again, with no answer handled for it
+    // (aborted, or ended without data): nothing else would ever release the
+    // queue. An answered one was released by the answer effect (declared before
+    // this one), which also reset the flag.
+    if (saveInFlightRef.current && sawBusyRef.current) advanceSaveQueue();
+    // A save waiting behind a load goes out before any deferred load.
+    if (!saveInFlightRef.current && saveQueueRef.current.length > 0) advanceSaveQueue();
     const load = deferredLoadRef.current;
     if (!load) return;
     deferredLoadRef.current = null;
@@ -2124,6 +2299,10 @@ export function useProductSubResources({
       const [clearItem, clearLocale] = key.split("|");
       if (clearItem === itemId && (locale === "*" || clearLocale === locale)) return true;
     }
+    for (const entry of [saveInFlightRef.current, ...saveQueueRef.current]) {
+      if (!entry || entry.itemId !== itemId) continue;
+      if (entry.kind === "primary" || locale === "*" || entry.locale === locale) return true;
+    }
     const f = fetcherForSaveCheckRef.current;
     if (f.state === "idle" || !f.formData) return false;
     const form = f.formData;
@@ -2200,9 +2379,38 @@ export function useProductSubResources({
     pendingLoadRef.current = null;
   }, []);
 
+  /**
+   * Send a save now if nothing is out, otherwise queue it behind the request on
+   * the fetcher (a save or a Phase-2 load): a submit on a busy fetcher would
+   * abort that request. FIFO, so two products' saves go out in press order.
+   */
+  const enqueueSave = useCallback((entry: SaveEntry) => {
+    const busy =
+      fetcherForSaveCheckRef.current.state !== "idle" ||
+      saveInFlightRef.current !== null ||
+      saveQueueRef.current.length > 0;
+    if (busy) {
+      saveQueueRef.current.push(entry);
+    } else {
+      saveInFlightRef.current = entry;
+      entry.dispatch();
+    }
+    bumpSaveTrack();
+  }, [bumpSaveTrack]);
+
   // Unified save handler - automatically detects primary vs foreign locale
   const saveSubResources = useCallback(() => {
     if (!hasChanges || !selectedItem) {
+      return;
+    }
+    // A save of this very view is already out or waiting: its edits are still in
+    // the maps until the answer settles them, so a second press would send them
+    // again. (The Save button is busy for the same reason.)
+    const viewKeyNow = isPrimaryLocale
+      ? selectedItem.id ?? ""
+      : `${selectedItem.id ?? ""}::${buildLocaleKey(currentLanguage, selectedMarketId)}`;
+    const kindNow: SaveEntry["kind"] = isPrimaryLocale ? "primary" : "foreign";
+    if ([saveInFlightRef.current, ...saveQueueRef.current].some((e) => e && e.kind === kindNow && e.viewKey === viewKeyNow)) {
       return;
     }
 
@@ -2416,8 +2624,11 @@ export function useProductSubResources({
         formData.append("optionValueOrder", JSON.stringify(movedValueOrder));
       }
 
-      pendingPrimarySaveIdsRef.current = changedIdsOfPrimarySave(optionsChanges, metafieldChanges);
-      pendingPrimarySaveSentRef.current = {
+      // Everything the answer will be read against is captured NOW (what the
+      // merchant pressed), and handed to the refs only when this request
+      // actually goes out.
+      const sentIds = changedIdsOfPrimarySave(optionsChanges, metafieldChanges);
+      const sentPayload = {
         itemId: selectedItem.id ?? null,
         options: optionsChanges,
         metafields: metafieldChanges,
@@ -2428,8 +2639,30 @@ export function useProductSubResources({
           valuesToDelete: optionValuesToDelete,
         }),
       };
-      yieldLoadToSave();
-      fetcher.submit(formData, { method: "POST", action: "/app/products" });
+      enqueueSave({
+        kind: "primary",
+        itemId: selectedItem.id ?? null,
+        title: (selectedItem as { title?: string }).title ?? null,
+        viewKey: selectedItem.id ?? "",
+        locale: "",
+        fingerprint: primaryFingerprint({
+          metafieldEdits: primaryMetafieldEdits,
+          optionEdits: primaryOptionEdits,
+          valuesToAdd: optionValuesToAdd,
+          linkedToAdd: optionLinkedValuesToAdd,
+          valuesToDelete: optionValuesToDelete,
+          optionsToCreate,
+          optionsToDelete,
+          optionOrder,
+          valueOrder: optionValueOrder,
+        }),
+        dispatch: () => {
+          pendingPrimarySaveIdsRef.current = sentIds;
+          pendingPrimarySaveSentRef.current = sentPayload;
+          yieldLoadToSave();
+          fetcher.submit(formData, { method: "POST", action: "/app/products" });
+        },
+      });
     } else {
       // FOREIGN LOCALE: Save translations
       const translationsData: Record<string, Record<string, string>> = {};
@@ -2465,25 +2698,47 @@ export function useProductSubResources({
 
       if (Object.keys(translationsData).length === 0) return;
 
-      pendingForeignSaveRef.current = {
-        localeKey: buildLocaleKey(currentLanguage, selectedMarketId),
+      const foreignLocaleKey = buildLocaleKey(currentLanguage, selectedMarketId);
+      const foreignSent = {
+        itemId: selectedItem.id ?? null,
+        localeKey: foreignLocaleKey,
         marketLayer: !!selectedMarketId,
         values: translationsData,
       };
-      yieldLoadToSave();
-      fetcher.submit(
-        {
-          action: "saveSubResourceTranslations",
-          locale: currentLanguage,
-          translationsData: JSON.stringify(translationsData),
-          resourceTypes: JSON.stringify(resourceTypes),
-          itemId: selectedItem.id,
-          marketId: selectedMarketId,
+      const foreignLocale = currentLanguage;
+      const foreignMarket = selectedMarketId;
+      const foreignItemId = selectedItem.id;
+      enqueueSave({
+        kind: "foreign",
+        itemId: selectedItem.id ?? null,
+        title: (selectedItem as { title?: string }).title ?? null,
+        viewKey: `${selectedItem.id ?? ""}::${foreignLocaleKey}`,
+        locale: currentLanguage,
+        fingerprint: foreignFingerprint({
+          dirtyOptions: dirtyOptionIds,
+          dirtyValues: dirtyOptionValueIds,
+          dirtyMetafields: dirtyMetafieldIds,
+          optionTranslations,
+          metafieldTranslations,
+        }),
+        dispatch: () => {
+          pendingForeignSaveRef.current = foreignSent;
+          yieldLoadToSave();
+          fetcher.submit(
+            {
+              action: "saveSubResourceTranslations",
+              locale: foreignLocale,
+              translationsData: JSON.stringify(translationsData),
+              resourceTypes: JSON.stringify(resourceTypes),
+              itemId: foreignItemId,
+              marketId: foreignMarket,
+            },
+            { method: "POST", action: "/app/products" }
+          );
         },
-        { method: "POST", action: "/app/products" }
-      );
+      });
     }
-  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder, optionValueOrder, yieldLoadToSave]);
+  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder, optionValueOrder, yieldLoadToSave, enqueueSave]);
 
   const clearAllForLocale = useCallback(() => {
     if (!selectedItem || isPrimaryLocale) return;
@@ -2944,6 +3199,53 @@ export function useProductSubResources({
     });
   }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds, showInfoBox, strings.copied, strings.copyFailedLocales, strings.upgradeRequired]);
 
+  // ---- what the card reports about saves, derived at render ------------------
+  // `saveTrackVersion` re-renders the hook whenever the in-flight / queued
+  // entries change; the entries themselves live in refs (they are read from
+  // click handlers and effects too).
+  void saveTrackVersion;
+  const saveEntries = [saveInFlightRef.current, ...saveQueueRef.current].filter((e): e is SaveEntry => !!e);
+  // A save of THIS product is out or waiting: the Save button is busy and does
+  // not send it twice (also when the merchant comes back to a product whose save
+  // is still on its way). A save of ANOTHER product does not block this one.
+  const savesForThisItem = saveEntries.some((e) => e.itemId === (itemId ?? null));
+  // A Phase-2 load owns the fetcher (nothing of ours is in flight on it).
+  const loadBusy = fetcher.state !== "idle" && !saveInFlightRef.current;
+  // Changes no save carries yet: what a save of this very view already holds is
+  // not "unsaved" (switching away loses nothing, its answer is tagged), only
+  // edits typed after it went out are.
+  const currentSaveKind: SaveEntry["kind"] = isPrimaryLocale ? "primary" : "foreign";
+  const currentViewKey = isPrimaryLocale
+    ? itemId ?? ""
+    : `${itemId ?? ""}::${buildLocaleKey(currentLanguage, selectedMarketId)}`;
+  const lastCarrier = hasChanges
+    ? [...saveEntries].reverse().find((e) => e.kind === currentSaveKind && e.viewKey === currentViewKey)
+    : undefined;
+  const hasUnsentChanges = !hasChanges
+    ? false
+    : !lastCarrier
+      ? true
+      : lastCarrier.fingerprint !==
+        (isPrimaryLocale
+          ? primaryFingerprint({
+              metafieldEdits: primaryMetafieldEdits,
+              optionEdits: primaryOptionEdits,
+              valuesToAdd: optionValuesToAdd,
+              linkedToAdd: optionLinkedValuesToAdd,
+              valuesToDelete: optionValuesToDelete,
+              optionsToCreate,
+              optionsToDelete,
+              optionOrder,
+              valueOrder: optionValueOrder,
+            })
+          : foreignFingerprint({
+              dirtyOptions: dirtyOptionIds,
+              dirtyValues: dirtyOptionValueIds,
+              dirtyMetafields: dirtyMetafieldIds,
+              optionTranslations,
+              metafieldTranslations,
+            }));
+
   return {
     state: {
       optionTranslations,
@@ -2965,7 +3267,8 @@ export function useProductSubResources({
       localOverlay: localSubResourceOverlayRef.current,
       overlayVersion,
       isLoading,
-      isSaving: fetcher.state !== "idle",
+      isSaving: savesForThisItem || loadBusy,
+      hasUnsentChanges,
     },
     handlers: {
       handleOptionNameChange,
