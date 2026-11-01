@@ -729,6 +729,51 @@ describe('handleSavePrimarySubResources — the primary-change purges', () => {
       }),
     );
 
+  it('a save that waited for the one before it and whose client is GONE writes nothing', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const gone = new AbortController();
+    gone.abort();
+    const result = body(
+      await handleSavePrimarySubResources(
+        { ...makeCtx(w.admin, db), signal: gone.signal } as any,
+        form({ productId: PRODUCT, optionsChanges: JSON.stringify({ [OPTION]: { name: 'Farbe' } }), metafieldChanges: '{}' }),
+      ),
+    );
+    expect(result.notConfirmed).toBe(true);
+    expect(w.of('metafieldsSet')).toHaveLength(0);
+    expect(db.productMetafield.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('two saves of ONE product run one after the other on the server', async () => {
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const w = installAdmin({
+      metafieldsSet: (v) => {
+        order.push(`set:${v.metafields[0].value}`);
+        return { data: { metafieldsSet: { userErrors: [], metafields: v.metafields.map((m: any) => ({ ...m, id: 'gid://shopify/Metafield/13', owner: { id: m.ownerId } })) } } };
+      },
+    });
+    const db = makeDb();
+    const gate = new Promise<void>((r) => (releaseFirst = r));
+    const inner = w.admin.graphql.getMockImplementation()!;
+    let first = true;
+    w.admin.graphql.mockImplementation(async (q: string, o?: any) => {
+      if (q.includes('metafieldsSet') && first) {
+        first = false;
+        await gate; // the first save is still working
+      }
+      return inner(q, o);
+    });
+    const a = save(db, w.admin, {}, { [METAFIELD]: 'first' });
+    const b = save(db, w.admin, {}, { [METAFIELD]: 'second' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(order).toEqual([]); // neither has written; the second is waiting, not racing
+    releaseFirst();
+    await Promise.all([a, b]);
+    expect(order).toEqual(['set:first', 'set:second']);
+  });
+
   it('removes the option NAME translations in every foreign locale (one call) and deletes the global local rows', async () => {
     const w = installAdmin({ remove: (v) => echoRemoved(v.translationKeys, v.locales) });
     const db = makeDb();

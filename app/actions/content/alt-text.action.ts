@@ -47,6 +47,12 @@ export interface ContentActionHandlerContext {
   aiSettings: AISettings | null;
   aiInstructions: AIInstructions | null;
   itemId: string;
+  /**
+   * The request's abort signal, where the door hands it on. Only a handler that
+   * waits (the per-product save lock) looks at it: to skip a write nobody is
+   * waiting for any more. Never used to cancel a write that has started.
+   */
+  signal?: AbortSignal;
   seoTitleMaxChars: number;
   /** Fully-resolved merchant SEO character limits (defaults filled in). */
   seoLimits: SeoLimits;

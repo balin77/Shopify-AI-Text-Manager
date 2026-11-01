@@ -40,6 +40,7 @@ import { getTaskExpirationDate } from "~/config/constants";
 import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import { logger } from "../../utils/logger.server";
 import { withSerialLock } from "../../utils/keyed-serial-lock.server";
+import { scrubProviderErrorText } from "../../utils/provider-error-scrub";
 import type { ContentActionHandlerContext } from "./alt-text.action";
 import type { DataResponse } from "~/types/data-response";
 
@@ -300,6 +301,8 @@ export async function handleSaveSubResourceTranslations(
 
     const savedResources: string[] = [];
     const failedResources: string[] = [];
+    /** Why each failed resource failed (the client names it; logs keep the rest). */
+    const failureReasons: Record<string, string> = {};
     /** Resources with a key Shopify exposes no digest for: not writable there,
      *  which is a property of the field and not a refused write. */
     const notTranslatable: string[] = [];
@@ -373,6 +376,8 @@ export async function handleSaveSubResourceTranslations(
           }
           if (result.unconfirmedKeys.length > 0) {
             resourceFailed = true;
+            failureReasons[resourceId] =
+              firstUserErrorMessage(result.userErrors) || "Shopify did not confirm the translation.";
             logger.error(`[UnifiedContent] Shopify did not confirm every sub-resource translation for ${resourceId}`, {
               context: "UnifiedContent",
               resourceId,
@@ -411,6 +416,8 @@ export async function handleSaveSubResourceTranslations(
           }
           if (confirmedKeys.length < keysToDelete.length) {
             resourceFailed = true;
+            failureReasons[resourceId] =
+              firstUserErrorMessage(removal.userErrors) || "Shopify did not confirm removing the translation.";
             logger.error(`[UnifiedContent] Shopify did not confirm removing translations for ${resourceId} — local rows kept`, {
               context: "UnifiedContent",
               resourceId,
@@ -442,6 +449,7 @@ export async function handleSaveSubResourceTranslations(
           error: err instanceof Error ? err.message : String(err),
           stack: err instanceof Error ? err.stack : undefined,
         });
+        failureReasons[resourceId] = scrubProviderErrorText(err instanceof Error ? err.message : String(err)).slice(0, 240);
         failedResources.push(resourceId);
       }
     }
@@ -462,6 +470,7 @@ export async function handleSaveSubResourceTranslations(
       success: true,
       savedResources,
       failedResources,
+      ...(Object.keys(failureReasons).length > 0 ? { failureReasons } : {}),
       notTranslatable,
     });
   } catch (error: unknown) {
@@ -1049,6 +1058,20 @@ async function cachedOptionValueIds(
 const METAFIELDS_PER_CALL = 25;
 
 /**
+ * The first readable message of a Shopify `userErrors` list, scrubbed (the
+ * shared provider-text scrub masks key-like tokens) and bounded, for the
+ * client's "why" - never the raw object.
+ */
+function firstUserErrorMessage(userErrors: unknown): string | undefined {
+  if (!Array.isArray(userErrors)) return undefined;
+  for (const entry of userErrors) {
+    const message = (entry as { message?: unknown } | null)?.message;
+    if (typeof message === "string" && message.trim()) return scrubProviderErrorText(message).slice(0, 240);
+  }
+  return undefined;
+}
+
+/**
  * `MetafieldsSetUserError` codes that say the VALUE (or its type, or our right
  * to write it) was refused: retrying the same thing can never work, so the
  * merchant must be told Shopify's reason instead of "could not check, please
@@ -1146,9 +1169,20 @@ export async function handleSavePrimarySubResources(
   const productId = getFormString(formData, "productId");
   // No usable id: the inner handler refuses it at once, no lock needed.
   if (!productId || !isValidShopifyGID(productId)) return handleSavePrimarySubResourcesUnlocked(ctx, formData);
-  return withSerialLock(`primarySave|${ctx.session.shop}|${productId}`, () =>
-    handleSavePrimarySubResourcesUnlocked(ctx, formData),
-  );
+  return withSerialLock(`primarySave|${ctx.session.shop}|${productId}`, async () => {
+    // The client gave up while this save waited for the one before it: nobody
+    // reads an answer, and writing now would only land an old value late. (The
+    // signal is only as good as the proxy's propagation of a client disconnect,
+    // which has not been verified on Railway; it is a skip, not a guarantee.)
+    // A write that has STARTED is never cancelled.
+    if (ctx.signal?.aborted) {
+      return json(
+        { success: false, actionType: "savePrimarySubResources", error: "saveNotConfirmed", notConfirmed: true, notConfirmedReason: "clientGone" },
+        { status: 499 },
+      );
+    }
+    return handleSavePrimarySubResourcesUnlocked(ctx, formData);
+  });
 }
 
 async function handleSavePrimarySubResourcesUnlocked(
