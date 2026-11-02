@@ -1413,19 +1413,12 @@ export function VariantImageManager({
   // Hash altText into the key so a bulk-apply (mediaIds unchanged, altTexts new) also
   // invalidates the stale refreshedProductImages and re-triggers the variant fetch.
   const productImagesKey = productImages.map(i => `${i.mediaId}|${i.altText ?? ""}`).join(",");
-  const keyEffectProductIdRef = useRef(productId);
   useEffect(() => {
     const prev = prevProductImagesKeyRef.current;
     prevProductImagesKeyRef.current = productImagesKey;
-    // A PRODUCT switch changes the images key too, but the [productId, resetKey]
-    // effect above already fetches the new product's variants: asking again here
-    // was a true duplicate (two requests per product view). Only a change of the
-    // SAME product's images (a reload, a bulk apply) re-fetches.
-    const productChanged = keyEffectProductIdRef.current !== productId;
-    keyEffectProductIdRef.current = productId;
     if (prev !== "" && prev !== productImagesKey && !isConvertingWebPRef.current) {
       setRefreshedProductImages(null);
-      if (productId && !productChanged) fetchVariantsForProduct(productId, false);
+      if (productId) fetchVariantsForProduct(productId, false);
     }
   }, [productImagesKey, productId, fetchVariantsForProduct]); // eslint-disable-line react-hooks/exhaustive-deps
 
