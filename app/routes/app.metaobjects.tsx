@@ -53,7 +53,6 @@ import { PlanAccessGate } from "../components/PlanAccessGate";
 import { MetaobjectEntryCard, type MetaobjectEntryUsage } from "../components/metaobjects/MetaobjectEntryCard";
 import { DeleteItemModal } from "../components/create/DeleteItemModal";
 import { useDeleteItem } from "../hooks/useDeleteItem";
-import { useBackgroundJson } from "../hooks/useBackgroundJson";
 import type { ContentItem, RenderedGroupField } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
@@ -209,8 +208,8 @@ export default function MetaobjectsPage() {
     selectedEntryId?: string | null;
   };
   const fetcher = useFetcher<FetcherData>();
-  const entryFetcher = useBackgroundJson<{ success?: boolean; error?: string; metaobject?: LoadedEntries }>();
-  const usageFetcher = useBackgroundJson<{ success?: boolean; usage?: Record<string, MetaobjectUsage> }>();
+  const entryFetcher = useFetcher<{ success?: boolean; error?: string; metaobject?: LoadedEntries }>();
+  const usageFetcher = useFetcher<{ success?: boolean; usage?: Record<string, MetaobjectUsage> }>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
@@ -326,18 +325,13 @@ export default function MetaobjectsPage() {
   }, [selectedType, requestKey, entryPage, entrySearch, focusEntryId, reloadNonce]);
 
   useEffect(() => {
-    if (entryFetcher.state !== "idle") return;
+    if (entryFetcher.state !== "idle" || !entryFetcher.data) return;
     const data = entryFetcher.data;
-    if (!data && !entryFetcher.failed) return;
-    if (!data || entryFetcher.failed || data.success === false || !data.metaobject) {
+    if (data.success === false || !data.metaobject) {
       // A FAILED load is not "this type has no entries" — the cards would
-      // otherwise report an empty type to a merchant who has fifty. And the
-      // request that failed may be asked again (same page, same search).
-      requestedRef.current = null;
+      // otherwise report an empty type to a merchant who has fifty.
       setEntryError(
-        // The server's own text only for an answer that is not a transport failure
-        // (the rate limiter's 429 body is English and says nothing useful here).
-        !entryFetcher.failed && typeof data?.error === "string"
+        typeof data.error === "string"
           ? data.error
           : t.content?.metaobjectEntriesLoadFailed || "Could not load the entries of this type.",
       );
@@ -345,7 +339,7 @@ export default function MetaobjectsPage() {
     }
     setLoaded(data.metaobject);
     if (data.metaobject.pagination) setEntryPage(data.metaobject.pagination.page);
-  }, [entryFetcher.state, entryFetcher.data, entryFetcher.failed, t]);
+  }, [entryFetcher.state, entryFetcher.data, t]);
 
   // ── Usage, per visible entry (three-valued — see metaobject-usage.server) ─
   const visibleEntryIds = useMemo(
@@ -371,24 +365,9 @@ export default function MetaobjectsPage() {
   }, [visibleEntryIds, isPrimaryLanguage]);
 
   useEffect(() => {
-    if (usageFetcher.state !== "idle") return;
-    if (usageFetcher.failed || (usageFetcher.data && !usageFetcher.data.success)) {
-      // A failed usage read is "unknown" - which blocks nothing - and not an
-      // answer to wait for ("Checking usage..." with Delete disabled forever).
-      // Clearing the key lets the next entries refresh ask again.
-      const asked = visibleEntryIds;
-      usageKeyRef.current = "";
-      setUsage((prev) => {
-        const next = { ...prev };
-        for (const id of asked) if (!next[id]) next[id] = { known: false, reason: "lookupFailed" };
-        return next;
-      });
-      return;
-    }
-    if (!usageFetcher.data?.success) return;
+    if (usageFetcher.state !== "idle" || !usageFetcher.data?.success) return;
     setUsage((prev) => ({ ...prev, ...(usageFetcher.data?.usage ?? {}) }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usageFetcher.state, usageFetcher.data, usageFetcher.failed]);
+  }, [usageFetcher.state, usageFetcher.data]);
 
   /**
    * Reload the current type's entries — after a create or a delete.
@@ -398,56 +377,6 @@ export default function MetaobjectsPage() {
    * change. Clearing the ref alone would not re-run the effect, and the entry
    * area would sit in its loading state until something else moved.
    */
-  // ── A revalidation re-reads the entries ─────────────────────────────────
-  // The entries used to ride on a router fetcher, which the router re-ran on every
-  // `revalidate()` (after a save, an AI run, the Reload button). A plain read does
-  // not, so it is asked for explicitly when the revalidation ends - quietly: `loaded`
-  // stays on screen, nothing flickers. The editor is told the revalidation is still
-  // running until that answer has landed (see `editorRevalidator`), so everything
-  // that waits for "the reload is done" (the Reload button's re-resolve) still sees
-  // the fresh entries. Usage is asked again by its own effect once `loaded` moves.
-  const [refreshPending, setRefreshPending] = useState(false);
-  const refreshStartedRef = useRef(false);
-  useEffect(() => {
-    if (revalidator.state !== "idle") {
-      setRefreshPending(true);
-      return;
-    }
-    if (!refreshPending || refreshStartedRef.current) return;
-    refreshStartedRef.current = true;
-    // A load the page itself has out (a create / delete reload, a page change)
-    // is newer than this revalidation's start; asking again would double it.
-    if (!selectedType || entryFetcher.state !== "idle" || !entryFetcher.url) {
-      refreshStartedRef.current = false;
-      setRefreshPending(false);
-      return;
-    }
-    usageKeyRef.current = "";
-    entryFetcher.reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revalidator.state, refreshPending]);
-  const refreshSawReloadRef = useRef(false);
-  useEffect(() => {
-    if (!refreshStartedRef.current) return;
-    if (entryFetcher.reloading) {
-      refreshSawReloadRef.current = true;
-      return;
-    }
-    // Not before the reload has been seen running: the effect that starts it
-    // and this one run in the same pass, before `reloading` has flipped.
-    if (!refreshSawReloadRef.current) return;
-    refreshSawReloadRef.current = false;
-    refreshStartedRef.current = false;
-    setRefreshPending(false);
-  }, [entryFetcher.reloading, entryFetcher.data]);
-  const editorRevalidator = useMemo(
-    () => ({
-      state: revalidator.state === "idle" && refreshPending ? ("loading" as const) : revalidator.state,
-      revalidate: revalidator.revalidate,
-    }),
-    [revalidator.state, revalidator.revalidate, refreshPending],
-  );
-
   const reloadEntries = useCallback(() => {
     usageKeyRef.current = "";
     setLoaded(null);
@@ -806,7 +735,7 @@ export default function MetaobjectsPage() {
           t={t}
           hideItemListImages={true}
           hideItemListStatusBars={true}
-          revalidator={editorRevalidator as unknown as ReturnType<typeof useRevalidator>}
+          revalidator={revalidator}
           isFieldsLoading={entriesLoading}
           fieldsReadOnly={writeAccess === "readOnly"}
           containerAction={containerAction}
@@ -818,14 +747,11 @@ export default function MetaobjectsPage() {
             // arrows do nothing.
             setFocusEntryId(null);
             setEntryPage(page);
-            // After a failed read the same page may be asked for again.
-            if (entryError) setReloadNonce((n) => n + 1);
           }}
           onFieldSearch={(search) => {
             setFocusEntryId(null);
             setEntrySearch(search);
             setEntryPage(1);
-            if (entryError) setReloadNonce((n) => n + 1);
           }}
           renderFieldGroup={renderFieldGroup}
           fieldGroupOrder={fieldGroupOrder}

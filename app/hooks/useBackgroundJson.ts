@@ -8,12 +8,11 @@
  * (a product switch, a tab). Here a failure stays local: `failed` is true and
  * the caller decides what to show.
  *
- * What a router fetcher did that a plain read does not: it re-ran on every
- * `revalidate()`. `reload()` is that, explicitly: it asks again for the last URL
- * WITHOUT clearing `data` or leaving `idle` (no flicker, no spinner), and a
- * failed quiet reload keeps the data it had.
+ * Not a drop-in for every router fetcher: a router fetcher is re-run by every
+ * `revalidate()`, a plain read is not. Only use this for a read nothing relies
+ * on being refreshed that way (see CLAUDE.md).
  *
- * Latest wins: a new `load` / `reload` aborts the one before it (reads only), an
+ * Latest wins: a new `load` aborts the one before it (reads only), an
  * answer for an aborted request is ignored, and nothing is set after unmount.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -29,17 +28,9 @@ interface Snapshot<T> {
   url: string | null;
 }
 
-export function useBackgroundJson<T>(): Snapshot<T> & {
-  load: (url: string) => void;
-  /** Ask again for the last URL, keeping what is on screen (see above). */
-  reload: () => void;
-  /** A `reload` is out. */
-  reloading: boolean;
-} {
+export function useBackgroundJson<T>(): Snapshot<T> & { load: (url: string) => void } {
   const [snap, setSnap] = useState<Snapshot<T>>({ state: "idle", data: null, failed: false, url: null });
-  const [reloading, setReloading] = useState(false);
   const controllerRef = useRef<AbortController | null>(null);
-  const lastUrlRef = useRef<string | null>(null);
   const aliveRef = useRef(true);
 
   useEffect(() => {
@@ -54,8 +45,6 @@ export function useBackgroundJson<T>(): Snapshot<T> & {
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
-    lastUrlRef.current = url;
-    setReloading(false);
     setSnap({ state: "loading", data: null, failed: false, url });
     appFetchJson<T>(url, { signal: controller.signal }).then(
       ({ response, data }) => {
@@ -69,26 +58,5 @@ export function useBackgroundJson<T>(): Snapshot<T> & {
     );
   }, []);
 
-  const reload = useCallback(() => {
-    const url = lastUrlRef.current;
-    if (!url) return;
-    controllerRef.current?.abort();
-    const controller = new AbortController();
-    controllerRef.current = controller;
-    setReloading(true);
-    appFetchJson<T>(url, { signal: controller.signal }).then(
-      ({ response, data }) => {
-        if (controller.signal.aborted || !aliveRef.current) return;
-        setReloading(false);
-        // A refused quiet reload keeps the data on screen.
-        if (response.ok) setSnap({ state: "idle", data, failed: false, url });
-      },
-      () => {
-        if (controller.signal.aborted || !aliveRef.current) return;
-        setReloading(false);
-      },
-    );
-  }, []);
-
-  return { ...snap, load, reload, reloading };
+  return { ...snap, load };
 }

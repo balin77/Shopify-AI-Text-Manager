@@ -75,11 +75,18 @@ export function useEditorImageManagement({
       prevSelectedItemIdRef.current = selectedItemId;
     }
 
-    if (!selectedItemId || !baseSelectedItem) return;
+    if (!selectedItemId || !baseSelectedItem) {
+      setIsLoadingImages(false);
+      return;
+    }
 
-    // Skip if DB already has images
+    // Skip if DB already has images. A read still out for the PREVIOUS product
+    // is ignored when it lands (url guard below), so its spinner ends here.
     const hasDbImages = baseSelectedItem.images && baseSelectedItem.images.length > 0;
-    if (hasDbImages) return;
+    if (hasDbImages) {
+      setIsLoadingImages(false);
+      return;
+    }
 
     // Skip if already loaded for this product
     if (loadedImagesForProductRef.current === selectedItemId) return;
@@ -91,7 +98,7 @@ export function useEditorImageManagement({
   // Handle on-demand image fetcher response
   useEffect(() => {
     // A failed read (rate limit, network) is settled like an error answer: no
-      // spinner, no retry storm, and never an error page.
+    // spinner, no retry storm, and never an error page.
     if (imageFetcher.state === "idle" && (imageFetcher.data || imageFetcher.failed) && selectedItemId) {
       // The snapshot must be the answer for THIS product. In the commit of a
       // product switch this effect still sees the previous product's idle

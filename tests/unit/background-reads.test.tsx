@@ -211,6 +211,25 @@ describe("useEditorImageManagement on-demand images", () => {
     expect(hook.result.current.isLoadingImages).toBe(false);
   });
 
+  it("a read still out for A does not leave the spinner on when the merchant moves to C, which has images in the DB", async () => {
+    const A = { id: "gid://shopify/Product/1", images: [] } as any;
+    const C = { id: "gid://shopify/Product/3", images: [{ url: "https://x/c.png", altText: "c" }] } as any;
+    const hook = renderHook(
+      ({ item }: { item: any }) =>
+        useEditorImageManagement({ config: { contentType: "products" } as any, selectedItemId: item.id, baseSelectedItem: item }),
+      { initialProps: { item: A } },
+    );
+    expect(hook.result.current.isLoadingImages).toBe(true);
+    hook.rerender({ item: C });
+    await flush();
+    expect(hook.result.current.isLoadingImages).toBe(false);
+    pending[0].resolve(answer(true, { success: true, images: [{ url: "https://x/A.png" }] })); // A answers late
+    await flush();
+    expect(hook.result.current.isLoadingImages).toBe(false);
+    expect(hook.result.current.onDemandImages).toEqual([]);
+    expect(pending).toHaveLength(1); // C asked for nothing
+  });
+
   it("an answer lands as before", async () => {
     const { result } = render();
     pending[0].resolve(answer(true, { success: true, images: [{ url: "https://x/y.png", altText: "a" }] }));
