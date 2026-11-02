@@ -38,7 +38,7 @@ function normalizedIpKey(req) {
  * @param {import('express').Request} req
  * @param {import('express').Response} res
  */
-const standardHandler = (req, res) => {
+const standardHandler = (req, res, _next, options) => {
   const resetTime = req.rateLimit?.resetTime;
   const retryAfter = resetTime
     ? Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
@@ -48,9 +48,13 @@ const standardHandler = (req, res) => {
   // enough: method, path WITHOUT its query string, and the limit. No IP, query,
   // token or shop data. Logging must never affect the response.
   try {
-    const path = String(req.originalUrl || req.url || '').split('?')[0];
+    // Bounded: a hostile path must not turn one refusal into a 15 KB log line.
+    const path = String(req.originalUrl || req.url || '').split('?')[0].slice(0, 200);
     const limit = req.rateLimit?.limit;
-    defaultWebhookWarn(`[rate-limit] 429 ${req.method} ${path} limit ${limit ?? 'unknown'}/min`);
+    // The window the limiter really uses (auth: 15 minutes), not an assumed minute.
+    const windowSeconds = Number(options?.windowMs ?? req.rateLimit?.windowMs) / 1000;
+    const windowText = Number.isFinite(windowSeconds) && windowSeconds > 0 ? `${windowSeconds}s` : 'window unknown';
+    defaultWebhookWarn(`[rate-limit] 429 ${req.method} ${path} limit ${limit ?? 'unknown'} per ${windowText}`);
   } catch {
     // ignore
   }

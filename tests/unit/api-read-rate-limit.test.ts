@@ -106,6 +106,39 @@ describe("the 429 warn line", () => {
     expect(line).not.toMatch(/productId|token|abc|198\.51\.100\.9|\?/);
   });
 
+  it("states the limiter's real window (auth is 15 minutes, not a minute) and caps the path at 200 characters", () => {
+    const { standardHandler } = require(limitersPath);
+    const { serverLogger } = require(loggerPath);
+    const warn = vi.spyOn(serverLogger, "warn").mockImplementation((() => {}) as any);
+    standardHandler(
+      { method: "GET", originalUrl: `/auth/${"x".repeat(15_000)}?code=secret`, rateLimit: { limit: 5 } },
+      fakeRes(),
+      () => {},
+      { windowMs: 15 * 60 * 1000 },
+    );
+    const line = String(warn.mock.calls[0][0]);
+    expect(line).toContain("limit 5 per 900s");
+    expect(line.length).toBeLessThan(300);
+    expect(line).not.toContain("secret");
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("a real limiter passes its own window to the handler", async () => {
+    const { apiReadRateLimit } = require(limitersPath);
+    const { serverLogger } = require(loggerPath);
+    const warn = vi.spyOn(serverLogger, "warn").mockImplementation((() => {}) as any);
+    const req: any = { method: "GET", path: "/x", originalUrl: "/api/x?q=1", url: "/x", ip: "203.0.113.99", headers: {}, app: { get: () => false } };
+    for (let i = 0; i < 201; i++) {
+      await new Promise<void>((resolve) => {
+        const res = fakeRes();
+        res.json = () => (resolve(), res);
+        apiReadRateLimit(req, res, () => resolve());
+      });
+    }
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toBe("[rate-limit] 429 GET /api/x limit 200 per 60s");
+  });
+
   it("a logger that throws never changes the response", () => {
     const { standardHandler } = require(limitersPath);
     const { serverLogger } = require(loggerPath);
