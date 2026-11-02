@@ -2938,8 +2938,29 @@ export function useProductSubResources({
       // is told the opposite of what happened -- the delete succeeded and is
       // irreversible. The value-order pass already filtered this; the add and
       // remove passes did not.
+      // A NEW option whose values are all blank fails on the server the same way
+      // (`optionValueEmpty`, nothing created): refused here too.
+      if (optionsToCreate.some((o) => !o.values.some((v) => v.trim() !== ""))) {
+        if (showInfoBox) {
+          showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical");
+        } else {
+          alert("Option values cannot be empty");
+        }
+        return;
+      }
       for (const [optionId, added] of Object.entries(optionValuesToAdd)) {
         if (added.length === 0 || optionsToDelete.includes(optionId)) continue;
+        // A pending row cleared to blank is refused HERE, nothing is sent: the
+        // server reports it for the whole option and the client would drop the
+        // option's other edits. The row is not dropped quietly either.
+        if (added.some((name) => name.trim() === "")) {
+          if (showInfoBox) {
+            showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical");
+          } else {
+            alert("Option values cannot be empty");
+          }
+          return;
+        }
         optionsChanges[optionId] = { ...(optionsChanges[optionId] ?? {}), valuesToAdd: added };
       }
       for (const [optionId, removed] of Object.entries(optionValuesToDelete)) {

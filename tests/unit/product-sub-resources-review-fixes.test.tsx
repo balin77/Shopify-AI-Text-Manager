@@ -382,6 +382,63 @@ describe("a blanked value is refused before anything is sent", () => {
   });
 });
 
+describe("a blank pending addition is refused before anything is sent", () => {
+  const blankRow = (text: string) => {
+    const hook = render();
+    act(() => hook.result.current.handlers.handlePrimaryOptionNameChange(OPT, "Farbe"));
+    act(() => hook.result.current.handlers.handleAddOptionValue(OPT, "Green"));
+    act(() => hook.result.current.handlers.handleEditPendingValue(OPT, 0, text));
+    return hook;
+  };
+
+  for (const text of ["", "   "]) {
+    it(`blank text ${JSON.stringify(text)}: refused, nothing sent, everything kept`, async () => {
+      const { result } = blankRow(text);
+      await press(result);
+      expect(saves.sent).toHaveLength(0);
+      expect(showInfoBox).toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+      expect(result.current.state.primaryOptionEdits[OPT].name).toBe("Farbe");
+      expect(result.current.state.optionValuesToAdd[OPT]).toEqual([text]);
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+  }
+
+  it("corrected, the next press sends the rename and the add", async () => {
+    const { result } = blankRow("");
+    await press(result);
+    act(() => result.current.handlers.handleEditPendingValue(OPT, 0, "Green"));
+    await press(result);
+    expect(JSON.parse(saves.fields(0).optionsChanges)[OPT]).toEqual({ name: "Farbe", valuesToAdd: ["Green"] });
+  });
+
+  it("the row removed, the next press sends the rename alone", async () => {
+    const { result } = blankRow("");
+    await press(result);
+    act(() => result.current.handlers.handleRemoveOptionValue(OPT, "", 0));
+    await press(result);
+    expect(JSON.parse(saves.fields(0).optionsChanges)[OPT]).toEqual({ name: "Farbe" });
+  });
+
+  it("a blank row on an option being deleted does not block", async () => {
+    const { result } = blankRow("");
+    act(() => result.current.handlers.handleDeleteOption(OPT));
+    await press(result);
+    expect(saves.sent).toHaveLength(1);
+    expect(showInfoBox).not.toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+  });
+
+  it("a new option with only blank values is refused; with one real value it is sent", async () => {
+    const { result } = render();
+    act(() => result.current.handlers.handleCreateOption("Material", ["", "  "]));
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPT, "Farbe"));
+    await press(result);
+    expect(saves.sent).toHaveLength(0);
+    expect(showInfoBox).toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+    expect(result.current.state.optionsToCreate).toHaveLength(1);
+    expect(result.current.state.primaryOptionEdits[OPT].name).toBe("Farbe");
+  });
+});
+
 describe("returning to a product before its reload lands", () => {
   const fresh = (text: string) => mk(P.id, "Shirt", { metafields: [{ id: MFA, namespace: "c", key: "a", value: text, type: "single_line_text_field" }] });
 
