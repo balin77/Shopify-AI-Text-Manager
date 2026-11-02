@@ -53,6 +53,7 @@ import { PlanAccessGate } from "../components/PlanAccessGate";
 import { MetaobjectEntryCard, type MetaobjectEntryUsage } from "../components/metaobjects/MetaobjectEntryCard";
 import { DeleteItemModal } from "../components/create/DeleteItemModal";
 import { useDeleteItem } from "../hooks/useDeleteItem";
+import { useBackgroundJson } from "../hooks/useBackgroundJson";
 import type { ContentItem, RenderedGroupField } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
@@ -208,8 +209,8 @@ export default function MetaobjectsPage() {
     selectedEntryId?: string | null;
   };
   const fetcher = useFetcher<FetcherData>();
-  const entryFetcher = useFetcher<{ success?: boolean; error?: string; metaobject?: LoadedEntries }>();
-  const usageFetcher = useFetcher<{ success?: boolean; usage?: Record<string, MetaobjectUsage> }>();
+  const entryFetcher = useBackgroundJson<{ success?: boolean; error?: string; metaobject?: LoadedEntries }>();
+  const usageFetcher = useBackgroundJson<{ success?: boolean; usage?: Record<string, MetaobjectUsage> }>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
@@ -325,13 +326,16 @@ export default function MetaobjectsPage() {
   }, [selectedType, requestKey, entryPage, entrySearch, focusEntryId, reloadNonce]);
 
   useEffect(() => {
-    if (entryFetcher.state !== "idle" || !entryFetcher.data) return;
+    if (entryFetcher.state !== "idle") return;
     const data = entryFetcher.data;
-    if (data.success === false || !data.metaobject) {
+    if (!data && !entryFetcher.failed) return;
+    if (!data || entryFetcher.failed || data.success === false || !data.metaobject) {
       // A FAILED load is not "this type has no entries" — the cards would
       // otherwise report an empty type to a merchant who has fifty.
       setEntryError(
-        typeof data.error === "string"
+        // The server's own text only for an answer that is not a transport failure
+        // (the rate limiter's 429 body is English and says nothing useful here).
+        !entryFetcher.failed && typeof data?.error === "string"
           ? data.error
           : t.content?.metaobjectEntriesLoadFailed || "Could not load the entries of this type.",
       );
@@ -339,7 +343,7 @@ export default function MetaobjectsPage() {
     }
     setLoaded(data.metaobject);
     if (data.metaobject.pagination) setEntryPage(data.metaobject.pagination.page);
-  }, [entryFetcher.state, entryFetcher.data, t]);
+  }, [entryFetcher.state, entryFetcher.data, entryFetcher.failed, t]);
 
   // ── Usage, per visible entry (three-valued — see metaobject-usage.server) ─
   const visibleEntryIds = useMemo(

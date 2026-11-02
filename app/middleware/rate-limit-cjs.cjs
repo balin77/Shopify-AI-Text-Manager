@@ -44,6 +44,17 @@ const standardHandler = (req, res) => {
     ? Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
     : 60; // safe fallback: 60 seconds
 
+  // One warn line per refusal so the owner can see whether a limit is high
+  // enough: method, path WITHOUT its query string, and the limit. No IP, query,
+  // token or shop data. Logging must never affect the response.
+  try {
+    const path = String(req.originalUrl || req.url || '').split('?')[0];
+    const limit = req.rateLimit?.limit;
+    defaultWebhookWarn(`[rate-limit] 429 ${req.method} ${path} limit ${limit ?? 'unknown'}/min`);
+  } catch {
+    // ignore
+  }
+
   res.status(429).json({
     error: 'Too many requests, please try again later',
     retryAfter,
@@ -51,8 +62,10 @@ const standardHandler = (req, res) => {
 };
 
 /**
- * General API Rate Limit — 100 requests per minute per IP.
- * Applied as a catch-all to /api/* (excluding explicitly excluded paths in server.js).
+ * General API Rate Limit — 100 requests per minute per IP, for everything that
+ * is NOT a read (POST and the like). Reads (GET / HEAD) use `apiReadRateLimit`.
+ * Applied to /api/* (excluding explicitly excluded paths in server.js) through
+ * `createApiRateLimitRouter`.
  */
 const apiRateLimit = rateLimit({
   windowMs: 60 * 1000,
@@ -63,6 +76,38 @@ const apiRateLimit = rateLimit({
   message: 'Too many API requests, please try again later',
   keyGenerator: normalizedIpKey,
 });
+
+/**
+ * API READ Rate Limit — 200 requests per minute per IP, its own bucket.
+ * One product view fires 10-12 background GETs under /api, so a merchant moving
+ * quickly between products used up the shared 100/min and got a 429. GET and
+ * HEAD use this limiter INSTEAD of `apiRateLimit` (never both: a request is
+ * counted once), so writes keep the tighter 100.
+ */
+const apiReadRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: standardHandler,
+  message: 'Too many API requests, please try again later',
+  keyGenerator: normalizedIpKey,
+});
+
+/**
+ * The /api catch-all: skip the excluded paths, send reads to the read limiter
+ * and everything else to the general one. A factory so the routing can be
+ * tested with fake limiters.
+ *
+ * @param {{ excludedPaths: string[], general: Function, read: Function }} options
+ */
+function createApiRateLimitRouter({ excludedPaths, general, read }) {
+  return (req, res, next) => {
+    if (excludedPaths.includes(req.path)) return next();
+    const isRead = req.method === 'GET' || req.method === 'HEAD';
+    return (isRead ? read : general)(req, res, next);
+  };
+}
 
 /**
  * AI Action Rate Limit — 30 requests per minute per IP.
@@ -274,6 +319,9 @@ const bulkOperationRateLimit = rateLimit({
 
 module.exports = {
   apiRateLimit,
+  apiReadRateLimit,
+  createApiRateLimitRouter,
+  standardHandler,
   aiActionRateLimit,
   contentActionRateLimit,
   webhookFailureObserver,

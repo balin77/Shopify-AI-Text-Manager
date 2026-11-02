@@ -2616,6 +2616,8 @@ export const es: Translation = {
     keywordImportSkippedOverQuota: "{count} keywords no se importaron por el l\u00edmite del plan.",
     keywordLocaleScopeHint: "Palabras clave para {language}: cada idioma tiene las suyas.",
     keywordOpError: "No se pudieron actualizar las palabras clave. Recarga la página e inténtalo de nuevo.",
+    keywordLoadFailed: "No se pudieron cargar las palabras clave.",
+    keywordLoadRetry: "Reintentar",
     keywordAggregateStuffing: "La densidad combinada de palabras clave supera el 5 % — riesgo de keyword stuffing.",
     keywordStuffingWarning: "El texto generado sigue usando en exceso una palabra clave rastreada tras un reintento — revísalo antes de aceptarlo.",
     keywordCannibalizationWarning: "Esta palabra clave ya es la principal de «{item}» — dos elementos compitiendo por ella se canibalizan en Google.",

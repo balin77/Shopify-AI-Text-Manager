@@ -2637,6 +2637,8 @@ export const de = {
     keywordImportSkippedOverQuota: "{count} Keywords wurden wegen des Plan-Limits nicht importiert.",
     keywordLocaleScopeHint: "Keywords für {language} — jede Sprache hat ihre eigenen.",
     keywordOpError: "Keywords konnten nicht aktualisiert werden. Bitte Seite neu laden und erneut versuchen.",
+    keywordLoadFailed: "Keywords konnten nicht geladen werden.",
+    keywordLoadRetry: "Erneut versuchen",
     keywordAggregateStuffing: "Gemeinsame Keyword-Dichte über 5 % — Gefahr von Keyword-Stuffing.",
     keywordStuffingWarning: "Der generierte Text verwendet ein getracktes Keyword auch nach einem Neuversuch zu häufig — bitte vor dem Übernehmen prüfen.",
     keywordCannibalizationWarning: "Dieses Keyword ist bereits das Primary-Keyword von „{item}“ — zwei Inhalte, die darum konkurrieren, kannibalisieren sich bei Google.",

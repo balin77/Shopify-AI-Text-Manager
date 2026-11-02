@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useFetcher } from "react-router";
+import { useBackgroundJson } from "./useBackgroundJson";
 import type { ContentImage, AltTextTranslation, ContentEditorConfig, TranslatableContentItem } from "../types/content-editor.types";
 
 interface UseEditorImageManagementProps {
@@ -28,7 +28,7 @@ export function useEditorImageManagement({
 }: UseEditorImageManagementProps): UseEditorImageManagementReturn {
   const [onDemandImages, setOnDemandImages] = useState<ContentImage[]>([]);
   const [isLoadingImages, setIsLoadingImages] = useState(false);
-  const imageFetcher = useFetcher<{ success: boolean; images: Array<{ url: string; altText?: string }>; error?: string }>();
+  const imageFetcher = useBackgroundJson<{ success: boolean; images: Array<{ url: string; altText?: string }>; error?: string }>();
   const loadedImagesForProductRef = useRef<string | null>(null);
   const prevSelectedItemIdRef = useRef<string | null>(null);
 
@@ -90,12 +90,16 @@ export function useEditorImageManagement({
 
   // Handle on-demand image fetcher response
   useEffect(() => {
-    if (imageFetcher.state === "idle" && imageFetcher.data && selectedItemId) {
+    // A failed read (rate limit, network) is settled like an error answer: no
+      // spinner, no retry storm, and never an error page.
+    if (imageFetcher.state === "idle" && (imageFetcher.data || imageFetcher.failed) && selectedItemId) {
       setIsLoadingImages(false);
 
       if (prevSelectedItemIdRef.current !== selectedItemId) return;
 
-      if (imageFetcher.data.success && imageFetcher.data.images) {
+      if (imageFetcher.failed || !imageFetcher.data) {
+        loadedImagesForProductRef.current = selectedItemId;
+      } else if (imageFetcher.data.success && imageFetcher.data.images) {
         const images: ContentImage[] = imageFetcher.data.images.map((img) => ({
           url: img.url,
           altText: img.altText,
@@ -107,7 +111,7 @@ export function useEditorImageManagement({
         loadedImagesForProductRef.current = selectedItemId;
       }
     }
-  }, [imageFetcher.state, imageFetcher.data, selectedItemId]);
+  }, [imageFetcher.state, imageFetcher.data, imageFetcher.failed, selectedItemId]);
 
   return { selectedItem, onDemandImages, isLoadingImages, prevSelectedItemIdRef };
 }

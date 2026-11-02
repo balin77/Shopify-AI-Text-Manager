@@ -2633,6 +2633,8 @@ export const en: Translation = {
     keywordImportSkippedOverQuota: "{count} keywords were not imported because of the plan limit.",
     keywordLocaleScopeHint: "Keywords for {language} — every language tracks its own.",
     keywordOpError: "Could not update keywords. Please reload and try again.",
+    keywordLoadFailed: "Keywords could not be loaded.",
+    keywordLoadRetry: "Retry",
     keywordAggregateStuffing: "Combined keyword density is above 5% — risk of keyword stuffing.",
     keywordStuffingWarning: "The generated text still over-uses a tracked keyword after one retry — review it before accepting.",
     keywordCannibalizationWarning: "This keyword is already the primary keyword of \"{item}\" — two items competing for it cannibalize each other in Google.",

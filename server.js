@@ -69,11 +69,12 @@ try {
   serverLogger.error("[server.js] Failed to load rate-limit-cjs.cjs: " + e.message);
   // Provide no-op middleware so server can still start
   const noop = (req, res, next) => next();
-  rateLimiters = { apiRateLimit: noop, aiActionRateLimit: noop, contentActionRateLimit: noop, webhookFailureObserver: noop, authRateLimit: noop, strictRateLimit: noop, bulkOperationRateLimit: noop };
+  rateLimiters = { apiRateLimit: noop, apiReadRateLimit: noop, aiActionRateLimit: noop, contentActionRateLimit: noop, webhookFailureObserver: noop, authRateLimit: noop, strictRateLimit: noop, bulkOperationRateLimit: noop, createApiRateLimitRouter: () => noop };
 }
 
 const {
   apiRateLimit,
+  apiReadRateLimit,
   aiActionRateLimit,
   contentActionRateLimit,
   webhookFailureObserver,
@@ -296,22 +297,24 @@ app.use((req, res, next) => {
 app.use('/api/ai', aiActionRateLimit);
 
 // General API rate limiting (catch-all for /api routes)
-// Exclude polling endpoints that have their own built-in backoff mechanisms
-app.use('/api', (req, res, next) => {
+// Exclude polling endpoints that have their own built-in backoff mechanisms.
+// Reads (GET/HEAD) count against apiReadRateLimit (200/min), everything else
+// against apiRateLimit (100/min) - one bucket per request, never both.
+const apiExcludedPaths = [
   // Skip rate limiting for these endpoints - they have exponential backoff in the client
-  const excludedPaths = [
-    '/running-tasks-count',
-    '/recently-completed-tasks',
-    // Limited by contentActionRateLimit above instead (CONTENT_EDITOR_API_PATHS).
-    ...CONTENT_EDITOR_API_PATHS.map((p) => p.slice('/api'.length)),
-  ];
-
-  if (excludedPaths.includes(req.path)) {
-    return next();
-  }
-
-  return apiRateLimit(req, res, next);
-});
+  '/running-tasks-count',
+  '/recently-completed-tasks',
+  // Limited by contentActionRateLimit above instead (CONTENT_EDITOR_API_PATHS).
+  ...CONTENT_EDITOR_API_PATHS.map((p) => p.slice('/api'.length)),
+];
+app.use(
+  '/api',
+  rateLimiters.createApiRateLimitRouter({
+    excludedPaths: apiExcludedPaths,
+    general: apiRateLimit,
+    read: apiReadRateLimit,
+  }),
+);
 
 // handle asset requests
 if (viteDevServer) {

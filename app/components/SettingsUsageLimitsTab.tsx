@@ -3,7 +3,8 @@ import { Card, Text, BlockStack, Banner, ProgressBar, InlineStack, Button } from
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import { usePlan } from "../contexts/PlanContext";
 import type { ResourceType } from "../utils/planUtils";
-import { useNavigate, useFetcher } from "react-router";
+import { useNavigate } from "react-router";
+import { useBackgroundJson } from "../hooks/useBackgroundJson";
 import { StoragePieChart, type StorageData } from "./StoragePieChart";
 import { HelpTooltip } from "./HelpTooltip";
 import { useI18n } from "../contexts/I18nContext";
@@ -132,7 +133,7 @@ export function SettingsUsageLimitsTab({
   const navigate = useNavigate();
 
   // Fetch storage stats
-  const storageFetcher = useFetcher<{
+  const storageFetcher = useBackgroundJson<{
     success?: boolean;
     stats?: {
       products: number;
@@ -146,11 +147,11 @@ export function SettingsUsageLimitsTab({
     };
   }>();
 
+  // Once per mount. (A failed read leaves the chart empty - it must not loop.)
+  const { load: loadStorageStats } = storageFetcher;
   useEffect(() => {
-    if (storageFetcher.state === "idle" && !storageFetcher.data) {
-      storageFetcher.load("/api/storage-stats");
-    }
-  }, [storageFetcher]);
+    loadStorageStats("/api/storage-stats");
+  }, [loadStorageStats]);
 
   // Prepare storage data for pie chart
   const storageChartData: StorageData[] = storageFetcher.data?.stats

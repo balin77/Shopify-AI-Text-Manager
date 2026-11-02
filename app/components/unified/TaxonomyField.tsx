@@ -434,6 +434,13 @@ export function TaxonomyField({
       setLocalizedCurrent(null);
       return;
     }
+    // A name this page already learned is not asked for again (a merchant moving
+    // between products of the same category cost one request per product view).
+    const known = labelsByCategoryId.get(value);
+    if (known) {
+      setLocalizedCurrent(known);
+      return;
+    }
     let current = true;
     appFetch(`/api/product-taxonomy?kind=taxonomy-name&id=${encodeURIComponent(value)}`)
       .then((r) => r.json())
