@@ -2275,6 +2275,9 @@ export function useProductSubResources({
     const dropped: string[] = [];
     const valuesToAdd: Record<string, string[]> = {};
     for (const [optionId, list] of Object.entries(now.valuesToAdd)) {
+      // An option the fresh item no longer has shows no rows and takes no
+      // additions: its pending rows go (they would be invisible and unsendable).
+      if (!options.some((o) => o.id === optionId)) continue;
       // A match the merchant has queued for DELETION does not count: it is
       // still there (the save did not land) and goes on being removed.
       const going = new Set(now.valuesToDelete[optionId] ?? []);
@@ -2953,6 +2956,14 @@ export function useProductSubResources({
         // A pending row cleared to blank is refused HERE, nothing is sent: the
         // server reports it for the whole option and the client would drop the
         // option's other edits. The row is not dropped quietly either.
+        // An option that is no longer on the item shows no rows: its blank rows
+        // are neither refused nor sent (the others behave as they always did).
+        const onItem = !!selectedItem.options?.some((o) => o.id === optionId);
+        if (!onItem) {
+          const real = added.filter((name) => name.trim() !== "");
+          if (real.length > 0) optionsChanges[optionId] = { ...(optionsChanges[optionId] ?? {}), valuesToAdd: real };
+          continue;
+        }
         if (added.some((name) => name.trim() === "")) {
           if (showInfoBox) {
             showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical");

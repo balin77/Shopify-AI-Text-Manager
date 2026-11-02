@@ -427,7 +427,7 @@ describe("a blank pending addition is refused before anything is sent", () => {
     expect(showInfoBox).not.toHaveBeenCalledWith("VALUES-EMPTY", "critical");
   });
 
-  it("a new option with only blank values is refused; with one real value it is sent", async () => {
+  it("a new option with only blank values is refused", async () => {
     const { result } = render();
     act(() => result.current.handlers.handleCreateOption("Material", ["", "  "]));
     act(() => result.current.handlers.handlePrimaryOptionNameChange(OPT, "Farbe"));
@@ -436,6 +436,75 @@ describe("a blank pending addition is refused before anything is sent", () => {
     expect(showInfoBox).toHaveBeenCalledWith("VALUES-EMPTY", "critical");
     expect(result.current.state.optionsToCreate).toHaveLength(1);
     expect(result.current.state.primaryOptionEdits[OPT].name).toBe("Farbe");
+  });
+
+  it("a new option with no values at all is refused too", async () => {
+    const { result } = render();
+    act(() => result.current.handlers.handleCreateOption("Material", []));
+    await press(result);
+    expect(saves.sent).toHaveLength(0);
+    expect(showInfoBox).toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+  });
+
+  it("a new option with one real value (and a blank extra) is sent", async () => {
+    const { result } = render();
+    act(() => result.current.handlers.handleCreateOption("Material", ["Silk", " "]));
+    await press(result);
+    expect(saves.sent).toHaveLength(1);
+    expect(JSON.parse(saves.fields(0).optionsToCreate)).toEqual([{ name: "Material", values: ["Silk", " "] }]);
+    expect(showInfoBox).not.toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+  });
+});
+
+describe("a blank row on an option that is gone from the item", () => {
+  const OPT2 = "gid://shopify/ProductOption/2";
+  const withSize = () =>
+    mk(P.id, "Shirt", { options: [...P.options, { id: OPT2, name: "Size", position: 2, values: [{ id: "s", name: "S" }] }] });
+  const pendingBlank = (result: any) => {
+    act(() => result.current.handlers.handleAddOptionValue(OPT2, "Green"));
+    act(() => result.current.handlers.handleEditPendingValue(OPT2, 0, ""));
+  };
+
+  it("route 1: delete landed after an unknown outcome - the row goes, the next Save of another option goes out", async () => {
+    const { result, rerender } = render(withSize());
+    pendingBlank(result);
+    act(() => result.current.handlers.handleDeleteOption(OPT2));
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPT, "Farbe"));
+    await press(result);
+    await saves.settle({ ...UNKNOWN });
+    reloadLands(rerender, mk(P.id, "Shirt", { options: [{ ...P.options[0], name: "Farbe" }] }));
+    expect(result.current.state.optionValuesToAdd[OPT2]).toBeUndefined();
+    expect(result.current.state.optionsToDelete).toEqual([]);
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPT, "Farbe2"));
+    showInfoBox.mockClear();
+    await press(result);
+    expect(saves.sent).toHaveLength(2);
+    expect(showInfoBox).not.toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+    expect(saves.fields(1).optionsChanges).not.toContain('[""]');
+    expect(JSON.parse(saves.fields(1).optionsChanges)).toEqual({ [OPT]: { name: "Farbe2" } });
+  });
+
+  it("route 2: the option disappears on a plain reload - nothing is stuck, nothing blank is sent", async () => {
+    const { result, rerender } = render(withSize());
+    pendingBlank(result);
+    rerender({ current: mk(P.id, "Shirt"), lang: "de" });
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPT, "Farbe"));
+    await press(result);
+    expect(showInfoBox).not.toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+    expect(JSON.parse(saves.fields(0).optionsChanges)).toEqual({ [OPT]: { name: "Farbe" } });
+    await saves.settle({ ...OKP });
+    reloadLands(rerender, mk(P.id, "Shirt", { options: [{ ...P.options[0], name: "Farbe" }] }));
+    expect(result.current.state.primaryOptionEdits).toEqual({});
+  });
+
+  it("route 2 with nothing else pending: the press sends nothing and the bar clears", async () => {
+    const { result, rerender } = render(withSize());
+    pendingBlank(result);
+    rerender({ current: mk(P.id, "Shirt"), lang: "de" });
+    await press(result);
+    expect(showInfoBox).not.toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+    expect(saves.sent).toHaveLength(0);
+    expect(result.current.state.hasChanges).toBe(false);
   });
 });
 
