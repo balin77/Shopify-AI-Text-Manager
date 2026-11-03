@@ -21,6 +21,7 @@ import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey, pr
 import type { PartialSave } from "./useUiDataLoader";
 import { dropSavedFieldsFromFallbackSnapshot, type LoadedFallbackSnapshot } from "../services/editor/discard-fallback.shared";
 import { useEditorAutoSave } from "./useEditorAutoSave";
+import { viewContentFingerprint } from "../services/editor/content-fingerprint.shared";
 import { useEditorAltText } from "./useEditorAltText";
 import type {
   UseContentEditorProps,
@@ -1329,6 +1330,26 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return `${item.title || ''}|${(item.descriptionHtml || '').length}|${item.handle || ''}`;
   }, [items, selectedItemId]);
 
+  // The same question answered by CONTENT. The two signals above compare sizes
+  // (the sum of the translation lengths, the description's length), so a value
+  // that becomes another value of the same length -- a save of this session, an
+  // AI run, an external edit -- moved neither: nothing re-resolved, and the
+  // baseline kept saying the old text, so retyping it counted as "unchanged"
+  // and was left out of the save. Scoped to what THIS view resolves from, so
+  // another language changing does not re-resolve it.
+  const selectedItemContentSignal = useMemo(() => {
+    if (!selectedItemId) return '';
+    const item = items.find(i => i.id === selectedItemId);
+    if (!item) return '';
+    return viewContentFingerprint({
+      locale: currentLanguage,
+      translations: item.translations,
+      marketTranslations: (item as { marketTranslations?: Record<string, Record<string, Record<string, string>>> }).marketTranslations,
+      primaryValues: effectiveFieldDefinitions.map((field) => getItemFieldValue(item, field.key, primaryLocale, config)),
+    });
+  }, [items, selectedItemId, currentLanguage, effectiveFieldDefinitions, primaryLocale, config]);
+  const prevContentSignalRef = useRef<string>('');
+
   const prevSelectedItemPrimarySignalRef = useRef<string>('');
 
   useEffect(() => {
@@ -1351,8 +1372,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const refreshTriggered = prevDataRefreshTriggerRef.current !== dataRefreshTrigger;
     const translationsArrived = prevTranslationSignalRef.current !== selectedItemTranslationSignal;
     const primaryContentChanged = prevSelectedItemPrimarySignalRef.current !== selectedItemPrimarySignal;
+    const contentChanged = prevContentSignalRef.current !== selectedItemContentSignal;
+    // The data moved, but by no more than the content check can see (a value
+    // replaced by another of the same length). Nothing else caused this pass.
+    const onlyContentMoved =
+      contentChanged && !itemIdChanged && !languageChanged && !marketChanged &&
+      !refreshTriggered && !translationsArrived && !primaryContentChanged;
 
-    if (!itemIdChanged && !languageChanged && !marketChanged && !refreshTriggered && !translationsArrived && !primaryContentChanged) {
+    if (!itemIdChanged && !languageChanged && !marketChanged && !refreshTriggered && !translationsArrived && !primaryContentChanged && !contentChanged) {
       // Don't log on skip to reduce console spam
       return;
     }
@@ -1369,6 +1396,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     prevDataRefreshTriggerRef.current = dataRefreshTrigger;
     prevTranslationSignalRef.current = selectedItemTranslationSignal;
     prevSelectedItemPrimarySignalRef.current = selectedItemPrimarySignal;
+    prevContentSignalRef.current = selectedItemContentSignal;
 
     // A refresh this page asked for AFTER a background re-translation finished
     // is not a ReloadButton press, and the two differ in both directions.
@@ -1494,7 +1522,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const preserveAfterPartialSave =
       !switchedDuringRefresh &&
       !(refreshTriggered && !isBackgroundRefresh) &&
-      (Date.now() < preserveEditsUntilRef.current ||
+      // A pass only the content check caused is the data catching up with
+      // itself, never the merchant asking for a reset: whatever they typed and
+      // have not saved stays (see `onlyContentMoved`).
+      (onlyContentMoved ||
+        Date.now() < preserveEditsUntilRef.current ||
         unconfirmedKeptKeysRef.current.size > 0 ||
         // Drafts a run deadline gave back (never sent): kept until saved or
         // discarded.
@@ -1547,7 +1579,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // IMPORTANT: Deps are kept minimal to prevent unnecessary re-runs.
     // selectedItemTranslationSignal is stable (only changes when translation count changes)
     // so it won't cause extra re-runs during normal editing.
-  }, [selectedItemId, currentLanguage, selectedMarketId, primaryLocale, config, dataRefreshTrigger, selectedItemTranslationSignal, selectedItemPrimarySignal]);
+  }, [selectedItemId, currentLanguage, selectedMarketId, primaryLocale, config, dataRefreshTrigger, selectedItemTranslationSignal, selectedItemPrimarySignal, selectedItemContentSignal]);
 
   // Mark loading as complete after editableValues have been updated
   // This is in a separate useEffect to ensure the state update has completed
@@ -2791,6 +2823,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           } else {
             baselineValuesRef.current = { ...editableValuesRef.current };
             setBaselineVersion(v => v + 1);
+          }
+          if (!partial && answeredScope?.sentFields) {
+            // What a FULL save wrote is what the field holds now: the loaded
+            // baseline moves to the values that were SENT -- not to the live
+            // fields (text typed since the submit is not stored) and not
+            // later, when the re-read lands, because that re-read cannot tell
+            // a value from one of the same length ("noir" -> "bleu"). Left on
+            // the old text, retyping it was "unchanged": a foreign save left
+            // it out, a primary save did not announce it as changed, and the
+            // answer was success while Shopify kept the new text. A field
+            // Shopify did not confirm keeps its old baseline and is sent again.
+            const notConfirmed = unconfirmedClearedFieldSet(fetcher.data);
+            const sentValues: Record<string, string> = {};
+            for (const field of effectiveFieldDefinitionsRef.current) {
+              if (field.key in answeredScope.sentFields && !notConfirmed.has(field.key)) {
+                sentValues[field.key] = answeredScope.sentFields[field.key];
+              }
+            }
+            if (Object.keys(sentValues).length > 0) {
+              originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, ...sentValues };
+            }
           }
           if (!partial) {
             // A full save stored every field that was no longer inherited

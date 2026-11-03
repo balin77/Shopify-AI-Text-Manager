@@ -43,7 +43,6 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
   - Selten bleibt die Meldung «konnte nicht geladen werden» neben einer korrekten Liste stehen.
   - Reload liest die Liste nicht neu. Änderungen aus einem anderen Tab oder einem Hintergrund-Task erscheinen erst nach einem Wechsel.
 - Ein Taxonomie-Name kann bis zum Neuladen englisch bleiben (`TaxonomyField.tsx:439-443`, kosmetisch).
-- Nach einer Listen-Synchronisierung auf der Metaobjekt-Seite (`handleSyncAll`) bleibt der Editor bei gleich langen Werten alt, die Karten sind aktuell.
 
 ## Bekannt: Server und Betrieb
 
