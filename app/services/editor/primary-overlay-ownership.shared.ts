@@ -45,25 +45,28 @@ export function forgetOwnedKeys(args: {
   token: unknown;
   pressSeq: number | undefined;
   onlyKeys?: ReadonlySet<string>;
-}): void {
+}): string[] {
   const { cacheByItem, owners, confirmed, itemId, sentKeys, token, pressSeq, onlyKeys } = args;
   const cached = cacheByItem[itemId];
   const itemOwners = owners[itemId];
+  /** Keys whose cache entry changed (deleted or put back to a confirmed value). */
+  const touched: string[] = [];
   for (const key of sentKeys) {
     if (onlyKeys && !onlyKeys.has(key)) continue;
     if (itemOwners && key in itemOwners && itemOwners[key] !== token) continue;
     if (cached) {
       const c = confirmed[itemId]?.[key];
-      if (c && pressSeq !== undefined && c.seq > pressSeq) cached[key] = c.value;
+      if (c) cached[key] = c.value;
       else delete cached[key];
+      touched.push(key);
     }
     if (itemOwners) delete itemOwners[key];
   }
   if (cached && Object.keys(cached).length === 0) delete cacheByItem[itemId];
+  return touched;
 }
 
-/** Nothing of the item is out any more: ownership and confirmations have no use. */
-export function pruneOwnership(owners: OverlayOwners, confirmed: OverlayConfirmed, itemId: string): void {
+/** Nothing of the item is out any more: ownership has no use. (Confirmations end with the overlay entry itself.) */
+export function pruneOwners(owners: OverlayOwners, itemId: string): void {
   delete owners[itemId];
-  delete confirmed[itemId];
 }

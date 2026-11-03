@@ -9,6 +9,7 @@
  *   Foreign locale: deleted → localOverride → itemTranslation → fallback → empty
  */
 
+import type { OverlayConfirmed } from "../services/editor/primary-overlay-ownership.shared";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { useRef, useState, useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
@@ -234,6 +235,9 @@ export interface UseUiDataLoaderReturn {
     savedPrimaryValuesRef: React.MutableRefObject<
       Record<string, Record<string, string>>
     >;
+    /** What saves confirmed, per item and field; lives exactly as long as the overlay
+     *  entry it can restore (see primary-overlay-ownership.shared.ts). */
+    primaryConfirmedRef: React.MutableRefObject<OverlayConfirmed>;
     originalLoadedValuesRef: React.MutableRefObject<Record<string, string>>;
     originalTemplateValuesRef: React.MutableRefObject<Record<string, string>>;
     /** Unified change-detection baseline — single source of truth for all content types */
@@ -434,6 +438,10 @@ export function useUiDataLoader(
   const savedPrimaryValuesRef = useRef<
     Record<string, Record<string, string>>
   >({});
+
+  /** The values saves CONFIRMED, per item and field. Ends with the overlay entry: whoever
+   *  deletes an entry of `savedPrimaryValuesRef` deletes its confirmation too. */
+  const primaryConfirmedRef = useRef<OverlayConfirmed>({});
 
   /** Baseline of loaded values for foreign-locale change detection.
    *  Prevents re-sending unchanged fields like handle on every save. */
@@ -666,6 +674,7 @@ export function useUiDataLoader(
         if (isPrimary) {
           const override = savedPrimaryValuesRef.current[item.id];
           if (override) delete override[field.key];
+          delete primaryConfirmedRef.current[item.id]?.[field.key];
         } else {
           delete localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];
         }
@@ -748,6 +757,7 @@ export function useUiDataLoader(
             debugLog.dataLoad("Saved values override ended, clearing it");
             delete savedPrimaryValuesRef.current[item.id];
             delete overlayLifeRef.current[item.id];
+            delete primaryConfirmedRef.current[item.id];
           }
         } else {
           delete overlayLifeRef.current[item.id];
@@ -1379,6 +1389,7 @@ export function useUiDataLoader(
     dropPurgeMarks();
     if (itemId && savedPrimaryValuesRef.current[itemId]) {
       delete savedPrimaryValuesRef.current[itemId];
+      delete primaryConfirmedRef.current[itemId];
     }
     localTranslationsRef.current = {};
     deletedTranslationKeysRef.current.clear();
@@ -1470,6 +1481,7 @@ export function useUiDataLoader(
       localTranslationsRef,
       deletedTranslationKeysRef,
       savedPrimaryValuesRef,
+      primaryConfirmedRef,
       originalLoadedValuesRef,
       originalTemplateValuesRef,
       baselineValuesRef,

@@ -119,21 +119,139 @@ describe("BLOCKER 1b: the answer still held in fetcher.data is not the abandoned
   });
 });
 
-describe("BLOCKER 1c: switching away and back before the answer", () => {
-  it("the refusal is still recognised and the text does not look saved", async () => {
+describe("BLOCKER 1c / R9 C1: switching away and back before the refusal arrives", () => {
+  it("the refused text does not read as saved on return, and the next save does not write it", async () => {
     const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
     const m = mount(items, "de");
     await m.flush();
     act(() => m.h().handleValueChange("title", "verte2"));
     act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
     await act(async () => { await m.h().handleItemSelect(B); });
     await m.flush();
     await act(async () => { await m.h().handleItemSelect(A); });
     await m.flush();
-    await m.rerender(items, { success: false, error: "busy", rateLimited: true });
-    expect(infoBox.mock.calls.some((c) => c[1] === "critical")).toBe(true);
-    await m.rerender([{ id: A, title: "rouge", seoDesc: "moved" }, items[1]]);
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true, actionType: "updateContent" });
+    expect(infoBox.mock.calls.some((c) => c[1] === "critical" && String(c[0]).includes("rouge"))).toBe(true);
+    // no artificial read: the view itself shows what Shopify holds
     expect(m.v().title).toBe("rouge");
+    expect(m.dirty()).toBe(false);
+    act(() => m.h().handleValueChange("seoTitle", "s"));
+    act(() => m.h().handleSave());
+    expect(m.sent().title).toBe("rouge");
+    expect(m.sent().changedFields ?? "[]").not.toContain("title");
+  });
+});
+
+describe("R9 C2: a confirmation survives until the overlay ends", () => {
+  it("N3: A confirmed, a later save C is refused: the confirmed title stays", async () => {
+    const items = [{ id: A, title: "rouge" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: true, actionType: "updateContent" });
+    act(() => m.h().handleValueChange("seoTitle", "seo3"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true, actionType: "updateContent" });
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "lag" }]);
+    expect(m.v().title).toBe("rouge2");
+    act(() => m.h().handleValueChange("handle", "hh"));
+    act(() => m.h().handleSave());
+    expect(m.sent().title).toBe("rouge2");
+    // Shopify holds rouge2: the title is no change, and is not announced as one
+    expect(m.sent().changedFields ?? "[]").not.toContain("title");
+  });
+});
+
+describe("R9 H1: the snapshot of a newer queued save is not taken as stored", () => {
+  it("S1 answered while S2 (other text) is queued: S2's text still reads as a change", async () => {
+    const items = [{ id: A, title: "rouge" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "t1"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    act(() => m.h().handleValueChange("seoTitle", "s2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: true, actionType: "updateContent" });
+    expect(m.dirty()).toBe(true);
+  });
+});
+
+describe("R9 H2: a queued save of a product the merchant left, refused", () => {
+  it("says so with the product's name", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    act(() => m.h().handleValueChange("seoTitle", "seoQ"));
+    act(() => m.h().handleSave());
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    const firstAnswer = { success: true, actionType: "updateContent" };
+    m.fetcher.state = "idle";
+    await m.rerender(items, firstAnswer);
+    // A's second save is now out; the fetcher still holds the first answer
+    m.fetcher.state = "submitting";
+    await m.rerender(items, firstAnswer);
+    m.fetcher.state = "idle";
+    infoBox.mockClear();
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true, actionType: "updateContent" });
+    expect(infoBox.mock.calls.some((c) => c[1] === "critical" && String(c[0]).includes("rouge"))).toBe(true);
+  });
+});
+
+describe("R9: a refused save hands its announced changes on across a reload from the overlay", () => {
+  it("the next save announces the field the refused one announced", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("metaDescription", "c"));
+    act(() => m.h().handleValueChange("title", "b"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    await act(async () => { await m.h().handleItemSelect(A); });
+    await m.flush();
+    act(() => m.h().handleSave());
+    // pressed after the reload took the first save's text as loaded: announces nothing of it
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true, actionType: "updateContent" });
+    expect(m.sent().metaDescription).toBe("c");
+    expect(JSON.parse(m.sent().changedFields ?? "[]")).toContain("metaDescription");
+  });
+});
+
+describe("R9: a refused save hands its announced changes on to the save queued behind it", () => {
+  it("the queued save announces the field the refused one announced", async () => {
+    const items = [{ id: A, title: "rouge" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    act(() => m.h().handleSave());
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true, actionType: "updateContent" });
+    expect(m.sent().title).toBe("rouge2");
+    expect(JSON.parse(m.sent().changedFields ?? "[]")).toContain("title");
   });
 });
 

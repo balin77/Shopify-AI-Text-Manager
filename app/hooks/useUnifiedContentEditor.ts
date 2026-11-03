@@ -55,7 +55,7 @@ import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-m
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { isTranslatableFieldDefinition } from "../services/content-attributes.shared";
 import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource, altValuesForSaveResponse, revertAltsWithoutPrimary, sentAltsFromForm, sentFieldsFromForm, saveAnswerViewMoved, type SentSaveScope } from "../services/editor/own-field-save.shared";
-import { forgetOwnedKeys, recordConfirmedValues, pruneOwnership, type OverlayOwners, type OverlayConfirmed } from "../services/editor/primary-overlay-ownership.shared";
+import { forgetOwnedKeys, recordConfirmedValues, pruneOwners, type OverlayOwners, type OverlayConfirmed } from "../services/editor/primary-overlay-ownership.shared";
 import { settleOwnSave, settleUnsentSave, backstopOwnSaves, hasOwnSaveInFlight, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
@@ -851,7 +851,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   /** Per item and field: the request that last cached that primary value (see forgetFailedPrimarySave). */
   const primaryOwnerRef = useRef<OverlayOwners>({});
   /** What earlier saves confirmed, per item and field (primary-overlay-ownership.shared.ts). */
-  const primaryConfirmedRef = useRef<OverlayConfirmed>({});
+  const primaryConfirmedRef = dataLoader.refs.primaryConfirmedRef;
   /** ONE monotonic counter: a request's press, a confirmation, an edit of the merchant. */
   const eventSeqRef = useRef(0);
 
@@ -948,13 +948,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    *  every later re-resolve shows the unsent text as if it were stored (and
    *  not dirty). Only the keys this save carried; an older, confirmed overlay
    *  of other fields keeps bridging its lagging read. */
-  const forgetFailedPrimarySave = (onlyKeys?: ReadonlySet<string>) => {
+  const forgetFailedPrimarySave = (onlyKeys?: ReadonlySet<string>): string[] => {
     const scope = inFlightScopeRef.current;
     const itemId = scope?.sentFields?.itemId;
-    if (!scope || !itemId || scope.locale !== primaryLocale) return;
+    if (!scope || !itemId || scope.locale !== primaryLocale) return [];
     // Only what this request still owns, and what an earlier request confirmed
     // meanwhile goes back into the cache instead of nothing.
-    forgetOwnedKeys({
+    const touched = forgetOwnedKeys({
       cacheByItem: savedPrimaryValuesRef.current,
       owners: primaryOwnerRef.current,
       confirmed: primaryConfirmedRef.current,
@@ -964,7 +964,83 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       pressSeq: scope.pressSeq,
       onlyKeys,
     });
-    if (savesOfItemOut(itemId).length === 0) pruneOwnership(primaryOwnerRef.current, primaryConfirmedRef.current, itemId);
+    if (savesOfItemOut(itemId).length === 0) pruneOwners(primaryOwnerRef.current, itemId);
+    return touched;
+  };
+  /** A refused save on the item on screen: its cache entries go back, and what change
+   *  detection compares against with them (a read that landed while the save was out
+   *  resolved the unsent text from the cache and made it the baseline). */
+  /**
+   * A refused (or not confirmed) save announced changes (`changedFields`) that were
+   * never stored. A save of the same item queued behind it carries the same text but,
+   * having been pressed while that text was already the screen's baseline, does not
+   * announce it: the purge / re-translation it needs would never run. The queued save
+   * inherits the announcement (the form is still unsent).
+   */
+  const handOnRefusedChanges = (scope: SentSaveScope | null, onlyKeys?: ReadonlySet<string>) => {
+    const sent = scope?.sentFields;
+    if (!sent?.itemId || scope?.locale !== primaryLocale) return;
+    let announced: string[] = [];
+    try { announced = JSON.parse(sent.changedFields ?? "[]"); } catch { return; }
+    for (const entry of saveQueueRef.current) {
+      if (entry.savedItemId !== sent.itemId || entry.savedLocale !== primaryLocale) continue;
+      if (entry.formData.get("action") !== "updateContent") continue;
+      let list: string[] = [];
+      try { list = JSON.parse(String(entry.formData.get("changedFields") ?? "[]")); } catch { continue; }
+      let added = false;
+      for (const key of announced) {
+        if (list.includes(key) || (onlyKeys && !onlyKeys.has(key))) continue;
+        if (entry.formData.get(key) !== sent[key]) continue;
+        list.push(key);
+        added = true;
+        const field = effectiveFieldDefinitionsRef.current.find((f) => f.key === key);
+        if (field?.translationKey) deletedTranslationKeysRef.current.add(field.translationKey);
+      }
+      if (added) entry.formData.set("changedFields", JSON.stringify(list));
+    }
+  };
+  const forgetAndRebaseline = () => {
+    const refusedItemId = inFlightScopeRef.current?.sentFields?.itemId;
+    handOnRefusedChanges(inFlightScopeRef.current);
+    reresolveForgotten(refusedItemId, forgetFailedPrimarySave(), true);
+  };
+  /** The field values of a request's form (not action / itemId / locale ...). */
+  const fieldValuesOf = (sentFields: Record<string, string>): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const field of effectiveFieldDefinitionsRef.current) if (field.key in sentFields) out[field.key] = sentFields[field.key];
+    return out;
+  };
+  /** A product's display name for a message about a request the merchant has left. */
+  const itemNameOf = (itemId: string | undefined | null): string => {
+    const item = itemId ? itemsRef.current.find((i) => i.id === itemId) : undefined;
+    return item ? String(config.getPrimaryField?.(item as never, t as never) ?? (item as { title?: string }).title ?? "") : "";
+  };
+  /** The refusal of a save of an item that is NOT on screen: said with its name. */
+  const showRefusalOfOtherItem = (itemId: string | undefined | null, data: unknown) => {
+    const name = itemNameOf(itemId);
+    const text = localizedUnconfirmedFields(data) || translateErrorMessage(String((data as { error?: string }).error || ""), t);
+    showInfoBox(name ? `${name}: ${text}` : text, "critical");
+  };
+  /**
+   * A cache entry was taken back for an item that IS on screen again (the merchant
+   * switched away and back before the answer): the fields and every baseline that
+   * change detection uses go back to what the item holds now, or the refused text
+   * would read as stored and the next save would write it unannounced.
+   */
+  const reresolveForgotten = (itemId: string | undefined | null, keys: string[], keepText = false) => {
+    if (!itemId || keys.length === 0 || itemId !== selectedItemIdRef.current || currentLanguageRef.current !== primaryLocale) return;
+    const item = itemsRef.current.find((i) => i.id === itemId);
+    if (!item) return;
+    const { values } = dataLoader.resolveAll(item as never, primaryLocale, effectiveFieldDefinitionsRef.current);
+    const picked: Record<string, string> = {};
+    for (const key of keys) if (key in values) picked[key] = values[key];
+    if (Object.keys(picked).length === 0) return;
+    // A refusal on the item the merchant is looking at keeps the text in the field as a
+    // draft; only what change detection compares against goes back.
+    if (!keepText) setEditableValues((prev) => ({ ...prev, ...picked }));
+    baselineValuesRef.current = { ...baselineValuesRef.current, ...picked };
+    originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, ...picked };
+    setBaselineVersion((v) => v + 1);
   };
   const settleOwnSaveFor = useCallback((partial: PartialSave | null) => {
     if (!partial) return;
@@ -1491,7 +1567,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Clear data caches and processed response refs when switching to a different item
     if (itemIdChanged) {
       dataLoader.onItemSwitch();
-      processedSaveResponseRef.current = null;
+      // `processedSaveResponseRef` is NOT reset: `fetcher.data` still holds the last
+      // answer until the next one replaces it, and a reset would make that old answer
+      // look new to the next save pressed here (it would be taken as that save's answer).
       lastEditSeqRef.current = {};
       // A save still out when the merchant leaves: its answer is no longer applied
       // here, but a FAILURE must still be recognised (see the answer effect).
@@ -2028,11 +2106,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const fields = sentFieldsFromForm(entry.formData.entries());
       const changedKeys = changedTranslationKeysOf(fields, effectiveFieldDefinitionsRef.current);
       for (const tKey of changedKeys) deletedTranslationKeysRef.current.delete(tKey);
-      const cache = savedPrimaryValuesRef.current[entry.savedItemId];
-      if (cache) {
-        let changed: unknown = [];
-        try { changed = JSON.parse(fields.changedFields ?? "[]"); } catch { /* none */ }
-        if (Array.isArray(changed)) for (const key of changed) delete cache[String(key)];
+      let changed: unknown = [];
+      try { changed = JSON.parse(fields.changedFields ?? "[]"); } catch { /* none */ }
+      if (Array.isArray(changed)) {
+        // Same take-back as a refused save: only what this entry still owns, and an
+        // earlier confirmed value goes back instead of nothing.
+        forgetOwnedKeys({
+          cacheByItem: savedPrimaryValuesRef.current,
+          owners: primaryOwnerRef.current,
+          confirmed: primaryConfirmedRef.current,
+          itemId: entry.savedItemId,
+          sentKeys: changed.map(String),
+          token: entry.formData,
+          pressSeq: entry.pressSeq,
+        });
       }
     }
     if (dropped > 0) setIsSaving(false);
@@ -2826,12 +2913,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           const unconfirmed = unconfirmedClearedFieldSet(data);
           const abandonedItemId = abandoned.sentFields?.itemId;
           if (abandoned.sentFields && abandonedItemId && abandoned.locale === primaryLocale) {
-            recordConfirmedValues(primaryConfirmedRef.current, abandonedItemId, abandoned.sentFields, unconfirmed, ++eventSeqRef.current);
+            recordConfirmedValues(primaryConfirmedRef.current, abandonedItemId, fieldValuesOf(abandoned.sentFields), unconfirmed, ++eventSeqRef.current);
           }
           const savedScope = inFlightScopeRef.current;
           inFlightScopeRef.current = abandoned;
-          if (unconfirmed.size > 0) forgetFailedPrimarySave(unconfirmed);
-          else if (abandonedItemId && savesOfItemOut(abandonedItemId).length === 0) pruneOwnership(primaryOwnerRef.current, primaryConfirmedRef.current, abandonedItemId);
+          if (unconfirmed.size > 0) {
+            handOnRefusedChanges(abandoned, unconfirmed);
+            reresolveForgotten(abandonedItemId, forgetFailedPrimarySave(unconfirmed));
+          }
+          else if (abandonedItemId && savesOfItemOut(abandonedItemId).length === 0) pruneOwners(primaryOwnerRef.current, abandonedItemId);
           inFlightScopeRef.current = savedScope;
           // What the save's answer says to the merchant survives the switch: the
           // purge warning, the redirect note, fields and alt texts Shopify did not
@@ -2858,12 +2948,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           const failedItemId = abandoned.sentFields?.itemId;
           const savedScope = inFlightScopeRef.current;
           inFlightScopeRef.current = abandoned;
-          forgetFailedPrimarySave();
+          handOnRefusedChanges(abandoned);
+          const forgotten = forgetFailedPrimarySave();
           inFlightScopeRef.current = savedScope;
-          const failedItem = failedItemId ? itemsRef.current.find((i) => i.id === failedItemId) : undefined;
-          const title = failedItem ? String(config.getPrimaryField?.(failedItem as never, t as never) ?? (failedItem as { title?: string }).title ?? "") : "";
-          const text = translateErrorMessage(String((data as { error?: string }).error || ""), t);
-          showInfoBox(title ? `${title}: ${text}` : text, "critical");
+          reresolveForgotten(failedItemId, forgotten);
+          showRefusalOfOtherItem(failedItemId, data);
         }
       }
       return;
@@ -2885,8 +2974,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Taken now, beside `partial`: anything below that chains a new save
       // rebinds the in-flight slot.
       const answeredScope = inFlightScopeRef.current;
-      // Fields edited while this save was out: read here and cleared at EVERY answer,
-      // whichever branch below settles the baselines.
+      // Fields edited AFTER this save was pressed: judged against this request's own
+      // press (`pressSeq`), so overlapping saves each settle their own view.
       const editedDuringFlight = {
         has: (key: string) => (lastEditSeqRef.current[key] ?? 0) > (answeredScope?.pressSeq ?? Infinity),
       };
@@ -2896,13 +2985,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         recordConfirmedValues(
           primaryConfirmedRef.current,
           answeredScope.sentFields.itemId,
-          answeredScope.sentFields,
+          fieldValuesOf(answeredScope.sentFields),
           unconfirmedClearedFieldSet(fetcher.data),
           ++eventSeqRef.current,
         );
         // Nothing of the item left out or queued: ownership and confirmations end.
         if (savesOfItemOut(answeredScope.sentFields.itemId).length === 0) {
-          pruneOwnership(primaryOwnerRef.current, primaryConfirmedRef.current, answeredScope.sentFields.itemId);
+          pruneOwners(primaryOwnerRef.current, answeredScope.sentFields.itemId);
         }
       }
       // Answered: from here the field's baseline (moved below) decides.
@@ -3037,7 +3126,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             Object.keys(primarySnapshot).length > 0 &&
             currentLanguageRef.current === primaryLocale
           ) {
-            baselineValuesRef.current = { ...primarySnapshot };
+            // What this save SENT is what is stored; the snapshot also holds the text of
+            // any newer save of the item that is still out (its own answer decides).
+            baselineValuesRef.current = {
+              ...primarySnapshot,
+              ...(answeredScope?.sentFields ? fieldValuesOf(answeredScope.sentFields) : {}),
+            };
             setBaselineVersion(v => v + 1);
           } else if (answeredScope?.sentFields) {
             // What the save SENT is what is stored; text typed after the submit is
@@ -3589,7 +3683,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data && isSavePendingRef.current) {
       // Also mark error responses as processed
       processedSaveResponseRef.current = fetcher.data;
-      forgetFailedPrimarySave();
+      forgetAndRebaseline();
 
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
@@ -3621,9 +3715,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         rollbackCopyAltText();
       }
 
-      const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
+      // The item the REFUSED request carried: the press-time ref may already name the
+      // next save's item.
+      const refusedItemId = inFlightScopeRef.current?.sentFields?.itemId ?? savedItemIdRef.current;
+      const isSavedItemCurrent = refusedItemId === selectedItemIdRef.current;
       savedItemIdRef.current = null;
 
+      if (!isSavedItemCurrent) {
+        // A queued save of a product the merchant has left: its refusal is said with
+        // the product's name, not swallowed.
+        showRefusalOfOtherItem(refusedItemId, fetcher.data);
+      }
       if (isSavedItemCurrent) {
         const translatedError =
           localizedUnconfirmedFields(fetcher.data) ||
@@ -3642,7 +3744,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // revert the UI immediately to prevent accidental data loss.
       // ──────────────────────────────────────────────────────────────────
       processedSaveResponseRef.current = fetcher.data;
-      forgetFailedPrimarySave();
+      forgetAndRebaseline();
       isSavePendingRef.current = false;
       settleOwnSaveFor(inFlightPartialRef.current);
       inFlightPartialRef.current = null;
@@ -3670,9 +3772,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         rollbackCopyAltText();
       }
 
-      const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
+      const refusedKeyItemId = inFlightScopeRef.current?.sentFields?.itemId ?? savedItemIdRef.current;
+      const isSavedItemCurrent = refusedKeyItemId === selectedItemIdRef.current;
       savedItemIdRef.current = null;
 
+      if (!isSavedItemCurrent) {
+        const keyName = itemNameOf(refusedKeyItemId);
+        const keyText = String((t.content as Record<string, string>)?.[String((fetcher.data as { errorKey?: string }).errorKey)] || (fetcher.data as { errorKey?: string }).errorKey);
+        showInfoBox(keyName ? `${keyName}: ${keyText}` : keyText, "critical");
+      }
       if (isSavedItemCurrent) {
         const errorKey = String((fetcher.data as { errorKey?: string }).errorKey);
         const errorMessage =
@@ -3719,7 +3827,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // answer. Left alone, the pending flag stuck and refused every later
       // "translate all" as racing a save that had long ended.
       processedSaveResponseRef.current = fetcher.data;
-      forgetFailedPrimarySave();
+      forgetAndRebaseline();
       isSavePendingRef.current = false;
       settleOwnSaveFor(inFlightPartialRef.current);
       inFlightPartialRef.current = null;

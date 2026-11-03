@@ -237,7 +237,9 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     const pressSeq = eventSeqRef ? ++eventSeqRef.current : undefined;
     if (primaryOwnerRef && savedLocaleRef.current === primaryLocale && savedItemIdRef.current) {
       const owners = (primaryOwnerRef.current[savedItemIdRef.current] ??= {});
-      for (const key of Object.keys(data)) owners[key] = formData;
+      // Only the fields that went into the overlay (not action / itemId / locale ...).
+      const cachedNow = savedPrimaryValuesRef.current[savedItemIdRef.current] ?? {};
+      for (const key of Object.keys(data)) if (key in cachedNow) owners[key] = formData;
     }
 
     if (blockedByRun) onSaveHeldByRunRef?.current();
