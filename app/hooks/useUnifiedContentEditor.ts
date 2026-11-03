@@ -846,6 +846,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   /** Locale, market and alt texts of the save IN FLIGHT (full or partial),
    *  bound at submit time beside `inFlightPartialRef`. */
   const inFlightScopeRef = useRef<SentSaveScope | null>(null);
+  /** Per item and field: the request that last cached that primary value (see forgetFailedPrimarySave). */
+  const primaryOwnerRef = useRef<Record<string, Record<string, unknown>>>({});
 
   /** The saves of the selected item that are out (in flight on the fetcher)
    *  or waiting in the queue, with the form fields each carries. */
@@ -941,13 +943,24 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    *  not dirty). Only the keys this save carried; an older, confirmed overlay
    *  of other fields keeps bridging its lagging read. */
   const forgetFailedPrimarySave = (onlyKeys?: ReadonlySet<string>) => {
-    typedWhileSavingRef.current.clear();
     const scope = inFlightScopeRef.current;
     const itemId = scope?.sentFields?.itemId;
+    // What was typed during flight belongs to the item on screen: the refusal of a
+    // save the merchant switched away from says nothing about it.
+    if (!scope || itemId === selectedItemIdRef.current) typedWhileSavingRef.current.clear();
     if (!scope || !itemId || scope.locale !== primaryLocale) return;
     const cached = savedPrimaryValuesRef.current[itemId];
     if (!cached) return;
-    for (const key of Object.keys(scope.sentFields ?? {})) if (!onlyKeys || onlyKeys.has(key)) delete cached[key];
+    const owners = primaryOwnerRef.current[itemId];
+    for (const key of Object.keys(scope.sentFields ?? {})) {
+      if (onlyKeys && !onlyKeys.has(key)) continue;
+      // A newer save (queued behind this one, or pressed after switching back) has
+      // cached its own value for the field since: that value is not this save's to
+      // take back.
+      if (owners && key in owners && owners[key] !== scope.token) continue;
+      delete cached[key];
+      if (owners) delete owners[key];
+    }
     if (Object.keys(cached).length === 0) delete savedPrimaryValuesRef.current[itemId];
   };
   const settleOwnSaveFor = useCallback((partial: PartialSave | null) => {
@@ -1315,6 +1328,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     preserveEditsUntilRef,
     setOwnSavesInFlight,
     inFlightScopeRef,
+    primaryOwnerRef,
   });
 
   // Stable signal that changes when translations arrive for the selected item.
@@ -2546,6 +2560,24 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
       lastFetcherDataRef.current = fetcher.data;
 
+      // The answer of a request that is not a save of the item on screen (an abandoned
+      // save, whatever has been queued behind it since) says nothing about this item's
+      // refs or overlays: `savedItemIdRef`/`savedLocaleRef` may already describe the
+      // NEXT save, which the queue has not sent yet. The abandoned save is settled by
+      // the answer effect below.
+      const answeredItemId = inFlightScopeRef.current?.sentFields?.itemId;
+      if (
+        (answeredItemId && answeredItemId !== selectedItemIdRef.current) ||
+        (abandonedSaveRef.current && inFlightScopeRef.current === abandonedSaveRef.current.scope)
+      ) {
+        debugLog.response(' Answer of an abandoned save — leaving this item alone');
+        if (savedItemIdRef.current === answeredItemId) {
+          savedLocaleRef.current = null;
+          savedItemIdRef.current = null;
+        }
+        return;
+      }
+
       // Guard: if the user navigated to a different item while this save was
       // in-flight, clear refs but do NOT apply state changes to the wrong item.
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
@@ -3754,6 +3786,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         marketId: next.savedMarketId ?? "",
         sentAlts: sentAltsFromForm(next.formData.get("imageAltTexts")),
         sentFields: sentFieldsFromForm(next.formData.entries()),
+        token: next.formData,
       };
       isSavePendingRef.current = true;
       // A save held behind a "translate all" run: another view's answer may
@@ -3818,7 +3851,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const setEditableValuesTracked: typeof setEditableValues = useCallback((value) => {
     // Decided when the edit is MADE, not when the updater runs: a "clear all" saves
     // first and empties the fields right after, and that belongs to the save.
-    const track = isSavePendingRef.current;
+    // Also while a save is only HELD behind a translate run (it is queued and the
+    // pending flag is down): its form is already fixed.
+    const track = isSavePendingRef.current || savesOfItemOut(selectedItemIdRef.current).length > 0;
     setEditableValues((prev) => {
       const next = typeof value === "function" ? (value as (p: Record<string, string>) => Record<string, string>)(prev) : value;
       if (track) {

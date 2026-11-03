@@ -11,9 +11,11 @@ vi.mock("react-router", async (orig) => ({
 vi.mock("~/contexts/TaskCountContext", () => ({
   useTaskCount: () => ({ refresh: vi.fn(), tasks: [], recentlyCompletedTasks: [], count: 0 }),
 }));
+const runControl = vi.hoisted(() => ({ finish: null as null | ((v: unknown) => void), calls: 0 }));
 vi.mock("~/utils/app-fetch", () => ({
   appFetch: () => new Promise(() => {}),
-  appFetchJson: () => new Promise(() => {}),
+  // The translate run of a product page: pending until a test lets it end.
+  appFetchJson: () => new Promise((resolve) => { runControl.calls++; runControl.finish = resolve; }),
 }));
 
 import { useUnifiedContentEditor } from "~/hooks/useUnifiedContentEditor";
@@ -189,6 +191,155 @@ describe("M1b: only an answer of a save can be the abandoned save's answer", () 
     expect(infoBox.mock.calls.some((c) => String(c[0]).includes("rouge"))).toBe(false);
     await m.rerender(items, { success: false, error: "busy", rateLimited: true });
     expect(infoBox.mock.calls.some((c) => c[1] === "critical" && String(c[0]).includes("rouge"))).toBe(true);
+  });
+});
+
+describe("R5 critical: a refused save does not forget what a newer save of the same field cached", () => {
+  it("an own AI save queued behind the refused full save", async () => {
+    const items = [{ id: A, title: "rouge" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    act(() => setFieldSuggestion({ resourceId: A, locale: "de", marketId: "" }, "title", "rouge3"));
+    await m.flush();
+    await act(async () => { m.h().handleAcceptSuggestion("title"); });
+    await m.flush();
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true });
+    expect(m.sent().title).toBe("rouge3");
+    await m.rerender(items, { success: true, actionType: "updateContent", n: 2 });
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "lag" }]);
+    expect(m.v().title).toBe("rouge3");
+  });
+  it("a second Save press queued behind the refused one", async () => {
+    const items = [{ id: A, title: "rouge" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    act(() => m.h().handleValueChange("title", "rouge3"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true });
+    expect(m.sent().title).toBe("rouge3");
+    await m.rerender(items, { success: true, actionType: "updateContent", n: 2 });
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "lag" }]);
+    expect(m.v().title).toBe("rouge3");
+  });
+  it("a re-save after switching away and back, while the first is still out", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    await act(async () => { await m.h().handleItemSelect(A); });
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge3"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true });
+    expect(m.sent().title).toBe("rouge3");
+    await m.rerender(items, { success: true, actionType: "updateContent", n: 2 });
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "lag" }, items[1]]);
+    expect(m.v().title).toBe("rouge3");
+  });
+});
+
+describe("R5 high 1: an abandoned answer is not applied to the item on screen", () => {
+  it("foreign: B's unsent text is not staged as stored by A's answer", async () => {
+    const items = [{ id: A, title: "rouge", frTitle: "noirA" }, { id: B, title: "vert", frTitle: "noirB" }];
+    const m = mount(items, "fr");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "A-new"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    act(() => m.h().handleValueChange("seoTitle", "seoB"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: true, actionType: "updateContent" });
+    // B's own save goes out; its refusal leaves B showing what Shopify holds for the title
+    await m.rerender([items[0], { ...items[1], seoDesc: "x" } as any]);
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true });
+    await m.rerender([items[0], { ...items[1], frSeo: "seoB" } as any]);
+    expect(m.v().title).toBe("noirB");
+  });
+  it("primary: A's market purge marks are not applied to B and B's real answer is still processed", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    act(() => m.h().handleValueChange("seoTitle", "seoB"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: true, actionType: "updateContent", marketPurgedFields: ["title"] });
+    expect(m.fetcher.submit.mock.calls.length).toBe(2);
+    expect(m.sent().itemId).toBe(B);
+    // B's answer: the save is settled (not skipped as "no saved locale")
+    await m.rerender(items, { success: true, actionType: "updateContent", n: 2 });
+    expect(m.dirty()).toBe(false);
+  });
+});
+
+describe("R5 high 2: an abandoned refusal does not wipe what B's merchant typed during B's save", () => {
+  it("B's typed field stays a change", async () => {
+    const items = [{ id: A, title: "rouge", frTitle: "noirA" }, { id: B, title: "vert", frTitle: "noirB" }];
+    const m = mount(items, "fr");
+    await m.flush();
+    act(() => m.h().handleValueChange("seoTitle", "seoA"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    act(() => m.h().handleValueChange("seoTitle", "seoB"));
+    act(() => m.h().handleSave());
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "typedB"));
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true });
+    await m.rerender(items, { success: true, actionType: "updateContent", n: 2 });
+    expect(m.dirty()).toBe(true);
+    await m.rerender([items[0], { ...items[1], frSeo: "seoB" } as any]);
+    expect(m.v().title).toBe("typedB");
+    expect(m.dirty()).toBe(true);
+  });
+});
+
+describe("R5 medium: text typed while a save is only HELD behind a translate run stays a change", () => {
+  it("the held save's answer does not mark it saved", async () => {
+    window.history.pushState({}, "", "/app/products");
+    const items = [{ id: A, title: "rouge", frTitle: "noir" }];
+    const m = mount(items, "fr");
+    await m.flush();
+    act(() => { m.h().handleTranslateAll(); });
+    act(() => m.h().handleValueChange("title", "bleu"));
+    act(() => m.h().handleSave());
+    await m.flush();
+    expect(m.fetcher.submit).not.toHaveBeenCalled(); // held, the pending flag is down
+    act(() => m.h().handleValueChange("seoTitle", "typed-while-held"));
+    // the run ends (refused): the held save goes out
+    await act(async () => { runControl.finish?.({ data: { success: false, error: "busy" } }); await new Promise((r) => setTimeout(r, 50)); });
+    expect(m.fetcher.submit).toHaveBeenCalledTimes(1);
+    await m.rerender(items, { success: true, actionType: "updateContent" });
+    expect(m.dirty()).toBe(true);
+    window.history.pushState({}, "", "/");
   });
 });
 

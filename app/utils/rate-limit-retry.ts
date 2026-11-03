@@ -168,10 +168,32 @@ function synthesized(status: number, body: string): Response {
   });
 }
 
+/** The `action` field of a form body (FormData, URL-encoded string or URLSearchParams), if it names one. */
+function actionOfBody(body: BodyInit | null | undefined): string | undefined {
+  try {
+    let value: unknown;
+    if (typeof FormData !== "undefined" && body instanceof FormData) value = body.get("action");
+    else if (body instanceof URLSearchParams) value = body.get("action");
+    else if (typeof body === "string") value = new URLSearchParams(body).get("action");
+    return typeof value === "string" && value ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The answer a router `.data` request gets when the retries ran out, or null where none can be made. */
-function singleFetchAnswer(url: URL, method: string, retryAfterSeconds: number): Response | null {
+function singleFetchAnswer(url: URL, method: string, retryAfterSeconds: number, action?: string): Response | null {
   // `ok: false` for the settings tabs that test it instead of `success`.
-  const data = { success: false, ok: false, error: messageProvider(), rateLimited: true, retryAfter: retryAfterSeconds };
+  // `actionType`: the action the refused request named (a router form submit), so a
+  // reader can tell WHOSE refusal this is; absent where the body does not say.
+  const data = {
+    success: false,
+    ok: false,
+    error: messageProvider(),
+    rateLimited: true,
+    retryAfter: retryAfterSeconds,
+    ...(action ? { actionType: action } : {}),
+  };
   if (method !== "GET" && method !== "HEAD") {
     // A POST: the router decodes `{ data }` as the action's result.
     return synthesized(429, encodeTurboStreamValue({ data }));
@@ -260,7 +282,8 @@ export function createRateLimitFetch(inner: typeof fetch, options: RateLimitFetc
         if (isSingleFetch && url) {
           // Free the connection; the router must not see this body.
           await refused?.body?.cancel().catch(() => undefined);
-          const answer = singleFetchAnswer(url, method, retryAfterSeconds);
+          const formAction = actionOfBody(init?.body);
+          const answer = singleFetchAnswer(url, method, retryAfterSeconds, formAction);
           return answer ?? holdUntilAborted(signal);
         }
         if (refused) return refused;

@@ -78,6 +78,9 @@ interface UseEditorAutoSaveProps {
   /** The locale, market and alt texts of the request IN FLIGHT, bound at
    *  submit time like `inFlightPartialRef` (see `revertAltsWithoutPrimary`). */
   inFlightScopeRef?: React.MutableRefObject<SentSaveScope | null>;
+  /** Per item and field: the request (its form) that last cached that primary value.
+   *  A refused save forgets only the keys it still owns. */
+  primaryOwnerRef?: React.MutableRefObject<Record<string, Record<string, unknown>>>;
   /** True while a "translate all" run of this item writes into `locale` (or,
    *  for the primary locale, runs at all): such a save waits in the queue
    *  until the run answered, so it lands AFTER the run -- a hand-written value
@@ -145,6 +148,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     preserveEditsUntilRef,
     setOwnSavesInFlight,
     inFlightScopeRef,
+    primaryOwnerRef,
     saveBlockedByTranslateRunRef,
     onSaveHeldByRunRef,
     onOwnSaveRefusedRef,
@@ -220,6 +224,13 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       }
     }
 
+    // This request now owns the cached primary values of the fields it carries: a
+    // newer save of the same field (queued behind it) takes them over.
+    if (primaryOwnerRef && savedLocaleRef.current === primaryLocale && savedItemIdRef.current) {
+      const owners = (primaryOwnerRef.current[savedItemIdRef.current] ??= {});
+      for (const key of Object.keys(data)) owners[key] = formData;
+    }
+
     if (blockedByRun) onSaveHeldByRunRef?.current();
     if (fetcherRef.current.state !== 'idle' || justSubmittedRef.current || blockedByRun) {
       debugLog.submit(' Fetcher busy (state:', fetcherRef.current.state, ', justSubmitted:', justSubmittedRef.current, '), queuing save for locale:', savedLocaleRef.current);
@@ -242,6 +253,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         marketId: savedMarketIdRef.current ?? "",
         sentAlts: sentAltsFromForm(data.imageAltTexts),
         sentFields: sentFieldsFromForm(Object.entries(data)),
+        token: formData,
       };
     }
 

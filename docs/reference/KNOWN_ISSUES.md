@@ -59,6 +59,8 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Ein fehlgeschlagenes Speichern der Hauptsprache lässt die Löschmarken der Übersetzungen stehen, die vor dem Senden gesetzt wurden. Die Anzeige versteckt sie bis zum Neuladen.
 - Ein Wert, den zwei Speicherungen ohne dazwischenliegenden Lesedurchgang überschreiben, kommt nicht in die «unser oder älter»-Menge; ein hinterherhinkendes Lesen mit dem ersten Wert kann dann als fremder Wert gelten.
 - Bearbeitungen während der Speicherung werden nur über die Feld-Handler erfasst (Tippen, Leeren, «Alle leeren», übernommener Vorschlag). Ein KI-Ergebnis, das auf anderem Weg in ein Feld geschrieben wird, gilt nach der Antwort als gespeichert. Ein «Alle leeren», das hinter einer laufenden Speicherung in der Warteschlange steht, bleibt nach der Antwort als Änderung stehen (sichere Richtung: erneutes Senden).
+- Trägt eine abgelehnte Anfrage ihren Aktionsnamen nicht im Körper (ein `Request`-Objekt als Eingabe), hat die synthetische 429-Antwort keinen `actionType` und kann für die Antwort einer abgebrochenen Speicherung gehalten werden, wenn eine andere Anfrage deren Platz eingenommen hat.
+- Die Prüfung «Antwort gehört zu einem anderen Produkt» im frühen Antwort-Effekt ist doppelt abgesichert (Produkt-Vergleich und Vermerk der verlassenen Speicherung); nur der zweite Teil ist durch einen Test belegt.
 
 ## Bekannt: veraltete Anzeigen
 

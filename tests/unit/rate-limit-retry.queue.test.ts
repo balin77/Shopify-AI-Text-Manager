@@ -184,4 +184,14 @@ describe("events and the synthesized answer", () => {
     expect(text).toContain('"ok"');
     expect(text).toContain('"success"');
   });
+  it("a router POST answer names the action the refused request carried (URL-encoded and FormData bodies)", async () => {
+    install(() => refused(2));
+    const p1 = globalThis.fetch("/api/w.data", { method: "POST", body: new URLSearchParams({ action: "translateAll", x: "1" }) });
+    const fd = new FormData();
+    fd.append("action", "updateContent");
+    const p2 = globalThis.fetch("/api/v.data", { method: "POST", body: fd });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await (await p1).text()).toContain("translateAll");
+    expect(await (await p2).text()).toContain("updateContent");
+  });
 });
