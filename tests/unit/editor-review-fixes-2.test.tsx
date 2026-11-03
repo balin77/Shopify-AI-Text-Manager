@@ -343,6 +343,93 @@ describe("R5 medium: text typed while a save is only HELD behind a translate run
   });
 });
 
+describe("R7 H1: a refused newer save gives back what an earlier save confirmed", () => {
+  const run = async (second: "refused" | "success") => {
+    const items = [{ id: A, title: "rouge" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    act(() => m.h().handleValueChange("seoTitle", "seo2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: true, actionType: "updateContent" });
+    await m.rerender(items, second === "refused"
+      ? { success: false, error: "busy", rateLimited: true, actionType: "updateContent" }
+      : { success: true, actionType: "updateContent", n: 2 });
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "lag" }]);
+    return m;
+  };
+  it("P4: A confirmed, B (same title) refused: a lagging read does not revert the title", async () => {
+    const m = await run("refused");
+    expect(m.v().title).toBe("rouge2");
+  });
+  it("P4c control: B answered too", async () => {
+    const m = await run("success");
+    expect(m.v().title).toBe("rouge2");
+  });
+  it("a refusal with NO earlier confirmation still forgets its text (nothing is stored)", async () => {
+    const items = [{ id: A, title: "rouge" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge2"));
+    act(() => m.h().handleSave());
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true, actionType: "updateContent" });
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "lag" }]);
+    expect(m.v().title).toBe("rouge2"); // the draft stays on screen
+    expect(m.dirty()).toBe(true);
+  });
+});
+
+describe("R7 H2: text typed after the second press stays a change when the FIRST save answers", () => {
+  const run = async (first: any) => {
+    const items = [{ id: A, title: "rouge", frTitle: "noir" }];
+    const m = mount(items, "fr");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "bleu"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    act(() => m.h().handleValueChange("title", "bleu2"));
+    act(() => m.h().handleSave());
+    await m.flush();
+    act(() => m.h().handleValueChange("seoTitle", "typed"));
+    m.fetcher.state = "idle";
+    await m.rerender(items, first);
+    await m.rerender(items, { success: true, actionType: "updateContent", n: 2 });
+    expect(m.dirty()).toBe(true);
+    await m.rerender([{ id: A, title: "rouge", frTitle: "bleu2" }]);
+    expect(m.v().seoTitle).toBe("typed");
+    expect(m.dirty()).toBe(true);
+  };
+  it("P1: A success, B success", async () => { await run({ success: true, actionType: "updateContent" }); });
+  it("P2: A refused, B success", async () => { await run({ success: false, error: "busy", rateLimited: true, actionType: "updateContent" }); });
+});
+
+describe("R7 M1: an abandoned success still tells the merchant what the answer says", () => {
+  it("the purge warning is shown with the product's name", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    act(() => m.h().handleValueChange("seoTitle", "seoB"));
+    act(() => m.h().handleSave());
+    infoBox.mockClear();
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: true, actionType: "updateContent", warnings: ["translationPurgeUnconfirmed"] });
+    const shown = infoBox.mock.calls.filter((c) => String(c[0]).includes("rouge"));
+    expect(shown.length).toBe(1);
+    expect(shown[0][1]).toBe("warning");
+  });
+});
+
 describe("M1: the record of an abandoned save does not outlive its answer", () => {
   it("a later unrelated failure is not shown as the abandoned product's refusal", async () => {
     const items = [{ id: A, title: "rouge", frTitle: "noirA" }, { id: B, title: "vert", frTitle: "noirB" }];
@@ -704,6 +791,14 @@ describe("translate runs: a refused answer releases the spinner, a tracked run i
     m.fetcher.submit.mockClear();
     act(() => { m.h().handleTranslateAllForLocale(); });
     expect(m.fetcher.submit).toHaveBeenCalledTimes(1);
+  });
+  it("a refusal of ANOTHER action (a save) does not release a one-language run's spinner", async () => {
+    const m = mount([{ id: THEME, title: "x" }], "fr", TEMPLATES_CONFIG, theme);
+    await m.flush();
+    act(() => { m.h().handleTranslateAllForLocale(); });
+    expect(isOperationActive(THEME, "__translateAllForLocale__fr")).toBe(true);
+    await m.rerender([{ id: THEME, title: "x" }], { success: false, error: "busy", rateLimited: true, actionType: "updateContent" });
+    expect(isOperationActive(THEME, "__translateAllForLocale__fr")).toBe(true);
   });
   it("translate-all with a tracked run of the item out: a refused save answer does not drop its spinner", async () => {
     window.history.pushState({}, "", "/app/products");

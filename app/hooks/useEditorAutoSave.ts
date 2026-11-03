@@ -8,6 +8,7 @@
 
 import type { PartialSave } from "./useUiDataLoader";
 import { settleUnsentSave, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
+import { forgetOwnedKeys, type OverlayOwners, type OverlayConfirmed } from "../services/editor/primary-overlay-ownership.shared";
 import { sentAltsFromForm, sentFieldsFromForm, type SentSaveScope } from "../services/editor/own-field-save.shared";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { fileIdForThemeImage, keepsForeignMediaOnPrimaryChange } from "~/utils/theme-image-reference.shared";
@@ -58,6 +59,7 @@ interface UseEditorAutoSaveProps {
     savedItemId: string | null;
     partial: PartialSave | null;
     successToast: string | null;
+    pressSeq?: number;
   }>>;
   justSubmittedRef: React.MutableRefObject<boolean>;
   fetcherRef: React.MutableRefObject<any>;
@@ -80,7 +82,11 @@ interface UseEditorAutoSaveProps {
   inFlightScopeRef?: React.MutableRefObject<SentSaveScope | null>;
   /** Per item and field: the request (its form) that last cached that primary value.
    *  A refused save forgets only the keys it still owns. */
-  primaryOwnerRef?: React.MutableRefObject<Record<string, Record<string, unknown>>>;
+  primaryOwnerRef?: React.MutableRefObject<OverlayOwners>;
+  /** What earlier saves confirmed, per item and field (see primary-overlay-ownership). */
+  primaryConfirmedRef?: React.MutableRefObject<OverlayConfirmed>;
+  /** The editor's monotonic event counter: presses, confirmations and edits. */
+  eventSeqRef?: React.MutableRefObject<number>;
   /** True while a "translate all" run of this item writes into `locale` (or,
    *  for the primary locale, runs at all): such a save waits in the queue
    *  until the run answered, so it lands AFTER the run -- a hand-written value
@@ -149,6 +155,8 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     setOwnSavesInFlight,
     inFlightScopeRef,
     primaryOwnerRef,
+    primaryConfirmedRef,
+    eventSeqRef,
     saveBlockedByTranslateRunRef,
     onSaveHeldByRunRef,
     onOwnSaveRefusedRef,
@@ -226,6 +234,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
 
     // This request now owns the cached primary values of the fields it carries: a
     // newer save of the same field (queued behind it) takes them over.
+    const pressSeq = eventSeqRef ? ++eventSeqRef.current : undefined;
     if (primaryOwnerRef && savedLocaleRef.current === primaryLocale && savedItemIdRef.current) {
       const owners = (primaryOwnerRef.current[savedItemIdRef.current] ??= {});
       for (const key of Object.keys(data)) owners[key] = formData;
@@ -242,6 +251,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         savedItemId: savedItemIdRef.current,
         partial,
         successToast,
+        pressSeq,
       });
       return;
     }
@@ -254,6 +264,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         sentAlts: sentAltsFromForm(data.imageAltTexts),
         sentFields: sentFieldsFromForm(Object.entries(data)),
         token: formData,
+        pressSeq,
       };
     }
 
@@ -275,6 +286,18 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       } else {
         // The request never left: settle what was staged for it (shared
         // with the queued-save drain in useUnifiedContentEditor).
+        // The values it cached are not stored anywhere: give back what it owns.
+        if (primaryOwnerRef && primaryConfirmedRef && savedItemIdRef.current && savedLocaleRef.current === primaryLocale) {
+          forgetOwnedKeys({
+            cacheByItem: savedPrimaryValuesRef.current,
+            owners: primaryOwnerRef.current,
+            confirmed: primaryConfirmedRef.current,
+            itemId: savedItemIdRef.current,
+            sentKeys: Object.keys(data),
+            token: formData,
+            pressSeq,
+          });
+        }
         settleUnsentSave({
           partial,
           successToast,

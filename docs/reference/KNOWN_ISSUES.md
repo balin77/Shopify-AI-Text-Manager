@@ -59,8 +59,10 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Ein fehlgeschlagenes Speichern der Hauptsprache lässt die Löschmarken der Übersetzungen stehen, die vor dem Senden gesetzt wurden. Die Anzeige versteckt sie bis zum Neuladen.
 - Ein Wert, den zwei Speicherungen ohne dazwischenliegenden Lesedurchgang überschreiben, kommt nicht in die «unser oder älter»-Menge; ein hinterherhinkendes Lesen mit dem ersten Wert kann dann als fremder Wert gelten.
 - Bearbeitungen während der Speicherung werden nur über die Feld-Handler erfasst (Tippen, Leeren, «Alle leeren», übernommener Vorschlag). Ein KI-Ergebnis, das auf anderem Weg in ein Feld geschrieben wird, gilt nach der Antwort als gespeichert. Ein «Alle leeren», das hinter einer laufenden Speicherung in der Warteschlange steht, bleibt nach der Antwort als Änderung stehen (sichere Richtung: erneutes Senden).
-- Trägt eine abgelehnte Anfrage ihren Aktionsnamen nicht im Körper (ein `Request`-Objekt als Eingabe), hat die synthetische 429-Antwort keinen `actionType` und kann für die Antwort einer abgebrochenen Speicherung gehalten werden, wenn eine andere Anfrage deren Platz eingenommen hat.
-- Die Prüfung «Antwort gehört zu einem anderen Produkt» im frühen Antwort-Effekt ist doppelt abgesichert (Produkt-Vergleich und Vermerk der verlassenen Speicherung); nur der zweite Teil ist durch einen Test belegt.
+- Die synthetische 429-Antwort nennt den Aktionsnamen der abgelehnten Anfrage (`actionType`), wenn der Körper ihn trägt. Router-Fetcher senden FormData oder URLSearchParams, der Fall «Körper ohne Namen» (ein `Request`-Objekt als Eingabe) kommt heute nicht vor; käme er vor, könnte die Antwort für die einer abgebrochenen Speicherung gehalten werden.
+- Die Prüfung «Antwort gehört zu einem anderen Produkt» im frühen Antwort-Effekt ist doppelt abgesichert (Produkt-Vergleich und Vermerk der verlassenen Speicherung); nur der zweite Teil ist durch einen Test belegt, ein Fall, in dem allein der erste greift, ist nicht konstruierbar gefunden worden.
+- Schlägt `fetcher.submit` mit einem Nicht-Abbruch-Fehler fehl, gibt die Speicherung ihre Zwischenspeicher-Einträge zurück (gleiche Regel wie bei einer Ablehnung); das ist nur über die gemeinsame Funktion getestet, nicht über den Fehlerpfad selbst.
+- Der Zwischenspeicher nach einer Ablehnung zeigt den Text der abgelehnten Speicherung weiter als Entwurf an (Entscheidung: kein Entwurf nach Fehler gilt für den gespeicherten Stand, der Text im Feld bleibt stehen).
 
 ## Bekannt: veraltete Anzeigen
 

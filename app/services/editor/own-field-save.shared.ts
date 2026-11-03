@@ -199,6 +199,8 @@ export interface SentSaveScope {
   /** The request's own form: the identity under which it cached its primary
    *  values (see `primaryOwnerRef` in the editor). */
   token?: unknown;
+  /** The event counter at the request's press (see primary-overlay-ownership). */
+  pressSeq?: number;
 }
 
 /** A form's string entries, for `SentSaveScope.sentFields`. */
