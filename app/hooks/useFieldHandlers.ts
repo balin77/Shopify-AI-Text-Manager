@@ -449,7 +449,7 @@ const submitOwnFieldSave = (
       [fieldKey]: value,
     };
   }
-  partialSaveRef.current = { locale, marketId, values: { [fieldKey]: value }, altIndices: [] };
+  partialSaveRef.current = { locale, marketId, values: { [fieldKey]: value }, altIndices: [], withheld: isPrimary && opts.markChanged === false };
   savedLocaleRef.current = locale;
   savedMarketIdRef.current = marketId;
   savedItemIdRef.current = selectedItemId;

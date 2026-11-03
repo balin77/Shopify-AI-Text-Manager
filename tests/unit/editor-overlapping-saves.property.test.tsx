@@ -252,6 +252,6 @@ describe("overlapping primary saves: a model of Shopify against the real editor"
 
   // Seeds that once found a wrong write (a confirmation restored over a value written elsewhere).
   it("regression seeds at 24 steps", async () => {
-    for (const seed of [2020, 5001, 5091, 5107, 2059]) await runOne(seed, 24);
+    for (const [seed, steps] of [[2020, 24], [5001, 24], [5091, 24], [5107, 24], [2059, 24], [7016, 20]]) await runOne(seed, steps);
   }, 60_000);
 });

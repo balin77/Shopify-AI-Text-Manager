@@ -6,7 +6,7 @@ const T2 = { id: 2 };
 const base = () => ({
   cacheByItem: { A: { title: "new", handle: "h" } } as Record<string, Record<string, string>>,
   owners: { A: { title: T2, handle: T2 } } as Record<string, Record<string, unknown>>,
-  confirmed: {} as Record<string, Record<string, { value: string }>>,
+  confirmed: {} as Record<string, Record<string, { value: string; seq: number }>>,
 });
 
 describe("forgetOwnedKeys", () => {

@@ -88,6 +88,8 @@ export interface PartialSave {
    *  while the save was in flight holds text that was not sent, and marking it
    *  saved would keep the next Save from sending it. */
   altValues?: Record<number, string>;
+  /** The form deliberately withholds `changedFields` (accept-and-translate writes the translations itself). */
+  withheld?: boolean;
 }
 
 export interface ResolvedField {
@@ -238,6 +240,8 @@ export interface UseUiDataLoaderReturn {
     /** What saves confirmed, per item and field; lives exactly as long as the overlay
      *  entry it can restore (see primary-overlay-ownership.shared.ts). */
     primaryConfirmedRef: React.MutableRefObject<OverlayConfirmed>;
+    /** Per field (`item|locale|market|key`): the values that count as ours or older. */
+    preSaveSeenRef: React.MutableRefObject<Record<string, Set<string>>>;
     /** Per item and field: the event number at which the loader read a value somebody else wrote.
      *  A save pressed BEFORE it must not be recorded as confirmed afterwards. */
     overtakenRef: React.MutableRefObject<Record<string, Record<string, number>>>;
@@ -708,8 +712,14 @@ export function useUiDataLoader(
       } else if (!isPrimary) {
         delete foreignLifeRef.current[seenKey];
       }
-      const everSeen = (everSeenRef.current[seenKey] ??= new Set());
-      if (everSeen.size < 50) everSeen.add(serverValue);
+      // Only values read while a cached save stands: a value read BEFORE it was staged is
+      // not "older than our save" in the sense that matters (see yield above).
+      if (cached !== undefined) {
+        const everSeen = (everSeenRef.current[seenKey] ??= new Set());
+        if (everSeen.size < 50) everSeen.add(serverValue);
+      } else {
+        delete everSeenRef.current[seenKey];
+      }
       seen[seenKey] = serverValue;
     }
   };
@@ -775,6 +785,7 @@ export function useUiDataLoader(
             delete savedPrimaryValuesRef.current[item.id];
             delete overlayLifeRef.current[item.id];
             delete primaryConfirmedRef.current[item.id];
+            delete overtakenRef.current[item.id];
           }
         } else {
           delete overlayLifeRef.current[item.id];
@@ -1408,6 +1419,7 @@ export function useUiDataLoader(
     if (itemId && savedPrimaryValuesRef.current[itemId]) {
       delete savedPrimaryValuesRef.current[itemId];
       delete primaryConfirmedRef.current[itemId];
+      delete overtakenRef.current[itemId];
       delete overlayLifeRef.current[itemId];
     }
     localTranslationsRef.current = {};
@@ -1501,6 +1513,7 @@ export function useUiDataLoader(
       deletedTranslationKeysRef,
       savedPrimaryValuesRef,
       primaryConfirmedRef,
+      preSaveSeenRef,
       overtakenRef,
       eventSeqRef,
       overlayLifeRef,

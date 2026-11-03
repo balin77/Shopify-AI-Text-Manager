@@ -15,7 +15,7 @@
  */
 
 export type OverlayOwners = Record<string, Record<string, unknown>>;
-export type OverlayConfirmed = Record<string, Record<string, { value: string }>>;
+export type OverlayConfirmed = Record<string, Record<string, { value: string; seq: number }>>;
 
 /** A save's answer was a success: its values are what Shopify holds now. */
 export function recordConfirmedValues(
@@ -24,12 +24,14 @@ export function recordConfirmedValues(
   sentFields: Record<string, string> | undefined,
   unconfirmed: ReadonlySet<string>,
   overlay: Record<string, string> | undefined,
+  /** The editor's event number at the confirmation: orders it against loader reads. */
+  seq = 0,
 ): void {
   if (!sentFields || !overlay) return;
   const byKey = (confirmed[itemId] ??= {});
   for (const [key, value] of Object.entries(sentFields)) {
     // Only a key the overlay still holds: after a Reload dropped it, nothing restores it.
-    if (!unconfirmed.has(key) && key in overlay) byKey[key] = { value };
+    if (!unconfirmed.has(key) && key in overlay) byKey[key] = { value, seq };
   }
 }
 

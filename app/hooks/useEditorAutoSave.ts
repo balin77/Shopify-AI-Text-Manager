@@ -89,6 +89,10 @@ interface UseEditorAutoSaveProps {
    *  field (the newest one), if any. What "changed" means at press time is decided against
    *  the baseline AND against it: typing a field back to its baseline while an earlier
    *  save still carries another value is a change. */
+  /** True when a sent PRIMARY text value differs from what the item's last read says Shopify holds and
+   *  is not explained by a save of ours that confirmed it after that read: an unannounced write
+   *  over a known different server value must be impossible. */
+  staleAgainstServerRef?: React.MutableRefObject<(key: string, value: string) => boolean>;
   pendingCarriedValueRef?: React.MutableRefObject<(locale: string, marketId: string, key: string) => string | undefined>;
   /** What earlier saves confirmed, per item and field (see primary-overlay-ownership). */
   primaryConfirmedRef?: React.MutableRefObject<OverlayConfirmed>;
@@ -163,6 +167,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     inFlightScopeRef,
     primaryOwnerRef,
     formMetaRef,
+    staleAgainstServerRef,
     pendingCarriedValueRef,
     primaryConfirmedRef,
     eventSeqRef,
@@ -247,7 +252,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     // newer save of the same field (queued behind it) takes them over.
     const pressSeq = eventSeqRef ? ++eventSeqRef.current : undefined;
     if (formMetaRef) {
-      formMetaRef.current.set(formData, { carryOnly: carryOnlyRef.current, withheld: !!isAcceptAndTranslateFlowRef.current });
+      formMetaRef.current.set(formData, { carryOnly: carryOnlyRef.current, withheld: !!isAcceptAndTranslateFlowRef.current || !!partial?.withheld });
       carryOnlyRef.current = new Set();
     }
     if (primaryOwnerRef && savedLocaleRef.current === primaryLocale && savedItemIdRef.current) {
@@ -373,7 +378,8 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
 
       const pendingCarried = pendingCarriedValueRef?.current(primaryLocale, "", field.key);
       const carriedOnly = currentValue === originalValue && pendingCarried !== undefined && pendingCarried !== currentValue;
-      if (currentValue !== originalValue || carriedOnly) {
+      const staleWrite = currentValue === originalValue && !carriedOnly && !!staleAgainstServerRef?.current(field.key, currentValue);
+      if (currentValue !== originalValue || carriedOnly || staleWrite) {
         // An image (or video) setting is a per-language choice, not text whose
         // translations go stale: a new original leaves the foreign replacements
         // standing, so it is never announced as a change that purges them. The

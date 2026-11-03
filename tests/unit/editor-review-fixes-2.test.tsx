@@ -837,6 +837,87 @@ describe("R13 M3: an old action-less error on the fetcher is not the new save's 
   });
 });
 
+describe("R14 HIGH: an unannounced write over a known different server value is impossible", () => {
+  const ok = { success: true, actionType: "updateContent", n: 1 };
+  it("probe: Z read, X confirmed, admin changes the title back to rouge: the next save announces the title", async () => {
+    const items = [{ id: A, title: "rouge", seoDesc: "m0" }];
+    const m = mount(items, "de");
+    await m.flush();
+    await m.rerender([{ id: A, title: "Z", seoDesc: "m0" }]);
+    act(() => m.h().handleValueChange("title", "X"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender([{ id: A, title: "Z", seoDesc: "m0" }]);
+    m.fetcher.state = "loading";
+    await m.rerender([{ id: A, title: "Z", seoDesc: "m0" }], ok);
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "X", seoDesc: "m0" }], ok);
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "m0", frSeo: "moved" }], ok);
+    act(() => m.h().handleValueChange("metaDescription", "m1"));
+    act(() => m.h().handleSave());
+    const f = m.sent();
+    expect(f.title === "rouge" || JSON.parse(f.changedFields ?? "[]").includes("title")).toBe(true);
+  });
+  it("control: a lagging read of the pre-save value after the confirmation does not announce the title", async () => {
+    const items = [{ id: A, title: "rouge", seoDesc: "m0" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "X"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    m.fetcher.state = "loading";
+    await m.rerender(items, ok);
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "m0", frSeo: "lag" }], ok);
+    act(() => m.h().handleValueChange("metaDescription", "m1"));
+    act(() => m.h().handleSave());
+    expect(JSON.parse(m.sent().changedFields ?? "[]")).toEqual(["metaDescription"]);
+  });
+});
+
+describe("R14 CRITICAL: an own save behind a save carrying the same value is announced when that save is refused", () => {
+  it("S1 (X) out, a read lands, own save of X queued: S1 refused, the own save announces the title", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "X"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "q" }, items[1]]);
+    act(() => setFieldSuggestion({ resourceId: A, locale: "de", marketId: "" }, "title", "X"));
+    await m.flush();
+    await act(async () => { m.h().handleAcceptSuggestion("title"); });
+    await m.flush();
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true, actionType: "updateContent" });
+    const f = m.sent();
+    expect(f.title).toBe("X");
+    expect(JSON.parse(f.changedFields ?? "[]")).toContain("title");
+  });
+});
+
+describe("R14 MEDIUM: a carried-only announcement of an OWN save is dropped against the server value", () => {
+  it("own save of the baseline value behind a refused full save", async () => {
+    const items = [{ id: A, title: "A0" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "B1"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    act(() => setFieldSuggestion({ resourceId: A, locale: "de", marketId: "" }, "title", "A0"));
+    await m.flush();
+    await act(async () => { m.h().handleAcceptSuggestion("title"); });
+    await m.flush();
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true, actionType: "updateContent" });
+    const f = m.sent();
+    expect(f.title).toBe("A0");
+    expect(f.changedFields ?? "[]").not.toContain("title");
+  });
+});
+
 describe("R13 LOW-2: the carried-value lookup of a foreign save uses the view's market", () => {
   it("P6: a global save behind a market save does not carry the market's title", async () => {
     const items = [{ id: A, title: "rouge", frTitle: "noir", marketFr: "noirM" }, { id: B, title: "vert" }];

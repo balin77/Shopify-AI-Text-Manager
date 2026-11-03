@@ -797,6 +797,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const prevTranslationSignalRef = useRef<number>(0);
 
   const selectedItemRef = useLatestRef(selectedItem);
+  useEffect(() => { itemReadSeqRef.current = ++eventSeqRef.current; }, [selectedItem]);
   const selectedItemIdRef = useLatestRef(selectedItemId);
 
   // ============================================================================
@@ -855,6 +856,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const primaryOwnerRef = useRef<OverlayOwners>({});
   /** What each primary form needs to remember (carried-only announcements, withheld changedFields). */
   const formMetaRef = useRef(new WeakMap<FormData, FormMeta>());
+  const staleAgainstServerRef = useRef<(key: string, value: string) => boolean>(() => false);
+  /** The event number at which the selected item was last (re)loaded: a loader read. */
+  const itemReadSeqRef = useRef(0);
   /** Assigned below (it reads the queue and the in-flight scope). */
   const pendingCarriedValueRef = useRef<(locale: string, marketId: string, key: string) => string | undefined>(() => undefined);
   /** What earlier saves confirmed, per item and field (primary-overlay-ownership.shared.ts). */
@@ -985,9 +989,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     for (const entry of saveQueueRef.current) {
       if (entry.savedItemId !== sent.itemId || entry.savedLocale !== primaryLocale) continue;
       if (entry.formData.get("action") !== "updateContent") continue;
-      // An own (partial) save announces for itself, and a form that withholds
-      // `changedFields` (accept-and-translate) must stay without them.
-      if (entry.partial || formMetaRef.current.get(entry.formData)?.withheld) continue;
+      // A form that withholds `changedFields` (accept-and-translate) must stay without them;
+      // an own (partial) save that announces is judged like any other.
+      if (formMetaRef.current.get(entry.formData)?.withheld) continue;
       let list: string[] = [];
       try { list = JSON.parse(String(entry.formData.get("changedFields") ?? "[]")); } catch { continue; }
       let added = false;
@@ -1023,7 +1027,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (entry.savedItemId !== sent.itemId || entry.savedLocale !== primaryLocale) continue;
       if (entry.formData.get("action") !== "updateContent") continue;
       const meta = formMetaRef.current.get(entry.formData);
-      if (entry.partial || meta?.withheld) continue;
+      if (meta?.withheld) continue;
       let list: string[] = [];
       try { list = JSON.parse(String(entry.formData.get("changedFields") ?? "[]")); } catch { continue; }
       // A key this entry announced ONLY because the refused save carried another value:
@@ -1032,10 +1036,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // while another save queued ahead of the entry still carries a different value.
       for (const key of [...(meta?.carryOnly ?? [])]) {
         if (!list.includes(key) || (onlyKeys && !onlyKeys.has(key)) || !(key in sent)) continue;
-        if (entry.formData.get(key) !== (originalLoadedValuesRef.current[key] ?? "")) continue;
+        // What Shopify holds: the item's last read where it can be told, else the loaded baseline.
+        const held = serverValueOf(key) ?? (originalLoadedValuesRef.current[key] ?? "");
+        if (entry.formData.get(key) !== held) continue;
         const stillCarried = queue.slice(0, index).some((other) =>
           other !== entry && other.savedItemId === sent.itemId && other.formData.has(key) &&
-          other.formData.get(key) !== (originalLoadedValuesRef.current[key] ?? ""));
+          other.formData.get(key) !== held);
         if (stillCarried) continue;
         list = list.filter((k) => k !== key);
         meta?.carryOnly.delete(key);
@@ -1059,6 +1065,37 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const refusedItemId = inFlightScopeRef.current?.sentFields?.itemId;
     handOnRefusedChanges(inFlightScopeRef.current);
     reresolveForgotten(refusedItemId, forgetFailedPrimarySave(), true);
+  };
+  /** What the item's last read says Shopify holds for a plain-text primary field (no overlay), or undefined. */
+  const serverValueOf = (key: string): string | undefined => {
+    const item = selectedItemRef.current;
+    const field = effectiveFieldDefinitionsRef.current.find((f) => f.key === key);
+    if (!item || !field || isThemeContentType(config.contentType)) return undefined;
+    // Plain text only: a rich-text value is normalised by the editor and by Shopify, so a byte
+    // difference there says nothing (the load baseline exists for exactly that).
+    if (field.type !== "text" && field.type !== "textarea" && field.type !== "slug") return undefined;
+    const cache = savedPrimaryValuesRef.current;
+    const held = cache[item.id];
+    try {
+      if (held) delete cache[item.id];
+      return dataLoader.resolve(item as never, key, field.translationKey ?? "", primaryLocale).value;
+    } finally {
+      if (held) cache[item.id] = held;
+    }
+  };
+  staleAgainstServerRef.current = (key, value) => {
+    const item = selectedItemRef.current;
+    const server = serverValueOf(key);
+    if (!item) return false;
+    if (server === undefined || server === value) return false;
+    // Excused: a save of ours confirmed this very value AFTER that read, so the read is a lagging one.
+    const confirmed = primaryConfirmedRef.current[item.id]?.[key];
+    if (confirmed && confirmed.value === value) {
+      if (confirmed.seq > itemReadSeqRef.current) return false;
+      // ...or the read shows a value from before our save (a read that lags behind it).
+      if (dataLoader.refs.preSaveSeenRef.current[`${item.id}|${primaryLocale}||${key}`]?.has(server)) return false;
+    }
+    return true;
   };
   pendingCarriedValueRef.current = (locale, marketId, key) => {
     const itemId = selectedItemIdRef.current;
@@ -1497,6 +1534,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     inFlightScopeRef,
     primaryOwnerRef,
     formMetaRef,
+    staleAgainstServerRef,
     pendingCarriedValueRef,
     primaryConfirmedRef,
     eventSeqRef,
@@ -3005,7 +3043,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           const unconfirmed = unconfirmedClearedFieldSet(data);
           const abandonedItemId = abandoned.sentFields?.itemId;
           if (abandoned.sentFields && abandonedItemId && abandoned.locale === primaryLocale) {
-            recordConfirmedValues(primaryConfirmedRef.current, abandonedItemId, fieldValuesOf(abandoned.sentFields), overtakenKeys(abandonedItemId, abandoned.pressSeq, unconfirmed), savedPrimaryValuesRef.current[abandonedItemId]);
+            recordConfirmedValues(primaryConfirmedRef.current, abandonedItemId, fieldValuesOf(abandoned.sentFields), overtakenKeys(abandonedItemId, abandoned.pressSeq, unconfirmed), savedPrimaryValuesRef.current[abandonedItemId], ++eventSeqRef.current);
           }
           const savedScope = inFlightScopeRef.current;
           inFlightScopeRef.current = abandoned;
@@ -3081,6 +3119,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           fieldValuesOf(answeredScope.sentFields),
           overtakenKeys(answeredScope.sentFields.itemId, answeredScope.pressSeq, unconfirmedClearedFieldSet(fetcher.data)),
           savedPrimaryValuesRef.current[answeredScope.sentFields.itemId],
+          ++eventSeqRef.current,
         );
         // Nothing of the item left out or queued: ownership and confirmations end.
         if (savesOfItemOut(answeredScope.sentFields.itemId).length === 0) {
