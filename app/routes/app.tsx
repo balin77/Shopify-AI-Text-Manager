@@ -28,6 +28,7 @@ import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import { AppErrorBoundary } from "../components/AppErrorBoundary";
+import { RateLimitNotice } from "../components/RateLimitNotice";
 import type { Locale } from "../i18n";
 import { resolveMerchantLocale } from "../utils/locale.server";
 import type { Plan } from "../config/plans";
@@ -570,6 +571,7 @@ function AppContent() {
   return (
     <AppErrorBoundary>
       <InitialSyncBanner />
+      <RateLimitNotice />
       {/* Persistent navigation: mounted once per app lifecycle here in the
           layout route so it survives sibling navigation instead of being
           remounted on every sub-page. Only the <Outlet /> content swaps.

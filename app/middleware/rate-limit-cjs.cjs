@@ -28,6 +28,42 @@ function normalizedIpKey(req) {
   return typeof raw === 'string' && raw.startsWith('::ffff:') ? raw.slice(7) : String(raw);
 }
 
+/** Response header that marks a refusal by OUR limiter (see standardHandler). */
+const RATE_LIMIT_MARKER_HEADER = 'X-CP-Rate-Limited';
+
+const RATE_LIMITED_TEXT = {
+  en: 'Many requests are being processed right now. This page reloads by itself in a few seconds.',
+  de: 'Gerade sind viele Anfragen unterwegs. Diese Seite lädt in wenigen Sekunden von selbst neu.',
+  es: 'Hay muchas solicitudes en este momento. Esta página se volverá a cargar sola en unos segundos.',
+};
+
+/** A browser document load: a GET that accepts HTML and is not a router data request. */
+function isDocumentRequest(req) {
+  try {
+    if (req.method !== 'GET') return false;
+    const path = String(req.path || req.originalUrl || '').split('?')[0];
+    if (path.endsWith('.data')) return false;
+    return /text\/html/i.test(String((req.headers && req.headers.accept) || ''));
+  } catch {
+    return false;
+  }
+}
+
+/** Fixed text in de / en / es, picked from Accept-Language; no request data is put into the page. */
+function rateLimitedPage(req, retryAfter) {
+  const first = String((req.headers && req.headers['accept-language']) || '').slice(0, 2).toLowerCase();
+  const lang = first === 'de' || first === 'es' ? first : 'en';
+  const wait = Math.min(Math.max(Number(retryAfter) || 0, 3), 60) + 1;
+  return (
+    '<!doctype html><html lang="' + lang + '"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<meta http-equiv="refresh" content="' + wait + '">' +
+    '<title>ContentPilot</title></head>' +
+    '<body style="font-family:system-ui,sans-serif;color:#303030;display:flex;align-items:center;justify-content:center;min-height:60vh;margin:0">' +
+    '<p style="max-width:28rem;padding:1rem;text-align:center">' + RATE_LIMITED_TEXT[lang] + '</p></body></html>'
+  );
+}
+
 /**
  * Standard 429 handler — returns JSON with a correct `retryAfter` value.
  *
@@ -38,7 +74,7 @@ function normalizedIpKey(req) {
  * @param {import('express').Request} req
  * @param {import('express').Response} res
  */
-const standardHandler = (req, res, _next, options) => {
+const standardHandler = (req, res, _next, options, bucket) => {
   const resetTime = req.rateLimit?.resetTime;
   const retryAfter = resetTime
     ? Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
@@ -59,11 +95,45 @@ const standardHandler = (req, res, _next, options) => {
     // ignore
   }
 
+  // The marker the client's retry layer (app/utils/rate-limit-retry.ts) keys
+  // on: it says "OUR limiter refused this, before any handler ran", which is
+  // what makes a resend safe. Its value is the limiter's bucket, so the client
+  // can stop sending into a window it knows is closed. A 429 WITHOUT it (Shopify
+  // throttling, an app-level plan limit) is never resent. Headers are set
+  // before anything can throw: they are the contract.
+  try {
+    res.setHeader('Retry-After', String(retryAfter));
+    res.setHeader(RATE_LIMIT_MARKER_HEADER, bucket || 'default');
+  } catch {
+    // ignore
+  }
+
+  // A DOCUMENT load (the app being opened or reloaded, the browser's own GET)
+  // used to show the raw JSON. It gets a page that says so in the merchant's
+  // language and loads again by itself. Nothing is reflected into it.
+  if (isDocumentRequest(req) && typeof res.send === 'function') {
+    try {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.status(429).send(rateLimitedPage(req, retryAfter));
+      return;
+    } catch {
+      // fall through to JSON
+    }
+  }
+
   res.status(429).json({
     error: 'Too many requests, please try again later',
     retryAfter,
   });
 };
+
+/**
+ * One handler per limiter, named after its bucket (the marker header's value).
+ * @param {string} bucket
+ */
+function bucketHandler(bucket) {
+  return (req, res, next, options) => standardHandler(req, res, next, options, bucket);
+}
 
 /**
  * General API Rate Limit — 100 requests per minute per IP, for everything that
@@ -76,7 +146,7 @@ const apiRateLimit = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: standardHandler,
+  handler: bucketHandler('api'),
   message: 'Too many API requests, please try again later',
   keyGenerator: normalizedIpKey,
 });
@@ -93,7 +163,7 @@ const apiReadRateLimit = rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: standardHandler,
+  handler: bucketHandler('api-read'),
   message: 'Too many API requests, please try again later',
   keyGenerator: normalizedIpKey,
 });
@@ -122,7 +192,7 @@ const aiActionRateLimit = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: standardHandler,
+  handler: bucketHandler('ai'),
   message: 'Too many AI requests, please try again later',
   keyGenerator: normalizedIpKey,
 });
@@ -138,7 +208,7 @@ const contentActionRateLimit = rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: standardHandler,
+  handler: bucketHandler('content'),
   message: 'Too many requests, please try again later',
   keyGenerator: normalizedIpKey,
 });
@@ -287,7 +357,7 @@ const authRateLimit = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: standardHandler,
+  handler: bucketHandler('auth'),
   message: 'Too many authentication attempts, please try again later',
   keyGenerator: normalizedIpKey,
   skipSuccessfulRequests: true, // only count failed/redirect attempts
@@ -302,7 +372,7 @@ const strictRateLimit = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: standardHandler,
+  handler: bucketHandler('strict'),
   message: 'Too many requests to this endpoint, please slow down',
   keyGenerator: normalizedIpKey,
 });
@@ -316,7 +386,7 @@ const bulkOperationRateLimit = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: standardHandler,
+  handler: bucketHandler('bulk'),
   message: 'Too many bulk operations, please wait before trying again',
   keyGenerator: normalizedIpKey,
 });
@@ -326,6 +396,8 @@ module.exports = {
   apiReadRateLimit,
   createApiRateLimitRouter,
   standardHandler,
+  bucketHandler,
+  RATE_LIMIT_MARKER_HEADER,
   aiActionRateLimit,
   contentActionRateLimit,
   webhookFailureObserver,

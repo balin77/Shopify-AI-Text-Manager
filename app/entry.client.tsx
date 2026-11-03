@@ -2,6 +2,7 @@ import { HydratedRouter } from "react-router/dom";
 import { startTransition } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { initSentryClient } from "~/utils/sentry.client";
+import { installRateLimitRetry } from "~/utils/rate-limit-retry";
 
 // Filter out known third-party library warnings
 if (typeof window !== 'undefined') {
@@ -52,6 +53,10 @@ if (typeof window !== 'undefined') {
     return originalAddEventListener.call(this, type, listener, options);
   };
 }
+
+// Before the router makes its first request: every fetch of the app, the router's
+// own included, goes through it (see rate-limit-retry.ts).
+installRateLimitRetry();
 
 startTransition(() => {
   hydrateRoot(document, <HydratedRouter />);

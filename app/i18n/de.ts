@@ -2210,6 +2210,8 @@ export const de = {
     translateWhileSaving: "Wird noch gespeichert – bitte einen Moment warten und dann erneut übersetzen.",
     clearWhileSaving: "Wird noch gespeichert – bitte einen Moment warten und dann erneut leeren.",
     saveWaitsForTranslation: "Wartet, bis die Übersetzung fertig ist – danach wird gespeichert.",
+    rateLimitWaiting: "Die App ist kurz ausgelastet. Die Anfrage läuft automatisch weiter.",
+    rateLimitGaveUp: "Die App ist gerade ausgelastet. Ihre Eingaben bleiben erhalten – bitte in einer Minute erneut versuchen.",
     translateRunTimedOut: "Die Übersetzung dauert länger als erwartet. Laden Sie die Seite später neu, um zu sehen, was gespeichert wurde.",
     translateRunTimedOutSaveKept: "Die Übersetzung läuft möglicherweise noch auf dem Server. Ihre Änderungen wurden noch nicht gespeichert – bitte in einem Moment erneut speichern.",
     ownSaveRefusedWhileTranslating: "In diese Sprache wird gerade noch übersetzt – die Änderung bleibt ungespeichert. Speichern Sie sie, wenn die Übersetzung fertig ist.",

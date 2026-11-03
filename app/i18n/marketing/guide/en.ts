@@ -64,6 +64,7 @@ export const guideEn: GuideCopy = {
       ],
       tips: [
         "How many products, languages and content types you can edit depends on your plan. Current usage is shown under Settings → Plan.",
+        "If the app says it is busy for a moment, nothing is lost: it carries on by itself, and what you have typed stays where it is. If it asks you to try again, wait a minute and repeat the step.",
       ],
     },
 

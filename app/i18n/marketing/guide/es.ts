@@ -64,6 +64,7 @@ export const guideEs: GuideCopy = {
       ],
       tips: [
         "Cuántos productos, idiomas y tipos de contenido puedes editar depende de tu plan. El uso actual aparece en Ajustes → Plan.",
+        "Si la app avisa de que está ocupada un momento, no se pierde nada: continúa sola y lo que has escrito se queda donde está. Si te pide volver a intentarlo, espera un minuto y repite el paso.",
       ],
     },
 

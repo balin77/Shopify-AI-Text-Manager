@@ -16,7 +16,7 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Der Lösch-Knopf für Metafelder fragt nicht nach.
 - Nach einem Fehler wird kein Entwurf wiederhergestellt.
 - Der Speichern-Knopf bleibt beim gleichen Produkt beschäftigt, bis gespeichert ist. Bei anderen Produkten nicht.
-- Pro 429 entsteht eine Log-Zeile. Die Länge ist begrenzt, die Anzahl pro Zeit nicht. Ein Client, der ständig anfragt, kann das Log füllen.
+- Pro 429 entsteht eine Log-Zeile. Die Länge ist begrenzt, die Anzahl pro Zeit nicht. Ein Client, der ständig anfragt, kann das Log füllen. Ein Client mit Wiederholung sendet pro Anfrage höchstens dreimal.
 - `loader-factory.server.ts:165-180` löscht Sessions bei 401. Hier ist nichts zu tun.
 
 ## Bekannt: Speichern und Sperren
@@ -31,6 +31,10 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Bulk-Editor und andere `METAFIELDS_SET`-Aufrufe laufen ausserhalb der Sperre. Nach 5 Minuten Wartezeit läuft eine Speicherung neben der haltenden.
 - Zwei Wechselpfade sind ungeschützt: `useUnifiedContentEditor.ts` bei den Zeilen 588-596 und 674-679.
 - Antwortet ein Speichern nach einem Teil-Schreibvorgang mit 4xx oder 5xx, wird nichts neu gelesen. Die Anzeige kann bis zum nächsten Laden alt bleiben.
+- Ist ein 429 des eigenen Limiters nach den Wiederholungen nicht aufgelöst, bleibt eine Seitennavigation oder Neuladung (Seiten-`.data`) offen («lädt»), bis die nächste Navigation sie abbricht. Seite und Eingaben bleiben stehen. Bisher begrenzt nur das Dokument-Laden solche Pfade, die `.data`-Variante nicht.
+- Die Wiederholung umhüllt `window.fetch` einmal beim Start, nach App Bridge. Ersetzt App Bridge `window.fetch` später, wird sie still abgeschaltet. Nicht im echten Admin geprüft.
+- Der Metaobjekt-Speichern-Pfad antwortet auf eine leere Übermittlung (nichts geändert) mit Erfolg; im Hauptsprachen-Pfad filtert der Server außerdem auf `changedFields`. Ein vom Browser nicht erkannter Unterschied (Änderung in Shopify, die der Editor noch nicht geladen hat) bleibt daher möglich, bis die Daten geladen sind.
+- Der 429-Fall der stillen Varianten-Abfrage (`VariantImageManager`) ist ohne Test.
 
 ## Bekannt: veraltete Anzeigen
 

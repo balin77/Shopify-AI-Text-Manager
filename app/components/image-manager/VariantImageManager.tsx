@@ -910,7 +910,13 @@ export function VariantImageManager({
     }
 
     appFetch(`/api/product-variants?productId=${encodeURIComponent(pid)}`)
-      .then(r => r.json())
+      .then(r => {
+        // The limiter's refusal is not a variants answer: its body has an English
+        // `error` that would be shown as the banner (the silent poll included).
+        // Through the catch below it is local, silent for a poll, translated otherwise.
+        if (r.status === 429) throw new Error("rateLimited");
+        return r.json();
+      })
       .then(({ variants: raw, mediaMap, mediaMetaMap: mmm, error }) => {
         // A newer product was selected while this request was in flight — drop the
         // result so it can't overwrite the current product's variants/galleries.
