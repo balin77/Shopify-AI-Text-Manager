@@ -1044,6 +1044,37 @@ describe("R17 MEDIUM: a field this save did not change takes what the read holds
   });
 });
 
+describe("R18 CRITICAL: a passenger key with a standing overlay never takes a lagging read", () => {
+  for (const between of [false, true]) {
+    it(`Save1 title, Save2 other field answered while the read still shows Old${between ? " (unrelated content read between)" : ""}`, async () => {
+      const OK = (n: number) => ({ success: true, actionType: "updateContent", n });
+      const old = [{ id: A, title: "Old" }, { id: B, title: "vert" }];
+      const m = mount(old, "de");
+      await m.flush();
+      act(() => m.h().handleValueChange("title", "New"));
+      act(() => m.h().handleSave());
+      m.fetcher.state = "submitting";
+      await m.rerender(old);
+      m.fetcher.state = "idle";
+      await m.rerender(old, OK(1));
+      await m.flush();
+      if (between) await m.rerender([{ id: A, title: "Old", seoDesc: "z" } as any, old[1]], OK(1));
+      act(() => m.h().handleValueChange("seoTitle", "s2"));
+      act(() => m.h().handleSave());
+      m.fetcher.state = "submitting";
+      await m.rerender(old, OK(1));
+      m.fetcher.state = "idle";
+      await m.rerender(between ? [{ id: A, title: "Old", seoDesc: "z" } as any, old[1]] : old, OK(2));
+      await m.flush();
+      act(() => m.h().handleValueChange("metaDescription", "m3"));
+      act(() => m.h().handleSave());
+      const f = formsOf(m).filter((x: any) => x.action === "updateContent").pop();
+      const announced = JSON.parse(f.changedFields ?? "[]");
+      expect(f.title === undefined || f.title === "New" || announced.includes("title")).toBe(true);
+    });
+  }
+});
+
 describe("R16 LOW: a handle that is announced is not left out of the form", () => {
   it("carried-only handle behind a save that is out", async () => {
     const withHandle = (p: any) => ({ ...product(p), handle: p.handle ?? "h" });

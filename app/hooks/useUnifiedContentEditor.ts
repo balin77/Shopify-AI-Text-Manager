@@ -1134,10 +1134,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    * the sent text, and a baseline of the unnormalised text would read as a difference from then on).
    */
   const baselineValueFor = (itemId: string, key: string, sent: string, changedBySave: boolean): string => {
-    // A key this save did not change takes what the read holds (an untouched field moved elsewhere is not ours).
-    if (!changedBySave) return serverValueOf(key, itemId) ?? sent;
+    // An overlay entry of an earlier confirmed save still stands for the key: what that save wrote wins.
     if (savedPrimaryValuesRef.current[itemId] && key in savedPrimaryValuesRef.current[itemId]) return sent;
     const server = serverValueOf(key, itemId);
+    // A key this save did not change takes what the read holds (an untouched field moved elsewhere is not
+    // ours), unless the read shows a value of the key's ours-or-older set (a lagging read of our own text).
+    if (!changedBySave) {
+      if (server === undefined || dataLoader.refs.preSaveSeenRef.current[`${itemId}|${primaryLocale}||${key}`]?.has(server)) return sent;
+      return server;
+    }
     if (server === undefined || server === sent) return sent;
     // Only the server's own normalisation of the sent text counts; any other read (a stale or third value)
     // must not replace what was just confirmed, or the next save would write that old text unannounced.
