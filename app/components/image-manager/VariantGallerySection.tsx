@@ -213,14 +213,13 @@ export function VariantGallerySection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variant.galleryOrderJson, fileUrlList.join("|"), effectiveExternalVideoUrls.join("|"), effectiveThreeDModelUrls.join("|"), fileUrlMap]);
 
-  // The main image leads, once: the saved order legitimately lists it (and older
-  // saves held it in the metafield too), but it is never shown twice or behind
-  // other tiles.
+  // The tiles are shown exactly as the order says. The parent hands over the order with the
+  // main image in it (orderShowingMain) and the main image is marked by its border, so nothing
+  // is pinned here: pinning made a drag of another image to the first slot look like it did
+  // nothing while the saved order said otherwise. The main image appears once (galleryOrder
+  // and the list are de-duplicated above).
   const mainFileUrl = hasMainImage && mainFileGid ? fileUrlMap[mainFileGid] : undefined;
-  const displayUrls = useMemo(
-    () => (mainFileUrl && orderedUrls.includes(mainFileUrl) ? [mainFileUrl, ...orderedUrls.filter((u) => u !== mainFileUrl)] : orderedUrls),
-    [orderedUrls, mainFileUrl],
-  );
+  const displayUrls = orderedUrls;
 
   // Augment the parent's imageMetas with synthetic entries for external
   // video URLs and 3D model URLs — the parent only populates entries for
@@ -408,6 +407,7 @@ export function VariantGallerySection({
             thumbSize={thumbSize}
             skipDndContext={skipDndContext}
             hasMainImage={hasMainImage}
+            mainUrl={mainFileUrl ?? null}
             localAltTexts={localAltTexts}
             isPrimaryLocale={isPrimaryLocale}
             replacements={replacements}

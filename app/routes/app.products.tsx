@@ -848,12 +848,15 @@ export default function ProductsPage() {
       let galleryApply: Promise<boolean> | undefined;
       if (hasPendingGalleryChanges && editor.selectedItem) {
         const productId = editor.selectedItem.id;
-        galleryApply = imageManagerState.handleApply(productId).then(err => {
+        galleryApply = imageManagerState.handleApply(productId).then(({ error: err, warning }) => {
           if (err) {
             showInfoBox(`${t.products.gallerySaveError} ${err}`, "critical");
             return false;
           }
-          showInfoBox(t.products.gallerySaveSuccess, "success");
+          // Saved; a variant that was left alone is named, and the save still counts as done (the
+          // alt drafts of new media are sent, the preview backfill and the reload run).
+          if (warning) showInfoBox(`${t.products.gallerySaveSuccess} ${warning}`, "warning");
+          else showInfoBox(t.products.gallerySaveSuccess, "success");
           // Kick off background polling for 3D model previews. Shopify
           // takes minutes to generate the .glb thumbnail server-side —
           // the save route only waits ~25s (enough for source URL), the
@@ -1330,11 +1333,12 @@ export default function ProductsPage() {
             onVariantsLoaded: imageManagerState.handleVariantsLoaded,
             selectedGalleryGids: imageManagerState.selectedGalleryGids,
             onConfirm: async () => {
-              const err = await imageManagerState.handleApply(editor.selectedItem?.id ?? "");
+              const { error: err, warning } = await imageManagerState.handleApply(editor.selectedItem?.id ?? "");
               if (err) {
                 showInfoBox(`${t.products.gallerySaveError} ${err}`, "critical");
               } else {
-                showInfoBox(t.products.gallerySaveSuccess, "success");
+                if (warning) showInfoBox(`${t.products.gallerySaveSuccess} ${warning}`, "warning");
+                else showInfoBox(t.products.gallerySaveSuccess, "success");
                 revalidator.revalidate();
               }
               return err;

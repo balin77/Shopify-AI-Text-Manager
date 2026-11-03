@@ -722,7 +722,9 @@ export const guideDe: GuideCopy = {
         {
           heading: "Das Hauptbild",
           paragraphs: [
-            "Das erste Bild jeder Variante ist ihr Hauptbild, mit goldenem Rand markiert. Es wird nur einmal gezeigt, vorne in der Galerie. Löschen Sie das Hauptbild oder schieben Sie es in die Produktgalerie, rückt das nächste Bild der Galerie dieser Variante automatisch an seine Stelle; nur eine Variante ohne weiteres Bild bleibt ohne Hauptbild. Videos, YouTube/Vimeo-Links und 3D-Modelle können kein Hauptbild sein und bleiben, wo sie sind.",
+            "Das erste Bild jeder Variante ist ihr Hauptbild, mit goldenem Rand markiert. Um ein anderes Bild zum Hauptbild zu machen, ziehen Sie es an die erste Stelle der eigenen Galerie dieser Variante; das bisherige Hauptbild rückt an die zweite Stelle und bleibt in der Galerie. Ziehen Sie das Hauptbild von der ersten Stelle weg, übernimmt das nächste Bild. Die Produktgalerie umzusortieren, Bilder hinzuzufügen oder zu kopieren ändert das Hauptbild einer Variante nie.",
+            "Nur ein Bild kann Hauptbild sein: Ein Video, ein YouTube/Vimeo-Link, ein 3D-Modell oder ein noch nicht gespeichertes Bild an die erste Stelle zu ziehen, wird mit einer Meldung abgelehnt, und das einzige Bild einer Variante lässt sich nicht von der ersten Stelle wegziehen. Löschen Sie das Hauptbild oder schieben Sie es in die Produktgalerie, rückt das nächste Bild der eigenen Galerie dieser Variante automatisch an seine Stelle; nur eine Variante ohne weiteres eigenes Bild bleibt ohne Hauptbild. Sobald Sie die Galerie einer Variante ganz ohne Bild ändern, wird ihr erstes eigenes Bild als Hauptbild gezeigt, und beim Speichern wird es zum Hauptbild. Ein Bild aus Ihrer Dateibibliothek wird dem Produkt hinzugefügt, wenn es zum Hauptbild wird.",
+            "Um ein Bild aus einer Variante in die Produktgalerie zu verschieben, halten Sie Strg (Mac: Cmd) gedrückt und legen es auf einer Bildkachel der Produktgalerie ab; ohne Strg passiert nichts. Ziehen Sie das Hauptbild einer Variante auf eine andere Variante, wird es dort kopiert und bleibt Hauptbild der ersten Variante.",
           ],
         },
         {

@@ -714,7 +714,9 @@ export const guideEn: GuideCopy = {
         {
           heading: "The main image",
           paragraphs: [
-            "The first image of each variant is its main image, marked with a gold border. It is shown once, at the front of the gallery. If you delete the main image or move it to the product gallery, the next image of that variant's gallery takes its place automatically; a variant is only left without a main image when it has no other image. Videos, YouTube/Vimeo links and 3D models cannot be a main image and stay where they are.",
+            "The first image of each variant is its main image, marked with a gold border. To make another image the main image, drag it to the first place of that variant's own gallery; the previous main image moves to the second place and stays in the gallery. If you drag the main image away from the first place, the next image takes over. Reordering the product gallery, adding images or copying them never changes a variant's main image.",
+            "Only an image can be the main image: dragging a video, a YouTube/Vimeo link, a 3D model or an image that is not saved yet to the first place is refused with a message, and the only image of a variant cannot be dragged away from the first place. If you delete the main image or move it to the product gallery, the next image of that variant's own gallery takes its place automatically; a variant is only left without a main image when it has no other image of its own. As soon as you change the gallery of a variant that has no image at all, its first own image is shown as its main image, and it becomes the main image when you save. An image from your file library is added to the product when it becomes a main image.",
+            "To take an image out of a variant and put it into the product gallery, hold Ctrl (Mac: Cmd) and drop it onto an image tile of the product gallery; without Ctrl nothing moves. Dragging a variant's main image onto another variant copies it there and it stays the main image of the first variant.",
           ],
         },
         {

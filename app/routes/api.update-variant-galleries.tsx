@@ -4,59 +4,234 @@ import { db } from "../db.server";
 import { isValidExternalVideoUrl, isValid3dModelUrl, kindToMediaContentType } from "../utils/mediaKind";
 import type { MediaKind } from "../components/image-manager/types";
 import { invalidateVariantDefsCache } from "./api.product-variants";
-import { planVariantWrite, type VariantLookup, type VariantWritePlan } from "../services/variant-main-image.shared";
+import {
+  planVariantWrite,
+  orderAfterMainChange,
+  orderRestrictedToLinks,
+  normalizeOrderHead,
+  parseGalleryOrder,
+  type MainRefusal,
+  type VariantLookup,
+  type VariantWritePlan,
+} from "../services/variant-main-image.shared";
 
 type AdminGraphql = (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
 
+export interface ProductMediaLookup {
+  /** The product's media: GID -> mediaContentType. */
+  media: Map<string, string>;
+  /** Only the variants that were asked for. */
+  variants: Map<string, VariantLookup>;
+}
+
+// Query sizes are a COST decision (Shopify's single-query ceiling is 1000 points):
+// a media page of 100 is ~102 points, a variant chunk of 50 (own image + two
+// metafields each) ~300. The first cut asked for 250 media and 250 variants in
+// ONE query, which is ~2000 by the same estimate and was refused outright on a
+// product with many variants. Only the variants the request names are read.
+const MEDIA_PAGE_SIZE = 100;
+const MEDIA_MAX_PAGES = 3;
+const VARIANT_CHUNK = 50;
+
+/** One GraphQL call; a top-level `errors` (including throttling) is logged, never swallowed. */
+async function runLookupQuery(
+  graphql: AdminGraphql,
+  label: string,
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<any | null> {
+  let d: any;
+  try {
+    const r = await graphql(query, { variables });
+    d = await r.json();
+  } catch (err) {
+    // The app's admin.graphql THROWS (GraphqlQueryError) on a top-level errors array instead of
+    // returning it: the codes are read off the error, never swallowed.
+    const body = (err as { body?: { errors?: unknown } })?.body?.errors;
+    const codes = Array.isArray(body)
+      ? body.map((e: { message?: string; extensions?: { code?: string } }) => e?.extensions?.code ?? e?.message).join(", ")
+      : err instanceof Error ? err.message : "unknown";
+    console.warn(`[update-variant-galleries] ${label} lookup threw: ${codes}`);
+    return null;
+  }
+  if (d?.errors) {
+    const codes = Array.isArray(d.errors) ? d.errors.map((e: { message?: string; extensions?: { code?: string } }) => e?.extensions?.code ?? e?.message).join(", ") : String(d.errors);
+    console.warn(`[update-variant-galleries] ${label} lookup returned errors: ${codes}`);
+    return null;
+  }
+  return d?.data ?? null;
+}
+
 /**
- * A fresh read of what Shopify holds for this product: which media exist (and
- * which of them are images), and for each variant its native image, its stored
- * gallery and its stored order. The route does not trust the client for "what
- * the current main image is": the gallery must never hold it, and a removed one
- * is replaced from this. `null` = the read failed; the rules then run on what the
- * client sent (the limit: a main image the client did not name stays unknown).
+ * A fresh read of what Shopify holds for this product: which media exist, and for
+ * the named variants their native image, stored gallery and stored order. The
+ * route does not trust the client for "what the current main image is". `null` =
+ * the read failed (logged): a write that touches a main image is then refused and
+ * nothing is written for it (fail closed); a plain gallery write falls back to
+ * what the client sent.
  */
-async function lookupProductMedia(
+export async function lookupProductMedia(
   graphql: AdminGraphql,
   productId: string,
-): Promise<{ media: Map<string, string>; variants: Map<string, VariantLookup> } | null> {
+  variantIds: readonly string[],
+): Promise<ProductMediaLookup | null> {
   try {
-    const r = await graphql(
-      `query productMediaForGalleries($id: ID!) {
-        product(id: $id) {
-          media(first: 250) { nodes { id mediaContentType } }
-          variants(first: 250) {
-            nodes {
+    const media = new Map<string, string>();
+    let after: string | null = null;
+    for (let page = 0; page < MEDIA_MAX_PAGES; page++) {
+      const data = await runLookupQuery(
+        graphql,
+        "product media",
+        `query productMediaPage($id: ID!, $first: Int!, $after: String) {
+          product(id: $id) {
+            media(first: $first, after: $after) {
+              pageInfo { hasNextPage endCursor }
+              nodes { id mediaContentType }
+            }
+          }
+        }`,
+        { id: productId, first: MEDIA_PAGE_SIZE, after },
+      );
+      const conn = data?.product?.media;
+      if (!conn) return null;
+      for (const n of conn.nodes ?? []) media.set(n.id, n.mediaContentType);
+      if (!conn.pageInfo?.hasNextPage) break;
+      after = conn.pageInfo.endCursor ?? null;
+      if (!after) break;
+    }
+    const variants = new Map<string, VariantLookup>();
+    const ids = [...new Set(variantIds)];
+    for (let i = 0; i < ids.length; i += VARIANT_CHUNK) {
+      const data = await runLookupQuery(
+        graphql,
+        "variants",
+        `query variantsForGalleries($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on ProductVariant {
               id
               media(first: 1) { nodes { id } }
               gallery: metafield(namespace: "custom", key: "variant_gallery") { value }
               order: metafield(namespace: "custom", key: "variant_gallery_order") { value }
+              links: metafield(namespace: "custom", key: "variant_external_videos") { value }
+              models: metafield(namespace: "custom", key: "variant_3d_models") { value }
             }
           }
-        }
-      }`,
-      { variables: { id: productId } },
-    );
-    const d = await r.json();
-    const product = d?.data?.product;
-    if (!product || d.errors) return null;
-    const media = new Map<string, string>();
-    for (const n of product.media?.nodes ?? []) media.set(n.id, n.mediaContentType);
-    const variants = new Map<string, VariantLookup>();
-    for (const v of product.variants?.nodes ?? []) {
-      let gallery: string[] = [];
-      try {
-        const parsed = JSON.parse(v.gallery?.value ?? "[]");
-        if (Array.isArray(parsed)) gallery = parsed.filter((g): g is string => typeof g === "string");
-      } catch { /* an unreadable list is no list */ }
-      variants.set(v.id, { main: v.media?.nodes?.[0]?.id ?? null, gallery, order: v.order?.value ?? null });
+        }`,
+        { ids: ids.slice(i, i + VARIANT_CHUNK) },
+      );
+      if (!data) return null;
+      for (const v of data.nodes ?? []) {
+        if (!v?.id) continue;
+        let gallery: string[] = [];
+        try {
+          const parsed = JSON.parse(v.gallery?.value ?? "[]");
+          if (Array.isArray(parsed)) gallery = parsed.filter((g): g is string => typeof g === "string");
+        } catch { /* an unreadable list is no list */ }
+        const strList = (raw?: string | null): string[] | undefined => {
+          if (raw == null) return [];
+          try {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : undefined;
+          } catch { return undefined; }
+        };
+        variants.set(v.id, {
+          main: v.media?.nodes?.[0]?.id ?? null,
+          gallery,
+          order: v.order?.value ?? null,
+          links: strList(v.links?.value),
+          models: strList(v.models?.value),
+        });
+      }
     }
     return { media, variants };
   } catch (err) {
-    console.warn("[update-variant-galleries] product media lookup failed", err);
+    console.warn("[update-variant-galleries] lookup failed", err instanceof Error ? err.message : "unknown");
     return null;
   }
 }
+
+/**
+ * Image references in a gallery whose file does not exist any more (a deleted
+ * medium can leave a dead reference in `variant_gallery`). Such a reference is
+ * never promoted: it is not a failed attach, there is nothing to attach. A read
+ * that fails reports none (the attach step still refuses a file it cannot find).
+ */
+async function findDeadFiles(graphql: AdminGraphql, gids: readonly string[]): Promise<Set<string>> {
+  const dead = new Set<string>();
+  const ids = [...new Set(gids)];
+  for (let i = 0; i < ids.length; i += VARIANT_CHUNK) {
+    const chunk = ids.slice(i, i + VARIANT_CHUNK);
+    try {
+      const data = await runLookupQuery(
+        graphql,
+        "file existence",
+        `query fileExistence($ids: [ID!]!) {
+          nodes(ids: $ids) { ... on MediaImage { id } }
+        }`,
+        { ids: chunk },
+      );
+      if (!data) continue;
+      const alive = new Set<string>((data.nodes ?? []).filter(Boolean).map((n: { id?: string }) => n.id).filter(Boolean));
+      for (const g of chunk) if (!alive.has(g)) dead.add(g);
+    } catch (err) {
+      // unknown = alive, but never silent
+      console.warn("[update-variant-galleries] file existence check threw", err instanceof Error ? err.message : "unknown");
+    }
+  }
+  return dead;
+}
+
+/**
+ * Attach a MediaImage that is a library file (not yet one of the product's media)
+ * to the product, so it can be a variant's native image. `fileUpdate` with
+ * `referencesToAdd` only ever ADDS the reference (never `referencesToRemove`, and
+ * nothing here undoes an attach). A file that is not READY is not attempted.
+ * Returns an error string, or null when Shopify accepted it; the caller confirms
+ * by reading the product's media again.
+ */
+async function attachFileToProduct(graphql: AdminGraphql, productId: string, fileId: string): Promise<string | null> {
+  try {
+    const status = await runLookupQuery(
+      graphql,
+      "file status",
+      `query fileStatusForAttach($ids: [ID!]!) {
+        nodes(ids: $ids) { ... on MediaImage { id fileStatus } }
+      }`,
+      { ids: [fileId] },
+    );
+    const node = (status?.nodes ?? [])[0];
+    if (!node?.id) return "file not found";
+    if (node.fileStatus !== "READY") return `file is not ready (${String(node.fileStatus)})`;
+    const r = await graphql(
+      `mutation fileAttachToProduct($files: [FileUpdateInput!]!) {
+        fileUpdate(files: $files) {
+          files { id }
+          userErrors { field message }
+        }
+      }`,
+      { variables: { files: [{ id: fileId, referencesToAdd: [productId] }] } },
+    );
+    const d = await r.json();
+    if (d?.errors) return "fileUpdate was refused";
+    const ue = d?.data?.fileUpdate?.userErrors ?? [];
+    if (ue.length > 0) return ue.map((e: { message: string }) => e.message).join("; ");
+    return null;
+  } catch (err) {
+    console.warn("[update-variant-galleries] attach failed", err instanceof Error ? err.message : "unknown");
+    return "attach failed";
+  }
+}
+
+const REFUSAL_TEXT: Record<MainRefusal, string> = {
+  mainChangedElsewhere: "the variant's main image was changed elsewhere in the meantime",
+  lookupFailed: "the variant's current state could not be read from Shopify",
+  attachFailed: "the image could not be added to the product",
+  attachNotConfirmed: "the image was added to the product but is not visible yet; nothing was saved for the variant, try again",
+  variantNotFound: "the variant no longer exists",
+  notAnImage: "only an image can be a variant's main image",
+  mainFileGone: "the image chosen as main image no longer exists",
+};
+
 
 // metafieldsSet userError messages that indicate one of our variant
 // metafield definitions has gone missing (deleted externally, type-changed,
@@ -76,11 +251,25 @@ interface UpdateVariantGalleriesBody {
    *  used for productCreateMedia.mediaContentType — defaults to "image" if
    *  unset, for backwards compatibility with older clients. */
   newMedia?: Array<{ resourceUrl: string; kind?: MediaKind }>;
-  variantGalleries?: Array<{ variantId: string; fileGids: string[]; galleryOnly?: boolean }>;
+  /** Per variant: the file references as the editor holds them, plus the EXPLICIT intent about
+   *  its main image (see variant-main-image.shared.ts): `galleryOnly` (main untouched),
+   *  `promoteIfEmpty` (no native image: a real edit promotes the first own image),
+   *  `removedMainGid` (the main image the merchant removed) or `mainGid` +
+   *  `expectedMainGid` (dragged to the first slot of the variant's own gallery). */
+  variantGalleries?: Array<{
+    variantId: string;
+    fileGids: string[];
+    galleryOnly?: boolean;
+    promoteIfEmpty?: boolean;
+    removedMainGid?: string;
+    mainGid?: string;
+    expectedMainGid?: string | null;
+  }>;
   mediaOrder?: Array<{ mediaId: string; position: number }>;
-  // Variant IDs whose Shopify image (mediaId) should be explicitly set to null.
-  // fileGids for these variants (if present) are gallery-only — no main GID at position 0.
-  clearVariantMainImages?: string[];
+  /** Variants whose main image the merchant removed (medium deleted) WITHOUT a pending
+   *  gallery, with the GID that was removed. Acts only while the fresh main image still is
+   *  that GID (or empty): a replay, a double click or a stale tab changes nothing. */
+  removedMainImages?: Array<{ variantId: string; removedMainGid: string }>;
   /** YouTube/Vimeo URLs per variant — persisted to custom.variant_external_videos
    *  (list.url). Server re-validates every URL with isValidExternalVideoUrl and
    *  drops anything we can't safely embed. */
@@ -111,6 +300,9 @@ interface UpdateVariantGalleriesBody {
    *  Position 0 must be a file reference (image) — enforced client-side.
    *  Stored in custom.variant_gallery_order (json). */
   variantGalleryOrder?: Array<{ variantId: string; orderJson: string }>;
+  /** GIDs of media an EARLIER, failed attempt of this save created (the retry references them by GID).
+   *  A removal does not promote them either; each must be product media in the fresh read. */
+  retainedCreatedGids?: string[];
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -121,12 +313,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     newMedia = [],
     variantGalleries = [],
     mediaOrder = [],
-    clearVariantMainImages = [],
+    removedMainImages = [],
     variantExternalVideos = [],
     variant3dModels = [],
     variant3dPreviews = [],
     knownModelGids = {},
     variantGalleryOrder = [],
+    retainedCreatedGids = [],
   } = body;
 
   const errors: string[] = [];
@@ -154,15 +347,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // FAILED, the metafield/mediaId points at an invalid media and this route
   // does not detect it (no status poll) — left to the webhook drift-reconcile.
   const completedSteps: string[] = [];
-  const fail = () => {
+  const fail = (refusals: Array<{ variantId: string; code: MainRefusal }> = []) => {
     console.error("[update-variant-galleries] aborting with errors", {
       errors,
       completedSteps,
+      refusals,
       newMediaCount: newMedia?.length ?? 0,
       newMediaKinds: (newMedia ?? []).map((m: { kind?: string }) => m.kind ?? "image"),
     });
-    return json({ success: false, errors, completedSteps }, { status: 422 });
+    // Media created before the failure are reported with it, so a second Save converts the staged
+    // references to these GIDs instead of uploading every new medium again.
+    return json({ success: false, errors, completedSteps, refusals, createdMedia: createdMediaList() }, { status: 422 });
   };
+  const createdMediaList = () =>
+    newMedia
+      .map(m => ({ resourceUrl: m.resourceUrl, mediaId: resourceUrlToGid[m.resourceUrl] ?? null, kind: (m.kind ?? "image") as MediaKind }))
+      .filter((m): m is { resourceUrl: string; mediaId: string; kind: MediaKind } => m.mediaId !== null);
 
   // 1. Neue Bilder zu Produkt hinzufügen und GID-Mapping aufbauen
   // resourceUrl (staged upload URL) → Shopify MediaImage GID
@@ -183,6 +383,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // polling timed out (merchant should re-save), "failed" → Shopify rejected
   // the .glb (invalid file).
   const modelResolutionStatus: Record<string, "ready" | "processing" | "failed"> = {};
+
+  // Pre-flight, BEFORE anything is created: a request that touches a main image needs a fresh read.
+  // Failing here (nothing written, nothing uploaded) means a retry cannot upload the new media twice.
+  {
+    const touching = [
+      ...variantGalleries.filter(v => v.removedMainGid || v.mainGid || v.promoteIfEmpty).map(v => v.variantId),
+      ...removedMainImages.map(r => r?.variantId),
+    ].filter((id): id is string => typeof id === "string");
+    if (touching.length > 0) {
+      const pre = await lookupProductMedia(admin.graphql as unknown as AdminGraphql, productId, touching);
+      if (!pre) {
+        const refusals = [...new Set(touching)].map(variantId => ({ variantId, code: "lookupFailed" as MainRefusal }));
+        errors.push(`variants: ${REFUSAL_TEXT.lookupFailed}; nothing was uploaded and nothing was written`);
+        return fail(refusals);
+      }
+    }
+  }
   if (newMedia.length > 0) {
     const r = await admin.graphql(`
       mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
@@ -216,7 +433,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         `aborting to avoid mapping variant galleries to the wrong images`
       );
     }
-    if (errors.length > 0) return fail();
+    // With equal counts the positional mapping holds even beside mediaUserErrors: what was created is
+    // reported with the failure, so a retry does not upload it again. With different counts nothing is
+    // mapped (the order of the answer cannot be trusted); those media may be duplicated by a retry.
+    if (errors.length > 0) {
+      if (createdMedia.length === newMedia.length) {
+        newMedia.forEach((m, i) => { if (createdMedia[i]?.id) resourceUrlToGid[m.resourceUrl] = createdMedia[i].id; });
+      }
+      return fail();
+    }
 
     // Map each resourceUrl to the GID of the newly created media (response order matches input order)
     newMedia.forEach((m, i) => {
@@ -469,35 +694,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const resolvedVariantGalleries = variantGalleries.map(vg => ({
     ...vg,
     fileGids: vg.fileGids.map(resolveGid),
+    ...(typeof vg.mainGid === "string" ? { mainGid: resolveGid(vg.mainGid) } : {}),
   }));
 
-  // Position-0 of a variant gallery becomes the variant's mediaId, which
-  // Shopify only accepts as a MediaImage GID. If the merchant accidentally
-  // drags a freshly uploaded video / 3D model into position 0 we reject up
-  // front with a clearer error than Shopify's "must be an Image" userError.
-  // Only known-non-image kinds (from newMedia) are blocked here — existing
-  // gid://shopify/Video/* and gid://shopify/Model3d/* are caught further
-  // down via the GID prefix check.
+  // What the client sent about a variant's main image is validated against the
+  // GID prefix further down (the plan refuses a main image that is not a
+  // MediaImage); the kinds of freshly uploaded media are known only here.
   const newMediaKindByResourceUrl: Record<string, MediaKind> = {};
   for (const m of newMedia) {
     if (m.kind) newMediaKindByResourceUrl[m.resourceUrl] = m.kind;
-  }
-  const clearSetEarly = new Set(clearVariantMainImages);
-  for (const vg of variantGalleries) {
-    if (vg.galleryOnly || clearSetEarly.has(vg.variantId)) continue;
-    const headRaw = vg.fileGids[0];
-    if (!headRaw) continue;
-    const headKind = newMediaKindByResourceUrl[headRaw];
-    const isKnownNonImage =
-      (headKind && headKind !== "image") ||
-      headRaw.startsWith("gid://shopify/Video/") ||
-      headRaw.startsWith("gid://shopify/Model3d/");
-    if (isKnownNonImage) {
-      errors.push(
-        `position-0: variant ${vg.variantId} would receive a non-image as featured media — ` +
-        `Shopify only accepts MediaImage for variant.image. Place an image at position 0.`
-      );
-    }
   }
 
   // Any-position Model3d guard. variant_gallery is a list.file_reference
@@ -520,10 +725,103 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  // The combined gallery order the client sent per variant is the source of truth
+  // for the voll-mix sequence. Validate its shape BEFORE anything is written for a
+  // variant: shape contract = array of { kind: "file" | "url" | "model", value:
+  // string } whose first entry is a file reference (only a MediaImage can be a
+  // variant's image; URLs / models can never lead).
+  const clientOrders = new Map<string, string>();
+  // Variants whose stored order must be DELETED (the client sent an empty order: no file entry is left,
+  // for example after the last image was removed and only a link would remain).
+  const orderClears = new Set<string>();
+  for (const vo of variantGalleryOrder) {
+    if (vo.orderJson === "") { orderClears.add(vo.variantId); continue; }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(vo.orderJson);
+    } catch {
+      errors.push(`variantGalleryOrder: variant ${vo.variantId} — orderJson is not valid JSON.`);
+      continue;
+    }
+    if (!Array.isArray(parsed)) {
+      errors.push(`variantGalleryOrder: variant ${vo.variantId} — orderJson must be an array.`);
+      continue;
+    }
+    let invalidEntry = false;
+    for (let i = 0; i < parsed.length; i++) {
+      const entry = parsed[i] as { kind?: unknown; value?: unknown };
+      const validKind = entry?.kind === "file" || entry?.kind === "url" || entry?.kind === "model";
+      if (!entry || typeof entry !== "object" || !validKind || typeof entry.value !== "string") {
+        errors.push(`variantGalleryOrder: variant ${vo.variantId} — entry ${i} is malformed.`);
+        invalidEntry = true;
+        break;
+      }
+    }
+    if (invalidEntry) continue;
+    // (an order of links / models only has no file entry and is valid: the embed renders those straight from it)
+    if ((parsed as Array<{ kind: string }>).some(e => e.kind === "file") && (parsed[0] as { kind: string }).kind !== "file") {
+      errors.push(
+        `variantGalleryOrder: variant ${vo.variantId} — position 0 must be a file ` +
+        `reference (image). Move an image to the first position before saving.`
+      );
+      continue;
+    }
+    // File entries are written as GIDs: a staged upload / asset URL of a medium created in this request
+    // becomes that medium's GID; one that resolves to nothing is dropped (never written as it is).
+    const resolved = (parsed as Array<{ kind: "file" | "url" | "model"; value: string }>)
+      .map(e => (e.kind === "file" ? { ...e, value: resolveGid(e.value) } : e))
+      .filter(e => e.kind !== "file" || e.value.startsWith("gid://"));
+    const head = normalizeOrderHead(resolved);
+    if (!head) { orderClears.add(vo.variantId); continue; }
+    clientOrders.set(vo.variantId, head);
+  }
+
+  // Links and models an order may list: the ones the request writes for the variant, else the stored ones
+  // (from the fresh read), else no restriction. A removed link must not stay live through an order.
+  const resolveModelForOrder = (u: string): string | null => {
+    const status = modelResolutionStatus[u];
+    if (status === "processing" || status === "failed") return null;
+    const resolved = resourceUrlToModelUrl[u] ?? u;
+    if (knownProductModelUrls.size > 0 && resolved === u && !freshUploadStagingUrls.has(u) && !knownProductModelUrls.has(u)) return null;
+    return isValid3dModelUrl(resolved) ? resolved : null;
+  };
+  const orderFor = (variantId: string, lk: VariantLookup | null | undefined): string | null | undefined => {
+    const raw = clientOrders.get(variantId);
+    if (raw === undefined) return undefined;
+    const ev = variantExternalVideos.find(e => e.variantId === variantId);
+    const md = variant3dModels.find(e => e.variantId === variantId);
+    const urls = ev ? new Set(ev.urls.filter(isValidExternalVideoUrl)) : lk?.links ? new Set(lk.links) : null;
+    // A model entry is written exactly as the metafield gets it: the staging URL of an upload becomes
+    // its CDN URL, and a model that is dropped (still processing, invalid, orphaned, not listed) is
+    // not in the order either.
+    const mapped: Array<{ kind: string; value: string }> = [];
+    for (const e of parseGalleryOrder(raw) ?? []) {
+      if (e.kind !== "model") { mapped.push(e); continue; }
+      if (md && !md.urls.includes(e.value)) continue;
+      const m = resolveModelForOrder(e.value);
+      if (m) mapped.push({ ...e, value: m });
+    }
+    return orderRestrictedToLinks(JSON.stringify(mapped), urls, md ? null : lk?.models ? new Set(lk.models) : null);
+  };
+  const storedOrderFor = (variantId: string, lk: VariantLookup): VariantLookup => {
+    if (!lk.order) return lk;
+    const ev = variantExternalVideos.find(e => e.variantId === variantId);
+    const md = variant3dModels.find(e => e.variantId === variantId);
+    const urls = ev ? new Set(ev.urls.filter(isValidExternalVideoUrl)) : lk.links ? new Set(lk.links) : null;
+    const models = md ? new Set(md.urls) : lk.models ? new Set(lk.models) : null;
+    return { ...lk, order: orderRestrictedToLinks(lk.order, urls, models) };
+  };
+  // Variants whose order metafield is deleted by this request (no plan wrote an order for them).
+  const orderDeletes = new Set<string>(orderClears);
+
   if (errors.length > 0) return fail();
 
-  // 2. Bilder neu sortieren
-  if (mediaOrder.length > 0) {
+  // 2. Bilder neu sortieren. Runs AFTER the variants were read afresh and checked (step 3),
+  // right before the variant write, so a refused variant leaves the product's media order alone.
+  let reordered = false;
+  const runReorder = async (): Promise<boolean> => {
+    reordered = true;
+    if (mediaOrder.length === 0) return true;
     const r = await admin.graphql(`
       mutation productReorderMedia($id: ID!, $moves: [MoveInput!]!) {
         productReorderMedia(id: $id, moves: $moves) {
@@ -540,98 +838,240 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const ue = d.data?.productReorderMedia?.userErrors ?? [];
     if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => `reorder: ${e.message}`));
     else completedSteps.push("productReorderMedia");
-    if (errors.length > 0) return fail();
-  }
+    return errors.length === 0;
+  };
 
   // 3. Variant-Galerien (Metafelder) updaten + Hauptbilder ggf. ersetzen
   //
+  // Write order: productCreateMedia (above); attach a library image to the product
+  // when it is to become a main image; a FRESH read and the expected-state check
+  // after both; productReorderMedia; ONE productVariantsBulkUpdate per call with
+  // `mediaId`, `variant_gallery` and `variant_gallery_order` in the same variant
+  // input; the DB mirror; metafieldsSet for videos and models (below).
+  //
   // The rule for every variant written here (see variant-main-image.shared.ts):
-  // the variant's main image is NEVER stored in `variant_gallery`, and a variant
-  // whose main image was removed gets the next image of its gallery as its new
-  // main image in the SAME write -- Shopify needs a main image. Only a variant
-  // with no image left to move up ends with `mediaId: null`.
-  const clearSet = new Set(clearVariantMainImages);
-  const hasVariantChanges = resolvedVariantGalleries.length > 0 || clearSet.size > 0;
-  // Order JSON rewritten because the main image changed (variantId -> JSON).
-  const orderOverrides = new Map<string, string>();
+  // the variant's main image is NEVER stored in `variant_gallery`, it changes only
+  // on an explicit intent compared with the fresh read, and a variant that loses
+  // its main image gets the next image of its OWN gallery in the same write. A
+  // variant the fresh read contradicts is refused (and nothing is written for it);
+  // the others are written. A failed read refuses every variant whose main image
+  // the request touches (fail closed).
+  type VariantIntent = {
+    variantId: string;
+    fileGids: string[] | null;
+    galleryOnly: boolean;
+    promoteIfEmpty: boolean;
+    removedMainGid: string | null;
+    mainGid: string | null;
+    expectedMainGid: string | null;
+  };
+  const gidOrNull = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? resolveGid(v) : null);
+  const intents = new Map<string, VariantIntent>();
+  for (const vg of resolvedVariantGalleries) {
+    intents.set(vg.variantId, {
+      variantId: vg.variantId,
+      fileGids: vg.fileGids,
+      galleryOnly: !!vg.galleryOnly,
+      promoteIfEmpty: !!vg.promoteIfEmpty,
+      removedMainGid: gidOrNull(vg.removedMainGid),
+      mainGid: gidOrNull(vg.mainGid),
+      expectedMainGid: gidOrNull(vg.expectedMainGid),
+    });
+  }
+  for (const rm of removedMainImages) {
+    const gid = gidOrNull(rm?.removedMainGid);
+    if (!rm?.variantId || !gid) continue;
+    const existing = intents.get(rm.variantId);
+    if (existing) existing.removedMainGid = existing.removedMainGid ?? gid;
+    else {
+      intents.set(rm.variantId, {
+        variantId: rm.variantId,
+        fileGids: null,
+        galleryOnly: false,
+        promoteIfEmpty: false,
+        removedMainGid: gid,
+        mainGid: null,
+        expectedMainGid: null,
+      });
+    }
+  }
+
+  // Variants refused (variantId -> code), reported to the client in its own words.
+  const refusedVariants: Array<{ variantId: string; code: MainRefusal }> = [];
   // The plan each written variant got, for the local mirror.
   const plans = new Map<string, VariantWritePlan>();
-  if (hasVariantChanges) {
-    const looked = await lookupProductMedia(admin.graphql as unknown as AdminGraphql, productId);
-    // A candidate must be an image the PRODUCT holds: Shopify refuses a `mediaId`
-    // that is not one of the product's media, and that would refuse the whole save.
-    const isCandidate = looked ? (gid: string) => looked.media.get(gid) === "IMAGE" : undefined;
-    const clientOrders = new Map(variantGalleryOrder.map((vo) => [vo.variantId, vo.orderJson]));
-    const variantMap = new Map<string, object>();
+  const writtenByBulk = new Set<string>();
+  let lookedFinal: ProductMediaLookup | null = null;
+  if (intents.size > 0) {
+    const graphql = admin.graphql as unknown as AdminGraphql;
+    const touchesMain = (i: VariantIntent) => !!i.removedMainGid || !!i.mainGid || i.promoteIfEmpty;
+    let looked = await lookupProductMedia(graphql, productId, [...intents.keys()]);
+
+    // Image references that are not product media may be library files (attachable) or
+    // dead references (a deleted medium); only the latter must never be promoted.
+    let deadFiles = new Set<string>();
+    if (looked) {
+      const refs: string[] = [];
+      for (const intent of intents.values()) {
+        for (const g of [...(intent.fileGids ?? looked.variants.get(intent.variantId)?.gallery ?? []), ...(intent.mainGid ? [intent.mainGid] : [])]) {
+          if (g.startsWith("gid://shopify/MediaImage/") && !looked.media.has(g)) refs.push(g);
+        }
+      }
+      deadFiles = await findDeadFiles(graphql, refs);
+    }
+
+    const createdFromRequest = Object.values(resourceUrlToGid);
+    const planAll = (lookup: ProductMediaLookup | null) => {
+      // (media of an earlier failed attempt count as created too, when the fresh read confirms them)
+      const createdGidSet = new Set([
+        ...createdFromRequest,
+        ...(Array.isArray(retainedCreatedGids) ? retainedCreatedGids : []).filter((g): g is string => typeof g === "string" && !!lookup?.media.has(g)),
+      ]);
+      plans.clear();
+      for (const intent of intents.values()) {
+        if (lookup && !lookup.variants.has(intent.variantId)) {
+          // An unknown or deleted variant refuses only itself; Shopify would refuse the whole bulk update.
+          plans.set(intent.variantId, { action: "refuse", refusal: "variantNotFound", mediaId: undefined, gallery: [] });
+          continue;
+        }
+        if (intent.mainGid && deadFiles.has(intent.mainGid)) {
+          // A chosen main image whose file is gone: refused before any attach is attempted.
+          plans.set(intent.variantId, { action: "refuse", refusal: "mainFileGone", mediaId: undefined, gallery: [] });
+          continue;
+        }
+        const plan = planVariantWrite({
+            fileGids: intent.fileGids,
+            galleryOnly: intent.galleryOnly,
+            promoteIfEmpty: intent.promoteIfEmpty,
+            removedMainGid: intent.removedMainGid,
+            mainGid: intent.mainGid,
+            expectedMainGid: intent.expectedMainGid,
+            lookup: lookup?.variants.get(intent.variantId) ? storedOrderFor(intent.variantId, lookup.variants.get(intent.variantId)!) : null,
+            clientOrderJson: orderFor(intent.variantId, lookup?.variants.get(intent.variantId)) ?? null,
+            productMedia: lookup?.media ?? null,
+            isCandidate: (gid: string) => !deadFiles.has(gid),
+            // A removal does not promote a medium created in THIS request (the editor shows no promoted image
+            // for it); a variant with NO native image gets its first own image, a created one included.
+            createdGids: createdGidSet,
+        });
+        // A reference to a file that no longer exists is not written back into the gallery.
+        if (deadFiles.size > 0) plan.gallery = plan.gallery.filter((g) => !deadFiles.has(g));
+        plans.set(intent.variantId, plan);
+      }
+    };
+    planAll(looked);
+
+    // A main image is never touched on a guess: a failed read refuses the write
+    // (the media already created above stay on the product, nothing else changes).
+    const unread = [...plans.entries()].filter(([, p]) => p.action === "refuse" && p.refusal === "lookupFailed");
+    if (unread.length > 0) {
+      for (const [variantId] of unread) refusedVariants.push({ variantId, code: "lookupFailed" });
+      errors.push(`variants: ${REFUSAL_TEXT.lookupFailed}; no main image was changed and nothing was written for the variants`);
+      return fail(refusedVariants);
+    }
+
+    // Attach library images that are about to become a main image. Shopify refuses a
+    // `mediaId` that is not one of the product's media, and that would refuse the whole
+    // bulk update. The attach only ADDS the product reference; nothing here undoes it.
+    const toAttach = [...new Set([...plans.values()].map(p => p.attach).filter((g): g is string => !!g))];
+    if (toAttach.length > 0) {
+      const attachFailed = new Set<string>();
+      for (const gid of toAttach) {
+        const err = await attachFileToProduct(graphql, productId, gid);
+        if (err) {
+          attachFailed.add(gid);
+          console.warn("[update-variant-galleries] attach refused", { error: err });
+        } else {
+          completedSteps.push("fileUpdate");
+        }
+      }
+      // Fresh read after the attach: the expected-state check runs again on it, and
+      // an image that did not show up among the product's media is not promoted.
+      looked = await lookupProductMedia(graphql, productId, [...intents.keys()]);
+      if (!looked && [...intents.values()].some(touchesMain)) {
+        for (const intent of intents.values()) if (touchesMain(intent)) refusedVariants.push({ variantId: intent.variantId, code: "lookupFailed" });
+        errors.push(`variants: ${REFUSAL_TEXT.lookupFailed}; no main image was changed and nothing was written for the variants`);
+        return fail(refusedVariants);
+      }
+      planAll(looked);
+      for (const [variantId, plan] of plans) {
+        if (plan.attach && (attachFailed.has(plan.attach) || !looked?.media.has(plan.attach))) {
+          // Shopify accepted the attach but the read does not show it yet (read lag) is NOT a refusal
+          // by Shopify: nothing is written and the merchant keeps the edit to try again.
+          const code: MainRefusal = attachFailed.has(plan.attach) ? "attachFailed" : "attachNotConfirmed";
+          plans.set(variantId, { action: "refuse", refusal: code, mediaId: undefined, gallery: [] });
+        }
+      }
+      const unconfirmed = [...plans.entries()].filter(([, p]) => p.refusal === "attachNotConfirmed");
+      if (unconfirmed.length > 0) {
+        // Every refused variant is named, not only the unconfirmed ones.
+        for (const [variantId, p] of plans) if (p.action === "refuse") refusedVariants.push({ variantId, code: p.refusal ?? "attachNotConfirmed" });
+        errors.push(`variants: ${REFUSAL_TEXT.attachNotConfirmed}`);
+        return fail(refusedVariants);
+      }
+    }
+
+    lookedFinal = looked;
     const galleryMetafield = (gallery: string[]) => ({
       namespace: "custom",
       key: "variant_gallery",
       value: JSON.stringify(gallery),
       type: "list.file_reference",
     });
-    const planFor = (variantId: string, fileGids: string[] | null, galleryOnly: boolean) => {
-      const plan = planVariantWrite({
-        fileGids,
-        galleryOnly,
-        clear: clearSet.has(variantId),
-        lookup: looked?.variants.get(variantId) ?? null,
-        clientOrderJson: clientOrders.get(variantId) ?? null,
-        isCandidate,
-      });
-      plans.set(variantId, plan);
-      if (plan.order) orderOverrides.set(variantId, plan.order);
-      return plan;
-    };
-
-    for (const vg of resolvedVariantGalleries) {
-      const plan = planFor(vg.variantId, vg.fileGids, !!vg.galleryOnly);
-      variantMap.set(vg.variantId, {
-        id: vg.variantId,
-        ...(plan.mediaId !== undefined && { mediaId: plan.mediaId }),
-        metafields: [galleryMetafield(plan.gallery)],
-      });
-    }
-
-    // Variants that only lose their main image (a deleted medium): promote from
-    // the stored gallery.
-    for (const vid of clearSet) {
-      if (variantMap.has(vid)) continue;
-      const plan = planFor(vid, null, false);
-      variantMap.set(vid, {
-        id: vid,
-        mediaId: plan.mediaId ?? null,
-        ...(looked?.variants.has(vid) && { metafields: [galleryMetafield(plan.gallery)] }),
-      });
-    }
-
-    const variantPayload = [...variantMap.values()];
-    const r = await admin.graphql(`
-      mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-        productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-          productVariants { id }
-          userErrors { field message }
-        }
+    const variantMap = new Map<string, object>();
+    for (const [variantId, plan] of plans) {
+      if (plan.action === "refuse") {
+        refusedVariants.push({ variantId, code: plan.refusal ?? "mainChangedElsewhere" });
+        continue;
       }
-    `, {
-      variables: {
-        productId,
-        variants: variantPayload,
-      },
-    });
-    const d = await r.json();
-    const ue = d.data?.productVariantsBulkUpdate?.userErrors ?? [];
-    if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => `variantsBulkUpdate: ${e.message}`));
-    else completedSteps.push("productVariantsBulkUpdate");
+      if (plan.action === "skip") continue;
+      const clientOrderNow = orderFor(variantId, looked?.variants.get(variantId));
+      const orderValue = plan.order ?? clientOrderNow ?? undefined;
+      // The client sent an order, but nothing valid is left of it (only links): the stored one is deleted.
+      if (!plan.order && clientOrderNow === null) orderDeletes.add(variantId);
+      variantMap.set(variantId, {
+        id: variantId,
+        ...(plan.mediaId !== undefined && { mediaId: plan.mediaId }),
+        metafields: [
+          galleryMetafield(plan.gallery),
+          ...(orderValue ? [{ namespace: "custom", key: "variant_gallery_order", value: orderValue, type: "json" }] : []),
+        ],
+      });
+      writtenByBulk.add(variantId);
+    }
 
-    if (errors.length === 0) {
-      await Promise.all([...plans.entries()].map(([variantId, plan]) =>
-        db.productVariant.updateMany({
-          where: { shopifyGid: variantId },
-          data: { galleryJson: JSON.stringify(plan.gallery) },
-        }),
-      ));
+    if (!(await runReorder())) return fail();
+    if (variantMap.size > 0) {
+      const r = await admin.graphql(`
+        mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+            productVariants { id }
+            userErrors { field message }
+          }
+        }
+      `, {
+        variables: {
+          productId,
+          variants: [...variantMap.values()],
+        },
+      });
+      const d = await r.json();
+      const ue = d.data?.productVariantsBulkUpdate?.userErrors ?? [];
+      if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => `variantsBulkUpdate: ${e.message}`));
+      else completedSteps.push("productVariantsBulkUpdate");
+
+      if (errors.length === 0) {
+        await Promise.all([...variantMap.keys()].map((variantId) =>
+          db.productVariant.updateMany({
+            where: { shopifyGid: variantId },
+            data: { galleryJson: JSON.stringify(plans.get(variantId)!.gallery) },
+          }),
+        ));
+      }
     }
   }
+
+  if (!reordered && !(await runReorder())) return fail();
 
   // 4. External videos (YouTube/Vimeo URLs) + combined gallery order.
   // These live on separate metafields because list.file_reference cannot hold
@@ -749,60 +1189,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
-  // A main image that moved up changes the order the client sent (or the stored
-  // one): the new main image first, the removed one gone. Those are written as
-  // computed; the client's own copy for such a variant is not validated again.
-  for (const [variantId, orderJson] of orderOverrides) {
-    metafieldOps.push({ ownerId: variantId, namespace: "custom", key: "variant_gallery_order", type: "json", value: orderJson });
-  }
-  for (const vo of variantGalleryOrder) {
-    if (orderOverrides.has(vo.variantId)) continue;
-    // The order metafield is the source of truth for the voll-mix gallery
-    // sequence. Validate the shape here — relying purely on client-side
-    // checks would let a DevTools-savvy merchant persist e.g. a URL at
-    // position 0, which would desync variant.featured_image (still
-    // MediaImage from vg.fileGids[0]) from the storefront's first tile.
-    // Shape contract: array of { kind: "file" | "url" | "model", value: string }
-    // with the first entry's kind === "file" (only MediaImage can become
-    // variant.image — URLs / models can never occupy position 0).
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(vo.orderJson);
-    } catch {
-      errors.push(`variantGalleryOrder: variant ${vo.variantId} — orderJson is not valid JSON.`);
-      continue;
-    }
-    if (!Array.isArray(parsed)) {
-      errors.push(`variantGalleryOrder: variant ${vo.variantId} — orderJson must be an array.`);
-      continue;
-    }
-    let invalidEntry = false;
-    for (let i = 0; i < parsed.length; i++) {
-      const entry = parsed[i] as { kind?: unknown; value?: unknown };
-      const validKind = entry?.kind === "file" || entry?.kind === "url" || entry?.kind === "model";
-      if (!entry || typeof entry !== "object" || !validKind || typeof entry.value !== "string") {
-        errors.push(`variantGalleryOrder: variant ${vo.variantId} — entry ${i} is malformed.`);
-        invalidEntry = true;
-        break;
+  // A client order for a variant this request wrote above travelled in the same
+  // variant input; a refused or skipped variant gets none. Only an order for a
+  // variant with no gallery entry of its own is written here.
+  for (const variantId of clientOrders.keys()) {
+    const orderJson = orderFor(variantId, lookedFinal?.variants.get(variantId));
+    if (intents.has(variantId)) {
+      // A bare replay (skip) must not drop an order-only pending change; the removed main image is
+      // taken out of it.
+      const plan = plans.get(variantId);
+      if (plan?.action === "skip") {
+        if (orderJson === null) { orderDeletes.add(variantId); continue; }
+        const removed = intents.get(variantId)?.removedMainGid ?? null;
+        const cleaned = removed && orderJson ? orderAfterMainChange(orderJson, removed, null) : orderJson;
+        if (cleaned ?? orderJson) metafieldOps.push({ ownerId: variantId, namespace: "custom", key: "variant_gallery_order", type: "json", value: (cleaned ?? orderJson)! });
       }
-    }
-    if (invalidEntry) continue;
-    if (parsed.length > 0 && (parsed[0] as { kind: string }).kind !== "file") {
-      errors.push(
-        `variantGalleryOrder: variant ${vo.variantId} — position 0 must be a file ` +
-        `reference (image). Move an image to the first position before saving.`
-      );
       continue;
     }
-    metafieldOps.push({
-      ownerId: vo.variantId,
-      namespace: "custom",
-      key: "variant_gallery_order",
-      type: "json",
-      value: vo.orderJson,
-    });
+    if (orderJson === null) { orderDeletes.add(variantId); continue; }
+    if (orderJson) metafieldOps.push({ ownerId: variantId, namespace: "custom", key: "variant_gallery_order", type: "json", value: orderJson });
   }
   if (errors.length > 0) return fail();
+
+  // A refused variant gets nothing: no videos, 3D models or previews either.
+  const refusedIds = new Set(refusedVariants.map(r => r.variantId));
+  for (let i = metafieldOps.length - 1; i >= 0; i--) if (refusedIds.has(metafieldOps[i].ownerId)) metafieldOps.splice(i, 1);
 
   if (metafieldOps.length > 0) {
     const r = await admin.graphql(`
@@ -825,6 +1236,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (missingDef) invalidateVariantDefsCache(session.shop);
     } else {
       completedSteps.push("metafieldsSet");
+    }
+  }
+
+  // Orders that are left with no file entry are DELETED (an order with only links would be invalid, and the
+  // stored one would keep a removed link live): the embed then takes its default path.
+  // (a clear that arrives together with an intent whose plan writes its own order is not applied: that order was
+  // built from the stored one restricted to the variant's real links / models, so no removed entry stays live)
+  const deleteIds = [...orderDeletes].filter(id => !refusedIds.has(id) && !(plans.get(id)?.order));
+  if (errors.length === 0 && deleteIds.length > 0) {
+    const r = await admin.graphql(`
+      mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+        metafieldsDelete(metafields: $metafields) {
+          deletedMetafields { ownerId namespace key }
+          userErrors { field message }
+        }
+      }
+    `, { variables: { metafields: deleteIds.map(ownerId => ({ ownerId, namespace: "custom", key: "variant_gallery_order" })) } });
+    const d = await r.json();
+    const payload = d.data?.metafieldsDelete;
+    const ue = payload?.userErrors ?? [];
+    if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => `metafieldsDelete: ${e.message}`));
+    else if (!payload || !Array.isArray(payload.deletedMetafields)) {
+      // a payload that is null (a throttled answer carries empty userErrors too) confirms nothing
+      errors.push("metafieldsDelete: no confirmation from Shopify");
+    } else {
+      const echoed: Array<{ ownerId?: string; key?: string } | null> = payload.deletedMetafields;
+      // positional: slot i answers input i; a null slot means "not found" = already gone for THAT input
+      const missing = echoed.length !== deleteIds.length
+        ? deleteIds
+        : deleteIds.filter((id, i) => echoed[i] !== null && !(echoed[i]?.ownerId === id && echoed[i]?.key === "variant_gallery_order"));
+      if (missing.length > 0) errors.push("metafieldsDelete: the order was not confirmed deleted");
+      else completedSteps.push("metafieldsDelete");
     }
   }
 
@@ -862,5 +1305,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       kind: (m.kind ?? "image") as MediaKind,
     }))
     .filter((m): m is { resourceUrl: string; mediaId: string; kind: MediaKind } => m.mediaId !== null);
-  return json({ success: true, droppedExternalUrls, dropped3dModelUrls, createdMedia });
+  // Refused variants: when nothing at all was written the request failed (the client
+  // keeps its pending state); when something was (created media, other variants) it
+  // went through, and the client is told which variants were left alone, in its own
+  // words, so it neither replays the new media nor hides that part of the edit.
+  // (an attach alone is not a saved edit: a variant refused after only a fileUpdate is not "saved")
+  if (refusedVariants.length > 0 && completedSteps.filter(step => step !== "fileUpdate").length === 0) {
+    errors.push(...refusedVariants.map(r => `variant ${r.variantId}: ${REFUSAL_TEXT[r.code]}`));
+    return fail(refusedVariants);
+  }
+  return json({ success: true, droppedExternalUrls, dropped3dModelUrls, createdMedia, refusedVariants });
 };

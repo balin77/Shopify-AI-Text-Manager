@@ -548,6 +548,9 @@ interface SortableImageGridProps {
   skipDndContext?: boolean;
   // When false, no image gets the "main" gold border (variant has no featured image)
   hasMainImage?: boolean;
+  /** The tile that IS the main image (gold border). Unset = the first tile, as before; a variant
+   *  gallery sets it because the saved order, not the position, decides where the main image sits. */
+  mainUrl?: string | null;
   localAltTexts?: Record<string, string>;
   isPrimaryLocale?: boolean;
   /** Per tile URL: the replacement its medium shows in the language the editor shows (product gallery only). */
@@ -569,6 +572,7 @@ export function SortableImageGrid({
   onOpenPicker,
   skipDndContext = false,
   hasMainImage = true,
+  mainUrl,
   localAltTexts,
   isPrimaryLocale = true,
   replacements,
@@ -682,7 +686,7 @@ export function SortableImageGrid({
             meta={imageMetas[url]}
             onSelect={(sel) => onSelect?.(url, sel)}
             thumbSize={thumbSize}
-            isMain={showPlaceholder && hasMainImage && idx === 0}
+            isMain={showPlaceholder && hasMainImage && (mainUrl !== undefined ? mainUrl !== null && url === mainUrl : idx === 0)}
             localAltTexts={localAltTexts}
             isPrimaryLocale={isPrimaryLocale}
             replacement={replacements?.[url]}
