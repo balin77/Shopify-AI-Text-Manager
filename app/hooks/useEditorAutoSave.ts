@@ -428,6 +428,11 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       if (
         locale === primaryLocale && field.type === "slug" &&
         value === (originalLoadedValuesRef.current[field.key] || "") &&
+        (() => {
+          // A handle a pending save carries with another value is announced by getChangedFields: keep it.
+          const carried = pendingCarriedValueRef?.current(locale, savedMarketIdRef.current ?? "", field.key);
+          return carried === undefined || carried === value;
+        })() &&
         staleAgainstServerRef?.current(field.key, value)
       ) {
         return;

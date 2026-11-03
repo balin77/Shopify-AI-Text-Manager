@@ -1135,7 +1135,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    */
   const baselineValueFor = (itemId: string, key: string, sent: string): string => {
     if (savedPrimaryValuesRef.current[itemId] && key in savedPrimaryValuesRef.current[itemId]) return sent;
-    return serverValueOf(key, itemId) ?? sent;
+    const server = serverValueOf(key, itemId);
+    if (server === undefined || server === sent) return sent;
+    // Only the server's own normalisation of the sent text counts; any other read (a stale or third value)
+    // must not replace what was just confirmed, or the next save would write that old text unannounced.
+    const isSlug = effectiveFieldDefinitionsRef.current.find((f) => f.key === key)?.type === "slug";
+    const norm = (v: string) => (isSlug ? sanitizeSlug(v) : v.trim());
+    return norm(sent) === server ? server : sent;
   };
   /** The field values of a request's form (not action / itemId / locale ...). */
   const fieldValuesOf = (sentFields: Record<string, string>): Record<string, string> => {

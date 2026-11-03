@@ -969,6 +969,84 @@ describe("R15 C1: the server's own normalisation of a sent value is not a differ
   });
 });
 
+describe("R16 HIGH: the baseline follows the server only for its own normalisation", () => {
+  const OK = (n: number) => ({ success: true, actionType: "updateContent", n });
+  for (const third of [false, true]) {
+    it(`a stale ${third ? "third-value " : ""}read after Reload never makes the old text an unannounced write`, async () => {
+      const old = [{ id: A, title: "Old" }, { id: B, title: "vert" }];
+      const m = mount(old, "de");
+      await m.flush();
+      act(() => m.h().handleValueChange("title", "New"));
+      act(() => m.h().handleSave());
+      m.fetcher.state = "submitting";
+      await m.rerender(old);
+      // Reload during the flight: the read shows the old (or a third) value, the overlay ends
+      await act(async () => { m.hook.result.current.helpers.triggerDataRefresh(); });
+      await m.rerender([{ id: A, title: third ? "Third" : "Old", seoDesc: "r" }, old[1]]);
+      m.fetcher.state = "loading";
+      await m.rerender([{ id: A, title: third ? "Third" : "Old", seoDesc: "r" }, old[1]], OK(1));
+      m.fetcher.state = "idle";
+      await m.rerender([{ id: A, title: third ? "Third" : "Old", seoDesc: "r" }, old[1]], OK(1));
+      await m.flush();
+      act(() => m.h().handleValueChange("metaDescription", "m"));
+      act(() => m.h().handleSave());
+      const f = m.sent();
+      const announced = JSON.parse(f.changedFields ?? "[]");
+      // title is announced, or not sent at all; never the old/third text as an unannounced write
+      expect(f.title === undefined || announced.includes("title")).toBe(true);
+    });
+  }
+});
+
+describe("R16 HIGH (handle): a stale read after Reload does not make the old handle an unannounced write", () => {
+  it("handle", async () => {
+    const OK = (n: number) => ({ success: true, actionType: "updateContent", n });
+    const withHandle = (p: any) => ({ ...product(p), handle: p.handle ?? "h" });
+    const old = [{ id: A, title: "Old", handle: "h" }, { id: B, title: "vert" }];
+    const m = mount(old, "de", PRODUCTS_CONFIG, withHandle);
+    await m.flush();
+    act(() => m.h().handleValueChange("handle", "Neu Über"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(old);
+    await act(async () => { m.hook.result.current.helpers.triggerDataRefresh(); });
+    const stale = [{ id: A, title: "Old", handle: "h", seoDesc: "r" } as any, old[1]];
+    await m.rerender(stale);
+    m.fetcher.state = "loading";
+    await m.rerender(stale, OK(1));
+    m.fetcher.state = "idle";
+    await m.rerender(stale, OK(1));
+    await m.flush();
+    act(() => m.h().handleValueChange("metaDescription", "m"));
+    act(() => m.h().handleSave());
+    const f = m.sent();
+    expect(f.handle === undefined || JSON.parse(f.changedFields ?? "[]").includes("handle")).toBe(true);
+  });
+});
+
+describe("R16 LOW: a handle that is announced is not left out of the form", () => {
+  it("carried-only handle behind a save that is out", async () => {
+    const withHandle = (p: any) => ({ ...product(p), handle: p.handle ?? "h" });
+    const old = [{ id: A, title: "Old", handle: "h" }, { id: B, title: "vert" }];
+    const m = mount(old, "de", PRODUCTS_CONFIG, withHandle);
+    await m.flush();
+    act(() => m.h().handleValueChange("handle", "X"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender([{ id: A, title: "Old", handle: "ext" } as any, old[1]]);
+    act(() => m.h().handleValueChange("handle", "h"));
+    act(() => m.h().handleValueChange("metaDescription", "m"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "Old", handle: "ext" } as any, old[1]], { success: true, actionType: "updateContent", n: 1 });
+    await m.flush();
+    const f = formsOf(m).filter((x: any) => x.action === "updateContent").pop();
+    const announced = JSON.parse(f.changedFields ?? "[]");
+    expect(announced).toContain("handle");
+    expect(f.handle).toBe("h");
+  });
+});
+
 describe("R14 MEDIUM: a carried-only announcement of an OWN save is dropped against the server value", () => {
   it("own save of the baseline value behind a refused full save", async () => {
     const items = [{ id: A, title: "A0" }, { id: B, title: "vert" }];
