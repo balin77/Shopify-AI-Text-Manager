@@ -204,8 +204,8 @@ export function createRateLimitFetch(inner: typeof fetch, options: RateLimitFetc
     // the same bucket (copy to all languages, a save and an AI accept share one).
     // The slot is free the moment the older write is SENT again, not when its
     // handler finishes, and waiting for it is capped. Limit: ordering holds among
-    // writes that are already held or whose path is known to belong to a closed
-    // bucket; the FIRST send of a path the wrapper has never seen refused can still
+    // writes that are already held or whose path is known to belong to a bucket;
+    // the FIRST send of a path the wrapper has never seen refused can still
     // overtake a held write while it sleeps.
     const register = (bucket: string) => {
       if (!isWrite || registeredBucket) return;
@@ -237,6 +237,10 @@ export function createRateLimitFetch(inner: typeof fetch, options: RateLimitFetc
         gateWaits++;
         if (knownBucket) register(knownBucket);
       } else {
+        // A path known to belong to a bucket takes its turn behind older held writes
+        // of it even when the window is already open again (the older one may be
+        // asleep in its jitter).
+        if (knownBucket) register(knownBucket);
         while (hasOlderWaiting() && ++turnWaits <= MAX_TURN_WAITS) await sleep(25, signal);
         release();
         const attempt = isRequest ? (input as Request).clone() : input;

@@ -61,6 +61,16 @@ describe("ordering", () => {
     expect(log.map((l) => l.body)).toEqual(["A", "A", "B", "C"]);
   });
 
+  it("a newer write of the SAME known path does not overtake a held older one while the window is open again (jitter window)", async () => {
+    install((n) => (n === 1 ? refused(2) : ok()), [0.99, 0]);
+    const a = globalThis.fetch("/api/x", { method: "POST", body: "A" });
+    await vi.advanceTimersByTimeAsync(2200); // window open (2 s), A still asleep in its jitter
+    const b = globalThis.fetch("/api/x", { method: "POST", body: "B" });
+    await vi.advanceTimersByTimeAsync(20_000);
+    await Promise.all([a, b]);
+    expect(log.map((l) => l.body)).toEqual(["A", "A", "B"]);
+  });
+
   it("limit, stated: the first send of a path never seen refused can overtake a held write", async () => {
     install((n) => (n === 1 ? refused(5) : ok()), [0.99]);
     const older = globalThis.fetch("/api/content-editor-action", { method: "POST", body: "older" });

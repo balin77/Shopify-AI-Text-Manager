@@ -135,6 +135,139 @@ describe("BLOCKER 1c: switching away and back before the answer", () => {
   });
 });
 
+describe("M1: the record of an abandoned save does not outlive its answer", () => {
+  it("a later unrelated failure is not shown as the abandoned product's refusal", async () => {
+    const items = [{ id: A, title: "rouge", frTitle: "noirA" }, { id: B, title: "vert", frTitle: "noirB" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    act(() => m.h().handleValueChange("seoTitle", "seoB"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: true, actionType: "updateContent" });
+    await m.rerender(items, { success: true, actionType: "updateContent", n: 2 });
+    infoBox.mockClear();
+    await m.rerender(items, { success: false, error: "unrelated", actionType: "generateAIText" });
+    expect(infoBox.mock.calls.some((c) => String(c[0]).includes("rouge"))).toBe(false);
+  });
+});
+
+describe("H1: a saved overlay has an absolute end", () => {
+  it("after the server moved back to the pre-save value the overlay still ends, and shows what Shopify holds", async () => {
+    const real = Date.now();
+    let offset = 0;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => real + offset);
+    try {
+      const m = mount([{ id: A, title: "rouge" }], "de");
+      await m.flush();
+      act(() => m.h().handleValueChange("title", "bleu"));
+      act(() => m.h().handleSave());
+      await m.rerender([{ id: A, title: "rouge" }], { success: true, actionType: "updateContent" });
+      await m.rerender([{ id: A, title: "bleu" }]);
+      // somebody else put the old text back
+      await m.rerender([{ id: A, title: "rouge", seoDesc: "x" }]);
+      expect(m.v().title).toBe("bleu");
+      offset = 2 * 60_000; // past the bridge after the first catch-up, well before the hard cap
+      await m.rerender([{ id: A, title: "rouge", seoDesc: "y" }]);
+      expect(m.v().title).toBe("rouge");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("H1b: an overlay the server never confirmed ends at the hard cap", () => {
+  it("shows what Shopify holds after ten minutes", async () => {
+    const real = Date.now();
+    let offset = 0;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => real + offset);
+    try {
+      const m = mount([{ id: A, title: "rouge" }], "de");
+      await m.flush();
+      act(() => m.h().handleValueChange("title", "bleu"));
+      act(() => m.h().handleSave());
+      await m.rerender([{ id: A, title: "rouge" }], { success: true, actionType: "updateContent" });
+      await m.rerender([{ id: A, title: "rouge", seoDesc: "x" }]);
+      expect(m.v().title).toBe("bleu");
+      offset = 11 * 60_000;
+      await m.rerender([{ id: A, title: "rouge", seoDesc: "y" }]);
+      expect(m.v().title).toBe("rouge");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("H2: a lagging read after switching away and back does not revert a caught-up save", () => {
+  it("shows the saved text, not the pre-save one", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "bleu"));
+    act(() => m.h().handleSave());
+    await m.rerender(items, { success: true, actionType: "updateContent" });
+    await m.rerender([{ id: A, title: "bleu" }, items[1]]);
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    await act(async () => { await m.h().handleItemSelect(A); });
+    await m.flush();
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "moved" }, items[1]]);
+    expect(m.v().title).toBe("bleu");
+  });
+});
+
+describe("H3: foreign text typed during flight in a field the save did not carry stays a change", () => {
+  it("reads dirty after the answer and survives the re-read", async () => {
+    const m = mount([{ id: A, title: "rouge", frTitle: "noir" }], "fr");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "bleu"));
+    act(() => m.h().handleSave());
+    act(() => m.h().handleValueChange("seoTitle", "typed"));
+    await m.rerender([{ id: A, title: "rouge", frTitle: "noir" }], { success: true, actionType: "updateContent" });
+    expect(m.dirty()).toBe(true);
+    await m.rerender([{ id: A, title: "rouge", frTitle: "bleu" }]);
+    expect(m.v().seoTitle).toBe("typed");
+    expect(m.dirty()).toBe(true);
+  });
+});
+
+describe("H3b: text typed on top of a sent foreign field is not cached as stored", () => {
+  it("Discard after the answer shows what was SENT", async () => {
+    const m = mount([{ id: A, title: "rouge", frTitle: "noir" }], "fr");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "bleu"));
+    act(() => m.h().handleSave());
+    act(() => m.h().handleValueChange("title", "bleu et plus"));
+    await m.rerender([{ id: A, title: "rouge", frTitle: "noir" }], { success: true, actionType: "updateContent" });
+    await m.rerender([{ id: A, title: "rouge", frTitle: "bleu", seoDesc: "z" }]);
+    act(() => m.h().handleDiscard());
+    await m.flush();
+    expect(m.v().title).toBe("bleu");
+  });
+});
+
+describe("L3: an abandoned save confirmed only in part keeps no unconfirmed text as stored", () => {
+  it("the unconfirmed field shows what Shopify holds when the merchant is back", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "a1"));
+    act(() => m.h().handleSave());
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    await m.rerender(items, { success: true, actionType: "updateContent", unconfirmedFields: ["title"] });
+    await act(async () => { await m.h().handleItemSelect(A); });
+    await m.flush();
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "moved" }, items[1]]);
+    expect(m.v().title).toBe("rouge");
+  });
+});
+
 describe("BLOCKER 2: foreign text typed between submit and answer survives", () => {
   it("stays a change and survives the re-read", async () => {
     const m = mount([{ id: A, title: "rouge", frTitle: "noir" }], "fr");

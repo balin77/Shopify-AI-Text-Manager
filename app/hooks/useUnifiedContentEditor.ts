@@ -940,13 +940,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    *  every later re-resolve shows the unsent text as if it were stored (and
    *  not dirty). Only the keys this save carried; an older, confirmed overlay
    *  of other fields keeps bridging its lagging read. */
-  const forgetFailedPrimarySave = () => {
+  const forgetFailedPrimarySave = (onlyKeys?: ReadonlySet<string>) => {
+    typedWhileSavingRef.current.clear();
     const scope = inFlightScopeRef.current;
     const itemId = scope?.sentFields?.itemId;
     if (!scope || !itemId || scope.locale !== primaryLocale) return;
     const cached = savedPrimaryValuesRef.current[itemId];
     if (!cached) return;
-    for (const key of Object.keys(scope.sentFields ?? {})) delete cached[key];
+    for (const key of Object.keys(scope.sentFields ?? {})) if (!onlyKeys || onlyKeys.has(key)) delete cached[key];
     if (Object.keys(cached).length === 0) delete savedPrimaryValuesRef.current[itemId];
   };
   const settleOwnSaveFor = useCallback((partial: PartialSave | null) => {
@@ -1472,6 +1473,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (itemIdChanged) {
       dataLoader.onItemSwitch();
       processedSaveResponseRef.current = null;
+      typedWhileSavingRef.current.clear();
       // A save still out when the merchant leaves: its answer is no longer applied
       // here, but a FAILURE must still be recognised (see the answer effect).
       // `fetcher.data` still holds the answer of an EARLIER request until the
@@ -1937,6 +1939,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const processedSaveResponseRef = useRef<FetcherData | null>(null);
   const itemsRef = useLatestRef(items);
   /** The scope of a save that was out when the merchant switched to another item. */
+  /** Field keys typed into while a save was out. */
+  const typedWhileSavingRef = useRef<Set<string>>(new Set());
   const abandonedSaveRef = useRef<{ scope: SentSaveScope; staleData: unknown } | null>(null);
 
   // Ref to track processed translateAltTextToAllLocales responses (prevents infinite revalidation loop)
@@ -2389,7 +2393,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // own request (translateRunAnswer) answer the same way.
     handleAnswer(fetcher.data, fetcherScopeRef.current?.resourceId);
     for (const entry of takeTranslateRunAnswers(ANSWER_ACTION)) handleAnswer(entry.data, entry.itemId, true);
-  }, [fetcher.data, translateRunVersion, currentLanguage, effectiveFieldDefinitions, config.contentType, showInfoBox, t]); // Use selectedItemRef instead of selectedItem
+  }, [fetcher.data, translateRunVersion, currentLanguage, effectiveFieldDefinitions, config.contentType, showInfoBox, t, shopLocales]); // Use selectedItemRef instead of selectedItem
 
   // Handle "translateAllForLocale" response (translates to ONE specific locale)
   useEffect(() => {
@@ -2574,7 +2578,25 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         primaryLocale,
       );
       const sentFieldValues: Record<string, string> = {};
-      if (viewMoved) {
+      // A foreign full save stands for the fields it SENT: text typed into any
+      // other field (or on top of a sent one) while it was out is not stored and
+      // must not be cached as if it were.
+      const foreignSent = !partial && !viewMoved && savedLocale !== primaryLocale && !!sentScope?.sentFields;
+      // Text typed into a field the save did not carry is not stored: such a field
+      // is staged with the value it was loaded with, never the live text.
+      const unsentAtLoaded: Record<string, string> = {};
+      if (foreignSent) {
+        for (const field of effectiveFieldDefinitions) {
+          if (
+            !(field.key in (sentScope?.sentFields ?? {})) &&
+            field.key in baselineValuesRef.current &&
+            typedWhileSavingRef.current.has(field.key)
+          ) {
+            unsentAtLoaded[field.key] = baselineValuesRef.current[field.key];
+          }
+        }
+      }
+      if (viewMoved || foreignSent) {
         for (const field of effectiveFieldDefinitions) {
           const value = sentScope?.sentFields?.[field.key];
           if (value !== undefined) sentFieldValues[field.key] = value;
@@ -2613,7 +2635,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
       const result = dataLoader.onSaveComplete(
         savedLocale,
-        partial ? { ...editableValues, ...partial.values } : viewMoved ? sentFieldValues : editableValues,
+        partial ? { ...editableValues, ...partial.values } : viewMoved ? sentFieldValues : foreignSent ? { ...editableValues, ...unsentAtLoaded, ...sentFieldValues } : editableValues,
         effectiveFieldDefinitions,
         viewMoved ? undefined : fallbackFieldsRef.current,
         onlyKeys,
@@ -2750,7 +2772,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (abandoned && data && data !== abandonedEntry?.staleData) {
         abandonedSaveRef.current = null;
         processedSaveResponseRef.current = data;
-        if (!data.success) {
+        if (data.success) {
+          // Confirmed in part: what Shopify did not echo is not stored.
+          const unconfirmed = unconfirmedClearedFieldSet(data);
+          if (unconfirmed.size > 0) {
+            const savedScope = inFlightScopeRef.current;
+            inFlightScopeRef.current = abandoned;
+            forgetFailedPrimarySave(unconfirmed);
+            inFlightScopeRef.current = savedScope;
+          }
+        } else {
           const failedItemId = abandoned.sentFields?.itemId;
           const savedScope = inFlightScopeRef.current;
           inFlightScopeRef.current = abandoned;
@@ -2764,6 +2795,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
       return;
     }
+    // A save of the item on screen is answered here: the record of an abandoned
+    // one (its answer came first, the fetcher is serial) is stale and must not
+    // claim a later, unrelated answer.
+    if (abandonedSaveRef.current && fetcher.data !== abandonedSaveRef.current.staleData) abandonedSaveRef.current = null;
 
     if (fetcher.data?.success && fetcher.data.actionType === "updateContent") {
       // Mark this response as processed and clear save pending flag
@@ -2916,15 +2951,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             // not, and must stay a change (it was lost when the baseline took the
             // live fields: the field read as clean and the re-read replaced it).
             const sent = answeredScope.sentFields;
-            // Every other field takes what it holds now (it was not part of the save:
-            // unchanged, or inherited); a field typed in for the first time WHILE the
-            // save was out and not part of it cannot be told apart from those (limit).
+            // A field the save did not carry takes what it holds now, except one typed
+            // into WHILE the save was out: that one keeps its previous baseline and
+            // stays a change.
             const nextBaseline = { ...editableValuesRef.current };
             for (const field of effectiveFieldDefinitionsRef.current) {
               if (field.key in sent) nextBaseline[field.key] = sent[field.key];
+              else if (typedWhileSavingRef.current.has(field.key) && field.key in baselineBeforeSave) {
+                nextBaseline[field.key] = baselineBeforeSave[field.key];
+              }
             }
             baselineValuesRef.current = nextBaseline;
             setBaselineVersion(v => v + 1);
+            typedWhileSavingRef.current.clear();
           } else {
             baselineValuesRef.current = { ...editableValuesRef.current };
             setBaselineVersion(v => v + 1);
@@ -3778,7 +3817,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleMarketChange,
     handleToggleLanguage,
     handleItemSelect,
-    handleValueChange,
+    handleValueChange: handleValueChangeBase,
     handleToggleHtmlMode,
     handleClearField,
     handleClearAllClick,
@@ -3970,6 +4009,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     return "";
+  };
+
+  // Typing while a save is out: that text is not part of the save (see the answer effect).
+  const handleValueChange = (fieldKey: string, value: string) => {
+    if (isSavePendingRef.current) typedWhileSavingRef.current.add(fieldKey);
+    handleValueChangeBase(fieldKey, value);
   };
 
   const setEditableValue = (fieldKey: string, value: string) => {

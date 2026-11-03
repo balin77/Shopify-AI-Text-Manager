@@ -371,6 +371,8 @@ export function getItemFieldValue(
  */
 /** How long a saved overlay stays after the server confirmed it. */
 const SAVED_OVERLAY_BRIDGE_MS = 60_000;
+/** The latest end of a saved overlay, whatever the server shows. */
+const SAVED_OVERLAY_MAX_MS = 600_000;
 
 export function preserveUnsavedEdits(
   resolved: Record<string, string>,
@@ -605,8 +607,10 @@ export function useUiDataLoader(
   /** The server value from BEFORE a cached save, per field: a read that still shows it
    *  is a lagging or stale read, not somebody else's change. */
   const preSaveSeenRef = useRef<Record<string, string>>({});
-  /** When each item's saved overlay was first seen caught up by the server. */
-  const caughtUpAtRef = useRef<Record<string, number>>({});
+  /** Per item: the overlay it describes, when it was first seen, and when the server
+   *  first showed it. The overlay has an ABSOLUTE end counted from these, whatever
+   *  the server shows later. */
+  const overlayLifeRef = useRef<Record<string, { values: Record<string, string>; start: number; caught: number | null }>>({});
 
   const yieldToServerChanges = (
     item: TranslatableContentItem,
@@ -652,7 +656,6 @@ export function useUiDataLoader(
         if (isPrimary) {
           const override = savedPrimaryValuesRef.current[item.id];
           if (override) delete override[field.key];
-          delete caughtUpAtRef.current[item.id];
         } else {
           delete localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];
         }
@@ -701,21 +704,28 @@ export function useUiDataLoader(
             }
             return serverValue === savedValue;
           });
-          if (serverCaughtUp) {
-            // Kept for a bridging period after the server caught up: an older read
-            // landing right behind the confirming one would otherwise show the text
-            // from before the save (see yieldToServerChanges).
-            const since = (caughtUpAtRef.current[item.id] ??= Date.now());
-            if (Date.now() - since > SAVED_OVERLAY_BRIDGE_MS) {
-              debugLog.dataLoad(
-                "Server data caught up, clearing saved values override"
-              );
-              delete savedPrimaryValuesRef.current[item.id];
-              delete caughtUpAtRef.current[item.id];
-            }
-          } else {
-            delete caughtUpAtRef.current[item.id];
+          // The overlay ends on a clock, not on what the server shows: a minute after
+          // it was first seen caught up (an older read landing right behind the
+          // confirming one would otherwise show the text from before the save, see
+          // yieldToServerChanges), and at the latest SAVED_OVERLAY_MAX_MS after it
+          // was staged. A server that moved back to the pre-save value, or to blank,
+          // never "catches up", and an overlay that outlived it would be written
+          // back by the next save of another field.
+          const now = Date.now();
+          let life = overlayLifeRef.current[item.id];
+          // A NEW save (a key or a value the last look did not have) starts the clock
+          // again; a key the comparison dropped (somebody else's change) does not.
+          if (!life || Object.entries(savedOverride).some(([k, v]) => life!.values[k] !== v)) {
+            life = overlayLifeRef.current[item.id] = { values: { ...savedOverride }, start: now, caught: null };
           }
+          if (serverCaughtUp && life.caught === null) life.caught = now;
+          if ((life.caught !== null && now - life.caught > SAVED_OVERLAY_BRIDGE_MS) || now - life.start > SAVED_OVERLAY_MAX_MS) {
+            debugLog.dataLoad("Saved values override ended, clearing it");
+            delete savedPrimaryValuesRef.current[item.id];
+            delete overlayLifeRef.current[item.id];
+          }
+        } else {
+          delete overlayLifeRef.current[item.id];
         }
       }
 
@@ -1321,10 +1331,21 @@ export function useUiDataLoader(
     clearedDeletedByCopyRef.current.clear();
     clearedLocaleMarksByCopyRef.current.clear();
     localTranslationsRef.current = {};
-    // Only the item on screen is compared against: bounded for the session.
-    serverSeenRef.current = {};
-    preSaveSeenRef.current = {};
-  }, []);
+    // Bounded for the session: only what an item still holding a saved primary
+    // overlay needs is kept (its comparison state must survive a switch away and
+    // back, or the first read after coming back cannot tell a lagging read from
+    // somebody else's change).
+    const keep = (map: Record<string, string>) => {
+      const next: Record<string, string> = {};
+      for (const [key, value] of Object.entries(map)) {
+        const [itemId, locale] = key.split("|");
+        if (locale === primaryLocale && savedPrimaryValuesRef.current[itemId]) next[key] = value;
+      }
+      return next;
+    };
+    serverSeenRef.current = keep(serverSeenRef.current);
+    preSaveSeenRef.current = keep(preSaveSeenRef.current);
+  }, [primaryLocale]);
 
   /** When user clicks ReloadButton */
   const onRefresh = useCallback((itemId: string | null) => {

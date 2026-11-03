@@ -35,7 +35,6 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Eine gehaltene Seitennavigation oder Neuladung (Seiten-`.data`) ist heute nicht erreichbar: Seiten-`.data`-Abrufe sind praktisch unbegrenzt, nur das Dokument-Laden ist begrenzt. Sollte ein Limiter sie je erfassen, bleibt die Navigation «lädt», bis die nächste sie abbricht (Seite und Eingaben bleiben), und Fetcher warten dann im Zustand «loading».
 - Die Wiederholung umhüllt `window.fetch` einmal beim Start, nach App Bridge. Ersetzt App Bridge `window.fetch` später, wird sie still abgeschaltet. Nicht im echten Admin geprüft.
 - Der Metaobjekt-Speichern-Pfad antwortet auf eine leere Übermittlung (nichts geändert) mit Erfolg; im Hauptsprachen-Pfad filtert der Server außerdem auf `changedFields`. Ein vom Browser nicht erkannter Unterschied (Änderung in Shopify, die der Editor noch nicht geladen hat) bleibt daher möglich, bis die Daten geladen sind.
-- Der 429-Fall der stillen Varianten-Abfrage (`VariantImageManager`) ist ohne Test.
 
 ## Bekannt: Galerien und Hauptbild
 
@@ -49,12 +48,11 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 
 ## Bekannt: 429 und Wiederholung
 
-- Gehaltene Schreibvorgänge desselben Limiters werden nacheinander erneut gesendet, ältester zuerst; ein Schreibvorgang wartet höchstens eine Minute auf ältere und gibt seinen Platz beim erneuten Senden frei, nicht nach der Antwort. Lesezugriffe sind nicht geordnet. Grenze: Der erste Versand eines Pfads, der noch nie abgelehnt wurde, kann einen gehaltenen Schreibvorgang überholen.
+- Gehaltene Schreibvorgänge desselben Limiters werden nacheinander erneut gesendet, ältester zuerst; ein Schreibvorgang wartet höchstens eine Minute auf ältere und gibt seinen Platz beim erneuten Senden frei, nicht nach der Antwort. Lesezugriffe sind nicht geordnet. Auch ein Pfad, den der Wrapper schon abgelehnt sah, wartet auf ältere gehaltene Schreibvorgänge, wenn sein Fenster wieder offen ist. Grenze: Nur der erste Versand eines Pfads, der noch nie abgelehnt wurde, kann einen gehaltenen Schreibvorgang überholen.
 - Eine Hauptsprache-Speicherung, die nach einem Produktwechsel abgelehnt wird, zeigt das Produkt danach mit dem Stand von Shopify und nennt es in der Meldung. Der Text wird nicht als Entwurf zurückgebracht (Entscheidung: kein Entwurf nach Fehler).
-- Wird in einem Feld getippt, das beim Senden nicht Teil der Speicherung war, während sie unterwegs ist, gilt es nach der Antwort als sauber. Bei Feldern der Speicherung selbst bleibt der Text eine Änderung.
-- Ein externer Wechsel eines gespeicherten Werts zurück auf den Wert vor der Speicherung (oder auf leer) wird innerhalb der Überbrückungszeit (eine Minute nach der Bestätigung) als veraltete Antwort gelesen und nicht übernommen. Ein auf eine noch nie angesehene Sprache gelegtes Zwischenspeicher-Overlay prüft erst beim ersten Ansehen.
+- Ein externer Wechsel eines gespeicherten Werts zurück auf den Wert vor der Speicherung (oder auf leer) wird als veraltete Antwort gelesen und nicht übernommen, bis der Zwischenspeicher endet: eine Minute nach der ersten Bestätigung durch den Server, spätestens zehn Minuten nach der Speicherung. Ein auf eine noch nie angesehene Sprache gelegtes Zwischenspeicher-Overlay prüft erst beim ersten Ansehen und kann bis zu einem Produktwechsel nie nachgeben.
 - Eine Hauptsprache-Speicherung, die beim Produktwechsel noch unterwegs ist, wird nur für ihre eigene Antwort als «verlassen» vermerkt. Wird sie durch ein neues Senden desselben Fetchers abgebrochen oder landet sie noch in der Warteschlange, gibt es keine Antwort, die den Zwischenspeicher zurücknimmt. Nicht geprüft.
-- Die 429-Fälle der stillen Varianten-Abfrage (`VariantImageManager.tsx`, «rateLimited» und Abbruch) sind weiterhin ohne Test: Sie brauchen eine Darstellung der echten Komponente (Teil des Galerie-Arbeitsstrangs).
+- Kommt man zu einem Produkt zurück, bevor die Ablehnung seiner Speicherung eintrifft, bleibt der getippte Text bis zum nächsten Lesen sichtbar (der Zwischenspeicher ist dann zurückgenommen, die Felder werden aber nicht neu aufgelöst).
 - Beim Speichern der Hauptsprache setzt `update.actions.ts` den angezeigten Ersatzwert als `seoTitle` mit (vorbestehend, nicht behoben).
 - Ein ungeladener Übersetzungs- oder Alt-Text-Abruf (`ThemeContentDomainPage.tsx:656-657`, `VariantImageManager.tsx:864-865`) kann wie «keine Übersetzungen» aussehen. Nur die Meldung «App ausgelastet» weist darauf hin.
 - Möglicher Phantom-Änderungsstand, wenn Antwort und Neuladen im selben Render ankommen. Nicht untersucht.
