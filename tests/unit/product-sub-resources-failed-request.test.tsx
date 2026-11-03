@@ -167,3 +167,34 @@ describe("a sub-resource request that failed as a whole", () => {
     expect(showInfoBox).not.toHaveBeenCalled();
   });
 });
+
+describe("the limiter's refusal of a Phase-2 load (no actionType)", () => {
+  it("is quiet: no red message for a load nobody pressed, and the pending load is released", () => {
+    const { rerender } = setup();
+    fail(main, rerender, { error: "busy", rateLimited: true, ok: false });
+    expect(showInfoBox).not.toHaveBeenCalled();
+  });
+  it("any other failed answer without an actionType is still reported", () => {
+    const { rerender } = setup();
+    fail(main, rerender, { error: "plan refused" });
+    expect(showInfoBox).toHaveBeenCalled();
+  });
+});
+
+describe("Save stays busy for the product a load was asked for, not for the one moved to", () => {
+  const other = { ...(item as object), id: "gid://shopify/Product/43", title: "Hat" } as never;
+  it("busy on the same product, not on another", () => {
+    let current = item;
+    const hook = renderHook(() =>
+      useProductSubResources({ selectedItem: current, currentLanguage: "fr", primaryLocale: "de", showInfoBox, onSaveResponse, strings } as never),
+    );
+    act(() => { main.state = "submitting"; hook.rerender(); });
+    // the load for the first product is out
+    expect(main.submit).toHaveBeenCalled();
+    expect(hook.result.current.state.isSaving).toBe(true);
+    current = other;
+    act(() => { hook.rerender(); });
+    expect(hook.result.current.state.isSaving).toBe(false);
+    main.state = "idle";
+  });
+});

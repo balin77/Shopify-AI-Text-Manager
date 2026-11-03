@@ -32,7 +32,7 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Bulk-Editor und andere `METAFIELDS_SET`-Aufrufe laufen ausserhalb der Sperre. Nach 5 Minuten Wartezeit läuft eine Speicherung neben der haltenden.
 - Zwei Wechselpfade sind ungeschützt: `useUnifiedContentEditor.ts` bei den Zeilen 588-596 und 674-679.
 - Antwortet ein Speichern nach einem Teil-Schreibvorgang mit 4xx oder 5xx, wird nichts neu gelesen. Die Anzeige kann bis zum nächsten Laden alt bleiben.
-- Ist ein 429 des eigenen Limiters nach den Wiederholungen nicht aufgelöst, bleibt eine Seitennavigation oder Neuladung (Seiten-`.data`) offen («lädt»), bis die nächste Navigation sie abbricht. Seite und Eingaben bleiben stehen. Bisher begrenzt nur das Dokument-Laden solche Pfade, die `.data`-Variante nicht.
+- Eine gehaltene Seitennavigation oder Neuladung (Seiten-`.data`) ist heute nicht erreichbar: Seiten-`.data`-Abrufe sind praktisch unbegrenzt, nur das Dokument-Laden ist begrenzt. Sollte ein Limiter sie je erfassen, bleibt die Navigation «lädt», bis die nächste sie abbricht (Seite und Eingaben bleiben), und Fetcher warten dann im Zustand «loading».
 - Die Wiederholung umhüllt `window.fetch` einmal beim Start, nach App Bridge. Ersetzt App Bridge `window.fetch` später, wird sie still abgeschaltet. Nicht im echten Admin geprüft.
 - Der Metaobjekt-Speichern-Pfad antwortet auf eine leere Übermittlung (nichts geändert) mit Erfolg; im Hauptsprachen-Pfad filtert der Server außerdem auf `changedFields`. Ein vom Browser nicht erkannter Unterschied (Änderung in Shopify, die der Editor noch nicht geladen hat) bleibt daher möglich, bis die Daten geladen sind.
 - Der 429-Fall der stillen Varianten-Abfrage (`VariantImageManager`) ist ohne Test.
@@ -49,7 +49,11 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 
 ## Bekannt: 429 und Wiederholung
 
-- Die Wiederholungsschicht kennt keine Reihenfolge für Lesezugriffe. Schreibvorgänge desselben Limiters warten nacheinander, bis zu rund vier Minuten. Parallele Anfragen derselben Art warten also einzeln.
+- Gehaltene Schreibvorgänge desselben Limiters werden nacheinander erneut gesendet, ältester zuerst; ein Schreibvorgang wartet höchstens eine Minute auf ältere und gibt seinen Platz beim erneuten Senden frei, nicht nach der Antwort. Lesezugriffe sind nicht geordnet. Grenze: Der erste Versand eines Pfads, der noch nie abgelehnt wurde, kann einen gehaltenen Schreibvorgang überholen.
+- Eine Hauptsprache-Speicherung, die nach einem Produktwechsel abgelehnt wird, zeigt das Produkt danach mit dem Stand von Shopify und nennt es in der Meldung. Der Text wird nicht als Entwurf zurückgebracht (Entscheidung: kein Entwurf nach Fehler).
+- Wird in einem Feld getippt, das beim Senden nicht Teil der Speicherung war, während sie unterwegs ist, gilt es nach der Antwort als sauber. Bei Feldern der Speicherung selbst bleibt der Text eine Änderung.
+- Ein externer Wechsel eines gespeicherten Werts zurück auf den Wert vor der Speicherung (oder auf leer) wird innerhalb der Überbrückungszeit (eine Minute nach der Bestätigung) als veraltete Antwort gelesen und nicht übernommen. Ein auf eine noch nie angesehene Sprache gelegtes Zwischenspeicher-Overlay prüft erst beim ersten Ansehen.
+- Beim Speichern der Hauptsprache setzt `update.actions.ts` den angezeigten Ersatzwert als `seoTitle` mit (vorbestehend, nicht behoben).
 - Ein ungeladener Übersetzungs- oder Alt-Text-Abruf (`ThemeContentDomainPage.tsx:656-657`, `VariantImageManager.tsx:864-865`) kann wie «keine Übersetzungen» aussehen. Nur die Meldung «App ausgelastet» weist darauf hin.
 - Möglicher Phantom-Änderungsstand, wenn Antwort und Neuladen im selben Render ankommen. Nicht untersucht.
 - Ein fehlgeschlagenes Speichern der Hauptsprache lässt die Löschmarken der Übersetzungen stehen, die vor dem Senden gesetzt wurden. Die Anzeige versteckt sie bis zum Neuladen.

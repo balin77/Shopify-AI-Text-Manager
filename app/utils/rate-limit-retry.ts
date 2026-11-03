@@ -1,6 +1,6 @@
 /**
  * A request our OWN rate limiter refused is waited out and sent again -- and
- * when that does not work, it never reaches an error page.
+ * when that does not work, the router is not handed a thrown error.
  *
  * Why here: React Router, App Bridge and `appFetch` all call the global
  * `fetch`, so ONE wrapper covers router fetcher GETs and POSTs, navigations
@@ -29,7 +29,8 @@
  *  - a router POST (`*.data`): a real, decodable single-fetch result with the
  *    status 429 and `{ success: false, error, rateLimited: true }`. The
  *    fetcher gets `data`, nothing is thrown, the router does not revalidate
- *    after a 4xx action. The page stays.
+ *    after a 4xx action. Nothing is thrown at the router; the caller sees an
+ *    ordinary failed answer and decides what to show.
  *  - a router GET of an `/api/*` resource route (a fetcher load): the same,
  *    keyed by the route id the request named.
  *  - a router GET of a page (a navigation, a revalidation): there is no data
@@ -53,10 +54,12 @@ export const MIN_WAIT_MS = 1_000;
 export const JITTER_MS = 1_500;
 const DEFAULT_RETRY_AFTER_MS = 5_000;
 const MAX_GATE_WAITS = 5;
+/** 25 ms each: a write waits at most a minute for older held writes. */
+const MAX_TURN_WAITS = 2400;
 
 export type RateLimitEvent =
   | { type: "waiting"; seconds: number }
-  | { type: "gave-up"; retryAfterSeconds: number };
+  | { type: "gave-up"; retryAfterSeconds: number; /** a write (a POST...) was given up, not a read */ write: boolean };
 
 type Listener = (event: RateLimitEvent) => void;
 const listeners = new Set<Listener>();
@@ -195,9 +198,13 @@ export function createRateLimitFetch(inner: typeof fetch, options: RateLimitFetc
     const seq = ++callSeq;
     const isWrite = method !== "GET" && method !== "HEAD";
     let registeredBucket: string | undefined;
-    // A write held back by the limiter queues behind OLDER held writes of the
-    // same bucket (copy to all languages, a save, an AI accept all share one),
-    // so a retried older write cannot land after a newer one of the same field.
+    // A write the limiter holds back queues behind OLDER writes that are held in
+    // the same bucket (copy to all languages, a save and an AI accept share one).
+    // The slot is free the moment the older write is SENT again, not when its
+    // handler finishes, and waiting for it is capped. Limit: ordering holds among
+    // writes that are already held or whose path is known to belong to a closed
+    // bucket; the FIRST send of a path the wrapper has never seen refused can still
+    // overtake a held write while it sleeps.
     const register = (bucket: string) => {
       if (!isWrite || registeredBucket) return;
       registeredBucket = bucket;
@@ -205,6 +212,12 @@ export function createRateLimitFetch(inner: typeof fetch, options: RateLimitFetc
       if (!set) waitingWrites.set(bucket, (set = new Set()));
       set.add(seq);
     };
+    const release = () => {
+      if (!registeredBucket) return;
+      waitingWrites.get(registeredBucket)?.delete(seq);
+      registeredBucket = undefined;
+    };
+    let turnWaits = 0;
     const hasOlderWaiting = () =>
       !!registeredBucket && [...(waitingWrites.get(registeredBucket) ?? [])].some((other) => other < seq);
 
@@ -222,7 +235,8 @@ export function createRateLimitFetch(inner: typeof fetch, options: RateLimitFetc
         gateWaits++;
         if (knownBucket) register(knownBucket);
       } else {
-        while (hasOlderWaiting()) await sleep(25, signal);
+        while (hasOlderWaiting() && ++turnWaits <= MAX_TURN_WAITS) await sleep(25, signal);
+        release();
         const attempt = isRequest ? (input as Request).clone() : input;
         const response = await inner(attempt, init);
         const bucket = response.status === 429 ? response.headers.get(RATE_LIMIT_MARKER_HEADER) : null;
@@ -236,7 +250,7 @@ export function createRateLimitFetch(inner: typeof fetch, options: RateLimitFetc
 
       const retryAfterSeconds = Math.ceil(retryAfterMs / 1000);
       if ((refused && retries >= MAX_RETRIES) || retryAfterMs > MAX_WAIT_MS || !resendable) {
-        emit({ type: "gave-up", retryAfterSeconds });
+        emit({ type: "gave-up", retryAfterSeconds, write: isWrite });
         if (isSingleFetch && url) {
           // Free the connection; the router must not see this body.
           await refused?.body?.cancel().catch(() => undefined);
@@ -262,7 +276,7 @@ export function createRateLimitFetch(inner: typeof fetch, options: RateLimitFetc
       await sleep(retryAfterMs + Math.floor(random() * JITTER_MS), signal);
     }
     } finally {
-      if (registeredBucket) waitingWrites.get(registeredBucket)?.delete(seq);
+      release();
     }
   };
   return wrapped as typeof fetch;

@@ -20,7 +20,7 @@ export function RateLimitNotice() {
   const { showInfoBox } = useInfoBox();
   const last = useRef<{ waiting: number; gaveUp: number }>({ waiting: 0, gaveUp: 0 });
   const waitingText = t.common?.rateLimitWaiting || "The app is busy for a moment. Your request continues automatically.";
-  const gaveUpText = t.common?.rateLimitGaveUp || "The app is busy right now. Your input is kept – please try again in a minute.";
+  const gaveUpText = t.common?.rateLimitGaveUp || "The app is very busy right now, so this could not be completed. Please check your last change and try again in a minute.";
 
   useEffect(() => {
     // Also the sentence a refused request's synthesized answer carries as `error`.
@@ -32,6 +32,9 @@ export function RateLimitNotice() {
         last.current.waiting = now;
         showInfoBox(waitingText, "info", undefined, DEDUPE_KEY);
       } else {
+        // A read that was given up changed nothing: "check your last change" would
+        // send the merchant looking for a problem that is not there.
+        if (!event.write) return;
         if (now - last.current.gaveUp < MIN_GAP_MS) return;
         last.current.gaveUp = now;
         showInfoBox(gaveUpText, "warning", undefined, DEDUPE_KEY);

@@ -1472,6 +1472,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (itemIdChanged) {
       dataLoader.onItemSwitch();
       processedSaveResponseRef.current = null;
+      // A save still out when the merchant leaves: its answer is no longer applied
+      // here, but a FAILURE must still be recognised (see the answer effect).
+      abandonedSaveRef.current = isSavePendingRef.current ? inFlightScopeRef.current : null;
       isSavePendingRef.current = false;
       // Nor will it clear the busy flag: back on the old item it read as
       // saving for the rest of the session.
@@ -1926,6 +1929,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Ref to track processed save responses (prevents duplicate InfoBox/revalidation on re-renders)
   const processedSaveResponseRef = useRef<FetcherData | null>(null);
+  const itemsRef = useLatestRef(items);
+  /** The scope of a save that was out when the merchant switched to another item. */
+  const abandonedSaveRef = useRef<SentSaveScope | null>(null);
 
   // Ref to track processed translateAltTextToAllLocales responses (prevents infinite revalidation loop)
   const processedTranslateAltTextAllRef = useRef<FetcherData | null>(null);
@@ -2248,7 +2254,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (answer !== processedTranslateAllRef.current) {
           processedTranslateAllRef.current = answer;
           const failedItemId = scopeItemId || selectedItemIdRef.current;
-          if (failedItemId && isOperationActive(failedItemId, "__translateAll__") && !translateRunsRef.current.some((run) => run.itemId === failedItemId)) {
+          if (failedItemId && isOperationActive(failedItemId, "__translateAll__") && !translateRunsRef.current.some((run) => run.itemId === failedItemId) &&
+            // ...nor when the run itself is still queued behind the request that failed.
+            !saveQueueRef.current.some((entry) => entry.formData.get("action") === "translateAll" && entry.formData.get("itemId") === failedItemId)) {
             markOperationFailed(failedItemId, "__translateAll__");
           }
         }
@@ -2384,6 +2392,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // construction, and must not take the processed slot of the fetcher's
     // answer (which would then be re-applied on the next run).
     const handleAnswer = (answer: FetcherData | undefined, scopeItemId: string | null | undefined, fromQueue = false) => {
+      // A refused or failed run releases its spinner (and with it the retry), unless
+      // a tracked run of that item and language is still out.
+      if (answer && !answer.success && !fromQueue && ((answer as { actionType?: string }).actionType === ANSWER_ACTION || (answer as { rateLimited?: boolean }).rateLimited)) {
+        if (answer !== processedTranslateAllForLocaleRef.current) {
+          processedTranslateAllForLocaleRef.current = answer;
+          const failedItemId = scopeItemId || selectedItemIdRef.current;
+          // The failed answer does not name its language: every language of this item
+          // that shows a run on the fetcher path (none tracked, none queued) is released.
+          for (const failedLocale of shopLocales.map((l) => l.locale)) {
+            if (
+              failedItemId &&
+              isOperationActive(failedItemId, `__translateAllForLocale__${failedLocale}`) &&
+              !translateRunsRef.current.some((run) => run.itemId === failedItemId && (run.locale === failedLocale || run.locale === "*")) &&
+              !saveQueueRef.current.some((entry) => entry.formData.get("action") === "translateAllForLocale" && entry.formData.get("itemId") === failedItemId && entry.formData.get("targetLocale") === failedLocale)
+            ) {
+              markOperationFailed(failedItemId, `__translateAllForLocale__${failedLocale}`);
+            }
+          }
+        }
+        return;
+      }
       if (answer?.success && answer.actionType === "translateAllForLocale") {
         // Prevent re-processing when effectiveFieldDefinitions change (e.g. after Remix revalidation)
         if (!fromQueue) {
@@ -2705,6 +2734,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     // Skip if no save was actually initiated (prevents false "saved" messages during reload/revalidation)
     if (!isSavePendingRef.current) {
+      // The answer of a save the merchant switched away from. A refusal or failure
+      // must not leave that item looking saved (its unsent text cached as stored):
+      // the overlay goes, the item shows what Shopify holds, and the merchant is told
+      // which item it concerned. The text is NOT restored as a draft (owner decision).
+      const abandoned = abandonedSaveRef.current;
+      const data = fetcher.data as (FetcherData & { rateLimited?: boolean }) | undefined;
+      if (abandoned && data) {
+        abandonedSaveRef.current = null;
+        processedSaveResponseRef.current = data;
+        if (!data.success) {
+          const failedItemId = abandoned.sentFields?.itemId;
+          const savedScope = inFlightScopeRef.current;
+          inFlightScopeRef.current = abandoned;
+          forgetFailedPrimarySave();
+          inFlightScopeRef.current = savedScope;
+          const failedItem = failedItemId ? itemsRef.current.find((i) => i.id === failedItemId) : undefined;
+          const title = failedItem ? String(config.getPrimaryField?.(failedItem as never, t as never) ?? (failedItem as { title?: string }).title ?? "") : "";
+          const text = translateErrorMessage(String((data as { error?: string }).error || ""), t);
+          showInfoBox(title ? `${title}: ${text}` : text, "critical");
+        }
+      }
       return;
     }
 
@@ -2853,6 +2903,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             currentLanguageRef.current === primaryLocale
           ) {
             baselineValuesRef.current = { ...primarySnapshot };
+            setBaselineVersion(v => v + 1);
+          } else if (answeredScope?.sentFields) {
+            // What the save SENT is what is stored; text typed after the submit is
+            // not, and must stay a change (it was lost when the baseline took the
+            // live fields: the field read as clean and the re-read replaced it).
+            const sent = answeredScope.sentFields;
+            // Every other field takes what it holds now (it was not part of the save:
+            // unchanged, or inherited); a field typed in for the first time WHILE the
+            // save was out and not part of it cannot be told apart from those (limit).
+            const nextBaseline = { ...editableValuesRef.current };
+            for (const field of effectiveFieldDefinitionsRef.current) {
+              if (field.key in sent) nextBaseline[field.key] = sent[field.key];
+            }
+            baselineValuesRef.current = nextBaseline;
             setBaselineVersion(v => v + 1);
           } else {
             baselineValuesRef.current = { ...editableValuesRef.current };
@@ -3388,6 +3452,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Also mark error responses as processed
       processedSaveResponseRef.current = fetcher.data;
       forgetFailedPrimarySave();
+
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
       inFlightToastRef.current = null;

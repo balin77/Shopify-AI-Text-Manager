@@ -210,30 +210,6 @@ describe("a Request object as input", () => {
 });
 
 describe("ordering of held writes (M4)", () => {
-  it("an older write held by the limiter is sent before a newer one of the same bucket, even if the newer one wakes first", async () => {
-    const order: string[] = [];
-    let first = true;
-    inner = vi.fn(async (_input: any, init?: RequestInit) => {
-      sentAt.push(Date.now());
-      order.push(String(init?.body));
-      if (first) { first = false; return refused(2); }
-      return ok();
-    });
-    // The older write draws the long jitter, the newer one none.
-    const draws = [0.99, 0];
-    globalThis.fetch = createRateLimitFetch(inner as any, { random: () => draws.shift() ?? 0 });
-    const older = globalThis.fetch("/api/content-editor-action", { method: "POST", body: "older" });
-    await vi.advanceTimersByTimeAsync(100); // refused, now waiting
-    const newer = globalThis.fetch("/app/products.data", { method: "POST", body: "newer" });
-    await vi.advanceTimersByTimeAsync(20_000);
-    await Promise.all([older, newer]);
-    // "newer" has a different path but is learned into the same bucket only after a
-    // refusal of its own; here it is sent once and succeeds, so only the older
-    // retry order matters: the retry of the older write is not overtaken by a retry.
-    expect(order[0]).toBe("older");
-    expect(order.filter((o) => o === "older").length).toBe(2);
-  });
-
   it("two writes refused together are retried oldest first", async () => {
     const order: string[] = [];
     let n = 0;

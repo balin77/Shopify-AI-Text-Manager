@@ -29,7 +29,7 @@ describe("RateLimitNotice", () => {
   it("says it once for a real wait, in the merchant's text, with a dedupe key; and again when giving up", async () => {
     render(<RateLimitNotice />);
     globalThis.fetch = createRateLimitFetch((async () => refusal(5)) as any, { random: () => 0 });
-    const p = globalThis.fetch("/api/x");
+    const p = globalThis.fetch("/api/x", { method: "POST", body: "a=1" });
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     await p;
     expect(showInfoBox).toHaveBeenCalledWith("WAITING", "info", undefined, "rate-limit");

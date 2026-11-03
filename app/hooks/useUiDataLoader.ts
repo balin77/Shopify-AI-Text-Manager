@@ -369,6 +369,9 @@ export function getItemFieldValue(
  * preserved edit into it would mark that edit as already saved and the merchant
  * could never save it.
  */
+/** How long a saved overlay stays after the server confirmed it. */
+const SAVED_OVERLAY_BRIDGE_MS = 60_000;
+
 export function preserveUnsavedEdits(
   resolved: Record<string, string>,
   current: Record<string, string>,
@@ -599,6 +602,11 @@ export function useUiDataLoader(
   /** The server value each cache entry was last compared against, per
    *  item / language / market / field. */
   const serverSeenRef = useRef<Record<string, string>>({});
+  /** The server value from BEFORE a cached save, per field: a read that still shows it
+   *  is a lagging or stale read, not somebody else's change. */
+  const preSaveSeenRef = useRef<Record<string, string>>({});
+  /** When each item's saved overlay was first seen caught up by the server. */
+  const caughtUpAtRef = useRef<Record<string, number>>({});
 
   const yieldToServerChanges = (
     item: TranslatableContentItem,
@@ -623,7 +631,24 @@ export function useUiDataLoader(
         cached = localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];
       }
       const previous = seen[seenKey];
-      if (cached !== undefined && previous !== undefined && serverValue !== previous && serverValue !== cached) {
+      if (cached === undefined) {
+        delete preSaveSeenRef.current[seenKey];
+      } else if (previous !== undefined && !(seenKey in preSaveSeenRef.current)) {
+        // First pass since the save was cached: what was seen before it.
+        preSaveSeenRef.current[seenKey] = previous;
+      }
+      // Somebody else's change: the server moved on to a value that is neither what we
+      // saved, nor what it showed before the save (a stale read), nor blank (a read that
+      // momentarily has no translations). Limit: a change back to the pre-save value,
+      // or to blank, is indistinguishable from a stale read and does not yield.
+      if (
+        cached !== undefined &&
+        previous !== undefined &&
+        serverValue !== previous &&
+        serverValue !== cached &&
+        serverValue !== preSaveSeenRef.current[seenKey] &&
+        serverValue !== ""
+      ) {
         if (isPrimary) {
           const override = savedPrimaryValuesRef.current[item.id];
           if (override) delete override[field.key];
@@ -676,10 +701,19 @@ export function useUiDataLoader(
             return serverValue === savedValue;
           });
           if (serverCaughtUp) {
-            debugLog.dataLoad(
-              "Server data caught up, clearing saved values override"
-            );
-            delete savedPrimaryValuesRef.current[item.id];
+            // Kept for a bridging period after the server caught up: an older read
+            // landing right behind the confirming one would otherwise show the text
+            // from before the save (see yieldToServerChanges).
+            const since = (caughtUpAtRef.current[item.id] ??= Date.now());
+            if (Date.now() - since > SAVED_OVERLAY_BRIDGE_MS) {
+              debugLog.dataLoad(
+                "Server data caught up, clearing saved values override"
+              );
+              delete savedPrimaryValuesRef.current[item.id];
+              delete caughtUpAtRef.current[item.id];
+            }
+          } else {
+            delete caughtUpAtRef.current[item.id];
           }
         }
       }
@@ -1286,6 +1320,9 @@ export function useUiDataLoader(
     clearedDeletedByCopyRef.current.clear();
     clearedLocaleMarksByCopyRef.current.clear();
     localTranslationsRef.current = {};
+    // Only the item on screen is compared against: bounded for the session.
+    serverSeenRef.current = {};
+    preSaveSeenRef.current = {};
   }, []);
 
   /** When user clicks ReloadButton */

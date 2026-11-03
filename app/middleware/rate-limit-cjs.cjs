@@ -32,9 +32,9 @@ function normalizedIpKey(req) {
 const RATE_LIMIT_MARKER_HEADER = 'X-CP-Rate-Limited';
 
 const RATE_LIMITED_TEXT = {
-  en: 'Many requests are being processed right now. This page reloads by itself shortly (this can take up to a minute).',
-  de: 'Gerade sind viele Anfragen unterwegs. Diese Seite lädt in Kürze von selbst neu (das kann bis zu einer Minute dauern).',
-  es: 'Hay muchas solicitudes en este momento. Esta página se volverá a cargar sola en breve (puede tardar hasta un minuto).',
+  en: 'Many requests are being processed right now. This page reloads by itself shortly. If the app stays busy, please wait a few minutes.',
+  de: 'Gerade sind viele Anfragen unterwegs. Diese Seite lädt in Kürze von selbst neu. Bleibt die App ausgelastet, warten Sie bitte einige Minuten.',
+  es: 'Hay muchas solicitudes en este momento. Esta página se volverá a cargar sola en breve. Si la app sigue ocupada, espera unos minutos.',
 };
 
 /** A browser document load: a GET that accepts HTML and is not a router data request. */
