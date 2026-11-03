@@ -4,6 +4,59 @@ import { db } from "../db.server";
 import { isValidExternalVideoUrl, isValid3dModelUrl, kindToMediaContentType } from "../utils/mediaKind";
 import type { MediaKind } from "../components/image-manager/types";
 import { invalidateVariantDefsCache } from "./api.product-variants";
+import { planVariantWrite, type VariantLookup, type VariantWritePlan } from "../services/variant-main-image.shared";
+
+type AdminGraphql = (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
+
+/**
+ * A fresh read of what Shopify holds for this product: which media exist (and
+ * which of them are images), and for each variant its native image, its stored
+ * gallery and its stored order. The route does not trust the client for "what
+ * the current main image is": the gallery must never hold it, and a removed one
+ * is replaced from this. `null` = the read failed; the rules then run on what the
+ * client sent (the limit: a main image the client did not name stays unknown).
+ */
+async function lookupProductMedia(
+  graphql: AdminGraphql,
+  productId: string,
+): Promise<{ media: Map<string, string>; variants: Map<string, VariantLookup> } | null> {
+  try {
+    const r = await graphql(
+      `query productMediaForGalleries($id: ID!) {
+        product(id: $id) {
+          media(first: 250) { nodes { id mediaContentType } }
+          variants(first: 250) {
+            nodes {
+              id
+              media(first: 1) { nodes { id } }
+              gallery: metafield(namespace: "custom", key: "variant_gallery") { value }
+              order: metafield(namespace: "custom", key: "variant_gallery_order") { value }
+            }
+          }
+        }
+      }`,
+      { variables: { id: productId } },
+    );
+    const d = await r.json();
+    const product = d?.data?.product;
+    if (!product || d.errors) return null;
+    const media = new Map<string, string>();
+    for (const n of product.media?.nodes ?? []) media.set(n.id, n.mediaContentType);
+    const variants = new Map<string, VariantLookup>();
+    for (const v of product.variants?.nodes ?? []) {
+      let gallery: string[] = [];
+      try {
+        const parsed = JSON.parse(v.gallery?.value ?? "[]");
+        if (Array.isArray(parsed)) gallery = parsed.filter((g): g is string => typeof g === "string");
+      } catch { /* an unreadable list is no list */ }
+      variants.set(v.id, { main: v.media?.nodes?.[0]?.id ?? null, gallery, order: v.order?.value ?? null });
+    }
+    return { media, variants };
+  } catch (err) {
+    console.warn("[update-variant-galleries] product media lookup failed", err);
+    return null;
+  }
+}
 
 // metafieldsSet userError messages that indicate one of our variant
 // metafield definitions has gone missing (deleted externally, type-changed,
@@ -490,61 +543,65 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (errors.length > 0) return fail();
   }
 
-  // 3. Variant-Galerien (Metafelder) updaten + Hauptbilder ggf. löschen
+  // 3. Variant-Galerien (Metafelder) updaten + Hauptbilder ggf. ersetzen
+  //
+  // The rule for every variant written here (see variant-main-image.shared.ts):
+  // the variant's main image is NEVER stored in `variant_gallery`, and a variant
+  // whose main image was removed gets the next image of its gallery as its new
+  // main image in the SAME write -- Shopify needs a main image. Only a variant
+  // with no image left to move up ends with `mediaId: null`.
   const clearSet = new Set(clearVariantMainImages);
   const hasVariantChanges = resolvedVariantGalleries.length > 0 || clearSet.size > 0;
+  // Order JSON rewritten because the main image changed (variantId -> JSON).
+  const orderOverrides = new Map<string, string>();
+  // The plan each written variant got, for the local mirror.
+  const plans = new Map<string, VariantWritePlan>();
   if (hasVariantChanges) {
-    // Build variant update objects:
-    //  - Normal variants: fileGids[0] is the main image GID, fileGids[1..] are gallery.
-    //  - Clear-main variants: fileGids are gallery-only (no main at pos 0); set mediaId: null.
-    //  - Clear-only variants (not in variantGalleries): only send mediaId: null, no metafield change.
+    const looked = await lookupProductMedia(admin.graphql as unknown as AdminGraphql, productId);
+    // A candidate must be an image the PRODUCT holds: Shopify refuses a `mediaId`
+    // that is not one of the product's media, and that would refuse the whole save.
+    const isCandidate = looked ? (gid: string) => looked.media.get(gid) === "IMAGE" : undefined;
+    const clientOrders = new Map(variantGalleryOrder.map((vo) => [vo.variantId, vo.orderJson]));
     const variantMap = new Map<string, object>();
+    const galleryMetafield = (gallery: string[]) => ({
+      namespace: "custom",
+      key: "variant_gallery",
+      value: JSON.stringify(gallery),
+      type: "list.file_reference",
+    });
+    const planFor = (variantId: string, fileGids: string[] | null, galleryOnly: boolean) => {
+      const plan = planVariantWrite({
+        fileGids,
+        galleryOnly,
+        clear: clearSet.has(variantId),
+        lookup: looked?.variants.get(variantId) ?? null,
+        clientOrderJson: clientOrders.get(variantId) ?? null,
+        isCandidate,
+      });
+      plans.set(variantId, plan);
+      if (plan.order) orderOverrides.set(variantId, plan.order);
+      return plan;
+    };
 
     for (const vg of resolvedVariantGalleries) {
-      if (clearSet.has(vg.variantId)) {
-        // Explicitly cleared main image: all fileGids are gallery-only.
-        variantMap.set(vg.variantId, {
-          id: vg.variantId,
-          mediaId: null,
-          metafields: [{
-            namespace: "custom",
-            key: "variant_gallery",
-            value: JSON.stringify(vg.fileGids),
-            type: "list.file_reference",
-          }],
-        });
-      } else if (vg.galleryOnly) {
-        // Variant already has a main image — do NOT touch mediaId, only update gallery metafield.
-        variantMap.set(vg.variantId, {
-          id: vg.variantId,
-          metafields: [{
-            namespace: "custom",
-            key: "variant_gallery",
-            value: JSON.stringify(vg.fileGids),
-            type: "list.file_reference",
-          }],
-        });
-      } else {
-        // fileGids[0] is the new/existing variant main image; fileGids[1..] are gallery.
-        // (When variant had no main image, fileGids[0] is the first newly uploaded image.)
-        variantMap.set(vg.variantId, {
-          id: vg.variantId,
-          ...(vg.fileGids.length > 0 && { mediaId: vg.fileGids[0] }),
-          metafields: [{
-            namespace: "custom",
-            key: "variant_gallery",
-            value: JSON.stringify(vg.fileGids.slice(1)),
-            type: "list.file_reference",
-          }],
-        });
-      }
+      const plan = planFor(vg.variantId, vg.fileGids, !!vg.galleryOnly);
+      variantMap.set(vg.variantId, {
+        id: vg.variantId,
+        ...(plan.mediaId !== undefined && { mediaId: plan.mediaId }),
+        metafields: [galleryMetafield(plan.gallery)],
+      });
     }
 
-    // Add variants that only need mediaId cleared (no gallery change)
+    // Variants that only lose their main image (a deleted medium): promote from
+    // the stored gallery.
     for (const vid of clearSet) {
-      if (!variantMap.has(vid)) {
-        variantMap.set(vid, { id: vid, mediaId: null });
-      }
+      if (variantMap.has(vid)) continue;
+      const plan = planFor(vid, null, false);
+      variantMap.set(vid, {
+        id: vid,
+        mediaId: plan.mediaId ?? null,
+        ...(looked?.variants.has(vid) && { metafields: [galleryMetafield(plan.gallery)] }),
+      });
     }
 
     const variantPayload = [...variantMap.values()];
@@ -567,17 +624,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     else completedSteps.push("productVariantsBulkUpdate");
 
     if (errors.length === 0) {
-      await Promise.all(resolvedVariantGalleries.map(vg => {
-        // clearSet variants and galleryOnly variants: all fileGids are gallery (no main at [0])
-        // normal variants: fileGids[0] is the main image, fileGids[1..] are gallery
-        const galleryGids = (clearSet.has(vg.variantId) || vg.galleryOnly)
-          ? vg.fileGids
-          : vg.fileGids.slice(1);
-        return db.productVariant.updateMany({
-          where: { shopifyGid: vg.variantId },
-          data: { galleryJson: JSON.stringify(galleryGids) },
-        });
-      }));
+      await Promise.all([...plans.entries()].map(([variantId, plan]) =>
+        db.productVariant.updateMany({
+          where: { shopifyGid: variantId },
+          data: { galleryJson: JSON.stringify(plan.gallery) },
+        }),
+      ));
     }
   }
 
@@ -697,7 +749,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
+  // A main image that moved up changes the order the client sent (or the stored
+  // one): the new main image first, the removed one gone. Those are written as
+  // computed; the client's own copy for such a variant is not validated again.
+  for (const [variantId, orderJson] of orderOverrides) {
+    metafieldOps.push({ ownerId: variantId, namespace: "custom", key: "variant_gallery_order", type: "json", value: orderJson });
+  }
   for (const vo of variantGalleryOrder) {
+    if (orderOverrides.has(vo.variantId)) continue;
     // The order metafield is the source of truth for the voll-mix gallery
     // sequence. Validate the shape here — relying purely on client-side
     // checks would let a DevTools-savvy merchant persist e.g. a URL at

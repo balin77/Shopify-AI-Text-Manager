@@ -4,6 +4,7 @@ import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, 
 import { useFetcher } from "react-router";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
+import { buildVariantEmission, displayMain, isImageGid } from "../../services/variant-main-image.shared";
 import { useI18n } from "../../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import { answerPredatesSave, altConfirmKey, monotonicNow } from "./alt-load-guard";
@@ -110,7 +111,7 @@ interface VariantImageManagerProps {
   onRemoveBulk: (ids: string[]) => void;
   onSetAction: (action: "copy" | "move" | null) => void;
   imageManagerSettings: ImageManagerSettings;
-  onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>, clearVariantMainImages?: string[]) => void;
+  onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[]; galleryOnly?: boolean }>, mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>, clearVariantMainImages?: string[]) => void;
   /** Notified whenever the merchant adds / removes a YouTube or Vimeo URL on
    *  any variant. The shape mirrors the /api/update-variant-galleries body
    *  field so the hook can pass it straight through. */
@@ -1030,24 +1031,10 @@ export function VariantImageManager({
         setVariants(sortedVariants);
         onVariantsLoaded?.(sortedVariants);
 
-        // Auto-detect variants whose metafield wrongly contains the main image GID.
-        // Queue them for cleanup so the user only needs to click Save to fix existing bad data.
-        // Use v.mainImageGid (computed via stripped urlToGidMap at line 433) as the
-        // single source of truth — building a parallel non-stripped lookup here previously
-        // resolved to a different GID for variants with versioned image URLs, then this
-        // block stripped the wrong GID from the gallery.
-        if (resetState) {
-          const autoFixes: Record<string, string[]> = {};
-          for (const v of realVariants) {
-            if (!v.mainImageGid || v.galleryFileGids.length === 0) continue;
-            if (v.galleryFileGids.includes(v.mainImageGid)) {
-              autoFixes[v.id] = v.galleryFileGids.filter(g => g !== v.mainImageGid);
-            }
-          }
-          if (Object.keys(autoFixes).length > 0) {
-            setPendingVariantGalleries(autoFixes);
-          }
-        }
+        // Nothing is queued here: opening a product never marks it as changed. A
+        // main image that older saves also left in the gallery metafield is shown
+        // once (see displayMain) and is dropped by the server on the first real
+        // write to that variant.
       })
       // A silent poll must not raise the load-error banner: it runs in the
       // background after a successful save, and a transient network blip
@@ -1097,42 +1084,11 @@ export function VariantImageManager({
     }
     emittedPendingRef.current = true;
 
-    // Track variants with no featured image so backend keeps all GIDs in the metafield
-    // and never promotes fileGids[0] to become mediaId on Shopify.
-    const noMainVariantIds = new Set<string>();
-
-    const galleries = Object.entries(pendingVariantGalleries).map(([variantId, fileGids]) => {
-      if (locallyExcludedMainGids.has(variantId)) {
-        // Main image cleared — pass gallery-only GIDs; backend will set mediaId: null
-        return { variantId, fileGids };
-      }
-      const variant = variants.find(v => v.id === variantId);
-      const mainGid = variant?.defaultImageUrl
-        ? (urlToGid[variant.defaultImageUrl] ??
-           Object.entries(urlToGid).find(([u]) =>
-             u.split("?")[0] === variant.defaultImageUrl!.split("?")[0]
-           )?.[1])
-        : undefined;
-      if (!mainGid) {
-        // No native Shopify featured image — always keep mediaId: null on the backend.
-        // Gallery-only images must never be auto-promoted to mediaId; the user must
-        // explicitly assign a product image as the variant's featured image.
-        noMainVariantIds.add(variantId);
-        return { variantId, fileGids };
-      }
-      const fullGids = [mainGid, ...fileGids.filter(g => g !== mainGid)];
-      return { variantId, fileGids: fullGids };
+    const { galleries, clearVariantMainIds: clearVariantMainImages } = buildVariantEmission({
+      pending: pendingVariantGalleries,
+      removedMainVariantIds: locallyExcludedMainGids,
+      variants: variants.map(v => ({ id: v.id, mainGid: mainGidOfVariant(v), galleryFileGids: v.galleryFileGids })),
     });
-
-    // Add variants whose main image was excluded but have no pending gallery changes yet
-    for (const variantId of locallyExcludedMainGids) {
-      if (pendingVariantGalleries[variantId] === undefined) {
-        const variant = variants.find(v => v.id === variantId);
-        galleries.push({ variantId, fileGids: variant?.galleryFileGids ?? [] });
-      }
-    }
-
-    const clearVariantMainImages = [...locallyExcludedMainGids, ...noMainVariantIds];
     onPendingChange?.(galleries, pendingMediaOrderRef.current, pendingProductNewMedia, clearVariantMainImages);
   }, [pendingVariantGalleries, pendingProductNewMedia, locallyExcludedMainGids]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1549,13 +1505,38 @@ export function VariantImageManager({
     ),
   }), [effectiveProductImages, shopifyMediaMap, unsettledMedia]);
 
+  /** The variant's native image as a GID, tolerant of `?v=` versions; undefined = none, or
+   *  one whose URL does not resolve (such a variant is NEVER treated as having no main image
+   *  by a save: see buildVariantEmission). */
+  const mainGidOfVariant = (v: { defaultImageUrl?: string }): string | undefined =>
+    v.defaultImageUrl
+      ? (urlToGid[v.defaultImageUrl] ??
+         Object.entries(urlToGid).find(([u]) => u.split("?")[0] === v.defaultImageUrl!.split("?")[0])?.[1])
+      : undefined;
+
+  /** An image that could move up as a variant's main image: a MediaImage the PRODUCT holds
+   *  (the server applies the same rule against a fresh read). */
+  const promotableMediaIds = useMemo(() => {
+    const ids = new Set<string>(Object.keys(shopifyMediaMap));
+    for (const img of effectiveProductImages) if (img.mediaId) ids.add(img.mediaId);
+    return ids;
+  }, [shopifyMediaMap, effectiveProductImages]);
+  const isPromotable = (gid: string): boolean => isImageGid(gid) && (promotableMediaIds.size === 0 || promotableMediaIds.has(gid));
+
   // Variants that have no effective main image (neither native Shopify main nor any gallery image
   // at position 0 that would be promoted on save). Used for tooltip, pulse, and dot indicator.
   const variantsWithMissingMain = useMemo(() => {
     return variants.filter(v => {
       if (locallyExcludedMainGids.has(v.id)) {
-        const storedGids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
-        return storedGids.length === 0;
+        // Removed: the next image of the gallery moves up on save (see displayMain),
+        // so only a variant with no image left is without a main image.
+        return displayMain({
+          nativeMainGid: mainGidOfVariant(v),
+          removed: true,
+          stored: pendingVariantGalleries[v.id] ?? v.galleryFileGids,
+          orderJson: pendingGalleryOrder[v.id] ?? v.galleryOrderJson,
+          isCandidate: isPromotable,
+        }).mainGid === null;
       }
       const mainGid = v.defaultImageUrl
         ? (urlToGid[v.defaultImageUrl] ??
@@ -1835,11 +1816,16 @@ export function VariantImageManager({
       .filter(Boolean) as Array<{ mediaId: string; position: number }>;
 
     pendingMediaOrderRef.current = mediaOrder;
-    const galleries = Object.entries(pendingVariantGalleries).map(([variantId, fileGids]) => ({
-      variantId, fileGids,
-    }));
+    // The variants' part is built exactly like the sync effect builds it (main
+    // image pinned first, or `galleryOnly`): a reorder of the PRODUCT gallery
+    // must never change which image is a variant's main image.
+    const { galleries } = buildVariantEmission({
+      pending: pendingVariantGalleries,
+      removedMainVariantIds: locallyExcludedMainGids,
+      variants: variants.map(v => ({ id: v.id, mainGid: mainGidOfVariant(v), galleryFileGids: v.galleryFileGids })),
+    });
     onPendingChange?.(galleries, mediaOrder, pendingProductNewMedia);
-  }, [effectiveProductImages, pendingVariantGalleries, pendingProductNewMedia, onPendingChange]);
+  }, [effectiveProductImages, pendingVariantGalleries, pendingProductNewMedia, onPendingChange, locallyExcludedMainGids, variants, urlToGid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSharedDragStart = useCallback((event: DragStartEvent) => {
     const url = event.active.data.current?.url as string | undefined;
@@ -1909,27 +1895,18 @@ export function VariantImageManager({
       } else {
         const variant = variants.find(v => v.id === sourceContainerId);
         const storedGids = pendingVariantGalleries[sourceContainerId] ?? variant?.galleryFileGids ?? [];
-        // mainGid is what gets shown at position 0 in the variant gallery
-        // when storedGids doesn't already include it (legacy metafield
-        // convention: variant_gallery list.file_reference holds gallery
-        // items, mainGid is implicit at slot 0). For reorder to be aware of
-        // it (so the merchant can drag it to a different position OR drag
-        // something else to position 0 to promote that one to the new
-        // featured image), include it in the source variantUrls. If
-        // storedGids already contains it (after a prior reorder this
-        // session), use as-is — handleVariantReorder pushes mainGid into
-        // pendingVariantGalleries on each reorder so the second drag onwards
-        // doesn't need the prepend.
-        const variantMainGid = variant?.defaultImageUrl
-          ? (urlToGid[variant.defaultImageUrl] ??
-             Object.entries(urlToGid).find(([u]) =>
-               u.split("?")[0] === variant.defaultImageUrl!.split("?")[0]
-             )?.[1])
-          : undefined;
-        const hasMainImageInGallery = !locallyExcludedMainGids.has(sourceContainerId) && Boolean(variantMainGid);
-        const gids = (hasMainImageInGallery && variantMainGid && !storedGids.includes(variantMainGid))
-          ? [variantMainGid, ...storedGids]
-          : storedGids;
+        // The drag works on what the gallery SHOWS (displayMain): the main image first,
+        // once. A drop onto the first slot of a variant that still has its native main
+        // image does not change that main image (a save pins it); for a variant whose
+        // main image was removed, the image dropped first becomes the one that moves up.
+        const shownDrag = displayMain({
+          nativeMainGid: variant ? mainGidOfVariant(variant) : undefined,
+          removed: locallyExcludedMainGids.has(sourceContainerId),
+          stored: storedGids,
+          orderJson: pendingGalleryOrder[sourceContainerId] ?? variant?.galleryOrderJson ?? null,
+          isCandidate: isPromotable,
+        });
+        const gids = shownDrag.gids;
         const fileUrls = gids.map(gid => fileUrlMap[gid]).filter(Boolean) as string[];
         const externalUrls = pendingExternalVideos[sourceContainerId] ?? variant?.externalVideoUrls ?? [];
         const modelUrls = pendingVariant3dModels[sourceContainerId] ?? variant?.threeDModelUrls ?? [];
@@ -1971,6 +1948,10 @@ export function VariantImageManager({
           variantUrls = [...fileUrls, ...externalUrls, ...modelUrls];
         }
 
+        const shownMainUrl = shownDrag.mainGid ? fileUrlMap[shownDrag.mainGid] : undefined;
+        if (shownMainUrl && variantUrls.includes(shownMainUrl)) {
+          variantUrls = [shownMainUrl, ...variantUrls.filter(u => u !== shownMainUrl)];
+        }
         const oldIndex = variantUrls.indexOf(url);
         const newIndex = variantUrls.indexOf(overUrl);
         if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
@@ -2719,6 +2700,17 @@ export function VariantImageManager({
           });
           const clearBody = await clearRes.json().catch(() => null) as { success?: boolean } | null;
           clearOk = clearRes.ok && !!clearBody && clearBody.success !== false;
+          if (clearOk) {
+            // The write is DONE: the next image of each gallery moved up on Shopify.
+            // These variants are no longer "main removed" here -- left in the set, the
+            // next Save would remove the image that just moved up and promote another.
+            setLocallyExcludedMainGids(s => {
+              const next = new Set(s);
+              clearMainImageIds.forEach(id => next.delete(id));
+              return next;
+            });
+            fetchVariantsForProduct(startedProductId, false, { silent: true });
+          }
         } catch {
           clearOk = false;
         }
@@ -2818,7 +2810,7 @@ export function VariantImageManager({
       deletedAltLookup,
     );
     setIsDeleting(false);
-  }, [deleteConfirm, urlToGid, fileUrlMap, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t]);
+  }, [deleteConfirm, urlToGid, fileUrlMap, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t, fetchVariantsForProduct]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;
@@ -4126,42 +4118,21 @@ export function VariantImageManager({
           ) : (
             variants.map(v => {
               const storedGids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
-              const mainGid = v.defaultImageUrl
-                ? (urlToGid[v.defaultImageUrl] ??
-                   Object.entries(urlToGid).find(([u]) =>
-                     u.split("?")[0] === v.defaultImageUrl!.split("?")[0]
-                   )?.[1])
-                : undefined;
-              // hasMainImage is true only when a native Shopify main image (defaultImageUrl) resolves
-              // to a GID. Gallery-only images from the metafield are NOT a substitute — without a
-              // native main image the section must show the placeholder and pulse warning.
-              const hasMainImageForVariant = !locallyExcludedMainGids.has(v.id) && Boolean(mainGid);
-              // effectiveGids is the ordered file-GID list the variant gallery
-              // renders. Three cases:
-              //   1. No main image (none on Shopify, or merchant locally excluded it):
-              //      use storedGids as-is, with mainGid filtered out as a safety net.
-              //   2. Legacy state: storedGids excludes mainGid (the metafield holds
-              //      gallery items only). Prepend mainGid so it shows at position 0.
-              //   3. Post-reorder state: storedGids ALREADY contains mainGid in some
-              //      position (handleVariantReorder always pushes the full ordered
-              //      list including mainGid). Use as-is and dedup defensively — DO
-              //      NOT force mainGid back to slot 0, otherwise the merchant's
-              //      drag to demote it would visually snap back.
-              let effectiveGids: string[];
-              if (!hasMainImageForVariant) {
-                effectiveGids = mainGid ? storedGids.filter(g => g !== mainGid) : storedGids;
-              } else if (mainGid && !storedGids.includes(mainGid)) {
-                effectiveGids = [mainGid, ...storedGids];
-              } else {
-                // Dedup while preserving first-seen order (handles the rare
-                // bug case where the metafield contained mainGid twice).
-                const seen = new Set<string>();
-                effectiveGids = storedGids.filter(g => {
-                  if (seen.has(g)) return false;
-                  seen.add(g);
-                  return true;
-                });
-              }
+              const nativeMainGid = mainGidOfVariant(v);
+              // What the gallery SHOWS: the main image first and once (older saves
+              // also left it in the metafield); a main image the merchant removed is
+              // replaced right away by the image that moves up on save (displayMain,
+              // the same rule the server applies). A variant with no main image and
+              // none removed keeps its placeholder: nothing is promoted for it.
+              const shown = displayMain({
+                nativeMainGid,
+                removed: locallyExcludedMainGids.has(v.id),
+                stored: storedGids,
+                orderJson: pendingGalleryOrder[v.id] ?? v.galleryOrderJson,
+                isCandidate: isPromotable,
+              });
+              const hasMainImageForVariant = Boolean(shown.mainGid);
+              const effectiveGids = shown.gids;
               return (
               <VariantGallerySection
                 key={v.id}
@@ -4187,6 +4158,7 @@ export function VariantImageManager({
                   threeDPreviewUrls: pendingVariant3dPreviews[v.id] ?? v.threeDPreviewUrls,
                 }}
                 hasMainImage={hasMainImageForVariant}
+                mainFileGid={shown.mainGid}
                 fileUrlMap={fileUrlMap}
                 imageMetas={imageMetas}
                 activeAction={hasAnySelection ? activeAction : null}

@@ -6,7 +6,8 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 
 ## Zu entscheiden
 
-- **Automatische Galerie-Bereinigung beim Öffnen.** Enthält die Galerie einer Variante deren eigenes Hauptbild, zeigt ein unberührtes Produkt ungespeicherte Änderungen und fragt beim Verlassen nach. Speichern schreibt die Bereinigung mit. Laut Code-Kommentar gewollt, die Anzahl betroffener Produkte ist unbekannt. Ort: `VariantImageManager.tsx:1027-1037`, `:1053-1056`, `app.products.tsx:497-500`.
+- **Bestehende Doppelungen im Shop.** Hat die Galerie-Liste einer Variante deren Hauptbild noch mit gespeichert (ältere Speicherungen), sehen Kunden das Bild im Shop doppelt, bis die Galerie dieser Variante bearbeitet wird. Beim Öffnen wird nichts mehr bereinigt. Ob sich eine einmalige Bereinigung lohnt, hängt von einer noch offenen Zahl betroffener Produkte ab.
+- **Galerie `[Hauptbild]` wird zu `[]`.** Beim Bearbeiten einer solchen Variante (Galerie ändern, Bild einfügen, Hauptbild entfernen) wird die Liste leer, weil das Hauptbild nur noch im Hauptfeld liegt. Der Shop zeigt dann wie bei jeder Variante ohne weitere Bilder den Rückfall (alle Produktbilder). Unbearbeitete Varianten bleiben unberührt.
 
 ## Entschieden: bleibt so
 
@@ -35,6 +36,23 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Die Wiederholung umhüllt `window.fetch` einmal beim Start, nach App Bridge. Ersetzt App Bridge `window.fetch` später, wird sie still abgeschaltet. Nicht im echten Admin geprüft.
 - Der Metaobjekt-Speichern-Pfad antwortet auf eine leere Übermittlung (nichts geändert) mit Erfolg; im Hauptsprachen-Pfad filtert der Server außerdem auf `changedFields`. Ein vom Browser nicht erkannter Unterschied (Änderung in Shopify, die der Editor noch nicht geladen hat) bleibt daher möglich, bis die Daten geladen sind.
 - Der 429-Fall der stillen Varianten-Abfrage (`VariantImageManager`) ist ohne Test.
+
+## Bekannt: Galerien und Hauptbild
+
+- Auf einem echten Shop passen die `file`-Einträge des Reihenfolge-Pfads in der Einbettung möglicherweise nicht zu den GIDs. Dann würde die gespeicherte Reihenfolge ignoriert (`variant-gallery-embed.liquid:137`), und der Abgleich gegen Doppelte vergleicht Ids, die sich unterscheiden können (`:115-116`, `:186-188`). Braucht eine echte Darstellung zur Prüfung.
+- Rückt ein Bild nach, das nicht zu den Medien des Produkts gehört, würde Shopify den ganzen Speichervorgang ablehnen. Solche Bilder werden deshalb übersprungen, nicht an das Produkt gehängt. Fehlt die Abfrage (mehr als 250 Varianten oder Medien, oder sie schlägt fehl), gelten die Regeln nur für das, was der Editor schickt.
+- Ein Bild, das noch nicht hochgeladen ist, rückt in der Anzeige nicht als Hauptbild nach. Der Server nimmt nur Bilder, die schon eine GID haben.
+- Wird ein Hauptbild durch Löschen des Mediums ersetzt, wählt der Server aus der gespeicherten Galerie, nicht aus noch ungespeicherten Änderungen.
+- Zieht man bei einer Variante mit Hauptbild ein anderes Bild auf den ersten Platz, ändert das das Hauptbild nicht. Es bleibt vorn.
+- Die Verdrahtung im Image Manager (Senden beim Speichern, Anzeige, Löschen) ist ohne Darstellungs-Test. Getestet sind die Regeln und der Server.
+- «Alt-Text aus SKU» findet Bilder über die Galerie-Liste (`alt-text.action.ts:860-877`, `BulkAltTextPanel.tsx:838`). Hauptbilder stehen dort nicht, sie bekommen so keinen SKU-Alt-Text.
+
+## Bekannt: 429 und Wiederholung
+
+- Die Wiederholungsschicht kennt keine Reihenfolge für Lesezugriffe. Schreibvorgänge desselben Limiters warten nacheinander, bis zu rund vier Minuten. Parallele Anfragen derselben Art warten also einzeln.
+- Ein ungeladener Übersetzungs- oder Alt-Text-Abruf (`ThemeContentDomainPage.tsx:656-657`, `VariantImageManager.tsx:864-865`) kann wie «keine Übersetzungen» aussehen. Nur die Meldung «App ausgelastet» weist darauf hin.
+- Möglicher Phantom-Änderungsstand, wenn Antwort und Neuladen im selben Render ankommen. Nicht untersucht.
+- Ein fehlgeschlagenes Speichern der Hauptsprache lässt die Löschmarken der Übersetzungen stehen, die vor dem Senden gesetzt wurden. Die Anzeige versteckt sie bis zum Neuladen.
 
 ## Bekannt: veraltete Anzeigen
 

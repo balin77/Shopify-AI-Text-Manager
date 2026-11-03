@@ -712,6 +712,12 @@ export const guideEn: GuideCopy = {
           ],
         },
         {
+          heading: "The main image",
+          paragraphs: [
+            "The first image of each variant is its main image, marked with a gold border. It is shown once, at the front of the gallery. If you delete the main image or move it to the product gallery, the next image of that variant's gallery takes its place automatically; a variant is only left without a main image when it has no other image. Videos, YouTube/Vimeo links and 3D models cannot be a main image and stay where they are.",
+          ],
+        },
+        {
           heading: "Showing them in the shop",
           paragraphs: [
             "For visitors to see the variant galleries, switch on the “Variant gallery” app embed in the theme editor. It adopts your theme gallery's settings. If two galleries appear on top of each other, enter your theme gallery's CSS selector in the embed.",

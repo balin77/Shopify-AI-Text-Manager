@@ -236,7 +236,8 @@ export function useVariantImageManager() {
             // pendingVariantGalleries entry already has mainGid at [0]; new URLs land after it → gallery.
             existing.fileGids = [...existing.fileGids, ...newUrls];
           } else {
-            mergedVariantGalleries.push({ variantId, fileGids: [...galleryGids, ...newUrls], galleryOnly: true });
+            // The stored gallery may still hold the main image (older saves): it is not written back.
+            mergedVariantGalleries.push({ variantId, fileGids: [...galleryGids.filter(g => g !== mainGid), ...newUrls], galleryOnly: true });
           }
         } else {
           // Variant has no main image → first new upload becomes the variant image, rest go to gallery.

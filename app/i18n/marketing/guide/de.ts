@@ -720,6 +720,12 @@ export const guideDe: GuideCopy = {
           ],
         },
         {
+          heading: "Das Hauptbild",
+          paragraphs: [
+            "Das erste Bild jeder Variante ist ihr Hauptbild, mit goldenem Rand markiert. Es wird nur einmal gezeigt, vorne in der Galerie. Löschen Sie das Hauptbild oder schieben Sie es in die Produktgalerie, rückt das nächste Bild der Galerie dieser Variante automatisch an seine Stelle; nur eine Variante ohne weiteres Bild bleibt ohne Hauptbild. Videos, YouTube/Vimeo-Links und 3D-Modelle können kein Hauptbild sein und bleiben, wo sie sind.",
+          ],
+        },
+        {
           heading: "Im Shop anzeigen",
           paragraphs: [
             "Damit Besucher die Varianten-Galerien sehen, schalten Sie die App-Einbettung „Varianten-Galerie“ im Theme-Editor ein. Sie übernimmt die Einstellungen Ihrer Theme-Galerie. Erscheinen zwei Galerien übereinander, tragen Sie in der Einbettung den CSS-Selektor der Galerie Ihres Themes ein.",

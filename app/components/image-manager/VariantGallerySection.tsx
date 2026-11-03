@@ -32,6 +32,9 @@ interface VariantGallerySectionProps {
   forceOpen?: boolean;
   skipDndContext?: boolean;
   hasMainImage?: boolean;
+  /** The variant's main image (native, or the one that moves up). It is shown first, once,
+   *  with the gold border -- also when the saved order lists it elsewhere or twice. */
+  mainFileGid?: string | null;
   localAltTexts?: Record<string, string>;
   /** Values a selected market inherits from the global layer (placeholder only). */
   inheritedAltTexts?: Record<string, string>;
@@ -98,6 +101,7 @@ export function VariantGallerySection({
   forceOpen = false,
   skipDndContext = false,
   hasMainImage = true,
+  mainFileGid = null,
   localAltTexts,
   inheritedAltTexts,
   isAltTextLoading,
@@ -209,7 +213,14 @@ export function VariantGallerySection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variant.galleryOrderJson, fileUrlList.join("|"), effectiveExternalVideoUrls.join("|"), effectiveThreeDModelUrls.join("|"), fileUrlMap]);
 
-  const displayUrls = orderedUrls;
+  // The main image leads, once: the saved order legitimately lists it (and older
+  // saves held it in the metafield too), but it is never shown twice or behind
+  // other tiles.
+  const mainFileUrl = hasMainImage && mainFileGid ? fileUrlMap[mainFileGid] : undefined;
+  const displayUrls = useMemo(
+    () => (mainFileUrl && orderedUrls.includes(mainFileUrl) ? [mainFileUrl, ...orderedUrls.filter((u) => u !== mainFileUrl)] : orderedUrls),
+    [orderedUrls, mainFileUrl],
+  );
 
   // Augment the parent's imageMetas with synthetic entries for external
   // video URLs and 3D model URLs — the parent only populates entries for

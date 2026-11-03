@@ -712,6 +712,12 @@ export const guideEs: GuideCopy = {
           ],
         },
         {
+          heading: "La imagen principal",
+          paragraphs: [
+            "La primera imagen de cada variante es su imagen principal, marcada con un borde dorado. Se muestra una sola vez, al principio de la galería. Si eliminas la imagen principal o la mueves a la galería del producto, la siguiente imagen de la galería de esa variante ocupa su lugar automáticamente; una variante solo se queda sin imagen principal si no tiene ninguna otra imagen. Los vídeos, los enlaces de YouTube/Vimeo y los modelos 3D no pueden ser imagen principal y se quedan donde están.",
+          ],
+        },
+        {
           heading: "Mostrarlas en la tienda",
           paragraphs: [
             "Para que los visitantes vean las galerías por variante, activa el app embed «Galería de variantes» en el editor de temas. Adopta los ajustes de la galería de tu tema. Si aparecen dos galerías superpuestas, introduce en el embed el selector CSS de la galería de tu tema.",
