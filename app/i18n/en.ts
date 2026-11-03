@@ -2210,7 +2210,7 @@ export const en: Translation = {
     clearWhileSaving: "Still saving – please wait a moment and then clear again.",
     saveWaitsForTranslation: "Waiting until the translation has finished – then it is saved.",
     rateLimitWaiting: "The app is busy for a moment. Your request continues automatically.",
-    rateLimitGaveUp: "The app is busy right now. Your input is kept – please try again in a minute.",
+    rateLimitGaveUp: "The app is very busy right now, so this could not be completed. Please check your last change and try again in a minute.",
     translateRunTimedOut: "The translation is taking longer than expected. Reload the page later to see what was stored.",
     translateRunTimedOutSaveKept: "The translation may still be running on the server. Your changes were not saved yet – please save again in a moment.",
     ownSaveRefusedWhileTranslating: "A translation into this language is still running – the change stays unsaved. Save it when the translation has finished.",

@@ -1873,7 +1873,10 @@ export function useProductSubResources({
       // one with no `actionType` (a plan refusal, a proxy error), which used to
       // leave `isLoading` stuck.
       setIsLoading(false);
-      if (data.actionType === "loadSubResourceTranslations") {
+      // The limiter's synthesized refusal carries no `actionType` either, but it
+      // is nobody's error to report: the rate-limit notice already says it, and
+      // a load nobody pressed must not show a red message.
+      if (data.actionType === "loadSubResourceTranslations" || (data as { rateLimited?: boolean }).rateLimited) {
         pendingLoadRef.current = null;
         return;
       }
@@ -3721,7 +3724,8 @@ export function useProductSubResources({
   // is still on its way). A save of ANOTHER product does not block this one.
   const savesForThisItem = saveEntries.some((e) => e.itemId === (itemId ?? null));
   // A Phase-2 load owns the (load-only) fetcher.
-  const loadBusy = fetcher.state !== "idle";
+  // Busy for the product the load was asked for, not for the one the merchant moved to.
+  const loadBusy = fetcher.state !== "idle" && (pendingLoadRef.current ? pendingLoadRef.current.itemId === itemId : true);
   // Changes no save carries yet: what a save of this very view already holds is
   // not "unsaved" (switching away loses nothing, its answer is tagged), only
   // edits typed after it went out are.

@@ -64,7 +64,7 @@ export const guideDe: GuideCopy = {
       ],
       tips: [
         "Wie viele Produkte, Sprachen und Inhaltstypen Sie bearbeiten können, hängt von Ihrem Plan ab. Die aktuelle Nutzung sehen Sie unter Einstellungen → Plan.",
-        "Meldet die App, dass sie kurz ausgelastet ist, geht nichts verloren: Sie macht von selbst weiter, und was Sie getippt haben, bleibt stehen. Bittet sie darum, es noch einmal zu versuchen, warten Sie eine Minute und wiederholen den Schritt.",
+        "Meldet die App, dass sie kurz ausgelastet ist, macht sie von selbst weiter. Teilt sie mit, dass etwas nicht ausgeführt werden konnte, warten Sie eine Minute, prüfen Sie Ihre letzte Änderung und wiederholen Sie den Schritt.",
       ],
     },
 

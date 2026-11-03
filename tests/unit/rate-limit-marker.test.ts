@@ -85,3 +85,41 @@ describe("429 from our limiter", () => {
     expect(res.sent).toBeUndefined();
   });
 });
+
+describe("over a real Express server", () => {
+  it("the second request is refused with the marker, Retry-After, and a page for a browser / JSON for a fetch", async () => {
+    const http = await import("node:http");
+    const express = require("express");
+    const { rateLimit } = require("express-rate-limit");
+    const app = express();
+    app.use(
+      rateLimit({ windowMs: 60_000, limit: 1, standardHeaders: true, legacyHeaders: false, handler: limiters.bucketHandler("probe"), keyGenerator: () => "k" }),
+    );
+    app.get("/x", (_req: any, res: any) => res.json({ ok: true }));
+    const server = app.listen(0);
+    const port = (server.address() as any).port;
+    const get = (headers: Record<string, string>) =>
+      new Promise<{ status: number; headers: any; body: string }>((resolve, reject) => {
+        http.get({ port, path: "/x", headers }, (res) => {
+          let body = "";
+          res.on("data", (c) => (body += c));
+          res.on("end", () => resolve({ status: res.statusCode!, headers: res.headers, body }));
+        }).on("error", reject);
+      });
+    try {
+      expect((await get({ accept: "application/json" })).status).toBe(200);
+      const json = await get({ accept: "application/json" });
+      expect(json.status).toBe(429);
+      expect(json.headers["x-cp-rate-limited"]).toBe("probe");
+      expect(Number(json.headers["retry-after"])).toBeGreaterThan(0);
+      expect(JSON.parse(json.body).error).toContain("Too many requests");
+      const page = await get({ accept: "text/html", "accept-language": "de" });
+      expect(page.status).toBe(429);
+      expect(page.headers["content-type"]).toContain("text/html");
+      expect(page.headers["x-cp-rate-limited"]).toBe("probe");
+      expect(page.body).toContain("Gerade sind viele Anfragen");
+    } finally {
+      server.close();
+    }
+  });
+});

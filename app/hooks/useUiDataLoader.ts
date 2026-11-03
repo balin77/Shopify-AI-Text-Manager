@@ -596,6 +596,45 @@ export function useUiDataLoader(
   // RESOLVE ALL — All fields at once
   // ---------------------------------------------------------------------------
 
+  /** The server value each cache entry was last compared against, per
+   *  item / language / market / field. */
+  const serverSeenRef = useRef<Record<string, string>>({});
+
+  const yieldToServerChanges = (
+    item: TranslatableContentItem,
+    locale: string,
+    fieldDefinitions: FieldDefinition[]
+  ) => {
+    const seen = serverSeenRef.current;
+    const isPrimary = locale === primaryLocale;
+    const marketId = isPrimary ? "" : selectedMarketIdRef.current;
+    for (const field of fieldDefinitions) {
+      let serverValue: string;
+      let cached: string | undefined;
+      const seenKey = `${item.id}|${locale}|${marketId}|${field.key}`;
+      if (isPrimary) {
+        serverValue = getItemFieldValue(item, field.key, primaryLocale, config);
+        cached = savedPrimaryValuesRef.current[item.id]?.[field.key];
+      } else {
+        if (!field.translationKey) continue;
+        serverValue = marketId
+          ? item.marketTranslations?.[marketId]?.[field.translationKey]?.[locale] ?? ""
+          : getTranslatedValue(item, field.translationKey, locale, "", primaryLocale);
+        cached = localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];
+      }
+      const previous = seen[seenKey];
+      if (cached !== undefined && previous !== undefined && serverValue !== previous && serverValue !== cached) {
+        if (isPrimary) {
+          const override = savedPrimaryValuesRef.current[item.id];
+          if (override) delete override[field.key];
+        } else {
+          delete localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];
+        }
+      }
+      seen[seenKey] = serverValue;
+    }
+  };
+
   const resolveAll = useCallback(
     (
       item: TranslatableContentItem,
@@ -604,6 +643,12 @@ export function useUiDataLoader(
     ): { values: Record<string, string>; fallbackFields: Set<string> } => {
       const values: Record<string, string> = {};
       const fallbackFields = new Set<string>();
+
+      // The local caches (a saved value staged until the read catches up) bridge
+      // a LAGGING read, never an answer that moved on: when the server value
+      // changed since the last pass and is not the value we saved either,
+      // somebody else wrote it and the server wins.
+      yieldToServerChanges(item, locale, fieldDefinitions);
 
       // For primary locale with savedPrimaryValuesRef: check if server caught up
       if (locale === primaryLocale) {

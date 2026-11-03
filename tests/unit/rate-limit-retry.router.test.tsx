@@ -120,7 +120,8 @@ afterEach(() => {
 
 describe("the encoder against the router's own decoder", () => {
   it("round-trips a result object", async () => {
-    const value = { data: { success: false, error: "x", n: 3, nested: { a: [1, "b", null, true] } } };
+    const nasty = 'quote " backslash \ newline \n tab \t sep \u2028 emoji \u{1F600} _5 {"a":1}';
+    const value = { data: { success: false, error: nasty, [nasty]: 1, n: 3, nested: { a: [1, "b", null, true] } } };
     const res = new Response(encodeTurboStreamValue(value));
     const decoded = await decodeViaTurboStream(res.body as any, window as any);
     expect(decoded.value).toEqual(value);

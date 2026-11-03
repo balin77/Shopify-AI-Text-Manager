@@ -90,11 +90,15 @@ export interface RateLimitFetchOptions {
 }
 
 const blockedUntilByBucket = new Map<string, number>();
+/** Writes of one bucket that are waiting for its window, by call order. */
+const waitingWrites = new Map<string, Set<number>>();
+let callSeq = 0;
 const bucketByKey = new Map<string, string>();
 
 /** Test seam: forget what earlier requests learned. */
 export function resetRateLimitState() {
   blockedUntilByBucket.clear();
+  waitingWrites.clear();
   bucketByKey.clear();
 }
 
@@ -161,7 +165,8 @@ function synthesized(status: number, body: string): Response {
 
 /** The answer a router `.data` request gets when the retries ran out, or null where none can be made. */
 function singleFetchAnswer(url: URL, method: string, retryAfterSeconds: number): Response | null {
-  const data = { success: false, error: messageProvider(), rateLimited: true, retryAfter: retryAfterSeconds };
+  // `ok: false` for the settings tabs that test it instead of `success`.
+  const data = { success: false, ok: false, error: messageProvider(), rateLimited: true, retryAfter: retryAfterSeconds };
   if (method !== "GET" && method !== "HEAD") {
     // A POST: the router decodes `{ data }` as the action's result.
     return synthesized(429, encodeTurboStreamValue({ data }));
@@ -187,7 +192,23 @@ export function createRateLimitFetch(inner: typeof fetch, options: RateLimitFetc
     let retries = 0;
     let gateWaits = 0;
     let announced = false;
+    const seq = ++callSeq;
+    const isWrite = method !== "GET" && method !== "HEAD";
+    let registeredBucket: string | undefined;
+    // A write held back by the limiter queues behind OLDER held writes of the
+    // same bucket (copy to all languages, a save, an AI accept all share one),
+    // so a retried older write cannot land after a newer one of the same field.
+    const register = (bucket: string) => {
+      if (!isWrite || registeredBucket) return;
+      registeredBucket = bucket;
+      let set = waitingWrites.get(bucket);
+      if (!set) waitingWrites.set(bucket, (set = new Set()));
+      set.add(seq);
+    };
+    const hasOlderWaiting = () =>
+      !!registeredBucket && [...(waitingWrites.get(registeredBucket) ?? [])].some((other) => other < seq);
 
+    try {
     for (;;) {
       // A bucket this kind of request is known to belong to may be closed: do
       // not send into a closed window, wait for it (or give up when that is too long).
@@ -199,12 +220,15 @@ export function createRateLimitFetch(inner: typeof fetch, options: RateLimitFetc
       if (closedFor > 0 && resendable && gateWaits < MAX_GATE_WAITS) {
         retryAfterMs = closedFor;
         gateWaits++;
+        if (knownBucket) register(knownBucket);
       } else {
+        while (hasOlderWaiting()) await sleep(25, signal);
         const attempt = isRequest ? (input as Request).clone() : input;
         const response = await inner(attempt, init);
         const bucket = response.status === 429 ? response.headers.get(RATE_LIMIT_MARKER_HEADER) : null;
         if (!bucket) return response; // not ours: untouched, whatever the status
         if (key) bucketByKey.set(key, bucket);
+        register(bucket);
         retryAfterMs = parseRetryAfterMs(response.headers.get("Retry-After"));
         blockedUntilByBucket.set(bucket, Math.max(blockedUntilByBucket.get(bucket) ?? 0, now() + retryAfterMs));
         refused = response;
@@ -236,6 +260,9 @@ export function createRateLimitFetch(inner: typeof fetch, options: RateLimitFetc
       // Only a real send is a retry; waiting for a closed window is not.
       if (refused) retries++;
       await sleep(retryAfterMs + Math.floor(random() * JITTER_MS), signal);
+    }
+    } finally {
+      if (registeredBucket) waitingWrites.get(registeredBucket)?.delete(seq);
     }
   };
   return wrapped as typeof fetch;

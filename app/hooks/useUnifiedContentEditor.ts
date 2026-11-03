@@ -935,6 +935,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    */
   const [ownSavesInFlight, setOwnSavesInFlight] = useState<OwnSaveInFlight[]>([]);
   /** The answer to `partial` landed (or will never be applied): stop covering it. */
+  /** A save that was refused or failed stored nothing: the main-language
+   *  overlay `savedPrimaryValuesRef` it was given before submit must go, or
+   *  every later re-resolve shows the unsent text as if it were stored (and
+   *  not dirty). Only the keys this save carried; an older, confirmed overlay
+   *  of other fields keeps bridging its lagging read. */
+  const forgetFailedPrimarySave = () => {
+    const scope = inFlightScopeRef.current;
+    const itemId = scope?.sentFields?.itemId;
+    if (!scope || !itemId || scope.locale !== primaryLocale) return;
+    const cached = savedPrimaryValuesRef.current[itemId];
+    if (!cached) return;
+    for (const key of Object.keys(scope.sentFields ?? {})) delete cached[key];
+    if (Object.keys(cached).length === 0) delete savedPrimaryValuesRef.current[itemId];
+  };
   const settleOwnSaveFor = useCallback((partial: PartialSave | null) => {
     if (!partial) return;
     setOwnSavesInFlight((prev) => settleOwnSave(prev, partial));
@@ -1571,6 +1585,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       );
       if (preservedKeys.length > 0) {
         debugLog.dataLoad(` Background refresh preserved ${preservedKeys.length} unsaved field(s)`);
+        // Typed text is the field's own value, not the inherited one the load
+        // flagged: a flagged field is left OUT of a foreign/market save, so
+        // keeping the flag would show the text and silently not store it.
+        const stillInherited = new Set([...newFallbackFields].filter((key) => !preservedKeys.includes(key)));
+        setFallbackFields(stillInherited);
       }
       setEditableValues(merged);
       return;
@@ -2221,6 +2240,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // construction, and must not take the processed slot of the fetcher's
     // answer (which would then be re-applied on the next run).
     const handleAnswer = (answer: FetcherData | undefined, scopeItemId: string | null | undefined, fromQueue = false) => {
+      // The fetcher path (theme pages): a refused or failed run must release
+      // its spinner too, or the item reads as translating for the rest of the
+      // session. Only an answer that is this run's own (or the limiter's
+      // synthesized one) and only when no tracked run of the item is out.
+      if (answer && !answer.success && !fromQueue && ((answer as { actionType?: string }).actionType === ANSWER_ACTION || (answer as { rateLimited?: boolean }).rateLimited)) {
+        if (answer !== processedTranslateAllRef.current) {
+          processedTranslateAllRef.current = answer;
+          const failedItemId = scopeItemId || selectedItemIdRef.current;
+          if (failedItemId && isOperationActive(failedItemId, "__translateAll__") && !translateRunsRef.current.some((run) => run.itemId === failedItemId)) {
+            markOperationFailed(failedItemId, "__translateAll__");
+          }
+        }
+        return;
+      }
       if (answer?.success && answer.actionType === "translateAll") {
         // Prevent re-processing when effectiveFieldDefinitions change (e.g. after Remix revalidation)
         if (!fromQueue) {
@@ -3354,6 +3387,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data && isSavePendingRef.current) {
       // Also mark error responses as processed
       processedSaveResponseRef.current = fetcher.data;
+      forgetFailedPrimarySave();
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
       inFlightToastRef.current = null;
@@ -3405,6 +3439,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // revert the UI immediately to prevent accidental data loss.
       // ──────────────────────────────────────────────────────────────────
       processedSaveResponseRef.current = fetcher.data;
+      forgetFailedPrimarySave();
       isSavePendingRef.current = false;
       settleOwnSaveFor(inFlightPartialRef.current);
       inFlightPartialRef.current = null;
@@ -3481,6 +3516,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // answer. Left alone, the pending flag stuck and refused every later
       // "translate all" as racing a save that had long ended.
       processedSaveResponseRef.current = fetcher.data;
+      forgetFailedPrimarySave();
       isSavePendingRef.current = false;
       settleOwnSaveFor(inFlightPartialRef.current);
       inFlightPartialRef.current = null;

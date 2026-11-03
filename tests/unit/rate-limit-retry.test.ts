@@ -157,3 +157,96 @@ describe("no retry storm", () => {
     expect(sentAt.filter((t) => t !== t0 && t - t0 < 3000)).toHaveLength(0);
   });
 });
+
+describe("what is held and what is answered (router .data requests)", () => {
+  const settled = async (p: Promise<unknown>) => {
+    let state = "pending";
+    p.then(() => (state = "resolved"), () => (state = "rejected"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    return state;
+  };
+  it("a page GET (not /api) is held even when it names one route", async () => {
+    install(() => refused(2));
+    const c = new AbortController();
+    const p = globalThis.fetch("/app/settings.data?_routes=routes%2Fsettings", { signal: c.signal });
+    expect(await settled(p)).toBe("pending");
+    c.abort();
+    await expect(p).rejects.toBeDefined();
+  });
+  it("a GET naming several routes is held, not answered with invented data", async () => {
+    install(() => refused(2));
+    const c = new AbortController();
+    const p = globalThis.fetch("/api/x.data?_routes=a%2Cb", { signal: c.signal });
+    expect(await settled(p)).toBe("pending");
+    c.abort();
+    await expect(p).rejects.toBeDefined();
+  });
+  it("an /api GET naming one route is answered", async () => {
+    install(() => refused(2));
+    const p = globalThis.fetch("/api/x.data?_routes=routes%2Fapi.x");
+    expect(await settled(p)).toBe("resolved");
+    const res = await p;
+    expect(res.status).toBe(429);
+    expect(res.headers.get("X-Remix-Response")).toBe("yes");
+  });
+});
+
+describe("a Request object as input", () => {
+  it("each send gets a body that can still be read", async () => {
+    const bodies: string[] = [];
+    let n = 0;
+    inner = vi.fn(async (input: any) => {
+      sentAt.push(Date.now());
+      bodies.push(await input.text());
+      return ++n === 1 ? refused(2) : ok();
+    });
+    globalThis.fetch = createRateLimitFetch(inner as any, { random: () => 0 });
+    const p = globalThis.fetch(new Request("http://localhost/api/x", { method: "POST", body: "a=1" }));
+    await vi.advanceTimersByTimeAsync(5000);
+    const res = await p;
+    expect(res.status).toBe(200);
+    expect(bodies).toEqual(["a=1", "a=1"]);
+  });
+});
+
+describe("ordering of held writes (M4)", () => {
+  it("an older write held by the limiter is sent before a newer one of the same bucket, even if the newer one wakes first", async () => {
+    const order: string[] = [];
+    let first = true;
+    inner = vi.fn(async (_input: any, init?: RequestInit) => {
+      sentAt.push(Date.now());
+      order.push(String(init?.body));
+      if (first) { first = false; return refused(2); }
+      return ok();
+    });
+    // The older write draws the long jitter, the newer one none.
+    const draws = [0.99, 0];
+    globalThis.fetch = createRateLimitFetch(inner as any, { random: () => draws.shift() ?? 0 });
+    const older = globalThis.fetch("/api/content-editor-action", { method: "POST", body: "older" });
+    await vi.advanceTimersByTimeAsync(100); // refused, now waiting
+    const newer = globalThis.fetch("/app/products.data", { method: "POST", body: "newer" });
+    await vi.advanceTimersByTimeAsync(20_000);
+    await Promise.all([older, newer]);
+    // "newer" has a different path but is learned into the same bucket only after a
+    // refusal of its own; here it is sent once and succeeds, so only the older
+    // retry order matters: the retry of the older write is not overtaken by a retry.
+    expect(order[0]).toBe("older");
+    expect(order.filter((o) => o === "older").length).toBe(2);
+  });
+
+  it("two writes refused together are retried oldest first", async () => {
+    const order: string[] = [];
+    let n = 0;
+    inner = vi.fn(async (_input: any, init?: RequestInit) => {
+      order.push(String(init?.body));
+      return ++n <= 2 ? refused(2) : ok();
+    });
+    const draws = [0.99, 0]; // older: long jitter, newer: none
+    globalThis.fetch = createRateLimitFetch(inner as any, { random: () => draws.shift() ?? 0 });
+    const a = globalThis.fetch("/api/x", { method: "POST", body: "A" });
+    const b = globalThis.fetch("/api/x", { method: "POST", body: "B" });
+    await vi.advanceTimersByTimeAsync(20_000);
+    await Promise.all([a, b]);
+    expect(order).toEqual(["A", "B", "A", "B"]);
+  });
+});

@@ -712,6 +712,7 @@ export function VariantImageManager({
   // A key={productId} remount was deliberately rejected (redundant reconcile
   // calls on every product re-visit).
   const variantsReqIdRef = useRef(0);
+  const variantsAbortRef = useRef<AbortController | null>(null);
 
   // Cross-gallery drag state
   const [activeDragUrl, setActiveDragUrl] = useState<string | null>(null);
@@ -897,6 +898,11 @@ export function VariantImageManager({
   // list would blink through its spinner on every tick.
   const fetchVariantsForProduct = useCallback((pid: string, resetState: boolean, opts?: { silent?: boolean }) => {
     const reqId = ++variantsReqIdRef.current;
+    // A newer read ends the older one outright (a read held back by the rate
+    // limiter would otherwise keep retrying for a product nobody looks at).
+    variantsAbortRef.current?.abort();
+    const variantsAbort = new AbortController();
+    variantsAbortRef.current = variantsAbort;
     const isStale = () => variantsReqIdRef.current !== reqId;
     if (!opts?.silent) setIsLoadingVariants(true);
     // A silent poll must not clear a genuine error banner either — it is
@@ -909,7 +915,7 @@ export function VariantImageManager({
       setLocallyExcludedMainGids(new Set());
     }
 
-    appFetch(`/api/product-variants?productId=${encodeURIComponent(pid)}`)
+    appFetch(`/api/product-variants?productId=${encodeURIComponent(pid)}`, { signal: variantsAbort.signal })
       .then(r => {
         // The limiter's refusal is not a variants answer: its body has an English
         // `error` that would be shown as the banner (the silent poll included).
