@@ -19,6 +19,7 @@ vi.mock("~/utils/app-fetch", () => ({
 import { useUnifiedContentEditor } from "~/hooks/useUnifiedContentEditor";
 import { PRODUCTS_CONFIG, TEMPLATES_CONFIG } from "~/config/content-fields.config";
 import { isOperationActive } from "~/hooks/useAIOperationsStore";
+import { setFieldSuggestion } from "~/hooks/useAISuggestionStore";
 
 const shopLocales = [
   { locale: "de", name: "Deutsch", primary: true, published: true },
@@ -90,6 +91,50 @@ describe("BLOCKER 1: a save refused after a product switch does not look saved",
   });
 });
 
+describe("BLOCKER 1b: the answer still held in fetcher.data is not the abandoned save's answer", () => {
+  it("an earlier success on the fetcher does not consume the abandoned save; its later refusal is still recognised", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "v1"));
+    act(() => m.h().handleSave());
+    // First save answered: its answer stays on the fetcher.
+    await m.rerender(items, { success: true, actionType: "updateContent" });
+    const first = m.fetcher.data;
+    act(() => m.h().handleValueChange("title", "v2"));
+    act(() => m.h().handleSave());
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    // Re-renders while the second save is still out: fetcher.data is still the FIRST answer.
+    await m.rerender(items, first);
+    await m.rerender(items, first);
+    expect(infoBox.mock.calls.some((c) => c[1] === "critical")).toBe(false);
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true });
+    expect(infoBox.mock.calls.some((c) => c[1] === "critical" && String(c[0]).includes("rouge"))).toBe(true);
+    await act(async () => { await m.h().handleItemSelect(A); });
+    await m.flush();
+    expect(m.v().title).not.toBe("v2");
+  });
+});
+
+describe("BLOCKER 1c: switching away and back before the answer", () => {
+  it("the refusal is still recognised and the text does not look saved", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "verte2"));
+    act(() => m.h().handleSave());
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    await act(async () => { await m.h().handleItemSelect(A); });
+    await m.flush();
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true });
+    expect(infoBox.mock.calls.some((c) => c[1] === "critical")).toBe(true);
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "moved" }, items[1]]);
+    expect(m.v().title).toBe("rouge");
+  });
+});
+
 describe("BLOCKER 2: foreign text typed between submit and answer survives", () => {
   it("stays a change and survives the re-read", async () => {
     const m = mount([{ id: A, title: "rouge", frTitle: "noir" }], "fr");
@@ -129,6 +174,16 @@ describe("a stale or blank read does not revert a fresh save, and the bridging r
     const m = await saved(locale);
     await m.rerender([{ id: A, title: "rouge", frSeo: "seo-x" }]);
     expect(m.v().title).toBe("bleu");
+  });
+  it("a second save while the server still shows the first one: an unchanged read does not revert it", async () => {
+    const m = await saved("fr");
+    act(() => m.h().handleValueChange("title", "bleu2"));
+    act(() => m.h().handleSave());
+    await m.rerender([{ id: A, title: "rouge", frTitle: "bleu" }], { success: true, actionType: "updateContent" });
+    // a pass that runs, the server value of the field has NOT moved since the last pass
+    await m.rerender([{ id: A, title: "rouge", frTitle: "bleu", frSeo: "seo-y" }]);
+    expect(m.v().title).toBe("bleu2");
+    expect(m.dirty()).toBe(false);
   });
   it("an external third value still wins", async () => {
     const m = await saved("fr");
@@ -186,6 +241,28 @@ describe("a refused main-language save does not look saved (every failure shape)
   });
 });
 
+describe("a refused save forgets only the keys it carried", () => {
+  it("an earlier confirmed save of another field keeps bridging its lagging read", async () => {
+    const m = mount([{ id: A, title: "rouge" }], "de");
+    await m.flush();
+    const accept = async (field: string, text: string) => {
+      act(() => setFieldSuggestion({ resourceId: A, locale: "de", marketId: "" }, field, text));
+      await m.flush();
+      await act(async () => { m.h().handleAcceptSuggestion(field); });
+      await m.flush();
+    };
+    await accept("title", "T1");
+    expect(m.sent().changedFields).toBe(JSON.stringify(["title"]));
+    await m.rerender([{ id: A, title: "rouge" }], { success: true, actionType: "updateContent" });
+    await accept("metaDescription", "M1");
+    expect(m.sent().changedFields).toBe(JSON.stringify(["metaDescription"]));
+    await m.rerender([{ id: A, title: "rouge" }], { success: false, error: "busy", rateLimited: true });
+    // a pass over a read that still lags behind the confirmed title
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "moved" }]);
+    expect(m.v().title).toBe("T1");
+  });
+});
+
 describe("translate runs: a refused answer releases the spinner, a tracked run is protected", () => {
   const THEME = "gid://shopify/OnlineStoreThemeJsonTemplate/9";
   const theme = (_: any) => ({
@@ -214,6 +291,16 @@ describe("translate runs: a refused answer releases the spinner, a tracked run i
     expect(isOperationActive(A, "__translateAll__")).toBe(true);
     await m.rerender([{ id: A, title: "rouge" }], { success: false, error: "busy", rateLimited: true });
     expect(isOperationActive(A, "__translateAll__")).toBe(true);
+    window.history.pushState({}, "", "/");
+  });
+  it("translate-one-language with a tracked run out: a refused save answer does not drop its spinner", async () => {
+    window.history.pushState({}, "", "/app/products");
+    const m = mount([{ id: A, title: "rouge", frTitle: "noir" }], "fr");
+    await m.flush();
+    act(() => { m.h().handleTranslateAllForLocale(); });
+    expect(isOperationActive(A, "__translateAllForLocale__fr")).toBe(true);
+    await m.rerender([{ id: A, title: "rouge", frTitle: "noir" }], { success: false, error: "busy", rateLimited: true });
+    expect(isOperationActive(A, "__translateAllForLocale__fr")).toBe(true);
     window.history.pushState({}, "", "/");
   });
 });

@@ -652,6 +652,7 @@ export function useUiDataLoader(
         if (isPrimary) {
           const override = savedPrimaryValuesRef.current[item.id];
           if (override) delete override[field.key];
+          delete caughtUpAtRef.current[item.id];
         } else {
           delete localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];
         }

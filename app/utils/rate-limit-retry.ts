@@ -20,8 +20,10 @@
  * Retry: at most MAX_RETRIES more sends, after `Retry-After` plus jitter, and
  * only when `Retry-After` is within MAX_WAIT_MS (waiting less than the limiter
  * asked burns another refusal). Everything refused by one bucket shares one
- * "blocked until": nothing is sent into a known-closed window, so N waiting
- * requests do not become N refusals and N log lines. An abort (the router's
+ * "blocked until": a request whose path the wrapper has already seen refused is
+ * not sent into the closed window, so N waiting requests of that path do not
+ * become N refusals and N log lines (the first send of any other path goes out
+ * regardless, and may be refused). An abort (the router's
  * own signal on a product switch or a newer load) ends the wait with the
  * abort error and nothing is sent afterwards.
  *

@@ -72,6 +72,34 @@ describe("ordering", () => {
   });
 });
 
+describe("the wait for older writes is bounded", () => {
+  it("a write does not wait longer than a minute for an older held write that keeps being refused", async () => {
+    // Windows are made to look open at once (scaled clock) so only the turn is under test.
+    const inner = vi.fn(async (_input: any, init?: RequestInit) => {
+      const body = String(init?.body ?? "");
+      log.push({ body, at: Date.now(), method: "POST" });
+      const seen = log.filter((l) => l.body === body).length;
+      if (body === "H") return refused(30);
+      return seen === 1 ? refused(1) : ok();
+    });
+    const draws = [0.99, 0, 0.99]; // H sleeps 31.4 s twice, T once without jitter
+    globalThis.fetch = createRateLimitFetch(inner as any, { random: () => draws.shift() ?? 0, now: () => Date.now() * 1000 });
+    const start = Date.now();
+    const h = globalThis.fetch("/api/h", { method: "POST", body: "H" });
+    await vi.advanceTimersByTimeAsync(200);
+    const t = globalThis.fetch("/api/t", { method: "POST", body: "T" });
+    await vi.advanceTimersByTimeAsync(120_000);
+    await Promise.all([h, t]);
+    const tSends = log.filter((l) => l.body === "T").map((l) => l.at - start);
+    const hLast = log.filter((l) => l.body === "H").at(-1)!.at - start;
+    expect(tSends).toHaveLength(2);
+    // H is still being retried at 62.8 s; T went out at about a minute after it woke up.
+    expect(hLast).toBeGreaterThan(62_000);
+    expect(tSends[1]).toBeLessThan(hLast);
+    expect(tSends[1]).toBeGreaterThan(55_000);
+  });
+});
+
 describe("what the queue never holds up", () => {
   it("a READ does not wait for an older held write: it goes out first when it wakes first", async () => {
     install((n) => (n <= 2 ? refused(2) : ok()), [0.99, 0]);

@@ -1474,7 +1474,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       processedSaveResponseRef.current = null;
       // A save still out when the merchant leaves: its answer is no longer applied
       // here, but a FAILURE must still be recognised (see the answer effect).
-      abandonedSaveRef.current = isSavePendingRef.current ? inFlightScopeRef.current : null;
+      // `fetcher.data` still holds the answer of an EARLIER request until the
+      // save's own answer replaces it: that one is not this save's answer.
+      // A further switch (back to the first item, say) before the answer keeps the
+      // record: only a save that is out REPLACES it.
+      if (isSavePendingRef.current && inFlightScopeRef.current) {
+        abandonedSaveRef.current = { scope: inFlightScopeRef.current, staleData: fetcher.data };
+      }
       isSavePendingRef.current = false;
       // Nor will it clear the busy flag: back on the old item it read as
       // saving for the rest of the session.
@@ -1931,7 +1937,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const processedSaveResponseRef = useRef<FetcherData | null>(null);
   const itemsRef = useLatestRef(items);
   /** The scope of a save that was out when the merchant switched to another item. */
-  const abandonedSaveRef = useRef<SentSaveScope | null>(null);
+  const abandonedSaveRef = useRef<{ scope: SentSaveScope; staleData: unknown } | null>(null);
 
   // Ref to track processed translateAltTextToAllLocales responses (prevents infinite revalidation loop)
   const processedTranslateAltTextAllRef = useRef<FetcherData | null>(null);
@@ -2738,9 +2744,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // must not leave that item looking saved (its unsent text cached as stored):
       // the overlay goes, the item shows what Shopify holds, and the merchant is told
       // which item it concerned. The text is NOT restored as a draft (owner decision).
-      const abandoned = abandonedSaveRef.current;
+      const abandonedEntry = abandonedSaveRef.current;
+      const abandoned = abandonedEntry?.scope;
       const data = fetcher.data as (FetcherData & { rateLimited?: boolean }) | undefined;
-      if (abandoned && data) {
+      if (abandoned && data && data !== abandonedEntry?.staleData) {
         abandonedSaveRef.current = null;
         processedSaveResponseRef.current = data;
         if (!data.success) {
