@@ -604,13 +604,19 @@ export function useUiDataLoader(
   /** The server value each cache entry was last compared against, per
    *  item / language / market / field. */
   const serverSeenRef = useRef<Record<string, string>>({});
-  /** The server value from BEFORE a cached save, per field: a read that still shows it
-   *  is a lagging or stale read, not somebody else's change. */
-  const preSaveSeenRef = useRef<Record<string, string>>({});
+  /** Per field: every value that counts as OURS or OLDER while a cached save stands:
+   *  the server value from before the first save and every value cached during the
+   *  overlay's life. A read showing any of them is a lagging or stale read, not
+   *  somebody else's change (a second save must not turn the first one's value
+   *  into a "third value"). */
+  const preSaveSeenRef = useRef<Record<string, Set<string>>>({});
   /** Per item: the overlay it describes, when it was first seen, and when the server
    *  first showed it. The overlay has an ABSOLUTE end counted from these, whatever
    *  the server shows later. */
   const overlayLifeRef = useRef<Record<string, { values: Record<string, string>; start: number; caught: number | null }>>({});
+
+  /** The same clock for the foreign overlay, per cache entry. */
+  const foreignLifeRef = useRef<Record<string, { value: string; start: number; caught: number | null }>>({});
 
   const yieldToServerChanges = (
     item: TranslatableContentItem,
@@ -635,22 +641,26 @@ export function useUiDataLoader(
         cached = localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];
       }
       const previous = seen[seenKey];
+      let ours = preSaveSeenRef.current[seenKey];
       if (cached === undefined) {
         delete preSaveSeenRef.current[seenKey];
-      } else if (previous !== undefined && !(seenKey in preSaveSeenRef.current)) {
-        // First pass since the save was cached: what was seen before it.
-        preSaveSeenRef.current[seenKey] = previous;
+        ours = undefined as unknown as Set<string>;
+      } else {
+        if (!ours) ours = preSaveSeenRef.current[seenKey] = new Set();
+        // First pass since a save was cached: what was seen before it.
+        if (ours.size === 0 && previous !== undefined) ours.add(previous);
+        ours.add(cached);
       }
-      // Somebody else's change: the server moved on to a value that is neither what we
-      // saved, nor what it showed before the save (a stale read), nor blank (a read that
-      // momentarily has no translations). Limit: a change back to the pre-save value,
-      // or to blank, is indistinguishable from a stale read and does not yield.
+      // Somebody else's change: the server moved on to a value that is neither ours
+      // or older (see preSaveSeenRef), nor blank (a read that momentarily has no
+      // translations). Limit: a change back to one of those values, or to blank, is
+      // indistinguishable from a stale read and does not yield until the overlay ends.
       if (
         cached !== undefined &&
         previous !== undefined &&
         serverValue !== previous &&
         serverValue !== cached &&
-        serverValue !== preSaveSeenRef.current[seenKey] &&
+        !ours.has(serverValue) &&
         serverValue !== ""
       ) {
         if (isPrimary) {
@@ -659,6 +669,21 @@ export function useUiDataLoader(
         } else {
           delete localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];
         }
+      }
+      if (!isPrimary && cached !== undefined) {
+        // The foreign overlay ends on a clock too (see overlayLifeRef): whatever the
+        // server shows, it is gone a minute after it was first seen caught up and ten
+        // minutes after it was staged at the latest.
+        const now = Date.now();
+        let life = foreignLifeRef.current[seenKey];
+        if (!life || life.value !== cached) life = foreignLifeRef.current[seenKey] = { value: cached, start: now, caught: null };
+        if (serverValue === cached && life.caught === null) life.caught = now;
+        if ((life.caught !== null && now - life.caught > SAVED_OVERLAY_BRIDGE_MS) || now - life.start > SAVED_OVERLAY_MAX_MS) {
+          delete localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];
+          delete foreignLifeRef.current[seenKey];
+        }
+      } else if (!isPrimary) {
+        delete foreignLifeRef.current[seenKey];
       }
       seen[seenKey] = serverValue;
     }
@@ -1335,14 +1360,15 @@ export function useUiDataLoader(
     // overlay needs is kept (its comparison state must survive a switch away and
     // back, or the first read after coming back cannot tell a lagging read from
     // somebody else's change).
-    const keep = (map: Record<string, string>) => {
-      const next: Record<string, string> = {};
+    const keep = <V,>(map: Record<string, V>) => {
+      const next: Record<string, V> = {};
       for (const [key, value] of Object.entries(map)) {
         const [itemId, locale] = key.split("|");
         if (locale === primaryLocale && savedPrimaryValuesRef.current[itemId]) next[key] = value;
       }
       return next;
     };
+    foreignLifeRef.current = {};
     serverSeenRef.current = keep(serverSeenRef.current);
     preSaveSeenRef.current = keep(preSaveSeenRef.current);
   }, [primaryLocale]);

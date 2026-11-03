@@ -2760,16 +2760,28 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
+    // The answer of a save the merchant switched away from is that save's, whatever
+    // the pending flag says: a save of the item now on screen may already be queued
+    // behind it (its press set the flag), but the request the fetcher carries is
+    // still the abandoned one until the queue drains. Ownership is decided by what
+    // was actually submitted (`inFlightScopeRef`), and only an answer of a save
+    // (`updateContent`, or the limiter's synthesized refusal with no action type)
+    // can be it.
+    const abandonedEntry = abandonedSaveRef.current;
+    const answerData = fetcher.data as (FetcherData & { rateLimited?: boolean }) | undefined;
+    const isSaveAnswer = !!answerData && (!answerData.actionType || answerData.actionType === "updateContent");
+    const ownedByAbandoned =
+      !!abandonedEntry && inFlightScopeRef.current === abandonedEntry.scope && isSaveAnswer && answerData !== abandonedEntry.staleData;
+
     // Skip if no save was actually initiated (prevents false "saved" messages during reload/revalidation)
-    if (!isSavePendingRef.current) {
-      // The answer of a save the merchant switched away from. A refusal or failure
-      // must not leave that item looking saved (its unsent text cached as stored):
-      // the overlay goes, the item shows what Shopify holds, and the merchant is told
-      // which item it concerned. The text is NOT restored as a draft (owner decision).
-      const abandonedEntry = abandonedSaveRef.current;
+    if (!isSavePendingRef.current || ownedByAbandoned) {
+      // A refusal or failure must not leave that item looking saved (its unsent text
+      // cached as stored): the overlay goes, the item shows what Shopify holds, and
+      // the merchant is told which item it concerned. The text is NOT restored as a
+      // draft (owner decision).
       const abandoned = abandonedEntry?.scope;
-      const data = fetcher.data as (FetcherData & { rateLimited?: boolean }) | undefined;
-      if (abandoned && data && data !== abandonedEntry?.staleData) {
+      const data = answerData;
+      if (abandoned && data && data !== abandonedEntry?.staleData && isSaveAnswer) {
         abandonedSaveRef.current = null;
         processedSaveResponseRef.current = data;
         if (data.success) {
@@ -2795,8 +2807,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
       return;
     }
-    // A save of the item on screen is answered here: the record of an abandoned
-    // one (its answer came first, the fetcher is serial) is stale and must not
+    // Here the answer is a save of the item on screen: the abandoned one (if any) was
+    // answered before it (the fetcher is serial), so its record is stale and must not
     // claim a later, unrelated answer.
     if (abandonedSaveRef.current && fetcher.data !== abandonedSaveRef.current.staleData) abandonedSaveRef.current = null;
 
@@ -2812,6 +2824,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Taken now, beside `partial`: anything below that chains a new save
       // rebinds the in-flight slot.
       const answeredScope = inFlightScopeRef.current;
+      // Fields edited while this save was out: read here and cleared at EVERY answer,
+      // whichever branch below settles the baselines.
+      const editedDuringFlight = new Set(typedWhileSavingRef.current);
+      typedWhileSavingRef.current.clear();
       // Answered: from here the field's baseline (moved below) decides.
       settleOwnSaveFor(partial);
 
@@ -2957,13 +2973,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             const nextBaseline = { ...editableValuesRef.current };
             for (const field of effectiveFieldDefinitionsRef.current) {
               if (field.key in sent) nextBaseline[field.key] = sent[field.key];
-              else if (typedWhileSavingRef.current.has(field.key) && field.key in baselineBeforeSave) {
+              else if (editedDuringFlight.has(field.key) && field.key in baselineBeforeSave) {
                 nextBaseline[field.key] = baselineBeforeSave[field.key];
               }
             }
             baselineValuesRef.current = nextBaseline;
             setBaselineVersion(v => v + 1);
-            typedWhileSavingRef.current.clear();
           } else {
             baselineValuesRef.current = { ...editableValuesRef.current };
             setBaselineVersion(v => v + 1);
@@ -3796,6 +3811,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // FIELD EVENT HANDLERS (extracted to useFieldHandlers)
   // ============================================================================
 
+  // Every edit the merchant makes through the field handlers (typing, a clear, "clear
+  // all", an accepted suggestion, a discard) while a save is out is NOT part of that
+  // save: its field is remembered, and after the answer it keeps its previous baseline
+  // (stays a change) instead of reading as saved.
+  const setEditableValuesTracked: typeof setEditableValues = useCallback((value) => {
+    // Decided when the edit is MADE, not when the updater runs: a "clear all" saves
+    // first and empties the fields right after, and that belongs to the save.
+    const track = isSavePendingRef.current;
+    setEditableValues((prev) => {
+      const next = typeof value === "function" ? (value as (p: Record<string, string>) => Record<string, string>)(prev) : value;
+      if (track) {
+        for (const key of Object.keys(next)) if (next[key] !== prev[key]) typedWhileSavingRef.current.add(key);
+      }
+      return next;
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const {
     handleSave,
     handleDiscard,
@@ -3817,7 +3849,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleMarketChange,
     handleToggleLanguage,
     handleItemSelect,
-    handleValueChange: handleValueChangeBase,
+    handleValueChange,
     handleToggleHtmlMode,
     handleClearField,
     handleClearAllClick,
@@ -3901,7 +3933,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setCurrentLanguage,
     setSelectedMarketId,
     markets,
-    setEditableValues,
+    setEditableValues: setEditableValuesTracked,
     setHtmlModes,
     setEnabledLanguages,
     setIsAcceptAndTranslateFlow,
@@ -4009,12 +4041,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     return "";
-  };
-
-  // Typing while a save is out: that text is not part of the save (see the answer effect).
-  const handleValueChange = (fieldKey: string, value: string) => {
-    if (isSavePendingRef.current) typedWhileSavingRef.current.add(fieldKey);
-    handleValueChangeBase(fieldKey, value);
   };
 
   const setEditableValue = (fieldKey: string, value: string) => {

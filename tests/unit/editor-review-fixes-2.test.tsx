@@ -108,7 +108,7 @@ describe("BLOCKER 1b: the answer still held in fetcher.data is not the abandoned
     // Re-renders while the second save is still out: fetcher.data is still the FIRST answer.
     await m.rerender(items, first);
     await m.rerender(items, first);
-    expect(infoBox.mock.calls.some((c) => c[1] === "critical")).toBe(false);
+    expect(infoBox.mock.calls.some((c) => String(c[0]).includes("rouge"))).toBe(false);
     await m.rerender(items, { success: false, error: "busy", rateLimited: true });
     expect(infoBox.mock.calls.some((c) => c[1] === "critical" && String(c[0]).includes("rouge"))).toBe(true);
     await act(async () => { await m.h().handleItemSelect(A); });
@@ -132,6 +132,63 @@ describe("BLOCKER 1c: switching away and back before the answer", () => {
     expect(infoBox.mock.calls.some((c) => c[1] === "critical")).toBe(true);
     await m.rerender([{ id: A, title: "rouge", seoDesc: "moved" }, items[1]]);
     expect(m.v().title).toBe("rouge");
+  });
+});
+
+describe("H1: an abandoned save answered while the next item's save is queued behind it", () => {
+  const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+  const setup = async () => {
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    act(() => m.h().handleValueChange("seoTitle", "seoB"));
+    act(() => m.h().handleSave());
+    return m;
+  };
+  it("a refusal is shown with the abandoned product's name, and not as B's", async () => {
+    const m = await setup();
+    infoBox.mockClear();
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true });
+    const critical = infoBox.mock.calls.filter((c) => c[1] === "critical");
+    expect(critical.length).toBe(1);
+    expect(String(critical[0][0])).toContain("rouge");
+  });
+  it("a success is not applied to B: no 'saved' message, B's save is still pending", async () => {
+    const m = await setup();
+    infoBox.mockClear();
+    const submits = m.fetcher.submit.mock.calls.length;
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: true, actionType: "updateContent" });
+    expect(infoBox).not.toHaveBeenCalled();
+    // B's own queued save goes out after A's answer
+    expect(m.fetcher.submit.mock.calls.length).toBe(submits + 1);
+    expect(m.sent().itemId).toBe(B);
+    expect(m.sent().seoTitle).toBe("seoB");
+  });
+});
+
+describe("M1b: only an answer of a save can be the abandoned save's answer", () => {
+  it("another request's failure does not consume the record; the real refusal is still recognised", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "rouge2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    infoBox.mockClear();
+    await m.rerender(items, { success: false, error: "other", actionType: "generateAIText" });
+    expect(infoBox.mock.calls.some((c) => String(c[0]).includes("rouge"))).toBe(false);
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true });
+    expect(infoBox.mock.calls.some((c) => c[1] === "critical" && String(c[0]).includes("rouge"))).toBe(true);
   });
 });
 
@@ -203,6 +260,49 @@ describe("H1b: an overlay the server never confirmed ends at the hard cap", () =
   });
 });
 
+describe("C1: a second save of the same field does not turn the first one's value into a third value", () => {
+  it.each(["de", "fr"] as const)("%s: a lagging read showing the first save's value keeps the second save", async (locale) => {
+    const base = (t: string): P => (locale === "de" ? { id: A, title: t, frTitle: "noir" } : { id: A, title: "rouge", frTitle: t });
+    const m = mount([base(locale === "de" ? "rouge" : "noir")], locale);
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "bleu"));
+    act(() => m.h().handleSave());
+    await m.rerender([base(locale === "de" ? "rouge" : "noir")], { success: true, actionType: "updateContent" });
+    await m.rerender([base("bleu")]);
+    act(() => m.h().handleValueChange("title", "vert"));
+    act(() => m.h().handleSave());
+    await m.rerender([base("bleu")], { success: true, actionType: "updateContent" });
+    // reads that lag: first the value from before any save, then the FIRST save's value
+    await m.rerender([{ ...base(locale === "de" ? "rouge" : "noir"), frSeo: "seo-y", seoDesc: "y" }]);
+    expect(m.v().title).toBe("vert");
+    await m.rerender([{ ...base("bleu"), frSeo: "seo-z", seoDesc: "z" }]);
+    expect(m.v().title).toBe("vert");
+  });
+});
+
+describe("M2: the foreign overlay has an absolute end too", () => {
+  it("shows what Shopify holds after the server moved back, once the clock ran out", async () => {
+    const real = Date.now();
+    let offset = 0;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => real + offset);
+    try {
+      const m = mount([{ id: A, title: "rouge", frTitle: "noir" }], "fr");
+      await m.flush();
+      act(() => m.h().handleValueChange("title", "bleu"));
+      act(() => m.h().handleSave());
+      await m.rerender([{ id: A, title: "rouge", frTitle: "noir" }], { success: true, actionType: "updateContent" });
+      await m.rerender([{ id: A, title: "rouge", frTitle: "bleu" }]);
+      await m.rerender([{ id: A, title: "rouge", frTitle: "noir", seoDesc: "x" }]);
+      expect(m.v().title).toBe("bleu");
+      offset = 2 * 60_000;
+      await m.rerender([{ id: A, title: "rouge", frTitle: "noir", seoDesc: "y" }]);
+      expect(m.v().title).toBe("noir");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("H2: a lagging read after switching away and back does not revert a caught-up save", () => {
   it("shows the saved text, not the pre-save one", async () => {
     const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
@@ -221,17 +321,54 @@ describe("H2: a lagging read after switching away and back does not revert a cau
   });
 });
 
+describe("a third value written elsewhere while the merchant was on another product wins on the first read back", () => {
+  it("shows the external value, not the cached save", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "bleu"));
+    act(() => m.h().handleSave());
+    await m.rerender(items, { success: true, actionType: "updateContent" });
+    await m.rerender([{ id: A, title: "bleu" }, items[1]]);
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    // written elsewhere while B is on screen
+    await m.rerender([{ id: A, title: "gris", seoDesc: "moved" }, items[1]]);
+    await act(async () => { await m.h().handleItemSelect(A); });
+    await m.flush();
+    expect(m.v().title).toBe("gris");
+  });
+});
+
 describe("H3: foreign text typed during flight in a field the save did not carry stays a change", () => {
   it("reads dirty after the answer and survives the re-read", async () => {
     const m = mount([{ id: A, title: "rouge", frTitle: "noir" }], "fr");
     await m.flush();
     act(() => m.h().handleValueChange("title", "bleu"));
     act(() => m.h().handleSave());
+    await m.flush(); // a later click, not the same tick
     act(() => m.h().handleValueChange("seoTitle", "typed"));
     await m.rerender([{ id: A, title: "rouge", frTitle: "noir" }], { success: true, actionType: "updateContent" });
     expect(m.dirty()).toBe(true);
     await m.rerender([{ id: A, title: "rouge", frTitle: "bleu" }]);
     expect(m.v().seoTitle).toBe("typed");
+    expect(m.dirty()).toBe(true);
+  });
+});
+
+describe("H2: a foreign clear during flight is not lost", () => {
+  it("the cleared field stays a change after the answer and the re-read", async () => {
+    const m = mount([{ id: A, title: "rouge", frTitle: "noir", frSeo: "seo-old" }], "fr");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "bleu"));
+    act(() => m.h().handleSave());
+    await m.flush();
+    act(() => m.h().handleClearField("seoTitle"));
+    expect(m.v().seoTitle).toBe("");
+    await m.rerender([{ id: A, title: "rouge", frTitle: "noir", frSeo: "seo-old" }], { success: true, actionType: "updateContent" });
+    expect(m.dirty()).toBe(true);
+    await m.rerender([{ id: A, title: "rouge", frTitle: "bleu", frSeo: "seo-old" }]);
+    expect(m.v().seoTitle).toBe("");
     expect(m.dirty()).toBe(true);
   });
 });
@@ -242,6 +379,7 @@ describe("H3b: text typed on top of a sent foreign field is not cached as stored
     await m.flush();
     act(() => m.h().handleValueChange("title", "bleu"));
     act(() => m.h().handleSave());
+    await m.flush();
     act(() => m.h().handleValueChange("title", "bleu et plus"));
     await m.rerender([{ id: A, title: "rouge", frTitle: "noir" }], { success: true, actionType: "updateContent" });
     await m.rerender([{ id: A, title: "rouge", frTitle: "bleu", seoDesc: "z" }]);
