@@ -295,3 +295,18 @@ describe("switching products", () => {
     expect(sentForm(m.fetcher).title).toBe("bleu");
   });
 });
+
+describe("the re-read after a save, whatever the length", () => {
+  it("text typed between the answer and the re-read survives a re-read that changes the length", async () => {
+    const m = mount({ config: PRODUCTS_CONFIG, item: productItem, key: "title", primary: "rouge", foreign: "noir" });
+    await m.flush();
+    act(() => m.hook.result.current.handlers.handleValueChange("title", "bleue!"));
+    act(() => m.hook.result.current.handlers.handleSave());
+    await answer(m, [productItem("rouge", "noir")]);
+    act(() => m.hook.result.current.handlers.handleValueChange("title", "typed after the answer"));
+    await act(async () => { m.hook.rerender({ items: [productItem("rouge", "bleue!")], f: { ...m.fetcher, data: undefined } }); });
+    await m.flush();
+    expect(m.hook.result.current.state.editableValues.title).toBe("typed after the answer");
+    expect(m.hook.result.current.state.hasChanges).toBe(true);
+  });
+});

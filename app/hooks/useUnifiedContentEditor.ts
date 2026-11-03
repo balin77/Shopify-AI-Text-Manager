@@ -1373,11 +1373,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const translationsArrived = prevTranslationSignalRef.current !== selectedItemTranslationSignal;
     const primaryContentChanged = prevSelectedItemPrimarySignalRef.current !== selectedItemPrimarySignal;
     const contentChanged = prevContentSignalRef.current !== selectedItemContentSignal;
-    // The data moved, but by no more than the content check can see (a value
-    // replaced by another of the same length). Nothing else caused this pass.
+    // The data moved underneath the view the merchant is in -- nobody switched
+    // item, language or market and nobody pressed Reload. That is the data
+    // catching up with itself (a save's re-read, an AI run, an external edit),
+    // never a request to throw away what is being typed.
     const onlyContentMoved =
-      contentChanged && !itemIdChanged && !languageChanged && !marketChanged &&
-      !refreshTriggered && !translationsArrived && !primaryContentChanged;
+      (contentChanged || translationsArrived || primaryContentChanged) &&
+      !itemIdChanged && !languageChanged && !marketChanged && !refreshTriggered;
 
     if (!itemIdChanged && !languageChanged && !marketChanged && !refreshTriggered && !translationsArrived && !primaryContentChanged && !contentChanged) {
       // Don't log on skip to reduce console spam
@@ -1522,9 +1524,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const preserveAfterPartialSave =
       !switchedDuringRefresh &&
       !(refreshTriggered && !isBackgroundRefresh) &&
-      // A pass only the content check caused is the data catching up with
-      // itself, never the merchant asking for a reset: whatever they typed and
-      // have not saved stays (see `onlyContentMoved`).
+      // A pass the data alone caused keeps whatever the merchant typed and has
+      // not saved (see `onlyContentMoved`).
       (onlyContentMoved ||
         Date.now() < preserveEditsUntilRef.current ||
         unconfirmedKeptKeysRef.current.size > 0 ||
