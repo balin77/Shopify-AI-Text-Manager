@@ -935,5 +935,6 @@ A shop with only its primary locale must never be offered translation UI it cann
 
 ## Notes for future work
 
+- **Known and decided issues live in [docs/reference/KNOWN_ISSUES.md](docs/reference/KNOWN_ISSUES.md).** Read it before reporting or fixing a bug: what is listed under "Entschieden" stays as it is unless the owner reverses it. A fix removes its entry in the same commit; a finding the owner leaves unfixed is added there.
 - New bug patterns and in-flight observations belong in the local memory system (outside this repo), not here. This file is curated architectural context that Claude Code should have available on every PC and in cloud sessions.
 - When memory claims conflict with the current codebase, trust the code and update the memory. Several memory entries reference file paths that have since been renamed or moved.
