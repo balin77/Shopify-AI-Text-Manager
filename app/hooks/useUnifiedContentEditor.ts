@@ -55,6 +55,7 @@ import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-m
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { isTranslatableFieldDefinition } from "../services/content-attributes.shared";
 import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource, altValuesForSaveResponse, revertAltsWithoutPrimary, sentAltsFromForm, sentFieldsFromForm, saveAnswerViewMoved, type SentSaveScope } from "../services/editor/own-field-save.shared";
+import { sanitizeSlug } from "../utils/slug.utils";
 import { forgetOwnedKeys, recordConfirmedValues, pruneOwners, type FormMeta, type OverlayOwners, type OverlayConfirmed } from "../services/editor/primary-overlay-ownership.shared";
 import { settleOwnSave, settleUnsentSave, backstopOwnSaves, hasOwnSaveInFlight, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
@@ -1037,7 +1038,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       for (const key of [...(meta?.carryOnly ?? [])]) {
         if (!list.includes(key) || (onlyKeys && !onlyKeys.has(key)) || !(key in sent)) continue;
         // What Shopify holds: the item's last read where it can be told, else the loaded baseline.
-        const held = serverValueOf(key) ?? (originalLoadedValuesRef.current[key] ?? "");
+        const held = serverValueOf(key, sent.itemId) ?? (originalLoadedValuesRef.current[key] ?? "");
         if (entry.formData.get(key) !== held) continue;
         const stillCarried = queue.slice(0, index).some((other) =>
           other !== entry && other.savedItemId === sent.itemId && other.formData.has(key) &&
@@ -1067,8 +1068,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     reresolveForgotten(refusedItemId, forgetFailedPrimarySave(), true);
   };
   /** What the item's last read says Shopify holds for a plain-text primary field (no overlay), or undefined. */
-  const serverValueOf = (key: string): string | undefined => {
+  const serverValueOf = (key: string, forItemId?: string): string | undefined => {
     const item = selectedItemRef.current;
+    // A product the merchant has left is not the one `selectedItemRef` holds.
+    if (forItemId !== undefined && item?.id !== forItemId) return undefined;
     const field = effectiveFieldDefinitionsRef.current.find((f) => f.key === key);
     if (!item || !field || isThemeContentType(config.contentType)) return undefined;
     // Plain text only: a rich-text value is normalised by the editor and by Shopify, so a byte
@@ -1088,6 +1091,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const server = serverValueOf(key);
     if (!item) return false;
     if (server === undefined || server === value) return false;
+    // What the server makes of a value is not a difference: a slug is sanitised, a text trimmed.
+    const slug = effectiveFieldDefinitionsRef.current.find((f) => f.key === key)?.type === "slug";
+    const norm = (v: string) => (slug ? sanitizeSlug(v) : v.trim());
+    if (norm(value) === server || norm(value) === norm(server)) return false;
     // Excused: a save of ours confirmed this very value AFTER that read, so the read is a lagging one.
     const confirmed = primaryConfirmedRef.current[item.id]?.[key];
     if (confirmed && confirmed.value === value) {
@@ -1120,6 +1127,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (seq > (pressSeq ?? 0)) out.add(key);
     }
     return out;
+  };
+  /**
+   * What a save that was just answered moves a baseline to: the value it SENT while its overlay entry
+   * still stands, but what the item's read holds once the entry is gone (the server may have normalised
+   * the sent text, and a baseline of the unnormalised text would read as a difference from then on).
+   */
+  const baselineValueFor = (itemId: string, key: string, sent: string): string => {
+    if (savedPrimaryValuesRef.current[itemId] && key in savedPrimaryValuesRef.current[itemId]) return sent;
+    return serverValueOf(key, itemId) ?? sent;
   };
   /** The field values of a request's form (not action / itemId / locale ...). */
   const fieldValuesOf = (sentFields: Record<string, string>): Record<string, string> => {
@@ -3262,9 +3278,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             // any newer save of the item that is still out (its own answer decides).
             baselineValuesRef.current = {
               ...primarySnapshot,
-              ...(answeredScope?.sentFields ? fieldValuesOf(answeredScope.sentFields) : {}),
+              ...(answeredScope?.sentFields
+                ? Object.fromEntries(Object.entries(fieldValuesOf(answeredScope.sentFields)).map(([k, v]) => [k, answeredScope.sentFields?.itemId ? baselineValueFor(answeredScope.sentFields.itemId, k, v) : v]))
+                : {}),
             };
             setBaselineVersion(v => v + 1);
+            // The server made something else of a sent text (a sanitised handle, a trimmed title): the
+            // field shows what Shopify holds, unless the merchant typed into it since the press.
+            if (answeredScope?.sentFields) {
+              const normalised: Record<string, string> = {};
+              for (const [k, v] of Object.entries(fieldValuesOf(answeredScope.sentFields))) {
+                const b = baselineValuesRef.current[k];
+                if (b !== undefined && b !== v && editableValuesRef.current[k] === v && !((lastEditSeqRef.current[k] ?? 0) > (answeredScope.pressSeq ?? Infinity))) {
+                  normalised[k] = b;
+                }
+              }
+              if (Object.keys(normalised).length > 0) setEditableValues((prev) => ({ ...prev, ...normalised }));
+            }
           } else if (answeredScope?.sentFields) {
             // What the save SENT is what is stored; text typed after the submit is
             // not, and must stay a change (it was lost when the baseline took the
@@ -3300,7 +3330,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             const sentValues: Record<string, string> = {};
             for (const field of effectiveFieldDefinitionsRef.current) {
               if (field.key in answeredScope.sentFields && !notConfirmed.has(field.key)) {
-                sentValues[field.key] = answeredScope.sentFields[field.key];
+                sentValues[field.key] = answeredScope.locale === primaryLocale && answeredScope.sentFields.itemId
+                  ? baselineValueFor(answeredScope.sentFields.itemId, field.key, answeredScope.sentFields[field.key])
+                  : answeredScope.sentFields[field.key];
               }
             }
             if (Object.keys(sentValues).length > 0) {

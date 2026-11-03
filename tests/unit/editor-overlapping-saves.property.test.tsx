@@ -118,7 +118,8 @@ async function runOne(seed: number, steps: number) {
       // accepts is decided now, so an external change after this point wins in the model too.
       const ok = rand() < 0.5;
       if (ok) {
-        for (const [prop, key] of FIELDS) if (key in sent) shop[prop] = sent[key];
+        // Shopify normalises on write (trim): a value typed with spaces is stored trimmed.
+        for (const [prop, key] of FIELDS) if (key in sent) shop[prop] = sent[key].trim();
         history.push({ ...shop });
       }
       unanswered.push({ sent, changed, ok });
@@ -147,6 +148,14 @@ async function runOne(seed: number, steps: number) {
     if (op === "edit") {
       const [, key] = pick(FIELDS); const val = pick(VALUES);
       if (st().selectedItemId !== A || st().currentLanguage !== "de") continue;
+      log.push(`edit ${key}=${val}`);
+      typed[key] = val;
+      act(() => h().handleValueChange(key, val));
+    } else if (op === "spaced") {
+      // opt-in op (PROPERTY_OPS): type a value with surrounding spaces; the model stores it trimmed
+      const [, key] = pick(FIELDS);
+      if (st().selectedItemId !== A || st().currentLanguage !== "de") continue;
+      const val = " " + pick(VALUES) + " ";
       log.push(`edit ${key}=${val}`);
       typed[key] = val;
       act(() => h().handleValueChange(key, val));

@@ -32,7 +32,7 @@ const B = "gid://shopify/Product/2";
 const MARKET = "gid://shopify/Market/7";
 const infoBox = vi.fn();
 
-type P = { id: string; title: string; frTitle?: string; frSeo?: string; marketFr?: string; seoDesc?: string };
+type P = { id: string; title: string; handle?: string; frTitle?: string; frSeo?: string; marketFr?: string; seoDesc?: string };
 const product = (o: P) => ({
   id: o.id,
   title: o.title,
@@ -894,6 +894,78 @@ describe("R14 CRITICAL: an own save behind a save carrying the same value is ann
     const f = m.sent();
     expect(f.title).toBe("X");
     expect(JSON.parse(f.changedFields ?? "[]")).toContain("title");
+  });
+});
+
+describe("R15 C1: the server's own normalisation of a sent value is not a difference", () => {
+  const OK = (n: number) => ({ success: true, actionType: "updateContent", n });
+  const withHandle = (p: any) => ({ ...product(p), handle: p.handle ?? "h" });
+  const updateForms = (m: any) => formsOf(m).filter((f: any) => f.action === "updateContent");
+  for (const midFlight of [false, true]) {
+    it(`a sanitised handle is never announced by later saves (re-read ${midFlight ? "mid-flight" : "in the answer's render"})`, async () => {
+      const old = [{ id: A, title: "Old" }, { id: B, title: "vert" }];
+      const m = mount(old, "de", PRODUCTS_CONFIG, withHandle);
+      await m.flush();
+      act(() => m.h().handleValueChange("handle", "Neu Über"));
+      act(() => m.h().handleSave());
+      const st = (sd: string) => [{ id: A, title: "Old", handle: "neu-ueber", seoDesc: sd } as any, old[1]];
+      m.fetcher.state = "submitting";
+      await m.rerender(old);
+      if (midFlight) await m.rerender(st(""));
+      m.fetcher.state = "loading";
+      await m.rerender(midFlight ? st("") : old, OK(1));
+      m.fetcher.state = "idle";
+      await m.rerender(st(""), OK(1));
+      for (let k = 2; k <= 4; k++) {
+        act(() => m.h().handleValueChange("metaDescription", "m" + k));
+        act(() => m.h().handleSave());
+        m.fetcher.state = "submitting";
+        await m.rerender(st("m" + (k - 1)));
+        m.fetcher.state = "loading";
+        await m.rerender(st("m" + (k - 1)), OK(k));
+        m.fetcher.state = "idle";
+        await m.rerender(st("m" + k), OK(k));
+      }
+      for (const f of updateForms(m).slice(1)) {
+        expect(JSON.parse(f.changedFields ?? "[]")).not.toContain("handle");
+      }
+    });
+  }
+  it("a trimmed title is not announced again", async () => {
+    const old = [{ id: A, title: "Old" }];
+    const m = mount(old, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "Neu "));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(old);
+    m.fetcher.state = "loading";
+    await m.rerender(old, OK(1));
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "Neu" }], OK(1));
+    act(() => m.h().handleValueChange("metaDescription", "m"));
+    act(() => m.h().handleSave());
+    expect(JSON.parse(m.sent().changedFields ?? "[]")).not.toContain("title");
+  });
+  it("a handle that sits unedited over a different server handle is left out of the form", async () => {
+    const old = [{ id: A, title: "Old", handle: "h" }, { id: B, title: "vert" }];
+    const m = mount(old, "de", PRODUCTS_CONFIG, withHandle);
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "T1"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(old);
+    m.fetcher.state = "loading";
+    await m.rerender(old, OK(1));
+    m.fetcher.state = "idle";
+    // Shopify's admin changed the handle elsewhere
+    await m.rerender([{ id: A, title: "T1", handle: "ext" }, old[1]], OK(1));
+    await m.rerender([{ id: A, title: "T1", handle: "ext", seoDesc: "x" }, old[1]], OK(1));
+    act(() => m.h().handleValueChange("metaDescription", "m"));
+    act(() => m.h().handleSave());
+    const f = m.sent();
+    expect(f.handle === undefined || f.handle === "ext").toBe(true);
+    expect(JSON.parse(f.changedFields ?? "[]")).not.toContain("handle");
   });
 });
 

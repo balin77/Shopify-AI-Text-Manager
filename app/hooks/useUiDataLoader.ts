@@ -692,6 +692,8 @@ export function useUiDataLoader(
           const override = savedPrimaryValuesRef.current[item.id];
           if (override) delete override[field.key];
           delete primaryConfirmedRef.current[item.id]?.[field.key];
+          delete preSaveSeenRef.current[seenKey];
+          delete everSeenRef.current[seenKey];
           (overtakenRef.current[item.id] ??= {})[field.key] = ++eventSeqRef.current;
         } else {
           delete localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];

@@ -378,7 +378,11 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
 
       const pendingCarried = pendingCarriedValueRef?.current(primaryLocale, "", field.key);
       const carriedOnly = currentValue === originalValue && pendingCarried !== undefined && pendingCarried !== currentValue;
-      const staleWrite = currentValue === originalValue && !carriedOnly && !!staleAgainstServerRef?.current(field.key, currentValue);
+      // Never for a handle (announcing one moves URLs) nor for a merchandising attribute (those follow
+      // the "only when edited" rule): a stale handle is left out of the form instead (buildFieldsForSave).
+      const staleWrite =
+        currentValue === originalValue && !carriedOnly && field.type !== "slug" && !isAttributeField(field) &&
+        !!staleAgainstServerRef?.current(field.key, currentValue);
       if (currentValue !== originalValue || carriedOnly || staleWrite) {
         // An image (or video) setting is a per-language choice, not text whose
         // translations go stale: a new original leaves the foreign replacements
@@ -418,6 +422,15 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         if (value === originalValue && (pendingCarried === undefined || pendingCarried === value)) {
           return;
         }
+      }
+      // A handle that merely sits in the form over a DIFFERENT server handle is not written: keeping the
+      // server's is the safe side (announcing it would move URLs and purge translations).
+      if (
+        locale === primaryLocale && field.type === "slug" &&
+        value === (originalLoadedValuesRef.current[field.key] || "") &&
+        staleAgainstServerRef?.current(field.key, value)
+      ) {
+        return;
       }
       result[field.key] = value;
       // The original image is named to the server by the id of the file that
