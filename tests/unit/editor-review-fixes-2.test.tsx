@@ -1024,6 +1024,26 @@ describe("R16 HIGH (handle): a stale read after Reload does not make the old han
   });
 });
 
+describe("R17 MEDIUM: a field this save did not change takes what the read holds", () => {
+  it("scenario A: answer and read in one render, an untouched field moved externally: not dirty, not announced", async () => {
+    const old = [{ id: A, title: "Old" }, { id: B, title: "vert" }];
+    const m = mount(old, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "New"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(old);
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "New", seoDesc: "r" } as any, old[1]], { success: true, actionType: "updateContent", n: 1 });
+    await m.flush();
+    expect(m.hook.result.current.state.hasChanges).toBe(false);
+    act(() => m.h().handleValueChange("seoTitle", "s"));
+    act(() => m.h().handleSave());
+    const f = formsOf(m).filter((x: any) => x.action === "updateContent").pop();
+    expect(JSON.parse(f.changedFields ?? "[]")).not.toContain("metaDescription");
+  });
+});
+
 describe("R16 LOW: a handle that is announced is not left out of the form", () => {
   it("carried-only handle behind a save that is out", async () => {
     const withHandle = (p: any) => ({ ...product(p), handle: p.handle ?? "h" });

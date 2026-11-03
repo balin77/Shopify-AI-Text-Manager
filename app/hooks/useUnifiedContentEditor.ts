@@ -1133,7 +1133,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    * still stands, but what the item's read holds once the entry is gone (the server may have normalised
    * the sent text, and a baseline of the unnormalised text would read as a difference from then on).
    */
-  const baselineValueFor = (itemId: string, key: string, sent: string): string => {
+  const baselineValueFor = (itemId: string, key: string, sent: string, changedBySave: boolean): string => {
+    // A key this save did not change takes what the read holds (an untouched field moved elsewhere is not ours).
+    if (!changedBySave) return serverValueOf(key, itemId) ?? sent;
     if (savedPrimaryValuesRef.current[itemId] && key in savedPrimaryValuesRef.current[itemId]) return sent;
     const server = serverValueOf(key, itemId);
     if (server === undefined || server === sent) return sent;
@@ -1142,6 +1144,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const isSlug = effectiveFieldDefinitionsRef.current.find((f) => f.key === key)?.type === "slug";
     const norm = (v: string) => (isSlug ? sanitizeSlug(v) : v.trim());
     return norm(sent) === server ? server : sent;
+  };
+  /** Did this save change the key: named in its changedFields, or different from the baseline before it. */
+  const savedChangedKey = (sentFields: Record<string, string>, key: string, sent: string, before: Record<string, string>): boolean => {
+    // The form names what the merchant changed; a key it does not name is a passenger. A form without the
+    // list (withheld: accept-and-translate) falls back to the baseline at answer time.
+    if (sentFields.changedFields !== undefined) {
+      try {
+        return (JSON.parse(sentFields.changedFields) as string[]).includes(key);
+      } catch { /* not JSON: fall through */ }
+    }
+    return !(key in before) || before[key] !== sent;
   };
   /** The field values of a request's form (not action / itemId / locale ...). */
   const fieldValuesOf = (sentFields: Record<string, string>): Record<string, string> => {
@@ -3285,7 +3298,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             baselineValuesRef.current = {
               ...primarySnapshot,
               ...(answeredScope?.sentFields
-                ? Object.fromEntries(Object.entries(fieldValuesOf(answeredScope.sentFields)).map(([k, v]) => [k, answeredScope.sentFields?.itemId ? baselineValueFor(answeredScope.sentFields.itemId, k, v) : v]))
+                ? Object.fromEntries(Object.entries(fieldValuesOf(answeredScope.sentFields)).map(([k, v]) => [k, answeredScope.sentFields?.itemId ? baselineValueFor(answeredScope.sentFields.itemId, k, v, savedChangedKey(answeredScope.sentFields, k, v, baselineBeforeSave)) : v]))
                 : {}),
             };
             setBaselineVersion(v => v + 1);
@@ -3337,7 +3350,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             for (const field of effectiveFieldDefinitionsRef.current) {
               if (field.key in answeredScope.sentFields && !notConfirmed.has(field.key)) {
                 sentValues[field.key] = answeredScope.locale === primaryLocale && answeredScope.sentFields.itemId
-                  ? baselineValueFor(answeredScope.sentFields.itemId, field.key, answeredScope.sentFields[field.key])
+                  ? baselineValueFor(answeredScope.sentFields.itemId, field.key, answeredScope.sentFields[field.key], savedChangedKey(answeredScope.sentFields, field.key, answeredScope.sentFields[field.key], baselineBeforeSave))
                   : answeredScope.sentFields[field.key];
               }
             }
