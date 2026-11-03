@@ -238,6 +238,8 @@ export interface UseUiDataLoaderReturn {
     /** What saves confirmed, per item and field; lives exactly as long as the overlay
      *  entry it can restore (see primary-overlay-ownership.shared.ts). */
     primaryConfirmedRef: React.MutableRefObject<OverlayConfirmed>;
+    /** The clock of each item's overlay entry (deleted with the entry). */
+    overlayLifeRef: React.MutableRefObject<Record<string, { values: Record<string, string>; start: number; caught: number | null }>>;
     originalLoadedValuesRef: React.MutableRefObject<Record<string, string>>;
     originalTemplateValuesRef: React.MutableRefObject<Record<string, string>>;
     /** Unified change-detection baseline — single source of truth for all content types */
@@ -747,8 +749,9 @@ export function useUiDataLoader(
           // back by the next save of another field.
           const now = Date.now();
           let life = overlayLifeRef.current[item.id];
-          // A NEW save (a key or a value the last look did not have) starts the clock
-          // again; a key the comparison dropped (somebody else's change) does not.
+          // A NEW save (a key or a value the last look did not have) starts the clock again;
+          // a key the comparison dropped (somebody else's change) does not. An entry that
+          // is removed altogether takes its clock with it (`onRefresh`, `forgetOwnedKeys`).
           if (!life || Object.entries(savedOverride).some(([k, v]) => life!.values[k] !== v)) {
             life = overlayLifeRef.current[item.id] = { values: { ...savedOverride }, start: now, caught: null };
           }
@@ -1390,6 +1393,7 @@ export function useUiDataLoader(
     if (itemId && savedPrimaryValuesRef.current[itemId]) {
       delete savedPrimaryValuesRef.current[itemId];
       delete primaryConfirmedRef.current[itemId];
+      delete overlayLifeRef.current[itemId];
     }
     localTranslationsRef.current = {};
     deletedTranslationKeysRef.current.clear();
@@ -1482,6 +1486,7 @@ export function useUiDataLoader(
       deletedTranslationKeysRef,
       savedPrimaryValuesRef,
       primaryConfirmedRef,
+      overlayLifeRef,
       originalLoadedValuesRef,
       originalTemplateValuesRef,
       baselineValuesRef,

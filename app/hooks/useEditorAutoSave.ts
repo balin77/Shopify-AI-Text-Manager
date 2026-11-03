@@ -83,6 +83,11 @@ interface UseEditorAutoSaveProps {
   /** Per item and field: the request (its form) that last cached that primary value.
    *  A refused save forgets only the keys it still owns. */
   primaryOwnerRef?: React.MutableRefObject<OverlayOwners>;
+  /** The value a save still OUT or queued for this item / language / market carries for a
+   *  field (the newest one), if any. What "changed" means at press time is decided against
+   *  the baseline AND against it: typing a field back to its baseline while an earlier
+   *  save still carries another value is a change. */
+  pendingCarriedValueRef?: React.MutableRefObject<(locale: string, marketId: string, key: string) => string | undefined>;
   /** What earlier saves confirmed, per item and field (see primary-overlay-ownership). */
   primaryConfirmedRef?: React.MutableRefObject<OverlayConfirmed>;
   /** The editor's monotonic event counter: presses, confirmations and edits. */
@@ -155,6 +160,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     setOwnSavesInFlight,
     inFlightScopeRef,
     primaryOwnerRef,
+    pendingCarriedValueRef,
     primaryConfirmedRef,
     eventSeqRef,
     saveBlockedByTranslateRunRef,
@@ -297,7 +303,6 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
             itemId: savedItemIdRef.current,
             sentKeys: Object.keys(data),
             token: formData,
-            pressSeq,
           });
         }
         settleUnsentSave({
@@ -355,7 +360,8 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         originalValue = getItemFieldValue(item, field.key, primaryLocale, config);
       }
 
-      if (currentValue !== originalValue) {
+      const pendingCarried = pendingCarriedValueRef?.current(primaryLocale, "", field.key);
+      if (currentValue !== originalValue || (pendingCarried !== undefined && pendingCarried !== currentValue)) {
         // An image (or video) setting is a per-language choice, not text whose
         // translations go stale: a new original leaves the foreign replacements
         // standing, so it is never announced as a change that purges them. The
@@ -389,7 +395,8 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       const value = values[field.key] || "";
       if (locale !== primaryLocale) {
         const originalValue = originalLoadedValuesRef.current[field.key] || "";
-        if (value === originalValue) {
+        const pendingCarried = pendingCarriedValueRef?.current(locale, savedMarketIdRef.current ?? "", field.key);
+        if (value === originalValue && (pendingCarried === undefined || pendingCarried === value)) {
           return;
         }
       }

@@ -645,6 +645,7 @@ export const es: Translation = {
     altTextNeedsPrimary: "El texto alt de la imagen {failedImages} no se guardó: Shopify no ofrece un texto alt en el idioma principal para traducir en esa imagen; normalmente aún no tiene ninguno. Introdúcelo y guárdalo allí (si acabas de hacerlo, vuelve a intentarlo en un momento); después se podrá traducir.",
     altTextImageMissing: "El texto alt de la imagen {failedImages} no se guardó: la imagen ya no se encontró en Shopify. Vuelve a cargar el elemento y comprueba que la imagen sigue existiendo.",
     unconfirmedFieldsWarning: "Shopify no confirmó el guardado de: {fields}. Estos campos NO se guardaron: tu texto sigue en los campos, inténtalo de nuevo.",
+    unconfirmedFieldsWarningLeft: "Shopify no confirmó el guardado de: {fields}. Estos campos NO se guardaron: abre el producto e inténtalo de nuevo.",
     skippedFieldsSamePrimary: "No guardado: {fields} es idéntico al del idioma principal. Una URL traducida necesita un valor distinto.",
     altTextTranslateAllPartialImages: "Textos alt guardados para {successCount}/{totalCount} imagen(es) en {languageCount} idioma(s). Imagen(es) {failedImages} no pudieron guardarse en Shopify. Por favor, sincroniza el producto de nuevo.",
     altTextTranslatePartialImages: "Textos alt parcialmente guardados. Imagen(es) {failedImages} no pudieron guardarse en Shopify. Por favor, sincroniza el producto de nuevo.",

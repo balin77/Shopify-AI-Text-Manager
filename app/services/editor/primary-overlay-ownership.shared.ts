@@ -9,13 +9,13 @@
  * meanwhile (never "nothing", which would let a lagging read show the pre-save text
  * as if nobody had saved).
  *
- * One monotonic counter orders everything: a request's press, a confirmation, an
- * edit of the merchant. "Confirmed after this request was pressed" is a comparison
- * of two numbers, so no clock and no flag per case is needed.
+ * A confirmation lives exactly as long as the overlay entry it can restore (the loader
+ * deletes both together), so it needs no age. (The editor orders presses and edits of
+ * the merchant on one counter of its own, `eventSeqRef`; that is not used here.)
  */
 
 export type OverlayOwners = Record<string, Record<string, unknown>>;
-export type OverlayConfirmed = Record<string, Record<string, { value: string; seq: number }>>;
+export type OverlayConfirmed = Record<string, Record<string, { value: string }>>;
 
 /** A save's answer was a success: its values are what Shopify holds now. */
 export function recordConfirmedValues(
@@ -23,12 +23,13 @@ export function recordConfirmedValues(
   itemId: string,
   sentFields: Record<string, string> | undefined,
   unconfirmed: ReadonlySet<string>,
-  seq: number,
+  overlay: Record<string, string> | undefined,
 ): void {
-  if (!sentFields) return;
+  if (!sentFields || !overlay) return;
   const byKey = (confirmed[itemId] ??= {});
   for (const [key, value] of Object.entries(sentFields)) {
-    if (!unconfirmed.has(key)) byKey[key] = { value, seq };
+    // Only a key the overlay still holds: after a Reload dropped it, nothing restores it.
+    if (!unconfirmed.has(key) && key in overlay) byKey[key] = { value };
   }
 }
 
@@ -43,10 +44,9 @@ export function forgetOwnedKeys(args: {
   itemId: string;
   sentKeys: Iterable<string>;
   token: unknown;
-  pressSeq: number | undefined;
   onlyKeys?: ReadonlySet<string>;
 }): string[] {
-  const { cacheByItem, owners, confirmed, itemId, sentKeys, token, pressSeq, onlyKeys } = args;
+  const { cacheByItem, owners, confirmed, itemId, sentKeys, token, onlyKeys } = args;
   const cached = cacheByItem[itemId];
   const itemOwners = owners[itemId];
   /** Keys whose cache entry changed (deleted or put back to a confirmed value). */

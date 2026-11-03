@@ -73,7 +73,7 @@ function mount(first: P[], locale: "de" | "fr", config: any = PRODUCTS_CONFIG, b
   return { hook, fetcher, flush, sent, rerender, v, h, dirty };
 }
 
-beforeEach(() => { infoBox.mockReset(); });
+beforeEach(() => { infoBox.mockReset(); try { window.localStorage.clear(); } catch { /* none */ } });
 
 describe("BLOCKER 1: a save refused after a product switch does not look saved", () => {
   it("back on A the text is not shown as stored, and the message names the product", async () => {
@@ -545,6 +545,213 @@ describe("R7 M1: an abandoned success still tells the merchant what the answer s
     const shown = infoBox.mock.calls.filter((c) => String(c[0]).includes("rouge"));
     expect(shown.length).toBe(1);
     expect(shown[0][1]).toBe("warning");
+  });
+});
+
+describe("R12 C1: a queued save is judged against what the saves ahead of it carry", () => {
+  const ok = { success: true, actionType: "updateContent", n: 1 };
+  it("E1L: meta typed back to its baseline while an earlier save carries another value is announced", async () => {
+    const m = mount([{ id: A, title: "t", seoDesc: "sb" }], "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("metaDescription", "a"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender([{ id: A, title: "t", seoDesc: "sb" }]);
+    act(() => m.h().handleValueChange("metaDescription", "sb"));
+    act(() => m.h().handleValueChange("title", "z"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "loading";
+    await m.rerender([{ id: A, title: "t", seoDesc: "sb" }], ok);
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "t", seoDesc: "a" }], ok);
+    expect(m.sent().metaDescription).toBe("sb");
+    expect(JSON.parse(m.sent().changedFields ?? "[]")).toContain("metaDescription");
+  });
+  it("E2: an own AI save restoring the baseline value behind a save carrying another one is announced", async () => {
+    const m = mount([{ id: A, title: "t", seoDesc: "sb" }], "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("metaDescription", "a"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender([{ id: A, title: "t", seoDesc: "sb" }]);
+    act(() => setFieldSuggestion({ resourceId: A, locale: "de", marketId: "" }, "metaDescription", "sb"));
+    await m.flush();
+    await act(async () => { m.h().handleAcceptSuggestion("metaDescription"); });
+    await m.flush();
+    m.fetcher.state = "loading";
+    await m.rerender([{ id: A, title: "t", seoDesc: "sb" }], ok);
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "t", seoDesc: "a" }], ok);
+    expect(m.sent().metaDescription).toBe("sb");
+    expect(JSON.parse(m.sent().changedFields ?? "[]")).toEqual(["metaDescription"]);
+  });
+  it("G: a foreign title typed back to its loaded value is still sent behind a save carrying another one", async () => {
+    const m = mount([{ id: A, title: "t", frTitle: "o", seoDesc: "m" }], "fr");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "a"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender([{ id: A, title: "t", frTitle: "o", seoDesc: "m" }]);
+    act(() => m.h().handleValueChange("title", "o"));
+    act(() => m.h().handleValueChange("metaDescription", "fm2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "loading";
+    await m.rerender([{ id: A, title: "t", frTitle: "o", seoDesc: "m" }], ok);
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "t", frTitle: "a", seoDesc: "m" }], ok);
+    expect(m.sent().title).toBe("o");
+  });
+  it("control: a field still differing from its baseline is announced as before", async () => {
+    const m = mount([{ id: A, title: "t", seoDesc: "sb" }], "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("metaDescription", "a"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender([{ id: A, title: "t", seoDesc: "sb" }]);
+    act(() => m.h().handleValueChange("title", "z"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "loading";
+    await m.rerender([{ id: A, title: "t", seoDesc: "sb" }], ok);
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "t", seoDesc: "a" }], ok);
+    // meta is still typed as "a" (its own save is out): both are announced, nothing else
+    expect(JSON.parse(m.sent().changedFields ?? "[]").sort()).toEqual(["metaDescription", "title"]);
+  });
+});
+
+describe("R12 C2: text typed after coming back survives the abandoned save's refusal / partial answer", () => {
+  for (const kind of ["refused", "partial"] as const) {
+    it(kind, async () => {
+      const items = [{ id: A, title: "o" }, { id: B, title: "b" }];
+      const m = mount(items, "de");
+      await m.flush();
+      act(() => m.h().handleValueChange("title", "a"));
+      act(() => m.h().handleSave());
+      m.fetcher.state = "submitting";
+      await m.rerender(items);
+      await act(async () => { await m.h().handleItemSelect(B); });
+      await m.flush();
+      await act(async () => { await m.h().handleItemSelect(A); });
+      await m.flush();
+      act(() => m.h().handleValueChange("title", "q"));
+      m.fetcher.state = "idle";
+      await m.rerender(items, kind === "refused"
+        ? { success: false, error: "busy", rateLimited: true, actionType: "updateContent" }
+        : { success: true, actionType: "updateContent", unconfirmedFields: ["title"] });
+      expect(m.v().title).toBe("q");
+      expect(m.dirty()).toBe(true);
+    });
+  }
+  it("the partial answer's message does not claim the text is still in the fields", async () => {
+    const items = [{ id: A, title: "o" }, { id: B, title: "b" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "a"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    await act(async () => { await m.h().handleItemSelect(B); });
+    await m.flush();
+    infoBox.mockClear();
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: true, actionType: "updateContent", unconfirmedFields: ["title"] });
+    const text = infoBox.mock.calls.map((c) => String(c[0])).join(" ");
+    expect(text).toContain("NOT saved");
+    expect(text).not.toContain("still in the fields");
+  });
+});
+
+describe("R12 M2: an old non-save error on the fetcher is not the pending save's refusal", () => {
+  it("F: a language switch during the save re-runs the effect without taking the stale error", async () => {
+    const items = [{ id: A, title: "t", frTitle: "f" }];
+    const m = mount(items, "de");
+    await m.flush();
+    const stale = { success: false, error: "alt translate failed", actionType: "translateAltTextToAllLocales" };
+    await m.rerender(items, stale);
+    infoBox.mockClear();
+    act(() => m.h().handleValueChange("title", "new"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items, stale);
+    await act(async () => { await m.h().handleLanguageChange("fr"); });
+    await m.flush();
+    expect(infoBox.mock.calls.some((c) => String(c[0]).includes("alt translate failed") && c[1] === "critical")).toBe(false);
+    expect(m.hook.result.current.state.isSavingCurrentItem).toBe(true);
+  });
+});
+
+describe("R12 H1: a confirmation ends with the overlay entry it could restore", () => {
+  // S1 (title bleu) confirmed; the title then moves elsewhere to "gris"; a LATER refused save that
+  // owns the title must give back nothing stale: the screen is clean at what Shopify holds.
+  const ok = { success: true, actionType: "updateContent", n: 1 };
+  const refused = { success: false, error: "busy", rateLimited: true, actionType: "updateContent", n: 2 };
+  it("yield: an external change to a third value drops the confirmation too", async () => {
+    const items = [{ id: A, title: "rouge" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "bleu"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    act(() => m.h().handleSave()); // S2: queued behind S1, carries the same title
+    m.fetcher.state = "loading";
+    await m.rerender(items, ok);
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "bleu" }], ok);
+    m.fetcher.state = "submitting";
+    await m.rerender([{ id: A, title: "bleu" }], ok);
+    await m.rerender([{ id: A, title: "gris", seoDesc: "moved" }], ok);
+    expect(m.v().title).toBe("gris");
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "gris", seoDesc: "moved" }], refused);
+    expect(m.v().title).toBe("gris");
+    expect(m.dirty()).toBe(false);
+  });
+  const lateRefusal = async (end: (m: ReturnType<typeof mount>) => Promise<void>) => {
+    const real = Date.now();
+    let offset = 0;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => real + offset);
+    try {
+      const items = [{ id: A, title: "rouge" }];
+      const m = mount(items, "de");
+      await m.flush();
+      act(() => m.h().handleValueChange("title", "bleu"));
+      act(() => m.h().handleSave());
+      m.fetcher.state = "submitting";
+      await m.rerender(items);
+      m.fetcher.state = "loading";
+      await m.rerender(items, ok);
+      m.fetcher.state = "idle";
+      await m.rerender([{ id: A, title: "bleu" }], ok);
+      // the overlay ends (clock / reload) while the title was changed elsewhere to "gris"
+      offset = 2 * 60_000;
+      await end(m);
+      await m.rerender([{ id: A, title: "gris", seoDesc: "z" }], ok);
+      expect(m.v().title).toBe("gris");
+      // a new save C carries the (gris) title and is refused
+      act(() => m.h().handleValueChange("seoTitle", "typed"));
+      act(() => m.h().handleSave());
+      expect(m.sent().title).toBe("gris");
+      m.fetcher.state = "submitting";
+      await m.rerender([{ id: A, title: "gris", seoDesc: "z" }], ok);
+      m.fetcher.state = "idle";
+      await m.rerender([{ id: A, title: "gris", seoDesc: "z" }], refused);
+      expect(m.v().title).toBe("gris");
+      // the typed seoTitle is the only change; the title (Shopify holds gris) is not announced
+      act(() => m.h().handleSave());
+      expect(JSON.parse(m.sent().changedFields ?? "[]")).toEqual(["seoTitle"]);
+    } finally {
+      spy.mockRestore();
+    }
+  };
+  it("expiry: the clock ending the overlay drops the confirmation", async () => {
+    await lateRefusal(async (m) => { await m.rerender([{ id: A, title: "bleu", seoDesc: "y" }], ok); });
+  });
+  it("reload: the Reload button dropping the overlay drops the confirmation", async () => {
+    await lateRefusal(async (m) => {
+      await act(async () => { m.hook.result.current.helpers.triggerDataRefresh(); });
+      await m.flush();
+    });
   });
 });
 

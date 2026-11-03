@@ -650,6 +650,7 @@ export const de = {
     altTextNeedsPrimary: "Der Alt-Text von Bild {failedImages} wurde nicht gespeichert: Shopify bietet für dieses Bild keinen Alt-Text in der Hauptsprache zum Übersetzen an – meist hat es dort noch keinen. Trage dort einen ein und speichere ihn (hast du das gerade getan, versuche es in einem Moment erneut) – danach kann er übersetzt werden.",
     altTextImageMissing: "Der Alt-Text von Bild {failedImages} wurde nicht gespeichert: Das Bild wurde auf Shopify nicht mehr gefunden. Lade den Eintrag neu und prüfe, ob das Bild noch vorhanden ist.",
     unconfirmedFieldsWarning: "Shopify hat das Speichern nicht bestätigt: {fields}. Diese Felder wurden NICHT gespeichert – dein Text steht noch in den Feldern, bitte versuche es erneut.",
+    unconfirmedFieldsWarningLeft: "Shopify hat das Speichern nicht bestätigt: {fields}. Diese Felder wurden NICHT gespeichert – bitte öffne das Produkt und versuche es erneut.",
     skippedFieldsSamePrimary: "Nicht gespeichert: {fields} ist identisch mit der Hauptsprache. Eine übersetzte URL braucht einen anderen Wert.",
     altTextTranslateAllPartialImages: "Alt-Texte für {successCount}/{totalCount} Bild(er) in {languageCount} Sprache(n) gespeichert. Bild(er) {failedImages} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.",
     altTextTranslatePartialImages: "Alt-Texte teilweise gespeichert. Bild(er) {failedImages} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.",

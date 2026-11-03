@@ -653,6 +653,7 @@ export const en: Translation = {
     altTextNeedsPrimary: "The alt text of image {failedImages} was not saved: Shopify offers no main-language alt text to translate for that image — usually it has none yet. Enter and save one there (if you just did, try again in a moment) — then it can be translated.",
     altTextImageMissing: "The alt text of image {failedImages} was not saved: the image could no longer be found on Shopify. Reload the item and check that the image still exists.",
     unconfirmedFieldsWarning: "Shopify did not confirm storing: {fields}. These fields were NOT saved - your text is still in the fields, please try again.",
+    unconfirmedFieldsWarningLeft: "Shopify did not confirm storing: {fields}. These fields were NOT saved - please open the product and try again.",
     skippedFieldsSamePrimary: "Not saved: {fields} is identical to the main language. A translated URL needs a different value.",
     altTextTranslateAllPartialImages: "Alt-texts saved for {successCount}/{totalCount} image(s) in {languageCount} language(s). Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.",
     altTextTranslatePartialImages: "Alt-texts partially saved. Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.",

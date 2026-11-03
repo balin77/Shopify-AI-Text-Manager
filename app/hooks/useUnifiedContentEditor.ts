@@ -741,16 +741,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     );
   };
 
-  const localizedUnconfirmedFields = (data: unknown): string => {
+  const localizedUnconfirmedFields = (data: unknown, textLeft = false): string => {
     const labels = (t.content?.fieldLabels ?? {}) as Record<string, string>;
     return unconfirmedFieldsMessage(
       data,
       (key) => labels[key] || effectiveFieldDefinitionsRef.current.find((f) => f.key === key)?.label || key,
       {
-        unconfirmed: String(
-          t.content?.unconfirmedFieldsWarning ||
-            "Shopify did not confirm storing: {fields}. These fields were NOT saved - your text is still in the fields, please try again.",
-        ),
+        // `textLeft`: the merchant has left the product, so the text is NOT in the fields.
+        unconfirmed: textLeft
+          ? String(t.content?.unconfirmedFieldsWarningLeft || "Shopify did not confirm storing: {fields}. These fields were NOT saved - please open the product and try again.")
+          : String(
+              t.content?.unconfirmedFieldsWarning ||
+                "Shopify did not confirm storing: {fields}. These fields were NOT saved - your text is still in the fields, please try again.",
+            ),
         skipped: String(
           t.content?.skippedFieldsSamePrimary ||
             "Not saved: {fields} is identical to the main language. A translated URL needs a different value.",
@@ -850,6 +853,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const inFlightScopeRef = useRef<SentSaveScope | null>(null);
   /** Per item and field: the request that last cached that primary value (see forgetFailedPrimarySave). */
   const primaryOwnerRef = useRef<OverlayOwners>({});
+  /** Assigned below (it reads the queue and the in-flight scope). */
+  const pendingCarriedValueRef = useRef<(locale: string, marketId: string, key: string) => string | undefined>(() => undefined);
   /** What earlier saves confirmed, per item and field (primary-overlay-ownership.shared.ts). */
   const primaryConfirmedRef = dataLoader.refs.primaryConfirmedRef;
   /** ONE monotonic counter: a request's press, a confirmation, an edit of the merchant. */
@@ -961,11 +966,36 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       itemId,
       sentKeys: Object.keys(scope.sentFields ?? {}),
       token: scope.token,
-      pressSeq: scope.pressSeq,
       onlyKeys,
     });
+    if (!savedPrimaryValuesRef.current[itemId]) delete dataLoader.refs.overlayLifeRef.current[itemId];
     if (savesOfItemOut(itemId).length === 0) pruneOwners(primaryOwnerRef.current, itemId);
     return touched;
+  };
+  /**
+   * A save was CONFIRMED: Shopify now holds its values. A save of the same item queued
+   * behind it that carries a different value for a field announces that field as a
+   * change, whatever baseline it was pressed against (mirror of `handOnRefusedChanges`).
+   */
+  const handOnAgainstConfirmed = (scope: SentSaveScope | null, unconfirmed: ReadonlySet<string>) => {
+    const sent = scope?.sentFields;
+    if (!sent?.itemId || scope?.locale !== primaryLocale) return;
+    for (const entry of saveQueueRef.current) {
+      if (entry.savedItemId !== sent.itemId || entry.savedLocale !== primaryLocale) continue;
+      if (entry.formData.get("action") !== "updateContent") continue;
+      let list: string[] = [];
+      try { list = JSON.parse(String(entry.formData.get("changedFields") ?? "[]")); } catch { continue; }
+      let added = false;
+      for (const field of effectiveFieldDefinitionsRef.current) {
+        const key = field.key;
+        if (!(key in sent) || unconfirmed.has(key) || list.includes(key) || !entry.formData.has(key)) continue;
+        if (entry.formData.get(key) === sent[key]) continue;
+        list.push(key);
+        added = true;
+        if (field.translationKey) deletedTranslationKeysRef.current.add(field.translationKey);
+      }
+      if (added) entry.formData.set("changedFields", JSON.stringify(list));
+    }
   };
   /** A refused save on the item on screen: its cache entries go back, and what change
    *  detection compares against with them (a read that landed while the save was out
@@ -1004,6 +1034,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handOnRefusedChanges(inFlightScopeRef.current);
     reresolveForgotten(refusedItemId, forgetFailedPrimarySave(), true);
   };
+  pendingCarriedValueRef.current = (locale, marketId, key) => {
+    const itemId = selectedItemIdRef.current;
+    if (!itemId) return undefined;
+    for (let i = saveQueueRef.current.length - 1; i >= 0; i--) {
+      const entry = saveQueueRef.current[i];
+      if (entry.savedItemId !== itemId || entry.formData.get("action") !== "updateContent") continue;
+      if ((entry.savedLocale ?? "") !== locale || (entry.savedMarketId ?? "") !== marketId || !entry.formData.has(key)) continue;
+      return String(entry.formData.get(key));
+    }
+    const scope = inFlightScopeRef.current;
+    const busy = fetcherRef.current.state === "submitting" || justSubmittedRef.current;
+    if (busy && scope?.sentFields?.itemId === itemId && scope.locale === locale && (scope.marketId ?? "") === marketId && key in scope.sentFields) {
+      return scope.sentFields[key];
+    }
+    return undefined;
+  };
   /** The field values of a request's form (not action / itemId / locale ...). */
   const fieldValuesOf = (sentFields: Record<string, string>): Record<string, string> => {
     const out: Record<string, string> = {};
@@ -1015,10 +1061,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const item = itemId ? itemsRef.current.find((i) => i.id === itemId) : undefined;
     return item ? String(config.getPrimaryField?.(item as never, t as never) ?? (item as { title?: string }).title ?? "") : "";
   };
+  /** The text of a refusal that names an `errorKey`: the one builder for the screen and for a left product. */
+  const errorKeyMessage = (data: unknown): string => {
+    const errorKey = String((data as { errorKey?: string }).errorKey);
+    return (t.content as Record<string, string>)?.[errorKey] || errorKey;
+  };
   /** The refusal of a save of an item that is NOT on screen: said with its name. */
   const showRefusalOfOtherItem = (itemId: string | undefined | null, data: unknown) => {
     const name = itemNameOf(itemId);
-    const text = localizedUnconfirmedFields(data) || translateErrorMessage(String((data as { error?: string }).error || ""), t);
+    const text = localizedUnconfirmedFields(data, true) || translateErrorMessage(String((data as { error?: string }).error || ""), t);
     showInfoBox(name ? `${name}: ${text}` : text, "critical");
   };
   /**
@@ -1037,7 +1088,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (Object.keys(picked).length === 0) return;
     // A refusal on the item the merchant is looking at keeps the text in the field as a
     // draft; only what change detection compares against goes back.
-    if (!keepText) setEditableValues((prev) => ({ ...prev, ...picked }));
+    // Text typed since the merchant came back (`lastEditSeqRef` starts empty at a switch)
+    // is theirs: only its baseline moves.
+    const untouched = Object.fromEntries(Object.entries(picked).filter(([key]) => !(lastEditSeqRef.current[key] > 0)));
+    if (!keepText && Object.keys(untouched).length > 0) setEditableValues((prev) => ({ ...prev, ...untouched }));
     baselineValuesRef.current = { ...baselineValuesRef.current, ...picked };
     originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, ...picked };
     setBaselineVersion((v) => v + 1);
@@ -1408,6 +1462,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setOwnSavesInFlight,
     inFlightScopeRef,
     primaryOwnerRef,
+    pendingCarriedValueRef,
     primaryConfirmedRef,
     eventSeqRef,
   });
@@ -2118,7 +2173,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           itemId: entry.savedItemId,
           sentKeys: changed.map(String),
           token: entry.formData,
-          pressSeq: entry.pressSeq,
         });
       }
     }
@@ -2894,6 +2948,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const abandonedEntry = abandonedSaveRef.current;
     const answerData = fetcher.data as (FetcherData & { rateLimited?: boolean }) | undefined;
     const isSaveAnswer = !!answerData && (!answerData.actionType || answerData.actionType === "updateContent");
+    // An old non-save failure still held on the fetcher is not the pending save's refusal.
+    const isSaveAnswerShape = isSaveAnswer;
     const ownedByAbandoned =
       !!abandonedEntry && inFlightScopeRef.current === abandonedEntry.scope && isSaveAnswer && answerData !== abandonedEntry.staleData;
 
@@ -2913,7 +2969,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           const unconfirmed = unconfirmedClearedFieldSet(data);
           const abandonedItemId = abandoned.sentFields?.itemId;
           if (abandoned.sentFields && abandonedItemId && abandoned.locale === primaryLocale) {
-            recordConfirmedValues(primaryConfirmedRef.current, abandonedItemId, fieldValuesOf(abandoned.sentFields), unconfirmed, ++eventSeqRef.current);
+            recordConfirmedValues(primaryConfirmedRef.current, abandonedItemId, fieldValuesOf(abandoned.sentFields), unconfirmed, savedPrimaryValuesRef.current[abandonedItemId]);
           }
           const savedScope = inFlightScopeRef.current;
           inFlightScopeRef.current = abandoned;
@@ -2934,7 +2990,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
           const redirectMessage = buildRedirectMessage(redirectNoteOf(data), t);
           if (redirectMessage) lines.push({ text: redirectMessage.text, tone: redirectMessage.tone as InfoBoxTone });
-          const unconfirmedText = localizedUnconfirmedFields(data);
+          const unconfirmedText = localizedUnconfirmedFields(data, true);
           if (unconfirmedText) lines.push({ text: unconfirmedText, tone: "warning" });
           const failedAlts = (data as { failedAltTextIndices?: unknown }).failedAltTextIndices;
           if (Array.isArray(failedAlts) && failedAlts.length > 0 && "warning" in data && (data as { warning?: unknown }).warning) {
@@ -2982,12 +3038,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // What this save confirmed is what Shopify holds now (a refused newer save of
       // the same field gives it back, see forgetFailedPrimarySave).
       if (answeredScope?.sentFields && answeredScope.locale === primaryLocale && answeredScope.sentFields.itemId) {
+        handOnAgainstConfirmed(answeredScope, unconfirmedClearedFieldSet(fetcher.data));
         recordConfirmedValues(
           primaryConfirmedRef.current,
           answeredScope.sentFields.itemId,
           fieldValuesOf(answeredScope.sentFields),
           unconfirmedClearedFieldSet(fetcher.data),
-          ++eventSeqRef.current,
+          savedPrimaryValuesRef.current[answeredScope.sentFields.itemId],
         );
         // Nothing of the item left out or queued: ownership and confirmations end.
         if (savesOfItemOut(answeredScope.sentFields.itemId).length === 0) {
@@ -3680,7 +3737,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           debugLog.revalidate(' Error during revalidation (ignored):', error);
         }
       }
-    } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data && isSavePendingRef.current) {
+    } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data && isSavePendingRef.current && isSaveAnswerShape) {
       // Also mark error responses as processed
       processedSaveResponseRef.current = fetcher.data;
       forgetAndRebaseline();
@@ -3733,7 +3790,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           translateErrorMessage(String(fetcher.data.error || ""), t);
         showInfoBox(translatedError, "critical");
       }
-    } else if (fetcher.data && !fetcher.data.success && 'errorKey' in fetcher.data && isSavePendingRef.current) {
+    } else if (fetcher.data && !fetcher.data.success && 'errorKey' in fetcher.data && isSavePendingRef.current && isSaveAnswerShape) {
       // ─── Handle i18n error-key responses (e.g. emptyPrimaryFieldsError) ───
       // When the server rejects a save with an errorKey, we must:
       //  1. Show the localised error message
@@ -3778,14 +3835,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       if (!isSavedItemCurrent) {
         const keyName = itemNameOf(refusedKeyItemId);
-        const keyText = String((t.content as Record<string, string>)?.[String((fetcher.data as { errorKey?: string }).errorKey)] || (fetcher.data as { errorKey?: string }).errorKey);
+        const keyText = errorKeyMessage(fetcher.data);
         showInfoBox(keyName ? `${keyName}: ${keyText}` : keyText, "critical");
       }
       if (isSavedItemCurrent) {
-        const errorKey = String((fetcher.data as { errorKey?: string }).errorKey);
-        const errorMessage =
-          (t.content as Record<string, string>)?.[errorKey] ||
-          errorKey;
+        const errorMessage = errorKeyMessage(fetcher.data);
         showInfoBox(errorMessage, "critical");
 
         // Auto-restore empty fields to their original values (discard empty edits)
@@ -3967,7 +4021,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               itemId: next.savedItemId,
               sentKeys: Object.keys(sentFieldsFromForm(next.formData.entries())),
               token: next.formData,
-              pressSeq: next.pressSeq,
             });
           }
           settleUnsentSave({
