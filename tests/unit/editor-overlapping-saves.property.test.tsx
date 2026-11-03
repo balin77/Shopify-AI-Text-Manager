@@ -243,9 +243,15 @@ describe("overlapping primary saves: a model of Shopify against the real editor"
   it(`holds all invariants over ${runs} random sequences of ${steps} steps`, async () => {
     const only = process.env.PROPERTY_SEED ? Number(process.env.PROPERTY_SEED) : null;
     const fails: string[] = [];
-    for (let seed = only ?? 1; seed <= (only ?? runs); seed++) {
+    const base = Number(process.env.PROPERTY_SEED_BASE ?? 0);
+    for (let seed = only ?? base + 1; seed <= (only ?? base + runs); seed++) {
       try { await runOne(seed, steps); } catch (e) { fails.push(String((e as Error).message)); if (fails.length >= 3) break; }
     }
     if (fails.length) throw new Error(fails.join("\n\n"));
   }, 30_000 + runs * 2_500);
+
+  // Seeds that once found a wrong write (a confirmation restored over a value written elsewhere).
+  it("regression seeds at 24 steps", async () => {
+    for (const seed of [2020, 5001, 5091, 5107, 2059]) await runOne(seed, 24);
+  }, 60_000);
 });

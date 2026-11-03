@@ -201,6 +201,8 @@ export interface SentSaveScope {
   token?: unknown;
   /** The event counter at the request's press (see primary-overlay-ownership). */
   pressSeq?: number;
+  /** `fetcher.data` when the request went out: an answer identical to it is an OLD one. */
+  staleData?: unknown;
 }
 
 /** A form's string entries, for `SentSaveScope.sentFields`. */

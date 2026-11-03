@@ -55,7 +55,7 @@ import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-m
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { isTranslatableFieldDefinition } from "../services/content-attributes.shared";
 import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource, altValuesForSaveResponse, revertAltsWithoutPrimary, sentAltsFromForm, sentFieldsFromForm, saveAnswerViewMoved, type SentSaveScope } from "../services/editor/own-field-save.shared";
-import { forgetOwnedKeys, recordConfirmedValues, pruneOwners, type OverlayOwners, type OverlayConfirmed } from "../services/editor/primary-overlay-ownership.shared";
+import { forgetOwnedKeys, recordConfirmedValues, pruneOwners, type FormMeta, type OverlayOwners, type OverlayConfirmed } from "../services/editor/primary-overlay-ownership.shared";
 import { settleOwnSave, settleUnsentSave, backstopOwnSaves, hasOwnSaveInFlight, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
@@ -853,12 +853,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const inFlightScopeRef = useRef<SentSaveScope | null>(null);
   /** Per item and field: the request that last cached that primary value (see forgetFailedPrimarySave). */
   const primaryOwnerRef = useRef<OverlayOwners>({});
+  /** What each primary form needs to remember (carried-only announcements, withheld changedFields). */
+  const formMetaRef = useRef(new WeakMap<FormData, FormMeta>());
   /** Assigned below (it reads the queue and the in-flight scope). */
   const pendingCarriedValueRef = useRef<(locale: string, marketId: string, key: string) => string | undefined>(() => undefined);
   /** What earlier saves confirmed, per item and field (primary-overlay-ownership.shared.ts). */
   const primaryConfirmedRef = dataLoader.refs.primaryConfirmedRef;
   /** ONE monotonic counter: a request's press, a confirmation, an edit of the merchant. */
-  const eventSeqRef = useRef(0);
+  const eventSeqRef = dataLoader.refs.eventSeqRef;
 
   /** The saves of the selected item that are out (in flight on the fetcher)
    *  or waiting in the queue, with the form fields each carries. */
@@ -983,6 +985,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     for (const entry of saveQueueRef.current) {
       if (entry.savedItemId !== sent.itemId || entry.savedLocale !== primaryLocale) continue;
       if (entry.formData.get("action") !== "updateContent") continue;
+      // An own (partial) save announces for itself, and a form that withholds
+      // `changedFields` (accept-and-translate) must stay without them.
+      if (entry.partial || formMetaRef.current.get(entry.formData)?.withheld) continue;
       let list: string[] = [];
       try { list = JSON.parse(String(entry.formData.get("changedFields") ?? "[]")); } catch { continue; }
       let added = false;
@@ -1012,11 +1017,32 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (!sent?.itemId || scope?.locale !== primaryLocale) return;
     let announced: string[] = [];
     try { announced = JSON.parse(sent.changedFields ?? "[]"); } catch { return; }
-    for (const entry of saveQueueRef.current) {
+    const queue = saveQueueRef.current;
+    for (let index = 0; index < queue.length; index++) {
+      const entry = queue[index];
       if (entry.savedItemId !== sent.itemId || entry.savedLocale !== primaryLocale) continue;
       if (entry.formData.get("action") !== "updateContent") continue;
+      const meta = formMetaRef.current.get(entry.formData);
+      if (entry.partial || meta?.withheld) continue;
       let list: string[] = [];
       try { list = JSON.parse(String(entry.formData.get("changedFields") ?? "[]")); } catch { continue; }
+      // A key this entry announced ONLY because the refused save carried another value:
+      // with that save refused, Shopify still holds the entry's value (= the loaded
+      // one), so the announcement would purge translations of unchanged text. Kept
+      // while another save queued ahead of the entry still carries a different value.
+      for (const key of [...(meta?.carryOnly ?? [])]) {
+        if (!list.includes(key) || (onlyKeys && !onlyKeys.has(key)) || !(key in sent)) continue;
+        if (entry.formData.get(key) !== (originalLoadedValuesRef.current[key] ?? "")) continue;
+        const stillCarried = queue.slice(0, index).some((other) =>
+          other !== entry && other.savedItemId === sent.itemId && other.formData.has(key) &&
+          other.formData.get(key) !== (originalLoadedValuesRef.current[key] ?? ""));
+        if (stillCarried) continue;
+        list = list.filter((k) => k !== key);
+        meta?.carryOnly.delete(key);
+        const field = effectiveFieldDefinitionsRef.current.find((f) => f.key === key);
+        if (field?.translationKey) deletedTranslationKeysRef.current.delete(field.translationKey);
+        entry.formData.set("changedFields", JSON.stringify(list));
+      }
       let added = false;
       for (const key of announced) {
         if (list.includes(key) || (onlyKeys && !onlyKeys.has(key))) continue;
@@ -1049,6 +1075,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return scope.sentFields[key];
     }
     return undefined;
+  };
+  /** `unconfirmed` plus the keys the loader read a foreign value for AFTER this request was pressed. */
+  const overtakenKeys = (itemId: string, pressSeq: number | undefined, unconfirmed: ReadonlySet<string>): ReadonlySet<string> => {
+    const out = new Set(unconfirmed);
+    for (const [key, seq] of Object.entries(dataLoader.refs.overtakenRef.current[itemId] ?? {})) {
+      if (seq > (pressSeq ?? 0)) out.add(key);
+    }
+    return out;
   };
   /** The field values of a request's form (not action / itemId / locale ...). */
   const fieldValuesOf = (sentFields: Record<string, string>): Record<string, string> => {
@@ -1462,6 +1496,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setOwnSavesInFlight,
     inFlightScopeRef,
     primaryOwnerRef,
+    formMetaRef,
     pendingCarriedValueRef,
     primaryConfirmedRef,
     eventSeqRef,
@@ -2949,7 +2984,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const answerData = fetcher.data as (FetcherData & { rateLimited?: boolean }) | undefined;
     const isSaveAnswer = !!answerData && (!answerData.actionType || answerData.actionType === "updateContent");
     // An old non-save failure still held on the fetcher is not the pending save's refusal.
-    const isSaveAnswerShape = isSaveAnswer;
+    // ...and an answer identical to what the fetcher held when the request went out is an old one.
+    const isSaveAnswerShape = isSaveAnswer && fetcher.data !== inFlightScopeRef.current?.staleData;
     const ownedByAbandoned =
       !!abandonedEntry && inFlightScopeRef.current === abandonedEntry.scope && isSaveAnswer && answerData !== abandonedEntry.staleData;
 
@@ -2969,7 +3005,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           const unconfirmed = unconfirmedClearedFieldSet(data);
           const abandonedItemId = abandoned.sentFields?.itemId;
           if (abandoned.sentFields && abandonedItemId && abandoned.locale === primaryLocale) {
-            recordConfirmedValues(primaryConfirmedRef.current, abandonedItemId, fieldValuesOf(abandoned.sentFields), unconfirmed, savedPrimaryValuesRef.current[abandonedItemId]);
+            recordConfirmedValues(primaryConfirmedRef.current, abandonedItemId, fieldValuesOf(abandoned.sentFields), overtakenKeys(abandonedItemId, abandoned.pressSeq, unconfirmed), savedPrimaryValuesRef.current[abandonedItemId]);
           }
           const savedScope = inFlightScopeRef.current;
           inFlightScopeRef.current = abandoned;
@@ -3043,7 +3079,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           primaryConfirmedRef.current,
           answeredScope.sentFields.itemId,
           fieldValuesOf(answeredScope.sentFields),
-          unconfirmedClearedFieldSet(fetcher.data),
+          overtakenKeys(answeredScope.sentFields.itemId, answeredScope.pressSeq, unconfirmedClearedFieldSet(fetcher.data)),
           savedPrimaryValuesRef.current[answeredScope.sentFields.itemId],
         );
         // Nothing of the item left out or queued: ownership and confirmations end.
@@ -3995,6 +4031,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         sentFields: sentFieldsFromForm(next.formData.entries()),
         token: next.formData,
         pressSeq: next.pressSeq,
+        staleData: fetcherRef.current.data,
       };
       isSavePendingRef.current = true;
       // A save held behind a "translate all" run: another view's answer may

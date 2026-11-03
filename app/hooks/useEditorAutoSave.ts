@@ -8,7 +8,7 @@
 
 import type { PartialSave } from "./useUiDataLoader";
 import { settleUnsentSave, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
-import { forgetOwnedKeys, type OverlayOwners, type OverlayConfirmed } from "../services/editor/primary-overlay-ownership.shared";
+import { forgetOwnedKeys, type FormMeta, type OverlayOwners, type OverlayConfirmed } from "../services/editor/primary-overlay-ownership.shared";
 import { sentAltsFromForm, sentFieldsFromForm, type SentSaveScope } from "../services/editor/own-field-save.shared";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { fileIdForThemeImage, keepsForeignMediaOnPrimaryChange } from "~/utils/theme-image-reference.shared";
@@ -83,6 +83,8 @@ interface UseEditorAutoSaveProps {
   /** Per item and field: the request (its form) that last cached that primary value.
    *  A refused save forgets only the keys it still owns. */
   primaryOwnerRef?: React.MutableRefObject<OverlayOwners>;
+  /** What each primary form needs to remember (see FormMeta). */
+  formMetaRef?: React.MutableRefObject<WeakMap<FormData, FormMeta>>;
   /** The value a save still OUT or queued for this item / language / market carries for a
    *  field (the newest one), if any. What "changed" means at press time is decided against
    *  the baseline AND against it: typing a field back to its baseline while an earlier
@@ -160,6 +162,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     setOwnSavesInFlight,
     inFlightScopeRef,
     primaryOwnerRef,
+    formMetaRef,
     pendingCarriedValueRef,
     primaryConfirmedRef,
     eventSeqRef,
@@ -169,6 +172,8 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
   } = props;
 
   // We need a stable ref for selectedItem so closures don't capture stale values
+  /** Keys the latest `getChangedFields` announced only because of a carried value. */
+  const carryOnlyRef = useRef<Set<string>>(new Set());
   const selectedItemRef = useRef(selectedItem);
   selectedItemRef.current = selectedItem;
 
@@ -241,6 +246,10 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     // This request now owns the cached primary values of the fields it carries: a
     // newer save of the same field (queued behind it) takes them over.
     const pressSeq = eventSeqRef ? ++eventSeqRef.current : undefined;
+    if (formMetaRef) {
+      formMetaRef.current.set(formData, { carryOnly: carryOnlyRef.current, withheld: !!isAcceptAndTranslateFlowRef.current });
+      carryOnlyRef.current = new Set();
+    }
     if (primaryOwnerRef && savedLocaleRef.current === primaryLocale && savedItemIdRef.current) {
       const owners = (primaryOwnerRef.current[savedItemIdRef.current] ??= {});
       // Only the fields that went into the overlay (not action / itemId / locale ...).
@@ -273,6 +282,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         sentFields: sentFieldsFromForm(Object.entries(data)),
         token: formData,
         pressSeq,
+        staleData: fetcherRef.current.data,
       };
     }
 
@@ -331,6 +341,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     }
 
     const changedFields: string[] = [];
+    carryOnlyRef.current = new Set();
     debugLog.fields(' contentType:', config.contentType);
     debugLog.fields(' originalTemplateValuesRef:', originalTemplateValuesRef.current);
     debugLog.fields(' valuesToCheck:', valuesToCheck);
@@ -361,7 +372,8 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       }
 
       const pendingCarried = pendingCarriedValueRef?.current(primaryLocale, "", field.key);
-      if (currentValue !== originalValue || (pendingCarried !== undefined && pendingCarried !== currentValue)) {
+      const carriedOnly = currentValue === originalValue && pendingCarried !== undefined && pendingCarried !== currentValue;
+      if (currentValue !== originalValue || carriedOnly) {
         // An image (or video) setting is a per-language choice, not text whose
         // translations go stale: a new original leaves the foreign replacements
         // standing, so it is never announced as a change that purges them. The
@@ -371,6 +383,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         }
         debugLog.fields(`Field "${field.key}" changed: "${originalValue}" -> "${currentValue}"`);
         changedFields.push(field.key);
+        if (carriedOnly) carryOnlyRef.current.add(field.key);
       }
     });
 

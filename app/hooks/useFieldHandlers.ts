@@ -559,6 +559,8 @@ const handleSave = () => {
   }
 
   // Add field values - for foreign locales, only send fields that actually changed
+  // The view's market, before the carried-value lookup in buildFieldsForSave reads it.
+  savedMarketIdRef.current = selectedMarketId;
   Object.assign(formDataObj, buildFieldsForSave(editableValues, currentLanguage));
 
   // Add image alt-texts ONLY if they actually changed (avoid sending unchanged alt-texts

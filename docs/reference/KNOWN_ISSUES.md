@@ -69,6 +69,11 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Ob eine Speicherung ein Feld ankündigt, wird beim Drücken gegen den Ausgangsstand UND gegen den Wert der zuletzt noch laufenden oder wartenden Speicherung desselben Produkts, derselben Sprache und desselben Markts entschieden (`pendingCarriedValueRef`). Eine Fremdsprach-Speicherung lässt ein Feld nur weg, wenn es weder vom Ausgangsstand noch von einer laufenden Speicherung abweicht. Eine laufende Speicherung eines anderen Markts oder einer anderen Sprache zählt nicht.
 - Eine bestätigte Speicherung reicht Änderungen an wartende Speicherungen desselben Produkts weiter (nur Hauptsprache), wenn deren Wert vom bestätigten abweicht.
 - Eine abgebrochene Speicherung, deren Antwort Felder nicht bestätigt, meldet sie mit dem Produktnamen und mit einem Text, der nicht behauptet, der Text stehe noch in den Feldern (`unconfirmedFieldsWarningLeft`).
+- Die Eigenschaftstest-Seeds 2001-2100 (22 und 24 Schritte) enden mit einem Fehler bei Seed 2033 (I3: der Bildschirm zeigt einen früher fremd geschriebenen Wert, während eigene Speicherungen noch laufen); bei 20 Schritten und für 5001-5120 (24 Schritte) sind alle Läufe grün. Ursache nicht abschliessend geklärt: Vermutlich gibt eine abgelehnte Speicherung den Eintrag frei, obwohl eine ältere, noch laufende Speicherung denselben Wert trägt.
+- Ein Wert, den das Laden schon einmal gelesen hat, gilt nie als neue fremde Änderung (`everSeenRef`, höchstens 50 Werte je Feld). Ein Wechsel von aussen auf einen früher gelesenen Wert wird daher bis zum Ende des Zwischenspeichers nicht erkannt.
+- Eine Ankündigung, die nur wegen eines Werts einer laufenden Speicherung entstand, wird bei deren Ablehnung nur zurückgenommen, wenn der Wert dem geladenen Stand entspricht und keine weitere vorausgehende wartende Speicherung ihn noch trägt.
+- Der Eigenschaftstest prüft die Gegenrichtung (ein Feld wird angekündigt, obwohl Shopify den gesendeten Wert schon hält) nicht: Sie ist nach einer Bestätigung zulässig und würde den Test unzuverlässig machen. Ein überflüssiges Ankündigen löscht höchstens Übersetzungen, die ohnehin neu entstehen.
+- Foreign-Speicherungen, die nur wegen eines mitlaufenden Werts ein Feld senden, schreiben den unveränderten Wert nochmals (keine Löschung von Übersetzungen).
 
 ## Bekannt: veraltete Anzeigen
 

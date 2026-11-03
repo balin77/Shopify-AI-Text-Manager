@@ -238,6 +238,11 @@ export interface UseUiDataLoaderReturn {
     /** What saves confirmed, per item and field; lives exactly as long as the overlay
      *  entry it can restore (see primary-overlay-ownership.shared.ts). */
     primaryConfirmedRef: React.MutableRefObject<OverlayConfirmed>;
+    /** Per item and field: the event number at which the loader read a value somebody else wrote.
+     *  A save pressed BEFORE it must not be recorded as confirmed afterwards. */
+    overtakenRef: React.MutableRefObject<Record<string, Record<string, number>>>;
+    /** The editor's one monotonic counter (presses, edits, overtakes). */
+    eventSeqRef: React.MutableRefObject<number>;
     /** The clock of each item's overlay entry (deleted with the entry). */
     overlayLifeRef: React.MutableRefObject<Record<string, { values: Record<string, string>; start: number; caught: number | null }>>;
     originalLoadedValuesRef: React.MutableRefObject<Record<string, string>>;
@@ -444,6 +449,8 @@ export function useUiDataLoader(
   /** The values saves CONFIRMED, per item and field. Ends with the overlay entry: whoever
    *  deletes an entry of `savedPrimaryValuesRef` deletes its confirmation too. */
   const primaryConfirmedRef = useRef<OverlayConfirmed>({});
+  const overtakenRef = useRef<Record<string, Record<string, number>>>({});
+  const eventSeqRef = useRef(0);
 
   /** Baseline of loaded values for foreign-locale change detection.
    *  Prevents re-sending unchanged fields like handle on every save. */
@@ -620,6 +627,9 @@ export function useUiDataLoader(
    *  somebody else's change (a second save must not turn the first one's value
    *  into a "third value"). */
   const preSaveSeenRef = useRef<Record<string, Set<string>>>({});
+  /** Every server value the loader has read for a field (bounded): a lagging read can show any
+   *  of them again, so none of them is somebody else's NEW change. */
+  const everSeenRef = useRef<Record<string, Set<string>>>({});
   /** Per item: the overlay it describes, when it was first seen, and when the server
    *  first showed it. The overlay has an ABSOLUTE end counted from these, whatever
    *  the server shows later. */
@@ -671,12 +681,14 @@ export function useUiDataLoader(
         serverValue !== previous &&
         serverValue !== cached &&
         !ours.has(serverValue) &&
+        !everSeenRef.current[seenKey]?.has(serverValue) &&
         serverValue !== ""
       ) {
         if (isPrimary) {
           const override = savedPrimaryValuesRef.current[item.id];
           if (override) delete override[field.key];
           delete primaryConfirmedRef.current[item.id]?.[field.key];
+          (overtakenRef.current[item.id] ??= {})[field.key] = ++eventSeqRef.current;
         } else {
           delete localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];
         }
@@ -696,6 +708,8 @@ export function useUiDataLoader(
       } else if (!isPrimary) {
         delete foreignLifeRef.current[seenKey];
       }
+      const everSeen = (everSeenRef.current[seenKey] ??= new Set());
+      if (everSeen.size < 50) everSeen.add(serverValue);
       seen[seenKey] = serverValue;
     }
   };
@@ -1384,6 +1398,7 @@ export function useUiDataLoader(
     foreignLifeRef.current = {};
     serverSeenRef.current = keep(serverSeenRef.current);
     preSaveSeenRef.current = keep(preSaveSeenRef.current);
+    everSeenRef.current = keep(everSeenRef.current);
   }, [primaryLocale]);
 
   /** When user clicks ReloadButton */
@@ -1486,6 +1501,8 @@ export function useUiDataLoader(
       deletedTranslationKeysRef,
       savedPrimaryValuesRef,
       primaryConfirmedRef,
+      overtakenRef,
+      eventSeqRef,
       overlayLifeRef,
       originalLoadedValuesRef,
       originalTemplateValuesRef,

@@ -755,6 +755,141 @@ describe("R12 H1: a confirmation ends with the overlay entry it could restore", 
   });
 });
 
+const formsOf = (m: any) =>
+  m.fetcher.submit.mock.calls.map((c: any) => Object.fromEntries([...(c[0] as FormData).entries()].map(([k, v]: any) => [k, String(v)])));
+
+describe("R13 M1: a carried-value announcement does not outlive its carrier", () => {
+  it("P1: the carrier is refused, the queued typed-back save no longer announces the unchanged title", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "X"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    act(() => m.h().handleValueChange("title", "rouge"));
+    act(() => m.h().handleValueChange("seoTitle", "s1"));
+    act(() => m.h().handleSave());
+    // pressed behind S1, which still carries "X": the typed-back title is announced
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: false, error: "busy", rateLimited: true, actionType: "updateContent" });
+    const forms = formsOf(m);
+    expect(forms[1].title).toBe("rouge");
+    expect(JSON.parse(forms[1].changedFields ?? "[]")).toEqual(["seoTitle"]);
+  });
+  it("control: the carrier is confirmed, the typed-back title IS announced", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "X"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    act(() => m.h().handleValueChange("title", "rouge"));
+    act(() => m.h().handleValueChange("seoTitle", "s1"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "loading";
+    await m.rerender(items, { success: true, actionType: "updateContent", n: 1 });
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "X" }, items[1]], { success: true, actionType: "updateContent", n: 1 });
+    expect(JSON.parse(formsOf(m)[1].changedFields ?? "[]").sort()).toEqual(["seoTitle", "title"]);
+  });
+  it("P4: an accept-and-translate save (changedFields withheld) queued behind a confirmed save stays without them", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("seoTitle", "s1"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    act(() => setFieldSuggestion({ resourceId: A, locale: "de", marketId: "" }, "title", "AI"));
+    await m.flush();
+    await act(async () => { (m.h() as any).handleAcceptAndTranslate("title"); });
+    await m.flush();
+    m.fetcher.state = "loading";
+    await m.rerender(items, { success: true, actionType: "updateContent", n: 1 });
+    m.fetcher.state = "idle";
+    await m.rerender(items, m.fetcher.data);
+    const forms = formsOf(m);
+    expect(forms[1].title).toBe("AI");
+    expect(forms[1].changedFields ?? "[]").toBe("[]");
+  });
+});
+
+describe("R13 M3: an old action-less error on the fetcher is not the new save's refusal", () => {
+  it("P10", async () => {
+    const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
+    const m = mount(items, "de");
+    await m.flush();
+    const old = { success: false, error: "Invalid field type" };
+    await m.rerender(items, old);
+    infoBox.mockReset();
+    act(() => m.h().handleValueChange("title", "X"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items, old);
+    await m.rerender([{ id: A, title: "rouge", seoDesc: "q" } as any, items[1]], old);
+    expect(infoBox.mock.calls.some((c) => String(c[0]).includes("Invalid field type"))).toBe(false);
+    expect(m.hook.result.current.state.isSavingCurrentItem).toBe(true);
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "X" }, items[1]], { success: true, actionType: "updateContent" });
+    expect(infoBox.mock.calls.some((c) => c[1] === "success")).toBe(true);
+  });
+});
+
+describe("R13 LOW-2: the carried-value lookup of a foreign save uses the view's market", () => {
+  it("P6: a global save behind a market save does not carry the market's title", async () => {
+    const items = [{ id: A, title: "rouge", frTitle: "noir", marketFr: "noirM" }, { id: B, title: "vert" }];
+    const m = mount(items, "fr");
+    await m.flush();
+    await act(async () => { await (m.h() as any).handleMarketChange(MARKET); });
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "noirM2"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    await act(async () => { await (m.h() as any).handleMarketChange(""); });
+    await m.flush();
+    act(() => m.h().handleValueChange("metaDescription", "g1"));
+    act(() => m.h().handleSave());
+    const forms = formsOf(m);
+    m.fetcher.state = "idle";
+    await m.rerender(items, { success: true, actionType: "updateContent", n: 1 });
+    const all = formsOf(m);
+    expect(all[all.length - 1].metaDescription).toBe("g1");
+    expect(all[all.length - 1].title).toBeUndefined();
+    expect(forms.length).toBeGreaterThan(0);
+  });
+  it("P8: a market title typed back behind a market save in between is still sent", async () => {
+    const items = [{ id: A, title: "rouge", frSeo: "seoG", marketFr: "noirM" }, { id: B, title: "vert" }];
+    const m = mount(items, "fr");
+    await m.flush();
+    await act(async () => { await (m.h() as any).handleMarketChange(MARKET); });
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "V1"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(items);
+    await act(async () => { await (m.h() as any).handleMarketChange(""); });
+    await m.flush();
+    act(() => m.h().handleValueChange("seoTitle", "seoG2"));
+    act(() => m.h().handleSave());
+    await act(async () => { await (m.h() as any).handleMarketChange(MARKET); });
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "noirM"));
+    act(() => m.h().handleValueChange("metaDescription", "zz"));
+    act(() => m.h().handleSave());
+    for (let k = 0; k < 3; k++) {
+      m.fetcher.state = "idle";
+      await m.rerender(items, { success: true, actionType: "updateContent", n: 10 + k });
+      m.fetcher.state = "submitting";
+      await m.rerender(items, m.fetcher.data);
+    }
+    const last = formsOf(m).filter((f: any) => f.marketId === MARKET).pop();
+    expect(last.title).toBe("noirM");
+  });
+});
+
 describe("M1: the record of an abandoned save does not outlive its answer", () => {
   it("a later unrelated failure is not shown as the abandoned product's refusal", async () => {
     const items = [{ id: A, title: "rouge", frTitle: "noirA" }, { id: B, title: "vert", frTitle: "noirB" }];

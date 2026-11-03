@@ -70,3 +70,11 @@ export function forgetOwnedKeys(args: {
 export function pruneOwners(owners: OverlayOwners, itemId: string): void {
   delete owners[itemId];
 }
+
+/** What a primary save's form needs to remember beyond its values. */
+export interface FormMeta {
+  /** Keys announced as changed ONLY because a save ahead of it carried another value. */
+  carryOnly: Set<string>;
+  /** The form deliberately withholds `changedFields` (accept-and-translate writes the translations itself). */
+  withheld: boolean;
+}
