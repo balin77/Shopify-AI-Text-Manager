@@ -695,4 +695,73 @@ describe("a REFUSED accept-and-translate save takes back everything the flow arm
     await tick(60);
     expect(h.savesPosted().filter((p) => p.locale === "de")).toHaveLength(0);
   });
+
+  it("(MED) an earlier primary save S refused before step 2 is refused: step 2 gives back nothing it no longer owns, the main language shows the stored text", async () => {
+    const h = mount();
+    await tick(50);
+    // An earlier, CONFIRMED main-language save keeps another field in the overlay (so the item's overlay object survives).
+    await act(async () => { h.editor.current.handlers.handleValueChange("metaDescription", "Meta neu"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(60);
+    // S: an ordinary Save-bar save of the main language, still out.
+    await act(async () => { h.editor.current.handlers.handleValueChange("seoTitle", "X draft"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    // The translation answers while S and step 1 are still out: step 2 queues and stages its overlay.
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    // S is refused, step 1 succeeds, step 2 is refused.
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(50);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(50);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused again" });
+    await tick(80);
+    await switchTo(h, "de");
+    expect(h.editor.current.state.editableValues.seoTitle).toBe("SEO");
+  });
+
+  it("(LOW1) a refused foreign step 1 takes the staged foreign text back: it reads as an unsaved draft, not as stored", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(60);
+    expect(h.editor.current.state.editableValues.seoTitle).toBe("SEO fr");
+    expect(h.editor.current.state.hasChanges).toBe(true);
+  });
+
+  it("(MED2) a value an earlier save CONFIRMED goes back when step 2 is refused, not nothing", async () => {
+    const h = mount();
+    await tick(50);
+    await act(async () => { h.editor.current.handlers.handleValueChange("seoTitle", "SEO conf"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(60);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(80);
+    await switchTo(h, "de");
+    expect(h.editor.current.state.editableValues.seoTitle).toBe("SEO conf");
+  });
 });

@@ -2228,9 +2228,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    * partial-save object), with how it ended and the step 2 that followed it. A Map, because two flows of different
    * fields may overlap; each is keyed by its own requests.
    */
-  const foreignStep1Ref = useRef<Map<object, { saved: boolean | null; step2: object | null }>>(new Map());
+  const foreignStep1Ref = useRef<Map<object, { saved: boolean | null; step2: object | null; undo?: () => void; done?: boolean }>>(new Map());
   /** The step 2 of those flows, keyed by ITS request identity: the staged overlay it can give back. */
-  const foreignAcceptPrimaryStepRef = useRef<Map<object, { itemId: string; fieldKey: string; previous: string | undefined; step1: object }>>(new Map());
+  const foreignAcceptPrimaryStepRef = useRef<Map<object, { itemId: string; fieldKey: string; staged: string; step1: object }>>(new Map());
 
   /**
    * A save answer that REFUSED. Takes back everything an accept-and-translate flow armed for the item the
@@ -2251,11 +2251,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       acceptedPrimaryValueRef.current = null;
       setIsAcceptAndTranslateFlow(false);
     }
-    const giveBack = (step: { itemId: string; fieldKey: string; previous: string | undefined }) => {
+    // Gives back what step 2 staged, and ONLY while the overlay still holds exactly that: an earlier save that
+    // cached another value first may have been refused meanwhile (its refusal already removed the entry), and
+    // putting a value captured before then would show a text that was never stored. What goes back is the
+    // value an earlier request CONFIRMED (`primaryConfirmedRef`), else nothing.
+    const giveBack = (step: { itemId: string; fieldKey: string; staged: string }) => {
       const overlay = savedPrimaryValuesRef.current[step.itemId];
-      if (!overlay) return;
-      if (step.previous === undefined) delete overlay[step.fieldKey];
-      else overlay[step.fieldKey] = step.previous;
+      if (!overlay || overlay[step.fieldKey] !== step.staged) return;
+      const confirmedValue = primaryConfirmedRef.current[step.itemId]?.[step.fieldKey];
+      if (confirmedValue) overlay[step.fieldKey] = confirmedValue.value;
+      else delete overlay[step.fieldKey];
+      if (Object.keys(overlay).length === 0) delete savedPrimaryValuesRef.current[step.itemId];
     };
     const outcome: AcceptOutcome = { stepTwoRefused: false, step1Saved: null, step2Dropped: false };
     if (!refusedPartial) return outcome;
@@ -2263,6 +2269,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const flow = foreignStep1Ref.current.get(refusedPartial);
     if (flow) {
       flow.saved = false;
+      flow.undo?.();
       if (flow.step2) {
         const queuedAt = saveQueueRef.current.findIndex((entry) => entry.partial === flow.step2);
         if (queuedAt >= 0) {
@@ -2275,6 +2282,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           outcome.step2Dropped = true;
         }
       }
+      // No step 2 will ever come for this flow (or it was just dropped): nothing is left to remember.
+      if (flow.done || outcome.step2Dropped) foreignStep1Ref.current.delete(refusedPartial);
     }
     // Step 2 is identified by the request it was sent as, not by the shape of its description.
     const step = foreignAcceptPrimaryStepRef.current.get(refusedPartial);
@@ -3502,7 +3511,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Only the ANSWER of the save that staged a foreign accept's main-language overlay makes it stand;
       // an earlier save answering first must not drop the rollback of a later refusal.
       const answeredFlow = partial ? foreignStep1Ref.current.get(partial) : undefined;
-      if (answeredFlow) answeredFlow.saved = true;
+      if (answeredFlow) {
+        answeredFlow.saved = true;
+        if (answeredFlow.done && partial) foreignStep1Ref.current.delete(partial);
+      }
       const answeredStep = partial ? foreignAcceptPrimaryStepRef.current.get(partial) : undefined;
       if (partial && answeredStep) {
         foreignAcceptPrimaryStepRef.current.delete(partial);
@@ -4079,7 +4091,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       if (!isSavedItemCurrent) {
         const keyName = itemNameOf(refusedKeyItemId);
-        const keyText = errorKeyMessage(fetcher.data);
+        const keyText = stepTwoRefusalText(fetcher.data, stepTwoRefused, errorKeyMessage(fetcher.data));
         showInfoBox(keyName ? `${keyName}: ${keyText}` : keyText, "critical");
       }
       if (isSavedItemCurrent) {

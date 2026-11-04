@@ -121,8 +121,8 @@ export interface FieldHandlerProps {
   pendingCopyFieldItemIdRef: { current: string | null };
   pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string; step1Partial?: object } | null };
   acceptedPrimaryValueRef: { current: { fieldKey: string; value: string } | null };
-  foreignStep1Ref: { current: Map<object, { saved: boolean | null; step2: object | null }> };
-  foreignAcceptPrimaryStepRef: { current: Map<object, { itemId: string; fieldKey: string; previous: string | undefined; step1: object }> };
+  foreignStep1Ref: { current: Map<object, { saved: boolean | null; step2: object | null; undo?: () => void; done?: boolean }> };
+  foreignAcceptPrimaryStepRef: { current: Map<object, { itemId: string; fieldKey: string; staged: string; step1: object }> };
   initialLoadSuccessfulRef: { current: boolean };
   retryCountRef: { current: number };
 
@@ -1547,6 +1547,10 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     // Update the `L` overlay AND the change-detection baseline IMMEDIATELY so the
     // accepted field is not flagged "dirty" — everything here saves automatically,
     // so the Save button must stay inactive.
+    const overlayLocaleKey = buildLocaleKey(L, "");
+    const prevOverlay = localTranslationsRef.current[translationKey]?.[overlayLocaleKey];
+    const prevOriginal = originalLoadedValuesRef.current[fieldKey];
+    const prevBaseline = baselineValuesRef.current[fieldKey];
     const transResult = dataLoader.onTranslateFieldComplete(
       fieldKey,
       translationKey,
@@ -1572,7 +1576,33 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     foreignForm[fieldKey] = suggestion;
     const step1Partial = { locale: L, marketId: "", values: { [fieldKey]: suggestion } };
     partialSaveRef.current = step1Partial;
-    foreignStep1Ref.current.set(step1Partial, { saved: null, step2: null });
+    // A REFUSED step 1 takes the staged foreign text back: the overlay entry and this field's baseline, so the
+    // text reads as an unsaved draft again and not as stored (only while they still hold what step 1 staged).
+    const undoStep1 = () => {
+      const entry = localTranslationsRef.current[translationKey];
+      if (entry && entry[overlayLocaleKey] === suggestion) {
+        if (prevOverlay === undefined) delete entry[overlayLocaleKey];
+        else entry[overlayLocaleKey] = prevOverlay;
+      }
+      const put = (ref: { current: Record<string, string> }, prev: string | undefined) => {
+        if (ref.current[fieldKey] !== suggestion) return;
+        const next = { ...ref.current };
+        if (prev === undefined) delete next[fieldKey];
+        else next[fieldKey] = prev;
+        ref.current = next;
+      };
+      put(originalLoadedValuesRef, prevOriginal);
+      put(baselineValuesRef, prevBaseline);
+      setBaselineVersion((v) => v + 1);
+    };
+    foreignStep1Ref.current.set(step1Partial, { saved: null, step2: null, undo: undoStep1 });
+    // No step 2 will follow (an exit below that never sends it): the record is dropped once step 1 has answered.
+    const flowDone = () => {
+      const flow = foreignStep1Ref.current.get(step1Partial);
+      if (!flow) return;
+      flow.done = true;
+      if (flow.saved !== null) foreignStep1Ref.current.delete(step1Partial);
+    };
     savedLocaleRef.current = L;
     savedMarketIdRef.current = selectedMarketId;
     savedItemIdRef.current = requestItemId;
@@ -1596,6 +1626,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     // Nothing left to translate (no other foreign locales) — the accepted text is
     // already saved in `L`. For read-only rubrics that is the whole job; inform.
     if (allTargets.length === 0) {
+      flowDone();
       if (primaryReadOnly) {
         showInfoBox(
           String(t.content?.primaryReadOnlyTranslateInfo
@@ -1624,7 +1655,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
       },
       fieldKey,
       (result) => {
-        if (selectedItemIdRef.current !== requestItemId) return;
+        if (selectedItemIdRef.current !== requestItemId) { flowDone(); return; }
         // A run of this item started while the AI worked: the PRIMARY base
         // save below is not made and nothing is staged for it (the server
         // already stored what it translated; a reload shows it).
@@ -1632,6 +1663,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         // ran with skipSaveLocales=[primary]); only the primary save is
         // skipped -- said exactly that way.
         if (isOwnSaveBlocked?.(requestItemId, primaryLocale)) {
+          flowDone();
           sayPrimaryTextSkipped?.();
           setIsAcceptAndTranslateFlow(false);
           if (revalidatorRef.current.state === 'idle') {
@@ -1648,6 +1680,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         // Step 1 (the text in this language) was REFUSED before the translation came back: the main-language
         // text would be written from a foreign text that was never saved, so step 2 is not sent at all.
         const step1Refused = foreignStep1Ref.current.get(step1Partial)?.saved === false;
+        if (!primaryTranslated || step1Refused) flowDone();
         const skipNote = primaryTranslated && step1Refused
           ? ` ${String(t.content?.foreignAcceptPrimaryStepNotSent || "The translation into the main language was not sent, because the text in this language was not saved.")}`
           : "";
@@ -1660,7 +1693,6 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
             savedPrimaryValuesRef.current[requestItemId] = {};
           }
           // Remembered so a REFUSED save gives the overlay back (nothing was stored under it).
-          const stepPrevious = savedPrimaryValuesRef.current[requestItemId][fieldKey];
           savedPrimaryValuesRef.current[requestItemId][fieldKey] = primaryTranslated;
 
           const primaryForm: Record<string, string> = {
@@ -1691,7 +1723,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
           const stepPartial = { locale: L, marketId: selectedMarketId, values: {}, holdsView: true };
           partialSaveRef.current = stepPartial;
           // The request's own description is its identity: only ITS answer settles the staged overlay.
-          foreignAcceptPrimaryStepRef.current.set(stepPartial, { itemId: requestItemId, fieldKey, previous: stepPrevious, step1: step1Partial });
+          foreignAcceptPrimaryStepRef.current.set(stepPartial, { itemId: requestItemId, fieldKey, staged: primaryTranslated, step1: step1Partial });
           const ownFlow = foreignStep1Ref.current.get(step1Partial);
           if (ownFlow) ownFlow.step2 = stepPartial;
           safeSubmit(primaryForm, { method: "POST" });
@@ -1736,6 +1768,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
       },
       () => {
         // Translation failed — the accepted foreign text is still saved in `L`.
+        flowDone();
         if (selectedItemIdRef.current !== requestItemId) return;
       }
     );
