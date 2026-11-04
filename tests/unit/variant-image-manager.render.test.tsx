@@ -1223,3 +1223,31 @@ describe("round 3, point 4: a variants read refused by the rate limiter (429)", 
     expect(screen.getByText(/variants of this product are not loaded/)).toBeTruthy();
   });
 });
+
+describe("round 3 review fix: the gallery selection survives a save cycle of the same product", () => {
+  it("a reset + re-read keeps a selected tile (and the selection bar), a product switch clears it", async () => {
+    const { rerender } = await mount();
+    act(() => grids.product.onSelect(url(2), true));
+    await waitFor(() => expect(grids.product.selectedUrls.has(url(2))).toBe(true));
+    rerender(ui({ resetKey: 1, variantReloadKey: 1 }));
+    await waitFor(() => expect(apiCalls.filter((c) => c.path === "/api/product-variants").length).toBeGreaterThan(1));
+    await waitFor(() => expect(grids.product.selectedUrls.has(url(2))).toBe(true));
+    // a medium that no longer exists is dropped from the selection
+    variantsAnswer = () => {
+      const b: any = variantsPayload();
+      delete b.mediaMap[gid(2)];
+      delete b.mediaMetaMap[gid(2)];
+      return b;
+    };
+    rerender(ui({ resetKey: 2, variantReloadKey: 2 }));
+    await waitFor(() => expect(grids.product.selectedUrls.has(url(2))).toBe(false));
+  });
+
+  it("switching to another product clears the selection", async () => {
+    const { rerender } = await mount();
+    act(() => grids.product.onSelect(url(2), true));
+    await waitFor(() => expect(grids.product.selectedUrls.has(url(2))).toBe(true));
+    rerender(ui({ productId: "gid://shopify/Product/2", resetKey: 1 }));
+    await waitFor(() => expect(grids.product.selectedUrls.has(url(2))).toBe(false));
+  });
+});

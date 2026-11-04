@@ -805,12 +805,17 @@ export function VariantImageManager({
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
   }, []);
 
+  // A reset of the SAME product (a save, a Discard) keeps the selection (pruned when the variants land);
+  // a product switch starts without one.
+  const lastResetProductRef = useRef(productId);
   useEffect(() => {
     if (!resetKey) return;
+    const sameProduct = lastResetProductRef.current === productId;
+    lastResetProductRef.current = productId;
     setPendingVariantGalleries({});
     setPendingProductNewMedia([]);
     setPendingProductImageOrder(null);
-    setSelectedGalleryItems(new Map());
+    if (!sameProduct) setSelectedGalleryItems(new Map());
     setRemovedMains({});
     setPendingMains({});
     setPendingMoves([]);
@@ -978,7 +983,7 @@ export function VariantImageManager({
     if (!opts?.silent) setVariantError(null);
     if (resetState) {
       setPendingVariantGalleries({});
-      setSelectedGalleryItems(new Map());
+      if (variantsLoadedForRef.current !== pid) setSelectedGalleryItems(new Map());
       setRemovedMains({});
       setPendingMains({});
       setPendingMoves([]);
@@ -1097,6 +1102,20 @@ export function VariantImageManager({
           : mapped;
         const sortedVariants = realVariants.sort((a, b) => a.position - b.position);
         setVariants(sortedVariants);
+        // The selection of this product survives the re-read, minus what no longer exists.
+        setSelectedGalleryItems(prev => {
+          if (prev.size === 0) return prev;
+          const known = new Set(Object.values((mediaMap ?? {}) as Record<string, string>).map(u => u.split("?")[0]));
+          const galleryIds = new Set(["product", ...sortedVariants.map(v => v.id)]);
+          const next = new Map(prev);
+          for (const key of prev.keys()) {
+            const sep = key.indexOf("::");
+            const container = sep === -1 ? key : key.slice(0, sep);
+            const url = sep === -1 ? "" : key.slice(sep + 2);
+            if (!galleryIds.has(container) || (url.includes("cdn.shopify.com") && !known.has(url.split("?")[0]))) next.delete(key);
+          }
+          return next.size === prev.size ? prev : next;
+        });
         variantsLoadedForRef.current = pid;
         variantsRetryAttemptRef.current = 0;
         onVariantsLoaded?.(sortedVariants);
