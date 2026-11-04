@@ -240,6 +240,16 @@ export function useVariantImageManager() {
         newImagesByVariant.set(item.targetVariantId, group);
       }
 
+      // A variant these uploads are assigned to must be KNOWN here (its stored gallery and main image come
+      // from the variants read). Without it (a read refused by the rate limiter, a product switched too fast)
+      // the gallery below would be rebuilt from nothing: the new files would REPLACE the stored gallery.
+      // Refused before anything is created or written.
+      for (const variantId of newImagesByVariant.keys()) {
+        if (!variantsForBulk.some(v => v.id === variantId)) {
+          return { error: t.imageManager.variantsNotLoadedSave, warning: null };
+        }
+      }
+
       // A bulk upload never changes a main image: a variant with a main image (or one whose
       // native image cannot be named here) only gets the new files in its gallery; a variant
       // with no native image at all gets its first OWN image promoted on this real edit.

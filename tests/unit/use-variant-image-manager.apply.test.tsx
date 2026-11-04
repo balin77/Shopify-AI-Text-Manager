@@ -258,3 +258,28 @@ describe("second review: a rejected move is worded", () => {
     expect(out.error).not.toContain("mainMoves[0]");
   });
 });
+
+describe("round 3, point 4: a bulk upload assigned to a variant that is not loaded writes nothing", () => {
+  const item = { uniqueId: "u1", status: "ready", resourceUrl: "https://staged/new.jpg", kind: "image", targetVariantId: V1, assignmentMode: "assigned" } as any;
+
+  it("without the variants read the save is refused BEFORE any request (no gallery rebuilt from nothing)", async () => {
+    answer = () => ({ success: true, createdMedia: [] });
+    const { result } = renderHook(() => useVariantImageManager());
+    act(() => result.current.handleBulkItemsChange(() => [item]));
+    let out: any;
+    await act(async () => { out = await result.current.handleApply("gid://shopify/Product/1"); });
+    expect(calls).toHaveLength(0);
+    expect(out.error).toContain("not loaded");
+    expect(out.warning).toBeNull();
+  });
+
+  it("with the variant known the same save goes out and keeps the stored gallery", async () => {
+    answer = () => ({ success: true, createdMedia: [] });
+    const { result } = renderHook(() => useVariantImageManager());
+    act(() => result.current.handleVariantsLoaded([{ id: V1, title: "Red", sku: "", position: 1, galleryFileGids: ["gid://shopify/MediaImage/9"], mainImageGid: "gid://shopify/MediaImage/1", defaultImageUrl: "https://cdn/1.jpg", externalVideoUrls: [], threeDModelUrls: [], threeDPreviewUrls: [], galleryOrderJson: null, selectedOptions: [] } as any]));
+    act(() => result.current.handleBulkItemsChange(() => [item]));
+    await act(async () => { await result.current.handleApply("gid://shopify/Product/1"); });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].variantGalleries).toEqual([{ variantId: V1, fileGids: ["gid://shopify/MediaImage/9", "https://staged/new.jpg"], galleryOnly: true }]);
+  });
+});

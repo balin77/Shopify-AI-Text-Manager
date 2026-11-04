@@ -55,6 +55,8 @@ vi.mock("react-router", async (orig) => {
 let apiCalls: Array<{ path: string; body: any }>;
 // When set, /api/product-variants answers only after this promise settles (a read in flight).
 let variantsGate: Promise<void> | null = null;
+// The next N variants reads are refused by the rate limiter (HTTP 429), then they answer normally.
+let variantsRefuse = 0;
 let variantsAnswer: () => any;
 let saveAnswer: (path: string, body: any) => any;
 vi.mock("~/utils/app-fetch", () => ({
@@ -63,13 +65,17 @@ vi.mock("~/utils/app-fetch", () => ({
     const body = init?.body ? JSON.parse(init.body) : undefined;
     apiCalls.push({ path, body });
     if (path === "/api/product-variants" && variantsGate) await variantsGate;
+    if (path === "/api/product-variants" && variantsRefuse > 0) {
+      variantsRefuse--;
+      return { ok: false, status: 429, json: async () => ({ error: "Many requests right now", rateLimited: true }) };
+    }
     const payload = path === "/api/product-variants" ? variantsAnswer() : saveAnswer(path, body);
     return { ok: true, status: 200, json: async () => payload };
   }),
   appFetchJson: vi.fn(),
 }));
 
-import { VariantImageManager } from "~/components/image-manager/VariantImageManager";
+import { VariantImageManager, VARIANTS_RETRY_DELAYS_MS } from "~/components/image-manager/VariantImageManager";
 import { planVariantWrite, validateMainMoves, type MoveIntentView } from "~/services/variant-main-image.shared";
 
 function variantsPayload(over: { v1Gallery?: string[]; v1Main?: number | null; v1Order?: string | null } = {}) {
@@ -151,6 +157,7 @@ beforeEach(() => {
   for (const k of Object.keys(grids)) delete grids[k];
   apiCalls = [];
   variantsGate = null;
+  variantsRefuse = 0;
   onPendingChange = vi.fn();
   onDirtyChange = vi.fn();
   onGalleryOrderChange = vi.fn();
@@ -1168,5 +1175,51 @@ describe("round 3, point 3: the manager is a switch between a product-image prev
     expect(view().dataset.imView).toBe("full");
     fireEvent.click(screen.getByText("Back to the product"));
     expect(onFullViewChange).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe("round 3, point 4: a variants read refused by the rate limiter (429)", () => {
+  const variantReads = () => apiCalls.filter((c) => c.path === "/api/product-variants").length;
+  const realDelays = [...VARIANTS_RETRY_DELAYS_MS];
+  afterEach(() => { VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length, ...realDelays); });
+
+  it("the galleries come back by themselves, without leaving the product", async () => {
+    VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length, 20, 20, 20);
+    variantsRefuse = 2;
+    render(ui());
+    fireEvent.click(await screen.findByText("Show all"));
+    await waitFor(() => expect(screen.getByText("Could not load variants.")).toBeTruthy());
+    // nothing of the variants is shown or editable meanwhile
+    expect(grids[V1]).toBeUndefined();
+    await waitFor(() => expect(grids.product).toBeDefined());
+    fireEvent.click(await screen.findByText("Red", {}, { timeout: 3000 }));
+    await waitFor(() => expect(grids[V1]?.imageUrls?.length).toBeGreaterThan(0));
+    expect(variantReads()).toBe(3);
+    expect(screen.queryByText("Could not load variants.")).toBeNull();
+  });
+
+  it("when the automatic tries are used up the banner offers \"Try again\" and that brings them back", async () => {
+    VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length);
+    variantsRefuse = 1;
+    render(ui());
+    fireEvent.click(await screen.findByText("Show all"));
+    await waitFor(() => expect(screen.getByText("Could not load variants.")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    fireEvent.click(await screen.findByText("Red"));
+    await waitFor(() => expect(grids[V1]?.imageUrls?.length).toBeGreaterThan(0));
+  });
+
+  it("deleting an image while the variants are unknown is refused with a message and sends nothing", async () => {
+    VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length);
+    variantsRefuse = 5;
+    render(ui());
+    fireEvent.click(await screen.findByText("Show all"));
+    await waitFor(() => expect(screen.getByText("Could not load variants.")).toBeTruthy());
+    await waitFor(() => expect(grids.product).toBeDefined());
+    act(() => grids.product.onSelect(url(1), true));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Yes, delete now" }));
+    expect(apiCalls.some((c) => c.path === "/api/delete-product-images")).toBe(false);
+    expect(screen.getByText(/variants of this product are not loaded/)).toBeTruthy();
   });
 });

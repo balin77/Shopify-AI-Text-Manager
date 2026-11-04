@@ -41,6 +41,10 @@ import {
 
 // Prefer sortable items (compound id '::') over plain container droppables;
 // fall back to closestCenter when pointer is outside all droppables.
+/** A variants read that failed (the limiter's 429 under fast clicking, a network blip) is tried again
+ *  by itself after these pauses, so the galleries come back without the merchant leaving the product. */
+export const VARIANTS_RETRY_DELAYS_MS = [3000, 8000, 20000];
+
 const imageManagerCollision: CollisionDetection = (args) => {
   const hits = pointerWithin(args);
   // No closestCenter fallback: releasing in genuine empty space must abort
@@ -765,6 +769,13 @@ export function VariantImageManager({
   // variant gallery, so each one closed again and the page jumped. Only a different product (or
   // none loaded yet) shows the spinner.
   const variantsLoadedForRef = useRef<string | null>(null);
+  const variantsRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const variantsRetryAttemptRef = useRef(0);
+  const fetchVariantsRef = useRef<((pid: string, resetState: boolean) => void) | null>(null);
+  useEffect(() => () => { if (variantsRetryTimerRef.current) clearTimeout(variantsRetryTimerRef.current); }, []);
+  // The variants of the open product are known (read and landed): until then a save must not act on
+  // them and nothing may be written or cleared for a variant the editor knows nothing about.
+  const variantsKnown = variantsLoadedForRef.current === productId && !isLoadingVariants && !variantError;
   const variantsAbortRef = useRef<AbortController | null>(null);
 
   // Cross-gallery drag state
@@ -953,6 +964,7 @@ export function VariantImageManager({
   // list would blink through its spinner on every tick.
   const fetchVariantsForProduct = useCallback((pid: string, resetState: boolean, opts?: { silent?: boolean; onLanded?: () => void }) => {
     const reqId = ++variantsReqIdRef.current;
+    if (variantsRetryTimerRef.current) { clearTimeout(variantsRetryTimerRef.current); variantsRetryTimerRef.current = null; }
     // A newer read ends the older one outright (a read held back by the rate
     // limiter would otherwise keep retrying for a product nobody looks at).
     variantsAbortRef.current?.abort();
@@ -1086,6 +1098,7 @@ export function VariantImageManager({
         const sortedVariants = realVariants.sort((a, b) => a.position - b.position);
         setVariants(sortedVariants);
         variantsLoadedForRef.current = pid;
+        variantsRetryAttemptRef.current = 0;
         onVariantsLoaded?.(sortedVariants);
         // Only a read that LANDED ends what depends on it (a removed main image that the
         // promoted image has replaced): a failed read leaves that state as it is.
@@ -1099,7 +1112,20 @@ export function VariantImageManager({
       // A silent poll must not raise the load-error banner: it runs in the
       // background after a successful save, and a transient network blip
       // there would read as "your save failed".
-      .catch(() => { if (!isStale() && !opts?.silent) setVariantError(t.imageManager.variantsLoadError); })
+      .catch(() => {
+        if (isStale() || opts?.silent) return;
+        setVariantError(t.imageManager.variantsLoadError);
+        // Try again by itself (a limiter refusal is gone after a few seconds); bounded, and only while
+        // nothing newer has been asked.
+        const delay = VARIANTS_RETRY_DELAYS_MS[variantsRetryAttemptRef.current];
+        if (delay !== undefined) {
+          variantsRetryAttemptRef.current += 1;
+          variantsRetryTimerRef.current = setTimeout(() => {
+            variantsRetryTimerRef.current = null;
+            if (variantsReqIdRef.current === reqId) fetchVariantsRef.current?.(pid, false);
+          }, delay);
+        }
+      })
       // Clearing is NOT gated on `silent`: every call shares variantsReqIdRef,
       // so a poll tick landing while a non-silent load is in flight makes that
       // load stale — it skips its own clear — and a silent-only clear would
@@ -1108,9 +1134,11 @@ export function VariantImageManager({
       // owns the flag.
       .finally(() => { if (!isStale()) setIsLoadingVariants(false); });
   }, [t.imageManager.variantsLoadError, onVariantsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  fetchVariantsRef.current = fetchVariantsForProduct;
 
   useEffect(() => {
     if (!productId) return;
+    variantsRetryAttemptRef.current = 0;
     fetchVariantsForProduct(productId, true);
   }, [productId, resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2966,6 +2994,13 @@ export function VariantImageManager({
 
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteConfirm) return;
+    // Deleting an image takes it off every variant that uses it: with the variants unknown (a read that
+    // failed or is still out) neither the warning nor the removal of its entries can be right.
+    if (!variantsKnown) {
+      setDeleteConfirm(null);
+      setMediaError(t.imageManager.variantsNotLoadedAction);
+      return;
+    }
     const { urls } = deleteConfirm;
     const gids = urls.map(url => urlToGid[url]).filter(Boolean) as string[];
     const urlSet = new Set(urls);
@@ -3292,7 +3327,7 @@ export function VariantImageManager({
       deletedAltLookup,
     );
     setIsDeleting(false);
-  }, [deleteConfirm, urlToGid, fileUrlMap, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, pendingGalleryOrder, pendingExternalVideos, pendingVariant3dModels, effectivePendingMains, effectiveMoves, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t, fetchVariantsForProduct]);
+  }, [deleteConfirm, variantsKnown, urlToGid, fileUrlMap, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, pendingGalleryOrder, pendingExternalVideos, pendingVariant3dModels, effectivePendingMains, effectiveMoves, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t, fetchVariantsForProduct]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;
@@ -4573,7 +4608,12 @@ export function VariantImageManager({
               <Spinner size="small" />
             </div>
           ) : variantError ? (
-            <Banner tone="warning"><p>{variantError}</p></Banner>
+            <Banner
+              tone="warning"
+              action={{ content: t.imageManager.variantsRetry, onAction: () => { variantsRetryAttemptRef.current = 0; fetchVariantsForProduct(productId, false); } }}
+            >
+              <p>{variantError}</p>
+            </Banner>
           ) : variants.length === 0 ? (
             <Text as="p" tone="subdued">{t.imageManager.noVariants}</Text>
           ) : (
