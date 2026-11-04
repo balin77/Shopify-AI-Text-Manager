@@ -109,6 +109,16 @@ export function useVariantImageManager() {
     carryOverGids: Record<string, string>;
   }>(null);
 
+  // Whether `variantsForBulk` is CURRENT (the manager reports it: false while a re-read of the product is
+  // in flight or failed, when the list may still hold the pre-save gallery). A save that merges new files
+  // into a variant's gallery needs it: the merge would drop what the stale list does not know.
+  const [variantsCurrent, setVariantsCurrent] = useState(true);
+  const variantsCurrentRef = useRef(true);
+  const handleVariantsCurrentChange = useCallback((current: boolean) => {
+    variantsCurrentRef.current = current;
+    setVariantsCurrent(current);
+  }, []);
+
   const handleVariantsLoaded = useCallback((variants: VariantWithGallery[]) => {
     setVariantsForBulk(variants);
     const deferred = postSaveDeferredClearRef.current;
@@ -245,7 +255,7 @@ export function useVariantImageManager() {
       // the gallery below would be rebuilt from nothing: the new files would REPLACE the stored gallery.
       // Refused before anything is created or written.
       for (const variantId of newImagesByVariant.keys()) {
-        if (!variantsForBulk.some(v => v.id === variantId)) {
+        if (!variantsCurrentRef.current || !variantsForBulk.some(v => v.id === variantId)) {
           return { error: t.imageManager.variantsNotLoadedSave, warning: null };
         }
       }
@@ -590,6 +600,8 @@ export function useVariantImageManager() {
     pendingGalleryOrder,
     setPendingGalleryOrder,
     handleVariantsLoaded,
+    handleVariantsCurrentChange,
+    variantsCurrent,
     handleGallerySelectionGidsChange,
     handleMissingMainImageChange,
     handleBulkItemsChange,

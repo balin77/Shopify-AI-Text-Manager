@@ -1334,6 +1334,7 @@ export default function ProductsPage() {
             imageManagerSettings: imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 },
             variantsForBulk: imageManagerState.variantsForBulk,
             onVariantsLoaded: imageManagerState.handleVariantsLoaded,
+            variantsCurrent: imageManagerState.variantsCurrent,
             selectedGalleryGids: imageManagerState.selectedGalleryGids,
             onConfirm: async () => {
               const { error: err, warning } = await imageManagerState.handleApply(editor.selectedItem?.id ?? "");
@@ -1389,6 +1390,7 @@ export default function ProductsPage() {
               seedThreeDPreviewUrls={imageManagerState.pendingVariant3dPreviews}
               onGalleryOrderChange={imageManagerState.setPendingGalleryOrder}
               onVariantsLoaded={imageManagerState.handleVariantsLoaded}
+              onVariantsCurrentChange={imageManagerState.handleVariantsCurrentChange}
               // Media Shopify created on the last save but is still
               // processing. Keeps the tile (and the media count) stable
               // between the save and the moment the CDN URL appears.

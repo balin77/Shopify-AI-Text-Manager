@@ -1320,6 +1320,18 @@ describe("round 3, point 4: a variants read refused by the rate limiter (429)", 
     await waitFor(() => expect((document.querySelector("[data-variants-list]") as HTMLElement).hasAttribute("inert")).toBe(false));
   });
 
+  it("MEDIUM: the manager reports not-current to the page while a re-read is in flight or failed, current when it landed", async () => {
+    VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length);
+    const cur = vi.fn();
+    const { rerender } = await mount({ onVariantsCurrentChange: cur });
+    expect(cur).toHaveBeenLastCalledWith(true);
+    variantsRefuse = 1;
+    rerender(ui({ onVariantsCurrentChange: cur, variantReloadKey: 1 }));
+    await waitFor(() => expect(cur).toHaveBeenLastCalledWith(false));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(cur).toHaveBeenLastCalledWith(true));
+  });
+
   it("HIGH: a library pick through the still-open picker is refused while the variants are not current", async () => {
     VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length);
     const { rerender } = await mount();

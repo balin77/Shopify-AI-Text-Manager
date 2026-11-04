@@ -153,6 +153,8 @@ interface VariantImageManagerProps {
    *  ready to be persisted to custom.variant_gallery_order. */
   onGalleryOrderChange?: (variantGalleryOrder: Record<string, string>) => void;
   onVariantsLoaded?: (variants: VariantWithGallery[]) => void;
+  /** Reports whether the variants shown are current (false while a re-read is in flight or failed). */
+  onVariantsCurrentChange?: (current: boolean) => void;
   /** Media Shopify has already created for this product (productCreateMedia
    *  returned the GID) but has not finished processing. `/api/product-variants`
    *  can only report media that HAS a URL, so between the save and the end of
@@ -249,6 +251,7 @@ export function VariantImageManager({
   imageManagerSettings,
   onPendingChange,
   onVariantsLoaded,
+  onVariantsCurrentChange,
   settlingMedia,
   onSettlingMediaResolved,
   resetKey,
@@ -794,6 +797,7 @@ export function VariantImageManager({
   const variantsCurrent = variantsKnown && !variantsRefreshing;
   const variantsCurrentRef = useRef(true);
   variantsCurrentRef.current = variantsCurrent;
+  useEffect(() => { onVariantsCurrentChange?.(variantsCurrent); }, [variantsCurrent]); // eslint-disable-line react-hooks/exhaustive-deps
   /** THE guard for every path that changes a variant's pending state (drags, drops, picks, link / 3D
    *  / upload adds, removals, reorders): while the variants are not current (read in flight or failed)
    *  they would be built from a stale list and a save would REPLACE the stored gallery with it. */

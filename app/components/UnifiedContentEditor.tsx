@@ -286,6 +286,8 @@ interface UnifiedContentEditorProps {
     imageManagerSettings: { firstImageBig: boolean; showAltTags: boolean; autoAltText: boolean };
     variantsForBulk?: import("./image-manager/types").VariantWithGallery[];
     onVariantsLoaded?: (variants: import("./image-manager/types").VariantWithGallery[]) => void;
+    /** false while the variants are being re-read or the read failed: variant-wide bulk actions wait. */
+    variantsCurrent?: boolean;
     selectedGalleryGids?: string[];
     onConfirm?: () => Promise<string | null>;
     isApplying?: boolean;
@@ -2728,6 +2730,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onApplySuccess={imageManager.onApplySuccess}
                   onSaveResponse={imageManager.onSaveResponse}
                   // The selection kept from the full view is hidden once it is closed: it must not scope a write then.
+                  variantsNotCurrent={imageManager.variantsCurrent === false}
                   selectedGids={imFull ? imageManager.selectedGalleryGids : undefined}
                 />
               )}

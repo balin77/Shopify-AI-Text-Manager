@@ -47,6 +47,8 @@ interface Props {
    *  background re-translation it started (it carries the task ids). */
   onSaveResponse?: (response: unknown) => void;
   selectedGids?: string[];
+  /** The variants list is being re-read or the read failed: the "all images" SKU action waits. */
+  variantsNotCurrent?: boolean;
 }
 
 function fillTemplate(
@@ -77,7 +79,7 @@ function buildVariableChips(variants: VariantWithGallery[]): string[] {
   return Array.from(seen);
 }
 
-export function BulkAltTextPanel({ productId, productTitle, variants, shopLocales, primaryLocale, onApplySuccess, onSaveResponse, selectedGids = [] }: Props) {
+export function BulkAltTextPanel({ productId, productTitle, variants, shopLocales, primaryLocale, onApplySuccess, onSaveResponse, selectedGids = [], variantsNotCurrent = false }: Props) {
   const { t } = useI18n();
   const im = t.imageManager;
   const { showInfoBox } = useInfoBox();
@@ -839,7 +841,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
                   handleSkuGenerate(allGids);
                 }}
                 loading={isSkuRunning}
-                disabled={variants.length === 0}
+                disabled={variants.length === 0 || variantsNotCurrent}
               >
                 {isSkuRunning
                   ? (im?.altTextFromSkuRunning ?? "Applying…")

@@ -273,6 +273,21 @@ describe("round 3, point 4: a bulk upload assigned to a variant that is not load
     expect(out.warning).toBeNull();
   });
 
+  it("MEDIUM: a loaded but NOT CURRENT variants list (re-read in flight or failed) refuses the save too, and current again lets it through", async () => {
+    answer = () => ({ success: true, createdMedia: [] });
+    const { result } = renderHook(() => useVariantImageManager());
+    act(() => result.current.handleVariantsLoaded([{ id: V1, title: "Red", sku: "", position: 1, galleryFileGids: ["gid://shopify/MediaImage/9"], mainImageGid: "gid://shopify/MediaImage/1", defaultImageUrl: "https://cdn/1.jpg", externalVideoUrls: [], threeDModelUrls: [], threeDPreviewUrls: [], galleryOrderJson: null, selectedOptions: [] } as any]));
+    act(() => result.current.handleBulkItemsChange(() => [item]));
+    act(() => result.current.handleVariantsCurrentChange(false));
+    let out: any;
+    await act(async () => { out = await result.current.handleApply("gid://shopify/Product/1"); });
+    expect(calls).toHaveLength(0);
+    expect(out.error).toContain("not loaded");
+    act(() => result.current.handleVariantsCurrentChange(true));
+    await act(async () => { out = await result.current.handleApply("gid://shopify/Product/1"); });
+    expect(calls).toHaveLength(1);
+  });
+
   it("with the variant known the same save goes out and keeps the stored gallery", async () => {
     answer = () => ({ success: true, createdMedia: [] });
     const { result } = renderHook(() => useVariantImageManager());
