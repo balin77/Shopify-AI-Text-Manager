@@ -899,6 +899,34 @@ describe("one-sided SEO save (the other half is a passenger the server did not w
     expect(JSON.stringify(sentSeo(w))).not.toContain('""');
   });
 
+  it("alt texts + ONE SEO half + failing read: refused BEFORE any write (no productUpdateMedia, no productUpdate, no mirror)", async () => {
+    const w = installAdmin({ seoRead: () => { throw new Error("throttled"); } });
+    const db = makeDb([{ id: "img-1", mediaId: MEDIA }]);
+    const result = body(await savePrimary(w.admin, {
+      metaDescription: "D-new",
+      imageAltTexts: JSON.stringify({ 0: "Neuer Alt" }),
+      changedFields: JSON.stringify(["metaDescription"]),
+      changedAltTextIndices: JSON.stringify([0]),
+    }));
+    expect(result).toMatchObject({ success: false, errorKey: "seoOtherHalfUnreadable" });
+    expect(w.of("updateMedia")).toHaveLength(0);
+    expect(w.of("productUpdate")).toHaveLength(0);
+    expect(db.productImage.update).not.toHaveBeenCalled();
+  });
+
+  it("alt texts + ONE SEO half + readable: the half is read once (the pre-check), alts and SEO are written", async () => {
+    const w = installAdmin();
+    makeDb([{ id: "img-1", mediaId: MEDIA }]);
+    await savePrimary(w.admin, {
+      metaDescription: "D-new",
+      imageAltTexts: JSON.stringify({ 0: "Neuer Alt" }),
+      changedFields: JSON.stringify(["metaDescription"]),
+    });
+    expect(w.of("seoRead")).toHaveLength(1);
+    expect(w.of("updateMedia")).toHaveLength(1);
+    expect(sentSeo(w)).toEqual({ title: "T-live", description: "D-new" });
+  });
+
   it("a full save (both halves) does not read at all and cannot be refused", async () => {
     const w = installAdmin({ seoRead: () => { throw new Error("must not be asked"); } });
     makeDb();

@@ -2243,9 +2243,16 @@ export function estimateCalls(
   let calls = 0;
   const foreignDigestResources = new Set<string>();
   const variantTargets = new Set<string>();
+  // Product/collection rows saving ONE SEO half: the other half is read live (batched, DIGEST_BATCH_CHUNK a call).
+  const seoReadRows = new Set<string>();
 
   for (const group of groups) {
     const entries = Object.entries(group.cells);
+    if (group.locale === "" && (group.rowType === "product" || group.rowType === "collection")) {
+      const hasTitle = "field.seoTitle" in group.cells;
+      const hasDescription = "field.seoDescription" in group.cells;
+      if (hasTitle !== hasDescription) seoReadRows.add(group.rowId);
+    }
     if (group.locale !== "") {
       // Sub-resource cells (metafields, product options) do NOT ride on the
       // row's own translationsRegister: each target resource costs its own
@@ -2378,6 +2385,7 @@ export function estimateCalls(
 
   calls += variantTargets.size;
   calls += Math.ceil(foreignDigestResources.size / DIGEST_BATCH_CHUNK);
+  calls += Math.ceil(seoReadRows.size / DIGEST_BATCH_CHUNK);
   return calls;
 }
 

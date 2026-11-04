@@ -578,6 +578,9 @@ export async function handleUpdateContent(
     if (
       contentConfig.resourceType === "Collection" &&
       isPrimarySave &&
+      // A refused save (e.g. the other SEO half could not be read) leaves the collection as it was:
+      // its rules are not written either.
+      (result as { success?: boolean })?.success !== false &&
       changedAttributeFields?.includes("collectionRules")
     ) {
       const { applyCollectionRuleChange } = await import("~/services/collection-rules.server");

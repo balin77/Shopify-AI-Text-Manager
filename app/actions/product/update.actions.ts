@@ -77,6 +77,8 @@ interface UpdateProductParams {
   seoTitle?: string;
   metaDescription?: string;
   productType?: string;
+  /** The other SEO half, read from Shopify BEFORE any write of the save (handleUpdateProduct); internal. */
+  preReadSeo?: { title?: string; description?: string };
   // ── PLAN_CONTENT_CREATION §Phase 3 merchandising attributes ──────────────
   // Not translatable (Shopify stores one value per product), so these only
   // ever arrive on a PRIMARY-locale save — the editor renders them read-only
@@ -214,6 +216,20 @@ export async function handleUpdateProduct(
 
   try {
     const gateway = new ShopifyApiGateway(context.admin, context.session.shop);
+
+    // A ONE-SIDED primary SEO save needs the other half from Shopify, and a failed read refuses the whole
+    // save. That read comes FIRST: nothing below (alt texts included) may be written for a refused save.
+    if (params.locale === params.primaryLocale && (params.seoTitle !== undefined) !== (params.metaDescription !== undefined)) {
+      try {
+        params.preReadSeo = await readOtherSeoHalf(gateway, productId);
+      } catch (seoError: unknown) {
+        loggers.product("warn", "Other SEO half unreadable, save refused before any write", {
+          productId,
+          error: seoError instanceof Error ? seoError.message : String(seoError),
+        });
+        return json(seoOtherHalfRefusalBody(), { status: 200 });
+      }
+    }
 
     // Update alt-texts first (works for both primary and translated locales)
     let failedAltTextIndices: number[] = [];
@@ -911,6 +927,29 @@ async function updateTranslatedProduct(
  * Updates a primary locale product
  * Also deletes translations for changed fields in all foreign languages
  */
+/**
+ * The other SEO half of a ONE-SIDED primary SEO save, read fresh from Shopify. Throws when it cannot be
+ * read (callers answer the refusal). A `null` half comes back as undefined: omitted, never sent as "".
+ */
+async function readOtherSeoHalf(
+  gateway: ShopifyApiGateway,
+  productId: string,
+): Promise<{ title?: string; description?: string }> {
+  const response = await gateway.graphql(
+    `#graphql
+      query getProductSeo($id: ID!) {
+        product(id: $id) {
+          seo { title description }
+        }
+      }`,
+    { variables: { id: productId } },
+  );
+  const data = (await response.json()) as any;
+  const seo = data.data?.product?.seo;
+  if (!seo) throw new Error("no SEO in the answer");
+  return { title: seo.title ?? undefined, description: seo.description ?? undefined };
+}
+
 async function updatePrimaryProduct(
   gateway: ShopifyApiGateway,
   db: PrismaClient,
@@ -980,21 +1019,9 @@ async function updatePrimaryProduct(
     // Only one side sent → preserve the other side from Shopify's current value.
     if (hasSeoTitle !== hasSeoDescription) {
       try {
-        const currentSeoResponse = await gateway.graphql(
-          `#graphql
-            query getProductSeo($id: ID!) {
-              product(id: $id) {
-                seo { title description }
-              }
-            }`,
-          { variables: { id: productId } }
-        );
-        const currentSeoData = await currentSeoResponse.json() as any;
-        const productNode = currentSeoData.data?.product;
-        if (!productNode?.seo) throw new Error("no SEO in the answer");
-        const currentSeo = productNode.seo;
-        if (!hasSeoTitle) seoInput.title = currentSeo.title ?? undefined;
-        if (!hasSeoDescription) seoInput.description = currentSeo.description ?? undefined;
+        const currentSeo = params.preReadSeo ?? (await readOtherSeoHalf(gateway, productId));
+        if (!hasSeoTitle) seoInput.title = currentSeo.title;
+        if (!hasSeoDescription) seoInput.description = currentSeo.description;
       } catch (seoError: unknown) {
         // The other half cannot be read: NOTHING is saved. The editor's value of that half may be older
         // than Shopify's, and one half alone may clear the other, so neither fallback is acceptable.
@@ -1003,7 +1030,7 @@ async function updatePrimaryProduct(
           productId,
           error: seoError instanceof Error ? seoError.message : String(seoError),
         });
-        return json(seoOtherHalfRefusalBody(), { status: 503 });
+        return json(seoOtherHalfRefusalBody(), { status: 200 });
       }
     }
 

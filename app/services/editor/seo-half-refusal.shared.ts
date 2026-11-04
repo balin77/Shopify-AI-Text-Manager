@@ -26,11 +26,3 @@ export class SeoOtherHalfUnreadableError extends Error {
 export function seoOtherHalfRefusalBody(): { success: false; error: string; errorKey: string } {
   return { success: false, error: SEO_OTHER_HALF_UNREADABLE, errorKey: SEO_OTHER_HALF_UNREADABLE };
 }
-
-/** Whether an error (or a refusal's text) is this refusal. */
-export function isSeoOtherHalfUnreadable(value: unknown): boolean {
-  if (value instanceof Error) {
-    return (value as { code?: string }).code === SEO_OTHER_HALF_UNREADABLE || value.message.startsWith(SEO_OTHER_HALF_UNREADABLE);
-  }
-  return typeof value === "string" && value.startsWith(SEO_OTHER_HALF_UNREADABLE);
-}

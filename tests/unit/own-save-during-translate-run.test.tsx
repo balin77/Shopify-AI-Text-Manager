@@ -407,3 +407,59 @@ describe("foreign accept-and-translate: the primary base save carries only the t
     expect("title" in primary!).toBe(false);
   });
 });
+
+describe("a REFUSED accept-and-translate save takes back everything the flow armed", () => {
+  beforeEach(() => {
+    clearAllForResource(ID);
+    __resetSuggestionStore();
+    try { window.localStorage.clear(); } catch { /* none */ }
+    window.history.replaceState({}, "", "/app/products");
+  });
+  afterEach(() => { vi.restoreAllMocks(); window.history.replaceState({}, "", "/"); });
+
+  it("(M1) primary step 1 refused: the NEXT successful save does not fire step 2 with the old suggestion", async () => {
+    const h = mount();
+    await tick(50);
+    setFieldSuggestion(scope("de"), "title", "KI Titel");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("title"); });
+    await tick(20);
+    expect(h.savesPosted()).toHaveLength(1);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(50);
+
+    // An ordinary Save of another field, answered with success.
+    await act(async () => { h.editor.current.handlers.handleValueChange("seoTitle", "SEO neu"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(100);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+  });
+
+  it("(H2) foreign step 2 refused (other SEO half unreadable): the main-language overlay is given back and the message does not say 'nothing saved'", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    expect(h.savesPosted().some((p) => p.locale === "de" && p.seoTitle === "SEO de")).toBe(true);
+    h.showInfoBox.mockClear();
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "seoOtherHalfUnreadable", errorKey: "seoOtherHalfUnreadable" });
+    await tick(50);
+
+    const critical = h.showInfoBox.mock.calls.filter(([, tone]) => tone === "critical").map(([m]) => String(m));
+    expect(critical).toHaveLength(1);
+    // The specific sentence: this language WAS saved, the main-language translation was not.
+    expect(critical[0]).toContain("The text in this language was saved, but the translation into the main language was not");
+    // The main language shows what is stored, never the refused translation.
+    await switchTo(h, "de");
+    expect(h.editor.current.state.editableValues.seoTitle).toBe("SEO");
+  });
+});

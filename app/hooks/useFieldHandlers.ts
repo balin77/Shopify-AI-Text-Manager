@@ -121,6 +121,7 @@ export interface FieldHandlerProps {
   pendingCopyFieldItemIdRef: { current: string | null };
   pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string } | null };
   acceptedPrimaryValueRef: { current: { fieldKey: string; value: string } | null };
+  foreignAcceptPrimaryStepRef: { current: { itemId: string; fieldKey: string; previous: string | undefined } | null };
   initialLoadSuccessfulRef: { current: boolean };
   retryCountRef: { current: number };
 
@@ -330,6 +331,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     pendingCopyFieldItemIdRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
+    foreignAcceptPrimaryStepRef,
     initialLoadSuccessfulRef,
     retryCountRef,
     submitAIAction,
@@ -1645,6 +1647,12 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
           if (!savedPrimaryValuesRef.current[requestItemId]) {
             savedPrimaryValuesRef.current[requestItemId] = {};
           }
+          // Remembered so a REFUSED save gives the overlay back (nothing was stored under it).
+          foreignAcceptPrimaryStepRef.current = {
+            itemId: requestItemId,
+            fieldKey,
+            previous: savedPrimaryValuesRef.current[requestItemId][fieldKey],
+          };
           savedPrimaryValuesRef.current[requestItemId][fieldKey] = primaryTranslated;
 
           const primaryForm: Record<string, string> = {

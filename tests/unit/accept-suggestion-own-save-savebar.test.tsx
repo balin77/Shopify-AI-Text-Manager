@@ -170,27 +170,26 @@ describe("accepting an AI suggestion saves the field without a save bar", () => 
     expect(h.editor.current.state.hasChanges).toBe(true);
   });
 
+  // The refusal is read through two branches of the save-answer handling (the `error` text, the `errorKey`),
+  // and each must word it with the SAME specific sentence - not merely show some error string.
+  const REFUSAL_SENTENCE = "The other half of the SEO text (title or description) could not be read from Shopify, so nothing was saved. Your text is kept - please try again.";
   it.each([
-    ["products", "metaDescription"],
-    ["products", "seoTitle"],
-    ["collections", "metaDescription"],
+    ["products", "metaDescription", { error: "seoOtherHalfUnreadable", errorKey: "seoOtherHalfUnreadable" }],
+    ["products", "seoTitle", { error: "seoOtherHalfUnreadable" }],
+    ["collections", "metaDescription", { errorKey: "seoOtherHalfUnreadable" }],
   ] as const)(
-    "%s %s: the server could not read the other SEO half -> refusal worded as try-again, the accepted text stays a draft",
-    async (kind, field) => {
+    "%s %s: refusal %j -> the specific try-again sentence, the accepted text stays a draft",
+    async (kind, field, refusal) => {
       const h = mount(kind);
       await tick(50);
       await accept(h, "de", field, "Neu von der KI");
 
-      await h.respond({ success: false, actionType: "updateContent", error: "seoOtherHalfUnreadable", errorKey: "seoOtherHalfUnreadable" });
+      await h.respond({ success: false, actionType: "updateContent", ...refusal });
       await tick(50);
-      // The typed/accepted text is kept in the field and still reads as unsaved.
       expect(h.editor.current.state.editableValues[field]).toBe("Neu von der KI");
       expect(h.editor.current.state.hasChanges).toBe(true);
-      // The merchant is told to try again - the text, not the raw code.
       const critical = h.showInfoBox.mock.calls.filter(([, tone]) => tone === "critical").map(([m]) => String(m));
-      expect(critical).toHaveLength(1);
-      expect(critical[0]).toMatch(/try again/i);
-      expect(critical[0]).not.toContain("seoOtherHalfUnreadable");
+      expect(critical).toEqual([REFUSAL_SENTENCE]);
     },
   );
 

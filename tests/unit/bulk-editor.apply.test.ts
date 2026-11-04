@@ -638,36 +638,65 @@ describe("applyBulkDiff — cell-granular partial failures (Plan §4.4/§12)", (
     expect(db.productImage.update).not.toHaveBeenCalled();
   });
 
-  it("rejects a partial-SEO product write as a CELL error when the cache row is missing (Finding 7)", async () => {
-    const { admin, calls } = mockAdmin();
+  // The untouched SEO half is read LIVE from Shopify (one batched `nodes` query per run), never taken
+  // from the local cache, and never sent as "".
+  const liveSeo = (nodes: unknown) => (query: string) =>
+    query.includes("bulkEditorLiveSeo") ? { data: { nodes } } : undefined;
+
+  it("product: the live read FAILS -> the SEO cell is refused (worded code), no seo input is sent, the row's other cell still saves", async () => {
+    const { admin, calls } = mockAdmin({
+      respond: (q) => { if (q.includes("bulkEditorLiveSeo")) throw new Error("throttled"); return undefined; },
+    });
     const db = mockDb();
-    // No cache row → the untouched SEO half cannot be resolved.
-    db.product.findUnique.mockResolvedValue(null as never);
 
     const result = await applyBulkDiff(
       { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
       [entry("field.seoTitle", "New SEO title"), entry("field.title", "Still saves")],
     );
 
-    // The SEO cell fails with the resync hint — and NO productUpdate call
-    // ever carries a `seo` input (the "" fallback would wipe the untouched
-    // description on Shopify).
     const seoFailure = result.failures.find((f) => f.columnId === "field.seoTitle");
-    expect(seoFailure).toBeDefined();
-    expect(seoFailure?.message).toContain("resync");
+    expect(seoFailure?.message).toBe("seoOtherHalfUnreadable");
     const updateCalls = calls.filter((c) => c.query.includes("productUpdate("));
     expect(updateCalls).toHaveLength(1);
     const input = updateCalls[0].variables?.input as Record<string, unknown>;
     expect(input.seo).toBeUndefined();
-    // The row's OTHER base cell still saved.
     expect(input.title).toBe("Still saves");
     expect(result.failures.some((f) => f.columnId === "field.title")).toBe(false);
   });
 
-  it("rejects a partial-SEO collection write BEFORE any Shopify call when the cache row is missing (Finding 7)", async () => {
-    const { admin, calls } = mockAdmin();
+  it("product: the other half is the LIVE value (not the cache's), read once per run in ONE query", async () => {
+    const { admin, calls } = mockAdmin({
+      respond: liveSeo([{ id: "gid://shopify/Product/1", seo: { title: "T-live", description: "D-live" } }]),
+    });
+    const db = mockDb(); // the cache says "old"/"old": it must not be used
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry("field.seoTitle", "New SEO title")],
+    );
+
+    expect(calls.filter((c) => c.query.includes("bulkEditorLiveSeo"))).toHaveLength(1);
+    const input = calls.find((c) => c.query.includes("productUpdate("))!.variables?.input as { seo: Record<string, unknown> };
+    expect(input.seo).toEqual({ title: "New SEO title", description: "D-live" });
+  });
+
+  it("product: a half that is EMPTY in Shopify is omitted, never sent as an empty string", async () => {
+    const { admin, calls } = mockAdmin({
+      respond: liveSeo([{ id: "gid://shopify/Product/1", seo: { title: null, description: null } }]),
+    });
+    await applyBulkDiff(
+      { db: mockDb() as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry("field.seoTitle", "New SEO title")],
+    );
+    const input = calls.find((c) => c.query.includes("productUpdate("))!.variables?.input as { seo: Record<string, unknown> };
+    expect(JSON.stringify(input.seo)).toBe('{"title":"New SEO title"}');
+  });
+
+  it("collection: the live read fails -> a CELL failure, NOT A SINGLE collectionUpdate, nothing half-written", async () => {
+    const { admin, calls } = mockAdmin({
+      respond: (q) => { if (q.includes("bulkEditorLiveSeo")) throw new Error("throttled"); return undefined; },
+    });
     const db = mockDb();
-    db.collection.findUnique.mockResolvedValue(null as never);
 
     const result = await applyBulkDiff(
       { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
@@ -683,13 +712,27 @@ describe("applyBulkDiff — cell-granular partial failures (Plan §4.4/§12)", (
       ],
     );
 
-    // Row-level failure (collections are single-mutation) with the resync
-    // hint — and NOT A SINGLE Shopify call, so nothing was half-written.
     expect(result.saved).toBe(0);
     expect(result.failures).toHaveLength(1);
-    expect(result.failures[0].columnId).toBeUndefined();
-    expect(result.failures[0].message).toContain("resync");
-    expect(calls).toHaveLength(0);
+    expect(result.failures[0]).toMatchObject({ columnId: "field.seoDescription", message: "seoOtherHalfUnreadable" });
+    expect(calls.filter((c) => c.query.includes("collectionUpdate"))).toHaveLength(0);
+  });
+
+  it("collection: the other half is the live value", async () => {
+    const { admin, calls } = mockAdmin({
+      respond: (q) =>
+        q.includes("bulkEditorLiveSeo")
+          ? { data: { nodes: [{ id: "gid://shopify/Collection/3", seo: { title: "T-live", description: null } }] } }
+          : q.includes("collectionUpdate")
+            ? { data: { collectionUpdate: { collection: { id: "gid://shopify/Collection/3", handle: "h" }, userErrors: [] } } }
+            : undefined,
+    });
+    await applyBulkDiff(
+      { db: mockDb() as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [{ rowId: "gid://shopify/Collection/3", rowType: "collection", locale: "", marketId: "", columnId: "field.seoDescription", value: "D-new" }],
+    );
+    const input = calls.find((c) => c.query.includes("collectionUpdate"))!.variables?.input as { seo: Record<string, unknown> };
+    expect(input.seo).toEqual({ title: "T-live", description: "D-new" });
   });
 
   it("keeps single-mutation rows on row-level failures (no columnId)", async () => {

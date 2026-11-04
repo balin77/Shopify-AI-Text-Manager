@@ -1160,7 +1160,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   /** The text of a refusal that names an `errorKey`: the one builder for the screen and for a left product. */
   const errorKeyMessage = (data: unknown): string => {
     const errorKey = String((data as { errorKey?: string }).errorKey);
-    return (t.content as Record<string, string>)?.[errorKey] || errorKey;
+    // A key the content bundle does not own (seoOtherHalfUnreadable) is worded by the shared error text.
+    return (t.content as Record<string, string>)?.[errorKey] || translateErrorMessage(errorKey, t);
+  };
+  /**
+   * The sentence of a refused STEP TWO of a foreign accept-and-translate: the text in this language WAS saved
+   * (step one), only the main-language translation was not - so the generic "nothing was saved" must not be said.
+   */
+  const stepTwoRefusalText = (data: unknown, stepTwoRefused: boolean): string => {
+    if (!stepTwoRefused) return "";
+    const key = String((data as { error?: string; errorKey?: string }).errorKey || (data as { error?: string }).error || "");
+    if (key !== "seoOtherHalfUnreadable") return "";
+    return String((t.content as Record<string, string>)?.seoOtherHalfUnreadablePrimaryStep
+      || "The text in this language was saved, but the translation into the main language was not: the other half of the SEO text could not be read from Shopify. Please try again.");
   };
   /** The refusal of a save of an item that is NOT on screen: said with its name. */
   const showRefusalOfOtherItem = (itemId: string | undefined | null, data: unknown) => {
@@ -2179,6 +2191,40 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     fieldKey: string;
     value: string;
   } | null>(null);
+
+  /**
+   * Step 2 of a FOREIGN accept-and-translate: the translation back into the main language is saved as the
+   * primary value, and the saved-primary overlay is staged up front (`previous` = what it held before, so a
+   * refused save can give it back). Armed when that save is sent; cleared by its answer.
+   */
+  const foreignAcceptPrimaryStepRef = useRef<{ itemId: string; fieldKey: string; previous: string | undefined } | null>(null);
+
+  /**
+   * A save answer that REFUSED. Takes back everything an accept-and-translate flow armed for the item the
+   * refused request carried, so nothing fires on the NEXT successful save with an old suggestion
+   * (pending step 2, accepted value, the flow flag) and the main-language overlay of a refused foreign
+   * step 2 stops showing text that was never stored. Returns whether that foreign step was the refused one.
+   */
+  const abandonAcceptAndTranslate = (refusedItemId: string | null | undefined): boolean => {
+    const pending = pendingTranslationAfterSaveRef.current;
+    if (pending && (!refusedItemId || pending.itemId === refusedItemId)) {
+      pendingTranslationAfterSaveRef.current = null;
+      acceptedPrimaryValueRef.current = null;
+      setIsAcceptAndTranslateFlow(false);
+    }
+    const step = foreignAcceptPrimaryStepRef.current;
+    const partial = inFlightPartialRef.current;
+    const isStepTwo = !!step && (!refusedItemId || step.itemId === refusedItemId) &&
+      !!partial && Object.keys(partial.values ?? {}).length === 0 && (partial.altIndices ?? []).length === 0;
+    if (!step || !isStepTwo) return false;
+    foreignAcceptPrimaryStepRef.current = null;
+    const overlay = savedPrimaryValuesRef.current[step.itemId];
+    if (overlay) {
+      if (step.previous === undefined) delete overlay[step.fieldKey];
+      else overlay[step.fieldKey] = step.previous;
+    }
+    return true;
+  };
 
   // Ref to track the last fetcher.data object (to detect actual data changes vs dependency re-runs)
   const lastFetcherDataRef = useRef<FetcherData | null>(null);
@@ -3391,6 +3437,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // redirect after "Accept & Translate" was swallowed and the merchant went
       // on believing the old URL still resolved.
       const pendingRedirectMessage = buildRedirectMessage(redirectNoteOf(fetcher.data), t);
+      // The save that staged a foreign accept's main-language overlay was answered successfully: it stands.
+      foreignAcceptPrimaryStepRef.current = null;
 
       // Check if there's a pending translation to start after this save
       if (pendingTranslationAfterSaveRef.current) {
@@ -3859,6 +3907,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data && isSavePendingRef.current && isSaveAnswerShape) {
       // Also mark error responses as processed
       processedSaveResponseRef.current = fetcher.data;
+      // Before the re-resolve: a refused accept-and-translate takes its overlay and armed step back.
+      const stepTwoRefused = abandonAcceptAndTranslate(inFlightScopeRef.current?.sentFields?.itemId ?? savedItemIdRef.current);
       forgetAndRebaseline();
 
       isSavePendingRef.current = false;
@@ -3906,6 +3956,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const translatedError =
           localizedUnconfirmedFields(fetcher.data) ||
           localizedThemeSaveIssues(fetcher.data) ||
+          stepTwoRefusalText(fetcher.data, stepTwoRefused) ||
           translateErrorMessage(String(fetcher.data.error || ""), t);
         showInfoBox(translatedError, "critical");
       }
@@ -3920,6 +3971,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // revert the UI immediately to prevent accidental data loss.
       // ──────────────────────────────────────────────────────────────────
       processedSaveResponseRef.current = fetcher.data;
+      const stepTwoRefused = abandonAcceptAndTranslate(inFlightScopeRef.current?.sentFields?.itemId ?? savedItemIdRef.current);
       forgetAndRebaseline();
       isSavePendingRef.current = false;
       settleOwnSaveFor(inFlightPartialRef.current);
@@ -3958,7 +4010,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         showInfoBox(keyName ? `${keyName}: ${keyText}` : keyText, "critical");
       }
       if (isSavedItemCurrent) {
-        const errorMessage = errorKeyMessage(fetcher.data);
+        const errorMessage = stepTwoRefusalText(fetcher.data, stepTwoRefused) || errorKeyMessage(fetcher.data);
         showInfoBox(errorMessage, "critical");
 
         // Auto-restore empty fields to their original values (discard empty edits)
@@ -4000,6 +4052,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // answer. Left alone, the pending flag stuck and refused every later
       // "translate all" as racing a save that had long ended.
       processedSaveResponseRef.current = fetcher.data;
+      abandonAcceptAndTranslate(inFlightScopeRef.current?.sentFields?.itemId ?? savedItemIdRef.current);
       forgetAndRebaseline();
       isSavePendingRef.current = false;
       settleOwnSaveFor(inFlightPartialRef.current);
@@ -4284,6 +4337,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     pendingCopyFieldItemIdRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
+    foreignAcceptPrimaryStepRef,
     initialLoadSuccessfulRef,
     retryCountRef,
     submitAIAction,

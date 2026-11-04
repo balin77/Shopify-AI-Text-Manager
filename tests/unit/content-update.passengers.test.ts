@@ -18,6 +18,11 @@ vi.mock("~/actions/product/shared/action-context", () => ({
   prepareActionContext: vi.fn(async () => ({})),
 }));
 
+const applyCollectionRuleChange = vi.fn(async () => undefined);
+vi.mock("~/services/collection-rules.server", () => ({
+  applyCollectionRuleChange: (...a: unknown[]) => (applyCollectionRuleChange as (...x: unknown[]) => unknown)(...a),
+}));
+
 import { handleUpdateContent } from "~/actions/content/content-update.action";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
 
@@ -188,15 +193,48 @@ describe("the unchanged SEO half is a passenger and no fallback value travels an
     expect(productForm!.has("seoFallback")).toBe(false);
   });
 
-  it("a collection save the writer REFUSES (other half unreadable) comes back as the structured refusal", async () => {
-    const refusal = { success: false, error: "seoOtherHalfUnreadable", errorKey: "seoOtherHalfUnreadable" };
-    const updateContent = vi.fn(async () => refusal);
-    const res: any = await handleUpdateContent(
-      ctx(COLLECTIONS_CONFIG, "gid://shopify/Collection/1", updateContent),
-      form({ seoTitle: "T-client", metaDescription: "M", changedFields: JSON.stringify(["metaDescription"]), passengerFields: JSON.stringify(["seoTitle"]) }),
-    );
+  // The REAL content service: the other half cannot be read from Shopify, so the collection writer itself
+  // refuses and no mutation is sent. (A mocked `updateContent` would only test that a refusal is passed on.)
+  const realServiceCtx = (graphql: ReturnType<typeof vi.fn>) => ({
+    ...ctx(COLLECTIONS_CONFIG, "gid://shopify/Collection/1", vi.fn()),
+    shopifyContentService: new ShopifyContentService({ graphql } as never),
+  }) as unknown as Parameters<typeof handleUpdateContent>[0];
+  const oneSided = (extra: Record<string, string> = {}) => form({
+    seoTitle: "T-client", metaDescription: "M", changedFields: JSON.stringify(["metaDescription"]),
+    passengerFields: JSON.stringify(["seoTitle"]), ...extra,
+  });
+
+  it("real collection writer: unreadable other half -> structured refusal, status 200, no mutation sent", async () => {
+    const graphql = vi.fn(async (query: string) => {
+      if (query.includes("getSeo")) throw new Error("throttled");
+      return { json: async () => ({ data: { collectionUpdate: { collection: { id: "x" }, userErrors: [] } } }) };
+    });
+    const res: any = await handleUpdateContent(realServiceCtx(graphql), oneSided());
+    expect(res?.init?.status ?? 200).toBe(200);
     const payload = res?.data ?? res;
-    expect(payload).toMatchObject({ success: false, errorKey: "seoOtherHalfUnreadable", actionType: "updateContent" });
+    expect(payload).toMatchObject({ success: false, error: "seoOtherHalfUnreadable", errorKey: "seoOtherHalfUnreadable", actionType: "updateContent" });
+    const sent = graphql.mock.calls.map((c) => String(c[0]));
+    expect(sent.some((q) => q.includes("collectionUpdate"))).toBe(false);
+  });
+
+  it("a refused collection save does NOT apply the rule change that rode along", async () => {
+    applyCollectionRuleChange.mockClear();
+    const graphql = vi.fn(async () => { throw new Error("throttled"); });
+    await handleUpdateContent(
+      realServiceCtx(graphql),
+      oneSided({ changedAttributeFields: JSON.stringify(["collectionRules"]), collectionRules: "[]" }),
+    );
+    expect(applyCollectionRuleChange).not.toHaveBeenCalled();
+  });
+
+  it("a successful collection save still applies the rule change", async () => {
+    applyCollectionRuleChange.mockClear();
+    const updateContent = vi.fn(async () => ({ success: true }));
+    await handleUpdateContent(
+      ctx(COLLECTIONS_CONFIG, "gid://shopify/Collection/1", updateContent),
+      oneSided({ changedAttributeFields: JSON.stringify(["collectionRules"]), collectionRules: "[]" }),
+    );
+    expect(applyCollectionRuleChange).toHaveBeenCalledTimes(1);
   });
 });
 
