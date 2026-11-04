@@ -77,7 +77,7 @@ vi.mock("~/utils/app-fetch", () => ({
 
 let stagedGate: Promise<void> = Promise.resolve();
 vi.mock("~/utils/staged-upload.client", () => ({ uploadToStagedTarget: vi.fn(async () => { await stagedGate; }) }));
-import { VariantImageManager, VARIANTS_RETRY_DELAYS_MS } from "~/components/image-manager/VariantImageManager";
+import { VariantImageManager, VARIANTS_RETRY_DELAYS_MS, composeOnLanded } from "~/components/image-manager/VariantImageManager";
 import { planVariantWrite, validateMainMoves, type MoveIntentView } from "~/services/variant-main-image.shared";
 
 function variantsPayload(over: { v1Gallery?: string[]; v1Main?: number | null; v1Order?: string | null } = {}) {
@@ -1355,7 +1355,69 @@ describe("round 3, point 4: a variants read refused by the rate limiter (429)", 
     expect((document.querySelector("[data-variants-list]") as HTMLElement).getAttribute("aria-busy") === "true").toBe(true);
     await act(async () => { release(); variantsGate = null; });
     await waitFor(() => expect(cur).toHaveBeenLastCalledWith(true));
+    // the parked poll ran after R1 (not lost): one more read than R1 alone, well before the next poll tick
+    await waitFor(() => expect(variantReads()).toBeGreaterThanOrEqual(readsBefore + 2), { timeout: 900 });
   }, 12000);
+
+  it("post-delete: a parked silent read (with its landing callback) runs after the in-flight re-read and ends the removal", async () => {
+    let n = 0;
+    let releaseUpdate!: () => void;
+    const updateGate = new Promise<void>((r) => { releaseUpdate = r; });
+    saveAnswer = (path, body) => {
+      if (path === "/api/delete-product-images") return { success: true, deletedMediaIds: body.mediaIds };
+      if (path === "/api/update-variant-galleries") return updateGate.then(() => ({ success: true }));
+      return { success: true };
+    };
+    // read 1 = mount, read 2 = the held re-read (still the pre-delete data), read 3 = the parked post-delete read
+    variantsAnswer = () => (++n >= 3 ? variantsPayload({ v1Main: 3, v1Gallery: [gid(2)] }) : variantsPayload());
+    const { rerender } = await mount();
+    act(() => grids.product.onSelect(url(1), true));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Yes, delete now" }));
+    await waitFor(() => expect(apiCalls.some((c) => c.path === "/api/update-variant-galleries")).toBe(true));
+    let release!: () => void;
+    variantsGate = new Promise<void>((r) => { release = r; });
+    rerender(ui({ variantReloadKey: 1 }));
+    await waitFor(() => expect((document.querySelector("[data-variants-list]") as HTMLElement).getAttribute("aria-busy")).toBe("true"));
+    // the delete's own silent read is parked behind the re-read
+    await act(async () => { releaseUpdate(); });
+    const before = apiCalls.filter((c) => c.path === "/api/product-variants").length;
+    await act(async () => { release(); variantsGate = null; });
+    await waitFor(() => expect(apiCalls.filter((c) => c.path === "/api/product-variants").length).toBeGreaterThan(before));
+    await waitFor(() => expect(grids[V1].mainUrl).toBe(url(3)));
+  });
+
+  it("L1: parked reads hand their landing callbacks on (both run, in order; one alone is kept)", () => {
+    const order: string[] = [];
+    composeOnLanded(() => order.push("a"), () => order.push("b"))!();
+    expect(order).toEqual(["a", "b"]);
+    const only = () => order.push("c");
+    expect(composeOnLanded(undefined, only)).toBe(only);
+    expect(composeOnLanded(only, undefined)).toBe(only);
+    expect(composeOnLanded()).toBeUndefined();
+  });
+
+  it("L2: skipped AND failed uploads are both said", async () => {
+    let call = 0;
+    saveAnswer = (path) => {
+      if (path !== "/api/staged-upload") return { success: true };
+      call++;
+      return call === 1 ? { error: "nope" } : { url: "https://staged/up", resourceUrl: "https://staged/new.jpg", parameters: [], httpMethod: "PUT" };
+    };
+    const { rerender } = await mount();
+    let releaseUpload!: () => void;
+    stagedGate = new Promise<void>((r) => { releaseUpload = r; });
+    let uploading!: Promise<void>;
+    act(() => { uploading = grids[V1].onUploadToGallery([new File(["x"], "bad.jpg", { type: "image/jpeg" }), new File(["x"], "late.jpg", { type: "image/jpeg" })]); });
+    let releaseRead!: () => void;
+    variantsGate = new Promise<void>((r) => { releaseRead = r; });
+    rerender(ui({ variantReloadKey: 1 }));
+    await waitFor(() => expect((document.querySelector("[data-variants-list]") as HTMLElement).getAttribute("aria-busy")).toBe("true"));
+    await act(async () => { releaseUpload(); stagedGate = Promise.resolve(); await uploading; });
+    expect(screen.getByText(/Not added: late\.jpg/)).toBeTruthy();
+    expect(screen.getByText(/Upload failed for: bad\.jpg/)).toBeTruthy();
+    await act(async () => { releaseRead(); variantsGate = null; });
+  });
 
   it("M3: typing in a variant alt input during a re-read keeps the element, focus and value", async () => {
     const { rerender } = await mount();

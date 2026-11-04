@@ -43,6 +43,10 @@ import {
 // fall back to closestCenter when pointer is outside all droppables.
 /** A variants read that failed (the limiter's 429 under fast clicking, a network blip) is tried again
  *  by itself after these pauses, so the galleries come back without the merchant leaving the product. */
+/** Two landing callbacks of parked reads of one product: both run, in order; one alone is kept as it is. */
+export function composeOnLanded(a?: () => void, b?: () => void): (() => void) | undefined {
+  return a && b ? () => { a(); b(); } : (b ?? a);
+}
 export const VARIANTS_RETRY_DELAYS_MS = [3000, 8000, 20000];
 
 const useIsomorphicLayoutEffect = typeof document !== "undefined" ? useLayoutEffect : useEffect;
@@ -1003,7 +1007,10 @@ export function VariantImageManager({
     // A silent read (settling poll, post-delete read) never aborts or supersedes a non-silent one: that read
     // owns `variantsRefreshing` / the error banner / the retry chain. It waits and runs when that read is done.
     if (opts?.silent && nonSilentReqRef.current !== 0) {
-      queuedSilentRef.current = { pid, opts };
+      // A parked read that is overwritten hands its landing callback on: both run when the read lands.
+      const prev = queuedSilentRef.current;
+      const onLanded = composeOnLanded(prev && prev.pid === pid ? prev.opts?.onLanded : undefined, opts.onLanded);
+      queuedSilentRef.current = { pid, opts: { ...opts, onLanded } };
       return;
     }
     const reqId = ++variantsReqIdRef.current;
@@ -3590,11 +3597,15 @@ export function VariantImageManager({
         failedFiles.push(file.name);
       }
     }
+    // Both kinds of loss are said (a batch can have uploads that failed AND ones that were not appended).
+    const notices: string[] = [];
     if (skippedFiles.length > 0 && productIdRef.current === startedProductId) {
-      setMediaError(t.imageManager.uploadSkippedNotCurrent.replace("{files}", skippedFiles.join(", ")));
-    } else if (failedFiles.length > 0) {
-      setMediaError(t.imageManager.uploadFailedFiles.replace("{files}", failedFiles.join(", ")));
+      notices.push(t.imageManager.uploadSkippedNotCurrent.replace("{files}", skippedFiles.join(", ")));
     }
+    if (failedFiles.length > 0) {
+      notices.push(t.imageManager.uploadFailedFiles.replace("{files}", failedFiles.join(", ")));
+    }
+    if (notices.length > 0) setMediaError(notices.join(" "));
   }, [t]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUploadToProductGallery = useCallback(async (files: File[]) => {
