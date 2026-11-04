@@ -50,6 +50,7 @@ const items = [1, 2].map((n) => ({
   status: "ACTIVE",
 }));
 
+let panelProps: { subTab: "bulkUpload" | "bulkAltText"; selected: string[] } = { subTab: "bulkUpload", selected: [] };
 let view: { open: boolean; set: (v: boolean) => void };
 let editorRef: { current: any } = { current: null };
 // The save's action answers only when the test says so (a save "in flight").
@@ -58,7 +59,7 @@ let answerSave: (body: Record<string, unknown>) => void = () => {};
 let holdSaves = false;
 
 function Page({ withManager, panels }: { withManager: boolean; panels?: boolean }) {
-  const [rightTab, setRightTab] = useState<"seo" | "images">("seo");
+  const [rightTab, setRightTab] = useState<"seo" | "images">(panelProps.subTab === "bulkAltText" ? "images" : "seo");
   const { items: loaded } = useLoaderData() as { items: any[] };
   const fetcher = useFetcher();
   const [full, setFull] = useState(false);
@@ -91,7 +92,7 @@ function Page({ withManager, panels }: { withManager: boolean; panels?: boolean 
       imageManager={panels ? ({
         bulkItems: [], onBulkItemsChange: () => {}, selectedBulkIds: new Set(), activeAction: null, onSetAction: () => {},
         onBulkSelect: () => {}, onRemoveBulk: () => {}, activeRightTab: rightTab, onTabChange: setRightTab,
-        activeImageSubTab: "bulkUpload", onImageSubTabChange: () => {}, imageManagerSettings: { firstImageBig: false, showAltTags: false, autoAltText: false },
+        activeImageSubTab: panelProps.subTab, onImageSubTabChange: () => {}, selectedGalleryGids: panelProps.selected, imageManagerSettings: { firstImageBig: false, showAltTags: false, autoAltText: false },
         variantsForBulk: [], productTitle: "Produkt 1", productId: items[0].id,
       } as any) : undefined}
       imageGalleryReplacement={withManager ? (
@@ -241,6 +242,23 @@ describe("image manager full view: sidebar, mobile toolbar, saves in flight", ()
     expect(screen.queryByText(en.imageManager?.bulkUploadSubTab ?? "Bulk Upload")).toBeNull();
     expect(screen.getByTestId("seo-part")).toBe(seoPartEl);
     expect(hiddenUp(seoPartEl)).toBe(false);
+  });
+
+  it("the selection kept from the full view does not scope the bulk alt text SKU action once the view is closed", async () => {
+    panelProps = { subTab: "bulkAltText", selected: ["gid://shopify/MediaImage/1", "gid://shopify/MediaImage/2"] };
+    try {
+      mount(true, true);
+      await tick(80);
+      fireEvent.click(screen.getByText("open"));
+      await tick(20);
+      expect(screen.getByRole("button", { name: /Selected only \(2\)/ })).toBeTruthy();
+      fireEvent.click(screen.getByText("close"));
+      await tick(20);
+      expect(screen.queryByRole("button", { name: /Selected only \(2\)/ })).toBeNull();
+      expect(screen.getByRole("button", { name: /Selected only \(0\)/ })).toBeTruthy();
+    } finally {
+      panelProps = { subTab: "bulkUpload", selected: [] };
+    }
   });
 
   it("the phone toolbar keeps only its language part: its actions are hidden but mounted", async () => {

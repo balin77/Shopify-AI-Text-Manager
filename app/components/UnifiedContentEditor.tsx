@@ -2727,7 +2727,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   primaryLocale={primaryLocale}
                   onApplySuccess={imageManager.onApplySuccess}
                   onSaveResponse={imageManager.onSaveResponse}
-                  selectedGids={imageManager.selectedGalleryGids}
+                  // The selection kept from the full view is hidden once it is closed: it must not scope a write then.
+                  selectedGids={imFull ? imageManager.selectedGalleryGids : undefined}
                 />
               )}
             </div>
