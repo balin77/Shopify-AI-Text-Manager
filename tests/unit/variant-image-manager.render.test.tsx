@@ -1236,6 +1236,37 @@ describe("round 3, point 4: a variants read refused by the rate limiter (429)", 
     expect(screen.getByText(/variants of this product are not loaded/)).toBeTruthy();
   });
 
+  it("a refused RE-READ of an already loaded product retries by itself and brings the galleries back", async () => {
+    VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length, 20, 20, 20);
+    const { rerender } = await mount();
+    const before = variantReads();
+    variantsRefuse = 1;
+    rerender(ui({ variantReloadKey: 1 }));
+    await waitFor(() => expect(screen.getByText("Could not load variants.")).toBeTruthy());
+    await waitFor(() => expect(screen.queryByText("Could not load variants.")).toBeNull(), { timeout: 3000 });
+    expect(variantReads()).toBe(before + 2);
+  });
+
+  it("a silent poll that aborts an in-flight retry and then fails keeps the retry chain going", async () => {
+    VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length, 1000, 300, 300);
+    variantsRefuse = 1;
+    render(ui({ settlingMedia: [{ productId: "gid://shopify/Product/1", mediaId: gid(99), kind: "image" }] }));
+    fireEvent.click(await screen.findByText("Show all"));
+    await waitFor(() => expect(screen.getByText("Could not load variants.")).toBeTruthy());
+    // the retry (about 1 s) is held in flight ...
+    let release!: () => void;
+    variantsGate = new Promise<void>((r) => { release = r; });
+    await waitFor(() => expect(variantReads()).toBe(2), { timeout: 3000 });
+    // ... the silent poll (about 1.5 s) aborts it and is itself refused
+    variantsGate = null;
+    variantsRefuse = 1;
+    await waitFor(() => expect(variantReads()).toBe(3), { timeout: 3000 });
+    await act(async () => { release(); });
+    // nothing else is re-armed by the aborted retry: the poll's own failure has to re-arm it (about 0.3 s)
+    await waitFor(() => expect(variantReads()).toBe(4), { timeout: 1200 });
+    await waitFor(() => expect(screen.queryByText("Could not load variants.")).toBeNull());
+  }, 12000);
+
   it("a silent settling poll that itself fails does not cancel the scheduled retry", async () => {
     VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length, 2500);
     variantsRefuse = 2; // the first read and the first (silent) poll are refused

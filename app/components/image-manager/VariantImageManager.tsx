@@ -773,6 +773,10 @@ export function VariantImageManager({
   const variantsLoadedForRef = useRef<string | null>(null);
   const variantsRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const variantsRetryAttemptRef = useRef(0);
+  // The product whose failed read has a retry chain running. Set by the failing read, cleared when
+  // a read lands and on a product switch. `variantsLoadedForRef` cannot tell: for a re-read of an
+  // ALREADY loaded product (after a save, a Discard) it equals the product while the read failed.
+  const variantsRetryChainRef = useRef<string | null>(null);
   const fetchVariantsRef = useRef<((pid: string, resetState: boolean) => void) | null>(null);
   useEffect(() => () => { if (variantsRetryTimerRef.current) clearTimeout(variantsRetryTimerRef.current); }, []);
   // The variants of the open product are known (read and landed): until then a save must not act on
@@ -1121,6 +1125,7 @@ export function VariantImageManager({
         });
         variantsLoadedForRef.current = pid;
         variantsRetryAttemptRef.current = 0;
+        variantsRetryChainRef.current = null;
         // Any read of the current product that lands ends the load-error banner and a pending retry.
         setVariantError(null);
         if (variantsRetryTimerRef.current) { clearTimeout(variantsRetryTimerRef.current); variantsRetryTimerRef.current = null; }
@@ -1138,18 +1143,27 @@ export function VariantImageManager({
       // background after a successful save, and a transient network blip
       // there would read as "your save failed".
       .catch(() => {
-        if (isStale() || opts?.silent) return;
-        setVariantError(t.imageManager.variantsLoadError);
+        if (isStale()) return;
         // Try again by itself (a limiter refusal is gone after a few seconds); bounded, and only while
         // nothing newer has been asked.
-        const delay = VARIANTS_RETRY_DELAYS_MS[variantsRetryAttemptRef.current];
-        if (delay !== undefined) {
+        const armRetry = () => {
+          if (variantsRetryTimerRef.current) return;
+          const delay = VARIANTS_RETRY_DELAYS_MS[variantsRetryAttemptRef.current];
+          if (delay === undefined) return;
           variantsRetryAttemptRef.current += 1;
+          variantsRetryChainRef.current = pid;
           variantsRetryTimerRef.current = setTimeout(() => {
             variantsRetryTimerRef.current = null;
-            if (productIdRef.current === pid && variantsLoadedForRef.current !== pid) fetchVariantsRef.current?.(pid, false);
+            if (productIdRef.current === pid && variantsRetryChainRef.current === pid) fetchVariantsRef.current?.(pid, false);
           }, delay);
+        };
+        if (opts?.silent) {
+          // The poll shows nothing, but it may have aborted a retry that was in flight: keep the chain going.
+          if (variantsRetryChainRef.current === pid) armRetry();
+          return;
         }
+        setVariantError(t.imageManager.variantsLoadError);
+        armRetry();
       })
       // Clearing is NOT gated on `silent`: every call shares variantsReqIdRef,
       // so a poll tick landing while a non-silent load is in flight makes that
@@ -1164,6 +1178,7 @@ export function VariantImageManager({
   useEffect(() => {
     if (!productId) return;
     variantsRetryAttemptRef.current = 0;
+    variantsRetryChainRef.current = null;
     fetchVariantsForProduct(productId, true);
   }, [productId, resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
