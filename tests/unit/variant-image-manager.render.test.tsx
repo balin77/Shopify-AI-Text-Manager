@@ -1209,7 +1209,7 @@ describe("round 3, point 4: a variants read refused by the rate limiter (429)", 
     await waitFor(() => expect(grids[V1]?.imageUrls?.length).toBeGreaterThan(0));
   });
 
-  it("deleting an image while the variants are unknown is refused with a message and sends nothing", async () => {
+  it("while the variants are unknown the Delete control is disabled with the reason", async () => {
     VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length);
     variantsRefuse = 5;
     render(ui());
@@ -1217,10 +1217,47 @@ describe("round 3, point 4: a variants read refused by the rate limiter (429)", 
     await waitFor(() => expect(screen.getByText("Could not load variants.")).toBeTruthy());
     await waitFor(() => expect(grids.product).toBeDefined());
     act(() => grids.product.onSelect(url(1), true));
+    const del = await screen.findByRole("button", { name: "Delete" });
+    expect(del.getAttribute("aria-disabled")).toBe("true");
+    expect(apiCalls.some((c) => c.path === "/api/delete-product-images")).toBe(false);
+  });
+
+  it("a delete whose confirmation was already open is still refused when the variants became unknown meanwhile", async () => {
+    VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length);
+    const { rerender } = await mount();
+    act(() => grids.product.onSelect(url(1), true));
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    variantsRefuse = 5;
+    rerender(ui({ variantReloadKey: 1 }));
+    // the reload is non-silent and fails: the banner replaces the list, the confirmation is still open
+    await waitFor(() => expect(screen.getByText("Could not load variants.")).toBeTruthy());
     fireEvent.click(await screen.findByRole("button", { name: "Yes, delete now" }));
     expect(apiCalls.some((c) => c.path === "/api/delete-product-images")).toBe(false);
     expect(screen.getByText(/variants of this product are not loaded/)).toBeTruthy();
+  });
+
+  it("a silent settling poll that itself fails does not cancel the scheduled retry", async () => {
+    VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length, 2500);
+    variantsRefuse = 2; // the first read and the first (silent) poll are refused
+    render(ui({ settlingMedia: [{ productId: "gid://shopify/Product/1", mediaId: gid(99), kind: "image" }] }));
+    fireEvent.click(await screen.findByText("Show all"));
+    await waitFor(() => expect(screen.getByText("Could not load variants.")).toBeTruthy());
+    await waitFor(() => expect(variantReads()).toBeGreaterThanOrEqual(2), { timeout: 3000 });
+    // the retry scheduled by the first failure still fires and brings the variants back
+    // (the next poll would only come at about 4.5 s: the banner going away earlier is the retry)
+    await waitFor(() => expect(screen.queryByText("Could not load variants.")).toBeNull(), { timeout: 1800 });
+  }, 12000);
+
+  it("a silent settling poll that lands ends the error banner and leaves no stale retry", async () => {
+    VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length, 60000);
+    variantsRefuse = 1;
+    render(ui({ settlingMedia: [{ productId: "gid://shopify/Product/1", mediaId: gid(99), kind: "image" }] }));
+    fireEvent.click(await screen.findByText("Show all"));
+    await waitFor(() => expect(screen.getByText("Could not load variants.")).toBeTruthy());
+    // the first settling poll (about 1.5 s) is silent and answers normally
+    await waitFor(() => expect(screen.queryByText("Could not load variants.")).toBeNull(), { timeout: 4000 });
+    fireEvent.click(await screen.findByText("Red"));
+    await waitFor(() => expect(grids[V1]?.imageUrls?.length).toBeGreaterThan(0));
   });
 });
 

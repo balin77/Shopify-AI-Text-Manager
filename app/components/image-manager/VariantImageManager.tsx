@@ -971,7 +971,8 @@ export function VariantImageManager({
   // list would blink through its spinner on every tick.
   const fetchVariantsForProduct = useCallback((pid: string, resetState: boolean, opts?: { silent?: boolean; onLanded?: () => void }) => {
     const reqId = ++variantsReqIdRef.current;
-    if (variantsRetryTimerRef.current) { clearTimeout(variantsRetryTimerRef.current); variantsRetryTimerRef.current = null; }
+    // (a silent poll leaves a scheduled retry of a failed read alone)
+    if (!opts?.silent && variantsRetryTimerRef.current) { clearTimeout(variantsRetryTimerRef.current); variantsRetryTimerRef.current = null; }
     // A newer read ends the older one outright (a read held back by the rate
     // limiter would otherwise keep retrying for a product nobody looks at).
     variantsAbortRef.current?.abort();
@@ -1120,6 +1121,9 @@ export function VariantImageManager({
         });
         variantsLoadedForRef.current = pid;
         variantsRetryAttemptRef.current = 0;
+        // Any read of the current product that lands ends the load-error banner and a pending retry.
+        setVariantError(null);
+        if (variantsRetryTimerRef.current) { clearTimeout(variantsRetryTimerRef.current); variantsRetryTimerRef.current = null; }
         onVariantsLoaded?.(sortedVariants);
         // Only a read that LANDED ends what depends on it (a removed main image that the
         // promoted image has replaced): a failed read leaves that state as it is.
@@ -1143,7 +1147,7 @@ export function VariantImageManager({
           variantsRetryAttemptRef.current += 1;
           variantsRetryTimerRef.current = setTimeout(() => {
             variantsRetryTimerRef.current = null;
-            if (variantsReqIdRef.current === reqId) fetchVariantsRef.current?.(pid, false);
+            if (productIdRef.current === pid && variantsLoadedForRef.current !== pid) fetchVariantsRef.current?.(pid, false);
           }, delay);
         }
       })
@@ -4429,11 +4433,12 @@ export function VariantImageManager({
               ? <LocalizedMediaNotReplaceable reason="model3d" />
               : <LocalizedMediaReplaceButtons mediaId={productSingleSelectedGid} />)}
             {productSelectedUrls.length > 0 && (
+              <DisabledActionTooltip hint={variantsKnown ? undefined : t.imageManager.variantsNotLoadedAction}>
               <Button
                 size="slim"
                 tone="critical"
                 variant="secondary"
-                disabled={isDeleting}
+                disabled={isDeleting || !variantsKnown}
                 onClick={() => {
                   const urlSetForCount = new Set(productSelectedUrls);
                   const gidSet = new Set(productSelectedUrls.map(url => urlToGid[url]).filter(Boolean));
@@ -4448,6 +4453,7 @@ export function VariantImageManager({
               >
                 {t.imageManager.deleteImage}
               </Button>
+              </DisabledActionTooltip>
             )}
             <Button
               size="slim"
