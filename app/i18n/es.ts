@@ -2414,6 +2414,8 @@ export const es: Translation = {
       someFailed: "Algunas entradas no se pudieron procesar — abre la tarea para ver los detalles.",
       handleRedirectsMissing:
         "Se volvieron a traducir {count} handle(s) de URL, pero no se pudo crear una redirección para la dirección anterior — añádela en Redirecciones de URL o los enlaces antiguos no llevarán a ninguna parte.",
+      seoOtherHalfUnreadable:
+        "No se pudo leer la otra mitad del texto SEO (título o descripción) desde Shopify, por lo que no se guardó nada. Tu texto se conserva: inténtalo de nuevo.",
       translationsNotMirrored:
         "{count} traducción(es) se guardaron en Shopify pero no se pudieron escribir en la caché de esta app — vuelve a cargar el elemento para verlas aquí.",
       autoTranslateDailyLimit:

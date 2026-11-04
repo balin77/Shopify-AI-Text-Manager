@@ -13,6 +13,7 @@ import { collectRetranslationTaskIds } from '../../app/services/translations/ret
 import { echoComparisonKey, ECHO_PAIR_SEP } from '../../app/services/translations/translation-echo.shared';
 import type { VerifiedWriteResult, TranslationUserError } from '../../app/services/translations/verified-translations.server';
 import { isProviderKeyRejection, isManagedRefusal, localeName } from './ai.service';
+import { SeoOtherHalfUnreadableError, seoOtherHalfRefusalBody } from '../../app/services/editor/seo-half-refusal.shared';
 import { attributeInputFor as buildAttributeInput } from '../../app/services/content-attributes.shared';
 import {
   keywordTranslationDirective,
@@ -592,7 +593,8 @@ export class ShopifyContentService {
    *
    * Shopify's productUpdate/collectionUpdate treats `seo` as a unit: sending
    * `seo: { title }` without a description CLEARS the existing seo.description
-   * (and vice versa). A normal full save sends both fields, but single-field
+   * (and vice versa). When the other half cannot be read this THROWS
+   * `SeoOtherHalfUnreadableError` and the caller saves nothing. A normal full save sends both fields, but single-field
    * primary saves — e.g. the Accept & Translate flow that translates only the
    * meta title back into the primary locale — send just one side. For that
    * partial case we fetch the current live SEO and carry the missing half over.
@@ -611,8 +613,6 @@ export class ShopifyContentService {
     resourceGid: string,
     seoTitle: string | undefined,
     seoDescription: string | undefined,
-    /** The client's value of a half it did not change: used when Shopify's cannot be read, so one half is never sent alone. */
-    fallback?: { title?: string; description?: string },
   ): Promise<{ title?: string; description?: string } | null> {
     const hasTitle = seoTitle !== undefined;
     const hasDescription = seoDescription !== undefined;
@@ -643,14 +643,14 @@ export class ShopifyContentService {
         if (!hasTitle) seo.title = currentSeo.title ?? undefined;
         if (!hasDescription) seo.description = currentSeo.description ?? undefined;
       } catch (error: unknown) {
-        // On lookup failure carry the client's value of the missing half (it never sends one half alone: that
-        // would clear the other); without one, drop the missing side (JSON.stringify omits undefined).
-        loggers.translation('warn', '[buildPreservedSeo] Failed to fetch current SEO for preservation', {
+        // The other half cannot be read: NOTHING is saved. The old stand-ins (the editor's value of the
+        // half, or dropping it) either overwrote Shopify's value with an older one or sent one half alone,
+        // which may clear the other. The caller answers a refusal the merchant can retry.
+        loggers.translation('warn', '[buildPreservedSeo] Other SEO half unreadable, save refused', {
           resourceGid,
           error: error instanceof Error ? error.message : String(error),
         });
-        if (!hasTitle) seo.title = fallback?.title;
-        if (!hasDescription) seo.description = fallback?.description;
+        throw new SeoOtherHalfUnreadableError();
       }
     }
 
@@ -1155,8 +1155,6 @@ export class ShopifyContentService {
      *  translations it would mark stale), and an attribute edit must not be
      *  dropped just because the save also starts a translation. */
     changedAttributeFields?: string[];
-    /** The client's unchanged SEO halves (not written themselves): the fallback of a one-sided SEO write. */
-    seoFallback?: { title?: string; description?: string };
     /**
      * Market scope for this save. "" (or undefined) = global (applies to all
      * markets, legacy behaviour). Non-empty = gid://shopify/Market/<id>, saving a
@@ -1731,7 +1729,14 @@ export class ShopifyContentService {
         });
       } else if (resourceType === 'Collection') {
         // Preserve the untouched SEO half on partial saves (see buildPreservedSeo).
-        const preservedSeo = await this.buildPreservedSeo(resourceId, updates.seoTitle, updates.metaDescription, params.seoFallback);
+        let preservedSeo: Awaited<ReturnType<ShopifyContentService['buildPreservedSeo']>>;
+        try {
+          preservedSeo = await this.buildPreservedSeo(resourceId, updates.seoTitle, updates.metaDescription);
+        } catch (seoError: unknown) {
+          // Nothing has been written yet: the refusal leaves the collection as it was.
+          if (seoError instanceof SeoOtherHalfUnreadableError) return seoOtherHalfRefusalBody();
+          throw seoError;
+        }
         updatedResource = await this.updateCollection(resourceId, {
           title: updates.title,
           handle: updates.handle,

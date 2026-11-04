@@ -858,26 +858,52 @@ describe("response shapes the client reads", () => {
 // ---------------------------------------------------------------------------
 describe("one-sided SEO save (the other half is a passenger the server did not write)", () => {
   const sentSeo = (w: ReturnType<typeof installAdmin>) => w.of("productUpdate")[0].variables.input.seo;
-  const fallback = JSON.stringify({ title: "T-client" });
+  // A stale editor value of the unchanged half: it must NEVER reach Shopify any more.
+  const staleEditorHalf = JSON.stringify({ title: "T-client" });
 
   it("normal path: the other half comes from the fresh read", async () => {
     const w = installAdmin();
     makeDb();
-    await savePrimary(w.admin, { metaDescription: "D-new", seoFallback: fallback, changedFields: JSON.stringify(["metaDescription"]) });
+    await savePrimary(w.admin, { metaDescription: "D-new", changedFields: JSON.stringify(["metaDescription"]) });
     expect(sentSeo(w)).toEqual({ title: "T-live", description: "D-new" });
   });
 
-  it("the read throws: the client's value of that half is carried, never one half alone", async () => {
+  it("the read throws: NOTHING is saved and the answer is the structured refusal (no editor-value fallback)", async () => {
     const w = installAdmin({ seoRead: () => { throw new Error("throttled"); } });
     makeDb();
-    await savePrimary(w.admin, { metaDescription: "D-new", seoFallback: fallback, changedFields: JSON.stringify(["metaDescription"]) });
-    expect(sentSeo(w)).toEqual({ title: "T-client", description: "D-new" });
+    const result = body(await savePrimary(w.admin, { metaDescription: "D-new", seoFallback: staleEditorHalf, changedFields: JSON.stringify(["metaDescription"]) }));
+    expect(w.of("productUpdate")).toHaveLength(0);
+    expect(result).toMatchObject({ success: false, errorKey: "seoOtherHalfUnreadable", error: "seoOtherHalfUnreadable" });
   });
 
-  it("the read answers null data: the client's value of that half is carried", async () => {
+  it("the read answers null data: nothing is saved, refusal", async () => {
     const w = installAdmin({ seoRead: () => ({ data: null }) });
     makeDb();
-    await savePrimary(w.admin, { metaDescription: "D-new", seoFallback: fallback, changedFields: JSON.stringify(["metaDescription"]) });
-    expect(sentSeo(w)).toEqual({ title: "T-client", description: "D-new" });
+    const result = body(await savePrimary(w.admin, { metaDescription: "D-new", changedFields: JSON.stringify(["metaDescription"]) }));
+    expect(w.of("productUpdate")).toHaveLength(0);
+    expect(result.errorKey).toBe("seoOtherHalfUnreadable");
+  });
+
+  it("a refused one-sided save also refuses the other half's direction (title only)", async () => {
+    const w = installAdmin({ seoRead: () => ({ data: { product: null } }) });
+    makeDb();
+    const result = body(await savePrimary(w.admin, { seoTitle: "T-new", changedFields: JSON.stringify(["seoTitle"]) }));
+    expect(w.of("productUpdate")).toHaveLength(0);
+    expect(result.success).toBe(false);
+  });
+
+  it("an EMPTY other half in Shopify is not sent as an empty string either", async () => {
+    const w = installAdmin({ seoRead: () => ({ data: { product: { seo: { title: null, description: null } } } }) });
+    makeDb();
+    await savePrimary(w.admin, { metaDescription: "D-new", changedFields: JSON.stringify(["metaDescription"]) });
+    expect(JSON.stringify(sentSeo(w))).not.toContain('""');
+  });
+
+  it("a full save (both halves) does not read at all and cannot be refused", async () => {
+    const w = installAdmin({ seoRead: () => { throw new Error("must not be asked"); } });
+    makeDb();
+    const result = body(await savePrimary(w.admin, { seoTitle: "T", metaDescription: "D", changedFields: JSON.stringify(["seoTitle", "metaDescription"]) }));
+    expect(result.success).toBe(true);
+    expect(sentSeo(w)).toEqual({ title: "T", description: "D" });
   });
 });

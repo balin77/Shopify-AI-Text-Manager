@@ -41,6 +41,11 @@ export function translateErrorMessage(errorMessage: string, t: TranslationString
     return errors?.reauthorizeRequired || "Shopify asks you to confirm the app's access again. Please reload the page and approve the request.";
   }
 
+  // A one-sided SEO save whose other half could not be read: nothing was saved, the text stays a draft.
+  if (errorMessage === "seoOtherHalfUnreadable") {
+    return taskErrorText(errorMessage, t) ?? errorMessage;
+  }
+
   // The image an alt-text action named no longer exists on the product.
   if (errorMessage === "Image not found on this product") {
     const im = (t as unknown as { imageManager?: Record<string, string> }).imageManager;

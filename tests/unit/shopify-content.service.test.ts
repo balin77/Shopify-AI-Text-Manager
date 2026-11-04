@@ -317,6 +317,17 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
       ...over,
     });
 
+  it('a one-sided SEO save whose other half cannot be read writes NOTHING and answers the structured refusal', async () => {
+    // getSeo answers like the rest of the mock (no `node`): the half cannot be read.
+    const result: any = await save({ updates: { metaDescription: 'D-new' }, changedFields: ['metaDescription'], changedAltTextIndices: undefined });
+
+    expect(result).toMatchObject({ success: false, error: 'seoOtherHalfUnreadable', errorKey: 'seoOtherHalfUnreadable' });
+    const sent = admin.graphql.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(sent.filter((q: string) => q.includes('collectionUpdate'))).toHaveLength(0);
+    expect(db.collection.update).not.toHaveBeenCalled();
+    expect(removeAcrossLocales.calls).toHaveLength(0);
+  });
+
   it('removes the alt translation on the IMAGE resource, not on the parent', async () => {
     await save();
 
@@ -1910,17 +1921,17 @@ describe('ShopifyContentService.buildPreservedSeo()', () => {
     expect(seo).toEqual({ title: 'keep me', description: 'new description' });
   });
 
-  it('DROPS the missing side when the lookup fails — never sends ""', async () => {
-    // The subtle case: `""` would clear the field, while an omitted key leaves
-    // it untouched. Erring towards "change nothing" is the only safe direction
-    // when we could not find out what is there.
+  it('REFUSES (throws the typed error) when the lookup fails - never sends one half or "" ', async () => {
     const admin = { graphql: vi.fn().mockRejectedValue(new Error('throttled')) };
     const service = new ShopifyContentService(admin);
 
-    const seo = await service.buildPreservedSeo(productId, 'new title', undefined);
+    await expect(service.buildPreservedSeo(productId, 'new title', undefined)).rejects.toMatchObject({ code: 'seoOtherHalfUnreadable' });
+  });
 
-    expect(seo).toEqual({ title: 'new title', description: undefined });
-    expect(JSON.stringify(seo)).not.toContain('description');
+  it('REFUSES when the answer carries no node (a throttled null body)', async () => {
+    const service = new ShopifyContentService(adminWithSeo(null));
+
+    await expect(service.buildPreservedSeo(productId, undefined, 'D')).rejects.toMatchObject({ code: 'seoOtherHalfUnreadable' });
   });
 
   it('treats a resource with no SEO set the same way — omit, not clear', async () => {

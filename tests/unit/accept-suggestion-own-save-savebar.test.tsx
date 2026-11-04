@@ -170,6 +170,30 @@ describe("accepting an AI suggestion saves the field without a save bar", () => 
     expect(h.editor.current.state.hasChanges).toBe(true);
   });
 
+  it.each([
+    ["products", "metaDescription"],
+    ["products", "seoTitle"],
+    ["collections", "metaDescription"],
+  ] as const)(
+    "%s %s: the server could not read the other SEO half -> refusal worded as try-again, the accepted text stays a draft",
+    async (kind, field) => {
+      const h = mount(kind);
+      await tick(50);
+      await accept(h, "de", field, "Neu von der KI");
+
+      await h.respond({ success: false, actionType: "updateContent", error: "seoOtherHalfUnreadable", errorKey: "seoOtherHalfUnreadable" });
+      await tick(50);
+      // The typed/accepted text is kept in the field and still reads as unsaved.
+      expect(h.editor.current.state.editableValues[field]).toBe("Neu von der KI");
+      expect(h.editor.current.state.hasChanges).toBe(true);
+      // The merchant is told to try again - the text, not the raw code.
+      const critical = h.showInfoBox.mock.calls.filter(([, tone]) => tone === "critical").map(([m]) => String(m));
+      expect(critical).toHaveLength(1);
+      expect(critical[0]).toMatch(/try again/i);
+      expect(critical[0]).not.toContain("seoOtherHalfUnreadable");
+    },
+  );
+
   it("typing over the accepted text while it is being saved is a draft again", async () => {
     const h = mount("products");
     await tick(50);

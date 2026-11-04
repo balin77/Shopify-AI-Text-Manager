@@ -2433,6 +2433,8 @@ export const en: Translation = {
       someFailed: "Some entries could not be processed — open the task for details.",
       handleRedirectsMissing:
         "{count} URL handle(s) were re-translated, but no redirect could be created for the previous address — add it under URL redirects, or old links will lead nowhere.",
+      seoOtherHalfUnreadable:
+        "The other half of the SEO text (title or description) could not be read from Shopify, so nothing was saved. Your text is kept - please try again.",
       translationsNotMirrored:
         "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
       autoTranslateDailyLimit:

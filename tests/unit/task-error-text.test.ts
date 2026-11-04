@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { taskErrorText } from "~/utils/task-error-text";
+import { translateErrorMessage } from "~/utils/editor-error-messages";
 import { de } from "~/i18n/de";
 import { en } from "~/i18n/en";
 import { es } from "~/i18n/es";
@@ -234,5 +235,18 @@ describe("taskErrorText — the runners' counted codes", () => {
         expect(String(t.tasks[key]).trim(), `${name}.${key}`).not.toBe("");
       }
     }
+  });
+});
+
+describe("seoOtherHalfUnreadable: a refused one-sided SEO save is worded, never shown as the raw code", () => {
+  it.each([
+    ["de", de, /nochmals/],
+    ["en", en, /try again/],
+    ["es", es, /inténtalo de nuevo/],
+  ] as const)("%s: the Task panel text and the editor's text say 'try again'", (_l, t, pattern) => {
+    const text = taskErrorText("seoOtherHalfUnreadable", t);
+    expect(text).toMatch(pattern);
+    expect(text).not.toContain("seoOtherHalfUnreadable");
+    expect(translateErrorMessage("seoOtherHalfUnreadable", t as never)).toBe(text);
   });
 });

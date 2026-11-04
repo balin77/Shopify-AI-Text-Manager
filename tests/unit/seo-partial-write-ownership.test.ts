@@ -54,14 +54,14 @@ describe('partial SEO writes go through the one merge', () => {
     expect(src).not.toMatch(/private async buildPreservedSeo\(/);
   });
 
-  it('and it still refuses to send "" for a side it could not read', () => {
+  it('and when it cannot read the other half it REFUSES: no fallback value, no one-sided send', () => {
     const src = read('src/services/shopify-content.service.ts');
     const body = src.slice(src.indexOf('async buildPreservedSeo('));
     const failure = body.slice(body.indexOf('catch'), body.indexOf('return seo;'));
-    // The client's value of the unchanged half (undefined where it sent none: dropped by
-    // JSON.stringify, leaves Shopify's value alone); `''` would clear it.
-    expect(failure).toMatch(/seo\.title = fallback\?\.title/);
-    expect(failure).toMatch(/seo\.description = fallback\?\.description/);
+    expect(failure).toMatch(/throw new SeoOtherHalfUnreadableError\(\)/);
+    expect(failure).not.toMatch(/fallback/);
     expect(failure).not.toMatch(/= ''|= ""/);
+    expect(read('app/actions/product/update.actions.ts')).not.toMatch(/seoFallback/);
+    expect(read('app/actions/content/content-update.action.ts')).not.toMatch(/seoFallback/);
   });
 });

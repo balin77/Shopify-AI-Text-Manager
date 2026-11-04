@@ -320,3 +320,51 @@ describe('a managed-AI refusal stops the run', () => {
     expect(Object.keys(updateContent.mock.calls[0][0].updates)).toHaveLength(1);
   });
 });
+
+// A one-sided SEO write (the bulk fix writes one SEO half per finding) whose other half cannot be
+// read is REFUSED by the writer (seo-half-refusal.shared.ts). That refusal fails THAT item only,
+// with the machine code the Task panel words ("please try again"); the other items are still written.
+describe('an item whose other SEO half could not be read is refused alone', () => {
+  const refusal = { success: false, error: 'seoOtherHalfUnreadable', errorKey: 'seoOtherHalfUnreadable' };
+
+  it('collections: item 2 refused, items 1 and 3 written, the refusal is reported per item', async () => {
+    const ids = ['gid://shopify/Collection/1', 'gid://shopify/Collection/2', 'gid://shopify/Collection/3'];
+    analyzeStore.mockResolvedValue({
+      problems: [{ code: 'metaDescriptionMissing', items: ids.map((id) => ({ id, type: 'collection' })) }],
+    });
+    updateContent.mockImplementation(async (p: any) => (p.resourceId === ids[1] ? refusal : { success: true }));
+    const { db, taskUpdates } = makeDb(ids);
+    await handleSeoBulkFix(ctxFor(db, { problemCode: 'metaDescriptionMissing' }));
+    const final = await finalUpdate(taskUpdates);
+
+    expect(updateContent).toHaveBeenCalledTimes(3);
+    const result = JSON.parse(final.result);
+    expect(result.succeeded.map((s: { id: string }) => s.id)).toEqual([ids[0], ids[2]]);
+    expect(result.failed).toEqual([{ type: 'collection', id: ids[1], error: 'seoOtherHalfUnreadable' }]);
+    expect(final.status).toBe('completed');
+    expect(final.error).toBe('items_failed:1:3');
+  });
+
+  it('products: the same through the product writer', async () => {
+    const ids = ['gid://shopify/Product/1', 'gid://shopify/Product/2'];
+    analyzeStore.mockResolvedValue({
+      problems: [{ code: 'metaDescriptionMissing', items: ids.map((id) => ({ id, type: 'product' })) }],
+    });
+    handleUpdateProduct.mockImplementation(async (_c: unknown, _f: unknown, id: string) =>
+      id === ids[0] ? { data: refusal, init: { status: 503 } } : { data: { success: true }, init: { status: 200 } },
+    );
+    const { db, taskUpdates } = makeDb([]);
+    db.product = {
+      findMany: vi.fn().mockResolvedValue(
+        ids.map((id) => ({ id, title: 'Old', descriptionHtml: '', seoTitle: '', seoDescription: '' })),
+      ),
+    };
+    await handleSeoBulkFix(ctxFor(db, { problemCode: 'metaDescriptionMissing' }));
+    const final = await finalUpdate(taskUpdates);
+
+    expect(handleUpdateProduct).toHaveBeenCalledTimes(2);
+    const result = JSON.parse(final.result);
+    expect(result.succeeded).toEqual([{ type: 'product', id: ids[1] }]);
+    expect(result.failed).toEqual([{ type: 'product', id: ids[0], error: 'seoOtherHalfUnreadable' }]);
+  });
+});

@@ -170,34 +170,45 @@ describe("handleUpdateContent: passengers are not written", () => {
   });
 });
 
-describe("the SEO fallback: an unchanged SEO half the server did not write", () => {
-  it("is handed to the writers so a one-sided SEO write never goes out alone", async () => {
+describe("the unchanged SEO half is a passenger and no fallback value travels any more", () => {
+  it("neither writer is handed the editor's copy of the unchanged half", async () => {
     const updateContent = vi.fn(async () => ({ success: true }));
     await handleUpdateContent(
       ctx(COLLECTIONS_CONFIG, "gid://shopify/Collection/1", updateContent),
       form({ seoTitle: "T-client", metaDescription: "M", changedFields: JSON.stringify(["metaDescription"]), passengerFields: JSON.stringify(["seoTitle"]) }),
     );
-    const arg = (updateContent.mock.calls[0] as unknown[])[0] as { updates: Record<string, string>; seoFallback: Record<string, string> };
+    const arg = (updateContent.mock.calls[0] as unknown[])[0] as { updates: Record<string, string>; seoFallback?: unknown };
     expect(arg.updates).toEqual({ metaDescription: "M" });
-    expect(arg.seoFallback).toEqual({ title: "T-client" });
+    expect("seoFallback" in arg).toBe(false);
 
     await handleUpdateContent(
       ctx(PRODUCTS_CONFIG, "gid://shopify/Product/1", vi.fn()),
       form({ seoTitle: "T-client", metaDescription: "M", changedFields: JSON.stringify(["metaDescription"]), passengerFields: JSON.stringify(["seoTitle"]) }),
     );
-    expect(JSON.parse(String(productForm!.get("seoFallback")))).toEqual({ title: "T-client" });
+    expect(productForm!.has("seoFallback")).toBe(false);
+  });
+
+  it("a collection save the writer REFUSES (other half unreadable) comes back as the structured refusal", async () => {
+    const refusal = { success: false, error: "seoOtherHalfUnreadable", errorKey: "seoOtherHalfUnreadable" };
+    const updateContent = vi.fn(async () => refusal);
+    const res: any = await handleUpdateContent(
+      ctx(COLLECTIONS_CONFIG, "gid://shopify/Collection/1", updateContent),
+      form({ seoTitle: "T-client", metaDescription: "M", changedFields: JSON.stringify(["metaDescription"]), passengerFields: JSON.stringify(["seoTitle"]) }),
+    );
+    const payload = res?.data ?? res;
+    expect(payload).toMatchObject({ success: false, errorKey: "seoOtherHalfUnreadable", actionType: "updateContent" });
   });
 });
 
 describe("buildPreservedSeo (collections)", () => {
   const make = (answer: () => unknown) =>
     new ShopifyContentService({ graphql: async () => ({ json: async () => answer() }) } as never);
-  it("throws -> carries the client's half; null node -> same; fresh read -> the live half", async () => {
-    expect(await make(() => { throw new Error("x"); }).buildPreservedSeo("gid://c/1", undefined, "D", { title: "T-client" }))
-      .toEqual({ title: "T-client", description: "D" });
-    expect(await make(() => ({ data: null })).buildPreservedSeo("gid://c/1", undefined, "D", { title: "T-client" }))
-      .toEqual({ title: "T-client", description: "D" });
-    expect(await make(() => ({ data: { node: { seo: { title: "T-live", description: "x" } } } })).buildPreservedSeo("gid://c/1", undefined, "D", { title: "T-client" }))
+  it("throws / null node -> the typed refusal (no fallback); fresh read -> the live half", async () => {
+    await expect(make(() => { throw new Error("x"); }).buildPreservedSeo("gid://c/1", undefined, "D"))
+      .rejects.toMatchObject({ code: "seoOtherHalfUnreadable" });
+    await expect(make(() => ({ data: null })).buildPreservedSeo("gid://c/1", undefined, "D"))
+      .rejects.toMatchObject({ code: "seoOtherHalfUnreadable" });
+    expect(await make(() => ({ data: { node: { seo: { title: "T-live", description: "x" } } } })).buildPreservedSeo("gid://c/1", undefined, "D"))
       .toEqual({ title: "T-live", description: "D" });
   });
 });

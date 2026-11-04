@@ -2435,6 +2435,8 @@ export const de = {
       someFailed: "Einige Einträge konnten nicht verarbeitet werden — Details stehen in der Aufgabe.",
       handleRedirectsMissing:
         "{count} URL-Handle(s) wurden neu übersetzt, aber für die bisherige Adresse konnte keine Weiterleitung angelegt werden — lege sie unter URL-Weiterleitungen an, sonst führen alte Links ins Leere.",
+      seoOtherHalfUnreadable:
+        "Die andere Hälfte des SEO-Texts (Titel oder Beschreibung) konnte nicht aus Shopify gelesen werden, deshalb wurde nichts gespeichert. Dein Text bleibt erhalten – bitte versuche es nochmals.",
       translationsNotMirrored:
         "{count} Übersetzung(en) wurden bei Shopify gespeichert, konnten aber nicht in den Cache dieser App geschrieben werden — lade den Eintrag neu, damit sie hier erscheinen.",
       autoTranslateDailyLimit:

@@ -67,6 +67,8 @@ const FALLBACK: Record<string, string> = {
   someFailed: "Some entries could not be processed — open the task for details.",
   translationsNotMirrored:
     "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
+  seoOtherHalfUnreadable:
+    "The other half of the SEO text (title or description) could not be read from Shopify, so nothing was saved. Your text is kept - please try again.",
   translationsNoneUsable: "The automatic re-translation produced no usable translation.",
   managedAiBudgetExceeded:
     "The AI volume included in your plan is used up for this period. Nothing was changed — your translations were left as they are.",
@@ -170,6 +172,10 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
     // Nothing the AI returned could be registered — a provider error, an empty
     // answer, an echo that never came. Its own code rather than a count: zero
     // of zero says nothing a merchant can act on.
+    // A one-sided SEO save whose other half could not be read (seo-half-refusal.shared.ts): nothing was
+    // saved. The SAME code is the editor's error text and a bulk run's per-item failure.
+    case "seoOtherHalfUnreadable":
+      return phrase(t, "seoOtherHalfUnreadable");
     case "translations_none_usable":
       return phrase(t, "translationsNoneUsable");
     // The brake on first translations proven by the primary digest baseline
