@@ -460,7 +460,9 @@ export function applyMainOnlyRule(plan: VariantWritePlan, input: PlanVariantWrit
     // unknown count: an entry in effect is untouched, even when the editor sent an empty order
     return { ...plan, order: lk.order! };
   }
-  if (count === 1 && (effMainOnly || (plan.order && entries.length > 0))) {
+  // exactly one variant: with no gallery image left, ANY order of files only is stale (a stored [M, X] with X
+  // removed would still show only M), so it is deleted
+  if (count === 1 && (effMainOnly || entries.length > 0)) {
     const { order: _order, ...rest } = plan;
     return lk.order || input.clientOrderJson ? { ...rest, clearOrder: true } : rest;
   }

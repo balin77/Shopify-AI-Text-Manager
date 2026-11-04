@@ -1992,6 +1992,7 @@ export const de = {
     mediaNotDroppable: "Ein 3D-Modell oder ein externes Video lässt sich nicht in die Bildergalerie einer Variante ziehen. Füge es über das Plus der Variantengalerie hinzu.",
     mainMoveNotSaved: "Das Hauptbild wurde nicht verschoben: Eine der beiden beteiligten Varianten konnte nicht gespeichert werden, deshalb blieb keine der beiden verändert. Lade das Produkt neu und wiederhole das Verschieben bei Bedarf.",
     mainMoveSaveFirst: "Speichere zuerst die ausstehenden Hauptbild-Änderungen dieser Varianten und verschiebe das Hauptbild danach.",
+    mainMoveInvalid: "Das Verschieben des Hauptbilds konnte nicht gespeichert werden, weil die beiden Varianten nicht mehr zusammenpassen. Es wurde nichts geändert. Verwirf die ausstehenden Bildänderungen und wiederhole das Verschieben.",
     mainNotNameable: "Dieses Hauptbild kann gerade nicht eindeutig bestimmt werden. Lade das Produkt neu und versuche es erneut.",
     uploadFailedFiles: "Upload fehlgeschlagen für: {files}. Diese Dateien wurden nicht hinzugefügt.",
     altImageNotFound: "Dieses Bild wurde am Produkt nicht mehr gefunden (es wird evtl. noch hochgeladen oder wurde gelöscht). Lade die Seite neu und versuche es erneut.",

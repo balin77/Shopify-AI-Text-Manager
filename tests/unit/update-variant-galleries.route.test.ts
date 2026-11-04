@@ -1013,6 +1013,31 @@ describe("review fixes (route)", () => {
   });
 });
 
+describe("second review fixes (route)", () => {
+  it("M-a: ONE variant, stored [M, X], X removed: the stale multi-file order is deleted (the storefront would show only M)", async () => {
+    const stale = JSON.stringify([{ kind: "file", value: img(1) }, { kind: "file", value: img(2) }]);
+    variants = { [V1]: { main: img(1), gallery: [img(2)], order: stale } };
+    const res = await post({
+      variantGalleries: [{ variantId: V1, fileGids: [], galleryOnly: true, expectedMainGid: img(1) }],
+      variantGalleryOrder: [{ variantId: V1, orderJson: stale }],
+    });
+    expect(res.success).toBe(true);
+    expect(orderOf(bulk()![0])).toBeUndefined();
+    expect(calls.find((c) => c.name === "metafieldsDelete")?.variables.metafields).toEqual([{ ownerId: V1, namespace: "custom", key: "variant_gallery_order" }]);
+  });
+
+  it("a malformed move answers a worded error code (the editor words it, never the raw English)", async () => {
+    const res = await post({
+      removedMainImages: [{ variantId: V1, removedMainGid: img(1) }],
+      variantGalleries: [{ variantId: V2, fileGids: [img(4)], galleryOnly: true, expectedMainGid: img(4) }],
+      mainMoves: [{ gid: img(1), sourceVariantId: V1, sourceExpectedMainGid: img(1), targetVariantId: V2, targetExpectedMainGid: img(4), targetPosition: 1 }],
+    });
+    expect(res.success).toBe(false);
+    expect(res.errorCode).toBe("mainMoveInvalid");
+    expect((await post({ mainMoves: "x" })).errorCode).toBe("mainMoveInvalid");
+  });
+});
+
 describe("review round: a failed or refused save never makes the next Save upload the media again", () => {
   const NEW = [{ resourceUrl: "https://staged/x.jpg", kind: "image" }];
 

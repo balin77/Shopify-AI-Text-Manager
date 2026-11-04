@@ -1554,6 +1554,12 @@ export function VariantImageManager({
   useEffect(() => {
     if (effectiveMoves.length !== pendingMoves.length) setPendingMoves(effectiveMoves);
   }, [effectiveMoves, pendingMoves]);
+  /** THE guard of a pending move: while a variant is part of one, every gesture that would change the
+   *  main image of either side (a drag to / away from the first slot, a removal or delete of its main
+   *  image, dragging the moved image onward) is refused with "save first". Without it the request would
+   *  contradict its own move statement and every Save would be refused until Discard. */
+  const inPendingMove = (variantId: string): boolean =>
+    effectiveMoves.some(m => m.sourceVariantId === variantId || m.targetVariantId === variantId);
 
   /** An image that could move up as a variant's main image: any MediaImage. A library image
    *  the product does not hold yet is attached by the server on the save (fileUpdate) before
@@ -2153,6 +2159,7 @@ export function VariantImageManager({
             setMediaError(drag.reason === "onlyImage" ? t.imageManager.mainOnlyImage : t.imageManager.mainFirstNeedsImage);
             return;
           }
+          if (drag.newMain && inPendingMove(sourceContainerId)) { setMediaError(t.imageManager.mainMoveSaveFirst); return; }
           // Only this drag's own refusal is cleared, never an unrelated error.
           setMediaError(cur => (cur === t.imageManager.mainOnlyImage || cur === t.imageManager.mainFirstNeedsImage ? null : cur));
           const moved = drag.order;
@@ -2223,12 +2230,14 @@ export function VariantImageManager({
         // alt-text dirty flag is not this drag's business.
         const mainGid = sourceVariant ? mainGidOfVariant(sourceVariant) : undefined;
         if (!mainGid) { setMediaError(t.imageManager.mainNotNameable); return; }
+        if (inPendingMove(sourceContainerId)) { setMediaError(t.imageManager.mainMoveSaveFirst); return; }
         setRemovedMains(prev => ({ ...prev, [sourceContainerId]: mainGid }));
         return;
       }
       const sourceCurrent = pendingVariantGalleries[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
       const gidToRemove = sourceCurrent.find(g => fileUrlMap[g] === url);
       if (!gidToRemove) return;
+      if (effectiveMoves.some(m => m.targetVariantId === sourceContainerId && m.gid === gidToRemove)) { setMediaError(t.imageManager.mainMoveSaveFirst); return; }
       setPendingMains(p => (p[sourceContainerId]?.gid === gidToRemove ? Object.fromEntries(Object.entries(p).filter(([k]) => k !== sourceContainerId)) : p));
       setPendingVariantGalleries(p => ({
         ...p,
@@ -2265,14 +2274,31 @@ export function VariantImageManager({
       // removal would strip (the image would be on no variant). Plain: it leaves the other gallery;
       // Ctrl/Cmd (copy): the other gallery keeps it.
       if (effectiveRemovals[targetContainerId] === gid) {
+        // (the dragged tile is another variant's stored MAIN image: nothing to take out of its list, so the
+        // plain gesture would only copy; refused instead of guessed at)
+        if (!isCtrlHeldRef.current && isStoredMainTile) { setMediaError(t.imageManager.mainMoveSaveFirst); return; }
         setRemovedMains(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== targetContainerId)));
         if (!isCtrlHeldRef.current) {
           setPendingMains(p => (p[sourceContainerId]?.gid === gid ? Object.fromEntries(Object.entries(p).filter(([k]) => k !== sourceContainerId)) : p));
-          setPendingVariantGalleries(p => {
-            const sv = variants.find(v => v.id === sourceContainerId);
-            return { ...p, [sourceContainerId]: (p[sourceContainerId] ?? sv?.galleryFileGids ?? []).filter(g => g !== gid) };
-          });
+          // The other gallery loses the image through the ONE reorder path, so a gallery that ends up as
+          // stored leaves no pending write behind.
+          const { variantUrls: srcUrls, externalSet: srcExternal, modelSet: srcModels } = orderedVariantTiles(sourceContainerId);
+          const goneUrl = fileUrlMap[gid] ?? url;
+          const refs = srcUrls.filter(u => u !== goneUrl).map(u => ((srcExternal.has(u) || srcModels.has(u)) ? u : fileRefOfUrl(u)));
+          if (refs.every(r => !!r)) {
+            handleVariantReorder(sourceContainerId, refs as string[], null);
+          } else {
+            setPendingVariantGalleries(p => {
+              const sv = variants.find(v => v.id === sourceContainerId);
+              return { ...p, [sourceContainerId]: (p[sourceContainerId] ?? sv?.galleryFileGids ?? []).filter(g => g !== gid) };
+            });
+          }
         }
+        return;
+      }
+      // The moved image dragged ONWARD to a third variant would drop its coupling: refused (undo = back to the source).
+      if (!isCtrlHeldRef.current && effectiveMoves.some(m => m.targetVariantId === sourceContainerId && m.gid === gid)) {
+        setMediaError(t.imageManager.mainMoveSaveFirst);
         return;
       }
       if (!isCtrlHeldRef.current && isStoredMainTile) {
@@ -2758,6 +2784,13 @@ export function VariantImageManager({
   const handleRemoveFromGallery = useCallback((variantId: string, urls: string[]) => {
     const urlSet = new Set(urls);
     const variant = variants.find(v => v.id === variantId);
+    // Removing the main image of a variant in a pending move (or the moved image itself) is refused.
+    if (inPendingMove(variantId) && (
+      (!!variant?.defaultImageUrl && urlSet.has(variant.defaultImageUrl)) ||
+      effectiveMoves.some(m => m.targetVariantId === variantId && urlSet.has(fileUrlMap[m.gid] ?? "")))) {
+      setMediaError(t.imageManager.mainMoveSaveFirst);
+      return;
+    }
 
     // If the variant's main image (injected at position 0) is among the removed URLs,
     // mark it as locally excluded so Shopify's mediaId gets cleared on save.
@@ -2865,7 +2898,7 @@ export function VariantImageManager({
       urls.forEach(u => next.delete(`${variantId}::${u}`));
       return next;
     });
-  }, [variants, fileUrlMap, urlToGid, t, effectivePendingMains, effectiveRemovals, pendingVariantGalleries, onGalleryOrderChange, isPromotable, pendingVariant3dModels, onExternalVideosChange, onThreeDModelsChange, onThreeDPreviewsChange]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [variants, fileUrlMap, urlToGid, t, effectivePendingMains, effectiveRemovals, effectiveMoves, pendingVariantGalleries, onGalleryOrderChange, isPromotable, pendingVariant3dModels, onExternalVideosChange, onThreeDModelsChange, onThreeDPreviewsChange]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const productSelectedUrls = useMemo(() => {
     const urls: string[] = [];
@@ -2891,6 +2924,12 @@ export function VariantImageManager({
     const gidSet = new Set(gids);
     const startedProductId = productId;
     const switchedAway = () => productIdRef.current !== startedProductId;
+    // Deleting the main image of a variant in a pending move is refused before anything is sent.
+    if (variants.some(v => inPendingMove(v.id) && !!v.defaultImageUrl && urlSet.has(v.defaultImageUrl))) {
+      setDeleteConfirm(null);
+      setMediaError(t.imageManager.mainMoveSaveFirst);
+      return;
+    }
 
     setIsDeleting(true);
     setDeleteConfirm(null);
@@ -3205,7 +3244,7 @@ export function VariantImageManager({
       deletedAltLookup,
     );
     setIsDeleting(false);
-  }, [deleteConfirm, urlToGid, fileUrlMap, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, pendingGalleryOrder, pendingExternalVideos, pendingVariant3dModels, effectivePendingMains, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t, fetchVariantsForProduct]);
+  }, [deleteConfirm, urlToGid, fileUrlMap, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, pendingGalleryOrder, pendingExternalVideos, pendingVariant3dModels, effectivePendingMains, effectiveMoves, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t, fetchVariantsForProduct]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;

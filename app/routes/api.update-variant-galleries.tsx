@@ -391,7 +391,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // FAILED, the metafield/mediaId points at an invalid media and this route
   // does not detect it (no status poll) — left to the webhook drift-reconcile.
   const completedSteps: string[] = [];
-  const fail = (refusals: Array<{ variantId: string; code: MainRefusal }> = []) => {
+  const fail = (refusals: Array<{ variantId: string; code: MainRefusal }> = [], errorCode?: string) => {
     console.error("[update-variant-galleries] aborting with errors", {
       errors,
       completedSteps,
@@ -401,7 +401,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
     // Media created before the failure are reported with it, so a second Save converts the staged
     // references to these GIDs instead of uploading every new medium again.
-    return json({ success: false, errors, completedSteps, refusals, createdMedia: createdMediaList() }, { status: 422 });
+    return json({ success: false, errors, completedSteps, refusals, createdMedia: createdMediaList(), ...(errorCode ? { errorCode } : {}) }, { status: 422 });
   };
   const createdMediaList = () =>
     newMedia
@@ -432,7 +432,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // consistent with each other. A malformed one is a client bug or a direct POST; nothing is done for it.
   if (rawMoves !== undefined && rawMoves !== null && !Array.isArray(rawMoves)) {
     errors.push("mainMoves: must be an array; nothing was uploaded and nothing was written");
-    return fail();
+    return fail([], "mainMoveInvalid");
   }
   if (mainMoves.length > 0) {
     const views = new Map<string, { fileGids: readonly string[] | null; removedMainGid: string | null; mainGid: string | null }>();
@@ -446,7 +446,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const moveErrors = validateMainMoves(mainMoves, views);
     if (moveErrors.length > 0) {
       errors.push(...moveErrors, "nothing was uploaded and nothing was written");
-      return fail();
+      return fail([], "mainMoveInvalid");
     }
   }
 

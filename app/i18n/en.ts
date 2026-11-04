@@ -1991,6 +1991,7 @@ export const en: Translation = {
     mediaNotDroppable: "A 3D model or an external video cannot be dragged into a variant's image gallery. Add it through the plus of the variant gallery instead.",
     mainMoveNotSaved: "The main image was not moved: one of the two variants involved could not be saved, so neither variant was changed. Reload the product and repeat the move if needed.",
     mainMoveSaveFirst: "Save the pending main image changes of these variants first, then move the main image.",
+    mainMoveInvalid: "The main image move could not be saved because the two variants no longer fit together. Nothing was changed. Discard the pending image changes and repeat the move.",
     mainNotNameable: "This main image cannot be identified right now. Reload the product and try again.",
     uploadFailedFiles: "Upload failed for: {files}. These files were not added.",
     altImageNotFound: "This image could not be found on the product any more (it may still be uploading or was deleted). Reload the page and try again.",

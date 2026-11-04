@@ -350,6 +350,7 @@ export function useVariantImageManager() {
             if (c?.resourceUrl && c.mediaId) createdByFailedSaveRef.current[c.resourceUrl] = { mediaId: c.mediaId, kind: c.kind ?? "image" };
           }
         }
+        if (data.errorCode === "mainMoveInvalid") return { error: t.imageManager.mainMoveInvalid, warning: null };
         const refused = refusalText(data.refusals);
         if (refused.length > 0) return { error: refused.join(" "), warning: null };
         if (Array.isArray(data.errors)) return { error: (data.errors as string[]).join(", "), warning: null };

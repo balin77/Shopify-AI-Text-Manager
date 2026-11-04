@@ -247,3 +247,14 @@ describe("point 2: a main-image move", () => {
     expect(calls[0].mainMoves).toEqual([]);
   });
 });
+
+describe("second review: a rejected move is worded", () => {
+  it("errorCode mainMoveInvalid becomes the merchant's text, never the raw English errors", async () => {
+    answer = () => ({ success: false, errors: ["mainMoves[0]: the target does not hold the moved image"], errorCode: "mainMoveInvalid" });
+    const { result } = renderHook(() => useVariantImageManager());
+    let out: any;
+    await act(async () => { out = await result.current.handleApply("gid://shopify/Product/1"); });
+    expect(out.error).toContain("could not be saved");
+    expect(out.error).not.toContain("mainMoves[0]");
+  });
+});

@@ -781,13 +781,14 @@ describe("point 2: a variant's MAIN image dragged onto another variant (plain = 
     expect(grids[V1].mainUrl).toBe(url(1));
   });
 
-  it("the move is only emitted while both sides still stand: undoing the target's gallery ends it, the source removal stays an ordinary removal", async () => {
+  it("taking the moved image out of the target again (Ctrl-drop onto the product gallery) is refused while the move is pending", async () => {
     await mountBoth();
     dragTo({ container: V1, url: url(1) }, { container: V2, url: url(2) });
     await waitFor(() => expect(lastEmission()[4]).toHaveLength(1));
-    // the merchant takes the moved image out of the target again (Ctrl-drop onto the product gallery)
+    onPendingChange.mockClear();
     dragTo({ container: V2, url: url(1) }, { container: "product", url: url(3) }, true);
-    await waitFor(() => expect(lastEmission()[4]).toEqual([]));
+    await screen.findByText(/Save the pending main image changes of these variants first/);
+    expect(onPendingChange).not.toHaveBeenCalled();
   });
 
   it("the editor's REAL emission of a move (slot one and a later slot) is accepted by the route's validation", async () => {
@@ -857,5 +858,82 @@ describe("point 2: a variant's MAIN image dragged onto another variant (plain = 
     dragTo({ container: V2, url: url(4) }, { container: V3, url: url(3) });
     await screen.findByText(/Save the pending main image changes of these variants first/);
     expect(onPendingChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("pending move: ONE guard refuses every gesture that would contradict it", () => {
+  const dragTo = (from: { container: string; url: string }, to: { container: string; url: string }, ctrl = false) =>
+    act(() => {
+      if (ctrl) fireEvent.keyDown(window, { key: "Control" });
+      dnd.onDragEnd?.({
+        active: { id: `${from.container}::${from.url}`, data: { current: { url: from.url, containerId: from.container } } },
+        over: { id: `${to.container}::${to.url}` },
+      });
+      if (ctrl) fireEvent.keyUp(window, { key: "Control" });
+    });
+  const SAVE_FIRST = /Save the pending main image changes of these variants first/;
+  async function moved() {
+    const V3 = "gid://shopify/ProductVariant/3";
+    variantsAnswer = () => {
+      const b = variantsPayload();
+      b.variants[1] = { ...b.variants[1], galleryJson: JSON.stringify([gid(2)]) };
+      b.variants.push({ shopifyGid: V3, title: "Green", sku: "g", position: 3, galleryJson: "[]", image: { url: url(3) }, selectedOptions: [] } as any);
+      return b;
+    };
+    await mount();
+    fireEvent.click(await screen.findByText("Blue"));
+    await waitFor(() => expect(grids[V2]?.imageUrls?.length).toBeGreaterThan(0));
+    dragTo({ container: V1, url: url(1) }, { container: V2, url: url(2) });
+    await waitFor(() => expect(lastEmission()[4]).toHaveLength(1));
+    onPendingChange.mockClear();
+    return V3;
+  }
+
+  it("(1) another image of the SOURCE dragged to its slot one", async () => {
+    await moved();
+    dragTo({ container: V1, url: url(3) }, { container: V1, url: url(2) });
+    await screen.findByText(SAVE_FIRST);
+    expect(onPendingChange).not.toHaveBeenCalled();
+  });
+
+  it("(2) an image dragged to the TARGET's slot one", async () => {
+    await moved();
+    dragTo({ container: V2, url: url(2) }, { container: V2, url: url(4) });
+    await screen.findByText(SAVE_FIRST);
+    expect(onPendingChange).not.toHaveBeenCalled();
+  });
+
+  it("(3) removing the target's old main image", async () => {
+    await moved();
+    act(() => grids[V2].onSelect(url(4), true));
+    fireEvent.click(await screen.findByRole("button", { name: /^Remove \(\d+\)$/ }));
+    await screen.findByText(SAVE_FIRST);
+    expect(onPendingChange).not.toHaveBeenCalled();
+  });
+
+  it("(3b) deleting the target's old main image from the product gallery is refused before anything is sent", async () => {
+    await moved();
+    apiCalls.length = 0;
+    act(() => grids.product.onSelect(url(4), true));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Yes, delete now" }));
+    await screen.findByText(SAVE_FIRST);
+    expect(apiCalls.some((c) => c.path === "/api/delete-product-images")).toBe(false);
+  });
+
+  it("M-b: the moved image dragged ONWARD to a third variant is refused", async () => {
+    await moved();
+    dragTo({ container: V2, url: url(1) }, { container: "gid://shopify/ProductVariant/3", url: url(3) });
+    await screen.findByText(SAVE_FIRST);
+    expect(onPendingChange).not.toHaveBeenCalled();
+  });
+
+  it("move BACK leaves no pending write behind (the source gallery is as stored again)", async () => {
+    await moved();
+    dragTo({ container: V2, url: url(1) }, { container: V1, url: url(2) });
+    await waitFor(() => expect(grids[V1].mainUrl).toBe(url(1)));
+    await waitFor(() => expect(lastEmission()[0]).toEqual([]));
+    expect(lastEmission()[3]).toEqual([]);
+    expect(lastEmission()[4]).toEqual([]);
   });
 });
