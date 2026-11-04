@@ -7,6 +7,7 @@ import {
   backstopOwnSaves,
   hasOwnSaveInFlight,
   type OwnSaveInFlight,
+  isStaleAcceptStep,
 } from "~/services/editor/own-save-in-flight.shared";
 
 const token = {};
@@ -98,5 +99,20 @@ describe("settleUnsentSave (a submit that threw)", () => {
     settleUnsentSave({ partial: token, successToast: "older", inFlightPartialRef: partialRef, inFlightToastRef: toastRef });
     expect(partialRef.current).toBe(newer);
     expect(toastRef.current).toBe("newer");
+  });
+});
+
+describe("isStaleAcceptStep: the idle backstop for a pending primary accept-and-translate step 2", () => {
+  const step1 = { locale: "de" };
+  it("a pending step whose step-1 request is not the one just submitted is stale (no answer is coming)", () => {
+    expect(isStaleAcceptStep({ step1Partial: step1 }, null)).toBe(true);
+    expect(isStaleAcceptStep({ step1Partial: step1 }, { locale: "other" })).toBe(true);
+  });
+  it("the request submitted in THIS effect flush is still on its way", () => {
+    expect(isStaleAcceptStep({ step1Partial: step1 }, step1)).toBe(false);
+  });
+  it("nothing pending, or a pending step without a recorded identity, is never stale", () => {
+    expect(isStaleAcceptStep(null, null)).toBe(false);
+    expect(isStaleAcceptStep({}, null)).toBe(false);
   });
 });

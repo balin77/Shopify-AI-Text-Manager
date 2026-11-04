@@ -354,6 +354,7 @@ export const de = {
     appEmbedReadOnlyHint: "Technisches Element der App-Einbettung — es kann weder in der Hauptsprache noch in Übersetzungen bearbeitet werden, da eine Änderung die Einbettung beschädigen würde.",
     primaryReadOnlyHint: "Dieses Feld kann in der Hauptsprache hier nicht bearbeitet werden — das Original verwaltest du in deinem Shopify-Admin. Übersetzen in andere Sprachen ist weiterhin möglich.",
     slugMarketLockedHint: "Der URL-Handle kann nicht pro Markt angepasst werden — Shopify erlaubt nur eine Übersetzung pro Sprache. Für alle Märkte gilt der globale (übersetzte) Handle.",
+    foreignAcceptPrimaryStepNotSent: "Die Übersetzung in die Hauptsprache wurde nicht gesendet, weil der Text in dieser Sprache nicht gespeichert wurde.",
     foreignAcceptPrimaryStepSaved: "Der Text in dieser Sprache wurde gespeichert, die Übersetzung in die Hauptsprache jedoch nicht.",
     seoOtherHalfUnreadablePrimaryStep: "Der Text in dieser Sprache wurde gespeichert, die Übersetzung in die Hauptsprache jedoch nicht: Die andere Hälfte des SEO-Texts konnte nicht aus Shopify gelesen werden. Bitte versuche es nochmals.",
     primaryReadOnlyTranslateInfo: "Die Hauptsprache ist bei diesem Inhaltstyp schreibgeschützt — die Übersetzung wurde übernommen, aber das Original wird in deinem Shopify-Admin verwaltet.",

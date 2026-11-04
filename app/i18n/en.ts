@@ -362,6 +362,7 @@ export const en: Translation = {
     appEmbedReadOnlyHint: "Technical app-embed element — it can't be edited in the main language or in translations, because changing it would break the embed.",
     primaryReadOnlyHint: "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages.",
     slugMarketLockedHint: "The URL handle can't be customized per market — Shopify only allows translating it per language. The global (translated) handle is used for every market.",
+    foreignAcceptPrimaryStepNotSent: "The translation into the main language was not sent, because the text in this language was not saved.",
     foreignAcceptPrimaryStepSaved: "The text in this language was saved, but the translation into the main language was not.",
     seoOtherHalfUnreadablePrimaryStep: "The text in this language was saved, but the translation into the main language was not: the other half of the SEO text could not be read from Shopify. Please try again.",
     primaryReadOnlyTranslateInfo: "The main language is read-only for this content type — the translation was accepted, but the original is managed in your Shopify admin.",

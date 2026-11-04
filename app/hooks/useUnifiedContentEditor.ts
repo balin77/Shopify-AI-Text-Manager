@@ -58,7 +58,7 @@ import { isTranslatableFieldDefinition } from "../services/content-attributes.sh
 import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource, altValuesForSaveResponse, revertAltsWithoutPrimary, sentAltsFromForm, sentFieldsFromForm, saveAnswerViewMoved, type SentSaveScope } from "../services/editor/own-field-save.shared";
 import { sanitizeSlug } from "../utils/slug.utils";
 import { forgetOwnedKeys, recordConfirmedValues, pruneOwners, type FormMeta, type OverlayOwners, type OverlayConfirmed } from "../services/editor/primary-overlay-ownership.shared";
-import { settleOwnSave, settleUnsentSave, backstopOwnSaves, hasOwnSaveInFlight, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
+import { settleOwnSave, settleUnsentSave, backstopOwnSaves, hasOwnSaveInFlight, isStaleAcceptStep, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import { appFetch, appFetchJson } from "../utils/app-fetch";
@@ -90,6 +90,17 @@ import {
  * into that language, or ANY run of the item for the primary language (a
  * primary save purges or re-translates every language).
  */
+/** What a refused save answer meant for a foreign accept-and-translate flow (see `abandonAcceptAndTranslate`). */
+interface AcceptOutcome {
+  /** The refused request was step 2 (the main-language save). */
+  stepTwoRefused: boolean;
+  /** Step 1 of that flow (the text in this language): true = answered with success, false = refused, null = not answered. */
+  step1Saved: boolean | null;
+  /** Step 1 was refused and step 2, already queued behind it, was dropped unsent. */
+  step2Dropped: boolean;
+}
+const NO_ACCEPT_OUTCOME: AcceptOutcome = { stepTwoRefused: false, step1Saved: null, step2Dropped: false };
+
 export function ownSaveBlockedByRuns(
   runs: ReadonlyArray<{ itemId: string | null; locale: string }>,
   itemId: string | null,
@@ -1164,27 +1175,33 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return (t.content as Record<string, string>)?.[errorKey] || translateErrorMessage(errorKey, t);
   };
   /**
-   * The sentence of a refused STEP TWO of a foreign accept-and-translate: the text in this language WAS saved
-   * (step one), only the main-language translation was not - so the generic "nothing was saved" must not be said.
+   * The sentence of a refused foreign accept-and-translate request. STEP TWO refused: the text in this language
+   * WAS saved (step one), only the main-language translation was not, so the generic "nothing was saved" must not
+   * be said. STEP ONE refused with step 2 already queued behind it: step 2 is dropped, and the same message says
+   * the main-language step was not sent.
    */
-  const stepTwoRefusalText = (data: unknown, stepTwoRefused: boolean, otherwise: string): string => {
-    if (!stepTwoRefused) return otherwise;
-    const key = String((data as { error?: string; errorKey?: string }).errorKey || (data as { error?: string }).error || "");
+  const stepTwoRefusalText = (data: unknown, outcome: AcceptOutcome, otherwise: string): string => {
     const content = t.content as Record<string, string> | undefined;
-    if (key === "seoOtherHalfUnreadable" && foreignStep1Ref.current?.saved === true) {
+    if (outcome.step2Dropped) {
+      const notSent = String(content?.foreignAcceptPrimaryStepNotSent || "The translation into the main language was not sent, because the text in this language was not saved.");
+      return `${otherwise} ${notSent}`.trim();
+    }
+    if (!outcome.stepTwoRefused) return otherwise;
+    const key = String((data as { error?: string; errorKey?: string }).errorKey || (data as { error?: string }).error || "");
+    if (key === "seoOtherHalfUnreadable" && outcome.step1Saved === true) {
       return String(content?.seoOtherHalfUnreadablePrimaryStep
         || "The text in this language was saved, but the translation into the main language was not: the other half of the SEO text could not be read from Shopify. Please try again.");
     }
     // EVERY other refusal of step 2: when step 1 really answered success the foreign text IS saved; where it
     // was refused (or has not answered) nothing is claimed.
-    if (foreignStep1Ref.current?.saved !== true) return otherwise;
+    if (outcome.step1Saved !== true) return otherwise;
     const saved = String(content?.foreignAcceptPrimaryStepSaved || "The text in this language was saved, but the translation into the main language was not.");
     return `${saved} ${otherwise}`.trim();
   };
   /** The refusal of a save of an item that is NOT on screen: said with its name. */
-  const showRefusalOfOtherItem = (itemId: string | undefined | null, data: unknown, stepTwoRefused = false) => {
+  const showRefusalOfOtherItem = (itemId: string | undefined | null, data: unknown, outcome: AcceptOutcome = NO_ACCEPT_OUTCOME) => {
     const name = itemNameOf(itemId);
-    const text = stepTwoRefusalText(data, stepTwoRefused, localizedUnconfirmedFields(data, true) || translateErrorMessage(String((data as { error?: string }).error || ""), t));
+    const text = stepTwoRefusalText(data, outcome, localizedUnconfirmedFields(data, true) || translateErrorMessage(String((data as { error?: string }).error || ""), t));
     showInfoBox(name ? `${name}: ${text}` : text, "critical");
   };
   /**
@@ -2206,9 +2223,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    * primary value, and the saved-primary overlay is staged up front (`previous` = what it held before, so a
    * refused save can give it back). Armed when that save is sent; cleared by its answer.
    */
-  /** Step 1 of a FOREIGN accept-and-translate (the text in this language), by its request identity, and how it ended. */
-  const foreignStep1Ref = useRef<{ partial: object; saved: boolean | null } | null>(null);
-  const foreignAcceptPrimaryStepRef = useRef<{ itemId: string; fieldKey: string; previous: string | undefined; partial: object } | null>(null);
+  /**
+   * Step 1 of every FOREIGN accept-and-translate (the text in this language), keyed by its request identity (the
+   * partial-save object), with how it ended and the step 2 that followed it. A Map, because two flows of different
+   * fields may overlap; each is keyed by its own requests.
+   */
+  const foreignStep1Ref = useRef<Map<object, { saved: boolean | null; step2: object | null }>>(new Map());
+  /** The step 2 of those flows, keyed by ITS request identity: the staged overlay it can give back. */
+  const foreignAcceptPrimaryStepRef = useRef<Map<object, { itemId: string; fieldKey: string; previous: string | undefined; step1: object }>>(new Map());
 
   /**
    * A save answer that REFUSED. Takes back everything an accept-and-translate flow armed for the item the
@@ -2216,10 +2238,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    * (pending step 2, accepted value, the flow flag) and the main-language overlay of a refused foreign
    * step 2 stops showing text that was never stored. Returns whether that foreign step was the refused one.
    */
-  const abandonAcceptAndTranslate = (refusedItemId: string | null | undefined): boolean => {
+  const abandonAcceptAndTranslate = (refusedItemId: string | null | undefined): AcceptOutcome => {
     const pending = pendingTranslationAfterSaveRef.current;
     const refusedPartial = inFlightPartialRef.current;
-    if (foreignStep1Ref.current && foreignStep1Ref.current.partial === refusedPartial) foreignStep1Ref.current.saved = false;
     // Identity of the REFUSED request: only step 1's own save abandons the pending step 2 (a refused
     // earlier Save-bar save of the same item does not). Without a recorded identity: the item decides.
     const isStepOne = !!pending && (pending.step1Partial
@@ -2230,16 +2251,41 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       acceptedPrimaryValueRef.current = null;
       setIsAcceptAndTranslateFlow(false);
     }
-    const step = foreignAcceptPrimaryStepRef.current;
-    // Step 2 is identified by the request it was sent as, not by the shape of its description.
-    if (!step || step.partial !== refusedPartial) return false;
-    foreignAcceptPrimaryStepRef.current = null;
-    const overlay = savedPrimaryValuesRef.current[step.itemId];
-    if (overlay) {
+    const giveBack = (step: { itemId: string; fieldKey: string; previous: string | undefined }) => {
+      const overlay = savedPrimaryValuesRef.current[step.itemId];
+      if (!overlay) return;
       if (step.previous === undefined) delete overlay[step.fieldKey];
       else overlay[step.fieldKey] = step.previous;
+    };
+    const outcome: AcceptOutcome = { stepTwoRefused: false, step1Saved: null, step2Dropped: false };
+    if (!refusedPartial) return outcome;
+    // The refused request is a foreign STEP ONE: its step 2 must not be written from a text that was never saved.
+    const flow = foreignStep1Ref.current.get(refusedPartial);
+    if (flow) {
+      flow.saved = false;
+      if (flow.step2) {
+        const queuedAt = saveQueueRef.current.findIndex((entry) => entry.partial === flow.step2);
+        if (queuedAt >= 0) {
+          const [dropped] = saveQueueRef.current.splice(queuedAt, 1);
+          settleOwnSaveFor(dropped.partial);
+          const step = foreignAcceptPrimaryStepRef.current.get(flow.step2);
+          if (step) giveBack(step);
+          foreignAcceptPrimaryStepRef.current.delete(flow.step2);
+          flow.step2 = null;
+          outcome.step2Dropped = true;
+        }
+      }
     }
-    return true;
+    // Step 2 is identified by the request it was sent as, not by the shape of its description.
+    const step = foreignAcceptPrimaryStepRef.current.get(refusedPartial);
+    if (step) {
+      outcome.stepTwoRefused = true;
+      outcome.step1Saved = foreignStep1Ref.current.get(step.step1)?.saved ?? null;
+      giveBack(step);
+      foreignAcceptPrimaryStepRef.current.delete(refusedPartial);
+      foreignStep1Ref.current.delete(step.step1);
+    }
+    return outcome;
   };
 
   // Ref to track the last fetcher.data object (to detect actual data changes vs dependency re-runs)
@@ -3455,9 +3501,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const pendingRedirectMessage = buildRedirectMessage(redirectNoteOf(fetcher.data), t);
       // Only the ANSWER of the save that staged a foreign accept's main-language overlay makes it stand;
       // an earlier save answering first must not drop the rollback of a later refusal.
-      if (foreignStep1Ref.current && foreignStep1Ref.current.partial === partial) foreignStep1Ref.current.saved = true;
-      if (foreignAcceptPrimaryStepRef.current && foreignAcceptPrimaryStepRef.current.partial === partial) {
-        foreignAcceptPrimaryStepRef.current = null;
+      const answeredFlow = partial ? foreignStep1Ref.current.get(partial) : undefined;
+      if (answeredFlow) answeredFlow.saved = true;
+      const answeredStep = partial ? foreignAcceptPrimaryStepRef.current.get(partial) : undefined;
+      if (partial && answeredStep) {
+        foreignAcceptPrimaryStepRef.current.delete(partial);
+        foreignStep1Ref.current.delete(answeredStep.step1);
       }
 
       // Check if there's a pending translation to start after this save - but only the ANSWER of step 1's
@@ -4157,6 +4206,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (fetcher.state !== "idle" || saveQueueRef.current.length > 0) return;
     const justSubmitted = justSubmittedRef.current ? inFlightPartialRef.current : null;
     setOwnSavesInFlight((prev) => backstopOwnSaves(prev, justSubmitted));
+    // A pending primary accept-and-translate step 2 whose step-1 save is neither in flight nor queued will
+    // never be answered (an unrecognised answer, a request that never went out): leaving it armed would mark
+    // every later save as "withheld" (no changedFields) until an item switch.
+    const armed = pendingTranslationAfterSaveRef.current;
+    if (isStaleAcceptStep(armed, justSubmitted)) {
+      pendingTranslationAfterSaveRef.current = null;
+      acceptedPrimaryValueRef.current = null;
+      setIsAcceptAndTranslateFlow(false);
+    }
   }, [fetcher.state]);
 
   // Process queued saves when the fetcher becomes idle.

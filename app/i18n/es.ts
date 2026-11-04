@@ -355,6 +355,7 @@ export const es: Translation = {
     appEmbedReadOnlyHint: "Elemento técnico de app-embed — no se puede editar ni en el idioma principal ni en las traducciones, porque cambiarlo rompería la inserción.",
     primaryReadOnlyHint: "Este campo no se puede editar en el idioma principal aquí — gestiona el original en tu panel de Shopify. Aún puedes traducirlo a otros idiomas.",
     slugMarketLockedHint: "El identificador de URL no se puede personalizar por mercado — Shopify solo permite traducirlo por idioma. Para todos los mercados se usa el identificador global (traducido).",
+    foreignAcceptPrimaryStepNotSent: "La traducción al idioma principal no se envió, porque el texto en este idioma no se guardó.",
     foreignAcceptPrimaryStepSaved: "El texto en este idioma se guardó, pero la traducción al idioma principal no.",
     seoOtherHalfUnreadablePrimaryStep: "El texto en este idioma se guardó, pero la traducción al idioma principal no: no se pudo leer la otra mitad del texto SEO desde Shopify. Inténtalo de nuevo.",
     primaryReadOnlyTranslateInfo: "El idioma principal es de solo lectura para este tipo de contenido — la traducción se aplicó, pero el original se gestiona en tu panel de Shopify.",

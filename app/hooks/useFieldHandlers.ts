@@ -121,8 +121,8 @@ export interface FieldHandlerProps {
   pendingCopyFieldItemIdRef: { current: string | null };
   pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string; step1Partial?: object } | null };
   acceptedPrimaryValueRef: { current: { fieldKey: string; value: string } | null };
-  foreignStep1Ref: { current: { partial: object; saved: boolean | null } | null };
-  foreignAcceptPrimaryStepRef: { current: { itemId: string; fieldKey: string; previous: string | undefined; partial: object } | null };
+  foreignStep1Ref: { current: Map<object, { saved: boolean | null; step2: object | null }> };
+  foreignAcceptPrimaryStepRef: { current: Map<object, { itemId: string; fieldKey: string; previous: string | undefined; step1: object }> };
   initialLoadSuccessfulRef: { current: boolean };
   retryCountRef: { current: number };
 
@@ -1572,7 +1572,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     foreignForm[fieldKey] = suggestion;
     const step1Partial = { locale: L, marketId: "", values: { [fieldKey]: suggestion } };
     partialSaveRef.current = step1Partial;
-    foreignStep1Ref.current = { partial: step1Partial, saved: null };
+    foreignStep1Ref.current.set(step1Partial, { saved: null, step2: null });
     savedLocaleRef.current = L;
     savedMarketIdRef.current = selectedMarketId;
     savedItemIdRef.current = requestItemId;
@@ -1645,7 +1645,13 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         // changedFields → existing foreign translations are preserved).
         // Read-only rubrics never translate/save/overlay the main language.
         const primaryTranslated = primaryReadOnly ? "" : (translations[primaryLocale] || "").trim();
-        if (primaryTranslated) {
+        // Step 1 (the text in this language) was REFUSED before the translation came back: the main-language
+        // text would be written from a foreign text that was never saved, so step 2 is not sent at all.
+        const step1Refused = foreignStep1Ref.current.get(step1Partial)?.saved === false;
+        const skipNote = primaryTranslated && step1Refused
+          ? ` ${String(t.content?.foreignAcceptPrimaryStepNotSent || "The translation into the main language was not sent, because the text in this language was not saved.")}`
+          : "";
+        if (primaryTranslated && !step1Refused) {
           // Overlay the new primary value so the main language shows it
           // IMMEDIATELY when the user switches to it — independent of when the
           // primary base save commits or whether the loader reads stale data.
@@ -1685,7 +1691,9 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
           const stepPartial = { locale: L, marketId: selectedMarketId, values: {}, holdsView: true };
           partialSaveRef.current = stepPartial;
           // The request's own description is its identity: only ITS answer settles the staged overlay.
-          foreignAcceptPrimaryStepRef.current = { itemId: requestItemId, fieldKey, previous: stepPrevious, partial: stepPartial };
+          foreignAcceptPrimaryStepRef.current.set(stepPartial, { itemId: requestItemId, fieldKey, previous: stepPrevious, step1: step1Partial });
+          const ownFlow = foreignStep1Ref.current.get(step1Partial);
+          if (ownFlow) ownFlow.step2 = stepPartial;
           safeSubmit(primaryForm, { method: "POST" });
         }
 
@@ -1705,16 +1713,16 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
             String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
               .replace("{successCount}", String(Object.keys(translations).length))
               .replace("{totalCount}", String(Object.keys(translations).length + failedLocales.length))
-              .replace("{failedLocales}", failedLocales.join(", ")),
+              .replace("{failedLocales}", failedLocales.join(", ")) + skipNote,
             "warning"
           );
         } else {
           showInfoBox(
-            t.common?.fieldTranslatedToLanguages
+            (t.common?.fieldTranslatedToLanguages
               ?.replace("{fieldType}", fieldLabel)
-              .replace("{count}", String(Object.keys(othersTranslations).length + (primaryTranslated ? 1 : 0)))
-              || `${fieldLabel} translated`,
-            "success"
+              .replace("{count}", String(Object.keys(othersTranslations).length + (primaryTranslated && !step1Refused ? 1 : 0)))
+              || `${fieldLabel} translated`) + skipNote,
+            skipNote ? "warning" : "success"
           );
         }
 
