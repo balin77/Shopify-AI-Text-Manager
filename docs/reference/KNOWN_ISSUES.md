@@ -70,6 +70,10 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Die Verdrahtung im Image Manager ist jetzt mit einem Darstellungs-Test der echten Komponente abgedeckt (`variant-image-manager.render.test.tsx`: Ziehen an die erste Stelle, Verwerfen, Löschen mit offener Änderung, Produktgalerie umsortieren, Öffnen ohne Änderung). Gespielt wird das Ziehen als Ereignis des Drag-Kontexts, nicht mit Mausbewegungen, die Kachel-Komponente ist ersetzt und das Netz ist Skript.
 - «Alt-Text aus SKU» findet Bilder über die Galerie-Liste (`alt-text.action.ts:860-877`, `BulkAltTextPanel.tsx:838`). Hauptbilder stehen dort nicht, sie bekommen so keinen SKU-Alt-Text.
 
+- Wird ein Hauptbild auf Platz 1 einer anderen Variante verschoben und vor dem Speichern wieder zurückgezogen, bleibt bei der Zielvariante eine ungespeicherte Änderung stehen (Speichern bleibt aktiv). Beim Speichern erhält sie einen neuen Reihenfolge-Eintrag; im Shop ist das Ergebnis gleich.
+- Nach einer Verschiebung auf Platz 1 kann das bisherige Hauptbild der Zielvariante erst nach dem Speichern entfernt werden («erst speichern»), obwohl es dann schon als gewöhnliches Galeriebild erscheint.
+- Andere fehlgeschlagene Galerie-Speicherungen ohne eigenen Fehlercode zeigen weiterhin die englische Fehlerliste (vorbestehend).
+
 ## Bekannt: 429 und Wiederholung
 
 - Gehaltene Schreibvorgänge desselben Limiters werden nacheinander erneut gesendet, ältester zuerst; ein Schreibvorgang wartet höchstens eine Minute auf ältere und gibt seinen Platz beim erneuten Senden frei, nicht nach der Antwort. Lesezugriffe sind nicht geordnet. Auch ein Pfad, den der Wrapper schon abgelehnt sah, wartet auf ältere gehaltene Schreibvorgänge, wenn sein Fenster wieder offen ist. Grenze: Nur der erste Versand eines Pfads, der noch nie abgelehnt wurde, kann einen gehaltenen Schreibvorgang überholen.
@@ -101,6 +105,10 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Seed 9097 (Basis 9000, 22 Schritte) endet mit I3: der Bildschirm zeigt einen von aussen geschriebenen Wert (`x10`), während das Modell schon den Wert einer später gesendeten, in der Warteschlange stehenden Speicherung hält. Muster: externer Wechsel, danach Wechsel zu einem anderen Produkt und zurück, die wartende Speicherung wird erst im letzten Schritt gesendet. Unverändert nach der Regel «unveränderte Felder werden nicht geschrieben» (reine Anzeige-Invariante, die Schreibseite ist davon nicht berührt). Kein Schreibrisiko (die Speicherung trägt den vom Händler getippten Wert und kündigt ihn an); das Modell wendet eine Speicherung beim Senden an, die Anzeige liest erst später neu.
 - Ein von aussen auf den Wert vor der Speicherung zurückgesetzter Text und ein hinterherhinkendes Lesen dieses Werts sind in der ANZEIGE nicht zu unterscheiden (nur ein Lesen vor der Bestätigung oder ein Wert der «unser oder älter»-Menge wird entschuldigt; der Zwischenspeicher endet dann durch seine Uhr). Geschrieben wird dadurch nichts mehr: Ein unverändertes Feld wird vom Server nicht geschrieben.
 - Die Entscheidung «Ankündigung nur wegen eines mitlaufenden Werts» (`pendingCarriedValueRef`) gegen den Serverwert statt gegen den geladenen Stand ist durch keinen gezielten Test getrennt belegt.
+
+- Eine einseitige SEO-Speicherung ohne mitgeschickte andere Hälfte (eigene Speicherung eines Felds, KI-Massenkorrektur, direkter Aufruf) sendet bei einem fehlgeschlagenen Nachlesen der anderen Hälfte weiterhin nur eine Hälfte. Ob Shopify die andere Hälfte dann leert, ist nicht gemessen (zwei Stellen im Code widersprechen sich). Vorbestehend. Sicherer wäre: in diesem Fall nicht speichern und «nochmals versuchen» melden.
+- Schlägt das Nachlesen der anderen SEO-Hälfte fehl, schreibt die Speicherung den Wert aus dem Editor, der älter sein kann als der in Shopify (selten, wie vor der Änderung).
+- Reload während einer vollen Speicherung hält alle Felder der Ansicht fest; eine Änderung in Shopify an einem unveränderten Feld erscheint erst später (nur Anzeige).
 
 ## Bekannt: veraltete Anzeigen
 
