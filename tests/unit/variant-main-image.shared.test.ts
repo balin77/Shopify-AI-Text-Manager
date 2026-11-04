@@ -8,10 +8,14 @@ import {
   orderAfterMainChange,
   orderShowingMain,
   pickPromotedMain,
+  planMainMove,
   planVariantDrag,
   planVariantWrite,
+  validateMainMoves,
   visibleFileOrder,
   type DragEntry,
+  type MainMove,
+  type MoveIntentView,
 } from "~/services/variant-main-image.shared";
 
 const img = (n: number) => `gid://shopify/MediaImage/${n}`;
@@ -176,7 +180,7 @@ describe("planVariantWrite", () => {
       expect(planVariantWrite({ fileGids: null, removedMainGid: img(1), lookup: lk(img(1), []), productMedia: all }).mediaId).toBeNull();
     });
     it("R4: a promoted main with an empty gallery writes the main-only order entry", () => {
-      const p = planVariantWrite({ fileGids: null, removedMainGid: img(1), lookup: lk(img(1), [img(2)]), productMedia: all });
+      const p = planVariantWrite({ fileGids: null, removedMainGid: img(1), lookup: lk(img(1), [img(2)]), productMedia: all, variantCount: 2 });
       expect(p).toMatchObject({ mediaId: img(2), gallery: [], order: mainOnlyOrder(img(2)) });
     });
     it("a promoted image the product does not hold yet is attached first", () => {
@@ -347,5 +351,81 @@ describe("sixth review: shared", () => {
     const p = planVariantWrite({ fileGids: null, removedMainGid: img(1), lookup: { main: img(1), gallery: [], order: o }, productMedia: new Map() });
     expect(p.mediaId).toBeNull();
     expect(JSON.parse(p.order!)).toEqual([{ kind: "url", value: "https://youtu.be/x" }]);
+  });
+});
+
+describe("the main-only rule (point 1)", () => {
+  const all = new Map([[img(1), "IMAGE"], [img(2), "IMAGE"], [img(3), "IMAGE"]]);
+  const lk = (main: string | null, gallery: string[], orderJson: string | null = null) => ({ main, gallery, order: orderJson });
+  const emptied = (count: number | null | undefined, l = lk(img(1), [img(2)])) =>
+    planVariantWrite({ fileGids: [], galleryOnly: true, expectedMainGid: img(1), lookup: l, productMedia: all, variantCount: count });
+
+  it("more than one variant, the last non-main image removed: the entry is written", () => {
+    expect(emptied(2)).toMatchObject({ action: "write", gallery: [], order: mainOnlyOrder(img(1)) });
+  });
+  it("exactly one variant or an unknown count: no entry", () => {
+    expect(emptied(1).order).toBeUndefined();
+    expect(emptied(null).order).toBeUndefined();
+    expect(emptied(undefined).order).toBeUndefined();
+  });
+  it("R3: a stored list of only the main image loses nothing", () => {
+    expect(emptied(2, lk(img(1), [img(1)])).order).toBeUndefined();
+  });
+  it("a stored entry stays on a multi-variant product, is cleared for one variant, untouched when the count is unknown", () => {
+    const stored = lk(img(1), [], mainOnlyOrder(img(1)));
+    expect(emptied(3, stored).order).toBe(mainOnlyOrder(img(1)));
+    expect(emptied(1, stored)).toMatchObject({ clearOrder: true });
+    expect(emptied(1, stored).order).toBeUndefined();
+    const unknown = emptied(null, stored);
+    expect(unknown.order).toBeUndefined();
+    expect(unknown.clearOrder).toBeUndefined();
+  });
+  it("an entry for ANOTHER main image is not kept: it is replaced by the new one when something was lost", () => {
+    const p = planVariantWrite({ fileGids: null, removedMainGid: img(1), lookup: lk(img(1), [img(2)], mainOnlyOrder(img(1))), productMedia: all, variantCount: 2 });
+    expect(p.order).toBe(mainOnlyOrder(img(2)));
+    const single = planVariantWrite({ fileGids: null, removedMainGid: img(1), lookup: lk(img(1), [img(2)], mainOnlyOrder(img(1))), productMedia: all, variantCount: 1 });
+    expect(single.order).toBeUndefined();
+    expect(single.clearOrder).toBe(true);
+  });
+  it("a link in the order is not main-only territory", () => {
+    const o = order(["file", img(1)], ["url", "https://youtu.be/x"]);
+    expect(emptied(2, lk(img(1), [img(2)], o)).order).toBeUndefined();
+  });
+});
+
+describe("validateMainMoves / planMainMove (point 2)", () => {
+  const move: MainMove = { gid: img(1), sourceVariantId: "S", sourceExpectedMainGid: img(1), targetVariantId: "T", targetExpectedMainGid: img(4), targetPosition: 0 };
+  const intents = (over: Partial<Record<string, MoveIntentView>> = {}) =>
+    new Map<string, MoveIntentView>(Object.entries({
+      S: { fileGids: null, removedMainGid: img(1), mainGid: null },
+      T: { fileGids: [img(1), img(4)], removedMainGid: null, mainGid: img(1) },
+      ...over,
+    }) as Array<[string, MoveIntentView]>);
+
+  it("a well-formed move passes; a move to a later slot passes without a chosen main", () => {
+    expect(validateMainMoves([move], intents())).toEqual([]);
+    expect(validateMainMoves([{ ...move, targetPosition: 2 }], intents({ T: { fileGids: [img(4), img(5), img(1)], removedMainGid: null, mainGid: null } }))).toEqual([]);
+  });
+  it("is refused when a side is missing or contradicts", () => {
+    expect(validateMainMoves([move], new Map([["T", intents().get("T")!]])).length).toBeGreaterThan(0);
+    expect(validateMainMoves([move], intents({ S: { fileGids: null, removedMainGid: img(9), mainGid: null } })).length).toBeGreaterThan(0);
+    expect(validateMainMoves([move], intents({ T: { fileGids: [img(4)], removedMainGid: null, mainGid: null } })).length).toBeGreaterThan(0);
+    expect(validateMainMoves([{ ...move, sourceExpectedMainGid: img(2) }], intents()).length).toBeGreaterThan(0);
+    expect(validateMainMoves([{ ...move, targetVariantId: "S" }], intents()).length).toBeGreaterThan(0);
+    expect(validateMainMoves([move, { ...move, sourceVariantId: "S2", gid: img(2), sourceExpectedMainGid: img(2) }], intents()).length).toBeGreaterThan(0);
+    // first slot dropped but the target does not choose it as main
+    expect(validateMainMoves([move], intents({ T: { fileGids: [img(4), img(1)], removedMainGid: null, mainGid: null } })).length).toBeGreaterThan(0);
+    // a video is no main image
+    expect(validateMainMoves([{ ...move, gid: vid(1), sourceExpectedMainGid: vid(1) }], intents()).length).toBeGreaterThan(0);
+  });
+  const L = (main: string | null, gallery: string[] = []) => ({ main, gallery, order: null });
+  it("proceeds while both fresh states match; refuses a changed source or target; done after our own write", () => {
+    expect(planMainMove(move, L(img(1)), L(img(4)))).toEqual({ kind: "proceed" });
+    expect(planMainMove(move, L(img(1)), L(img(1)))).toEqual({ kind: "proceed" });
+    expect(planMainMove(move, L(img(2)), L(img(4)))).toEqual({ kind: "refuse", side: "source", code: "mainChangedElsewhere" });
+    expect(planMainMove(move, L(img(1)), L(img(5)))).toEqual({ kind: "refuse", side: "target", code: "mainChangedElsewhere" });
+    expect(planMainMove(move, L(img(2)), L(img(1), [img(4)]))).toEqual({ kind: "done" });
+    expect(planMainMove(move, L(img(2)), L(img(4), [img(1)]))).toEqual({ kind: "done" });
+    expect(planMainMove(move, null, L(img(4)))).toMatchObject({ kind: "refuse", code: "variantNotFound" });
   });
 });

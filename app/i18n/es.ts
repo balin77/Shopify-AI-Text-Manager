@@ -1969,6 +1969,8 @@ export const es: Translation = {
     mainOnlyImage: "Es la única imagen de esta variante, así que sigue siendo la imagen principal. Añade primero otra imagen.",
     tileNotResolvable: "Ahora mismo no se puede identificar una miniatura de esta galería, por eso no se movió nada. Recarga el producto e inténtalo de nuevo.",
     mediaNotDroppable: "Un modelo 3D o un vídeo externo no se puede arrastrar a la galería de imágenes de una variante. Añádelo con el signo más de la galería de la variante.",
+    mainMoveNotSaved: "La imagen principal no se movió: la variante «{variant}» no se pudo guardar con ella, así que ninguna de las dos variantes cambió. Recarga el producto y repite el movimiento si hace falta.",
+    mainMoveSaveFirst: "Guarda primero los cambios pendientes de la imagen principal de estas variantes y mueve la imagen principal después.",
     mainNotNameable: "Ahora mismo no se puede identificar esta imagen principal. Recarga el producto e inténtalo de nuevo.",
     uploadFailedFiles: "Error al subir: {files}. Estos archivos no se añadieron.",
     altImageNotFound: "Esta imagen ya no se encuentra en el producto (puede que aún se esté subiendo o que se haya eliminado). Recarga la página e inténtalo de nuevo.",

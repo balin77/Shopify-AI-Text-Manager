@@ -3,7 +3,7 @@ import type { StagedItem, VariantWithGallery, MediaKind } from "../components/im
 import type { SettlingMediaEntry } from "../components/image-manager/settling-media";
 import { appFetch } from "../utils/app-fetch";
 import { useI18n } from "../contexts/I18nContext";
-import type { MainRefusal, RemovedMainEmission, VariantGalleryEmission } from "../services/variant-main-image.shared";
+import type { MainMove, MainRefusal, RemovedMainEmission, VariantGalleryEmission } from "../services/variant-main-image.shared";
 
 /** Resource URL + the kind it was uploaded as. The kind is needed at save
  *  time so productCreateMedia.mediaContentType maps correctly — without it
@@ -52,6 +52,8 @@ export function useVariantImageManager() {
   const [settlingMedia, setSettlingMedia] = useState<SettlingMediaEntry[]>([]);
   // Main images the merchant removed WITHOUT a pending gallery edit, with the GID that was removed.
   const [pendingClearVariantMainImages, setPendingClearVariantMainImages] = useState<RemovedMainEmission[]>([]);
+  // Main images moved from one variant to another (the statement that ties the two variants' changes together).
+  const [pendingMainMoves, setPendingMainMoves] = useState<MainMove[]>([]);
   // Per-variant YouTube / Vimeo URLs that the merchant has added via the URL
   // input inside each VariantGallerySection. variantId → canonical URLs.
   // Empty array is meaningful: it means "the merchant cleared this variant's
@@ -122,6 +124,7 @@ export function useVariantImageManager() {
       setPendingMediaOrder([]);
       setPendingProductNewMedia([]);
       setPendingClearVariantMainImages([]);
+      setPendingMainMoves([]);
       setPendingExternalVideos({});
       // Merge the still-processing staging URLs with the variant's freshly-
       // fetched saved metafield URLs. Without the merge, pendingVariant3dModels
@@ -195,11 +198,12 @@ export function useVariantImageManager() {
   }, []);
 
   const handlePendingChange = useCallback(
-    (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[], productNewMedia?: PendingProductNewMedia[], clearVariantMainImages?: RemovedMainEmission[]) => {
+    (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[], productNewMedia?: PendingProductNewMedia[], clearVariantMainImages?: RemovedMainEmission[], mainMoves?: MainMove[]) => {
       setPendingVariantGalleries(galleries);
       setPendingMediaOrder(mediaOrder);
       if (productNewMedia) setPendingProductNewMedia(productNewMedia);
       if (clearVariantMainImages !== undefined) setPendingClearVariantMainImages(clearVariantMainImages);
+      if (mainMoves !== undefined) setPendingMainMoves(mainMoves);
     },
     []
   );
@@ -301,6 +305,7 @@ export function useVariantImageManager() {
           variantGalleries: mergedVariantGalleries,
           mediaOrder: pendingMediaOrder,
           removedMainImages: pendingClearVariantMainImages,
+          mainMoves: pendingMainMoves,
           variantExternalVideos,
           variant3dModels,
           variant3dPreviews,
@@ -329,6 +334,7 @@ export function useVariantImageManager() {
           attachNotConfirmed: t.imageManager.mainAttachNotConfirmed,
           notAnImage: t.imageManager.mainNotAnImage,
           variantNotFound: t.imageManager.mainVariantGone,
+          moveCounterpartRefused: t.imageManager.mainMoveNotSaved,
         };
         return (list as Array<{ variantId?: string; code?: MainRefusal }>)
           .filter(r => r && typeof r.variantId === "string" && r.code && texts[r.code])
@@ -486,7 +492,7 @@ export function useVariantImageManager() {
     } finally {
       setIsApplying(false);
     }
-  }, [t, bulkItems, variantsForBulk, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages, pendingExternalVideos, pendingVariant3dModels, pendingVariant3dPreviews, pendingKnownModelGids, pendingGalleryOrder]);
+  }, [t, bulkItems, variantsForBulk, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages, pendingMainMoves, pendingExternalVideos, pendingVariant3dModels, pendingVariant3dPreviews, pendingKnownModelGids, pendingGalleryOrder]);
 
   /** Called by the Image Manager once every settling media node has shown up
    *  in the fetched media map (or the bounded wait gave up). */
@@ -515,6 +521,7 @@ export function useVariantImageManager() {
     setPendingMediaOrder([]);
     setPendingProductNewMedia([]);
     setPendingClearVariantMainImages([]);
+    setPendingMainMoves([]);
     setPendingExternalVideos({});
     setPendingVariant3dModels({});
     setPendingVariant3dPreviews({});

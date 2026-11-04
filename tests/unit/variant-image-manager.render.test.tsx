@@ -67,7 +67,7 @@ vi.mock("~/utils/app-fetch", () => ({
 }));
 
 import { VariantImageManager } from "~/components/image-manager/VariantImageManager";
-import { planVariantWrite } from "~/services/variant-main-image.shared";
+import { planVariantWrite, validateMainMoves, type MoveIntentView } from "~/services/variant-main-image.shared";
 
 function variantsPayload(over: { v1Gallery?: string[]; v1Main?: number | null; v1Order?: string | null } = {}) {
   const mainN = over.v1Main === undefined ? 1 : over.v1Main;
@@ -678,5 +678,132 @@ describe("sixth review: renders", () => {
     act(() => grids[V1].onOpenPicker());
     act(() => picker.onAdd!([{ source: "upload", resourceUrl: "https://staged/x.jpg", kind: "image", previewUrl: "blob:http://localhost/x" }]));
     await waitFor(() => expect(grids[V1].mainUrl).toBe(url(2)));
+  });
+});
+
+describe("point 2: a variant's MAIN image dragged onto another variant (plain = move, Ctrl/Cmd = copy)", () => {
+  const twoGalleries = () => {
+    const b = variantsPayload();
+    b.variants[1] = { ...b.variants[1], galleryJson: JSON.stringify([gid(2)]) };
+    return b;
+  };
+  const dragTo = (from: { container: string; url: string }, to: { container: string; url: string }, ctrl = false) =>
+    act(() => {
+      if (ctrl) fireEvent.keyDown(window, { key: "Control" });
+      dnd.onDragEnd?.({
+        active: { id: `${from.container}::${from.url}`, data: { current: { url: from.url, containerId: from.container } } },
+        over: { id: `${to.container}::${to.url}` },
+      });
+      if (ctrl) fireEvent.keyUp(window, { key: "Control" });
+    });
+  async function mountBoth(extra: Record<string, unknown> = {}) {
+    variantsAnswer = twoGalleries;
+    const r = await mount(extra);
+    fireEvent.click(await screen.findByText("Blue"));
+    await waitFor(() => expect(grids[V2]?.imageUrls?.length).toBeGreaterThan(0));
+    expect(grids[V2].imageUrls).toEqual([url(4), url(2)]);
+    return r;
+  }
+
+  it("a plain drag onto a LATER slot MOVES it: one explicit intent names both variants, the source shows its next image as main, the target keeps its main", async () => {
+    await mountBoth();
+    dragTo({ container: V1, url: url(1) }, { container: V2, url: url(2) });
+    await waitFor(() => expect(grids[V1].mainUrl).toBe(url(2)));
+    expect(grids[V1].imageUrls).toEqual([url(2), url(3)]);
+    expect(grids[V2].mainUrl).toBe(url(4));
+    expect(grids[V2].imageUrls).toEqual([url(4), url(1), url(2)]);
+    const [galleries, , , removed, moves] = lastEmission();
+    expect(removed).toEqual([{ variantId: V1, removedMainGid: gid(1) }]);
+    expect(galleries).toEqual([{ variantId: V2, fileGids: [gid(1), gid(2)], galleryOnly: true, expectedMainGid: gid(4) }]);
+    expect(moves).toEqual([{ gid: gid(1), sourceVariantId: V1, sourceExpectedMainGid: gid(1), targetVariantId: V2, targetExpectedMainGid: gid(4), targetPosition: 1 }]);
+    // the order the target saves places the moved image exactly where it was dropped
+    expect(JSON.parse(onGalleryOrderChange.mock.calls.at(-1)![0][V2]).map((e: any) => e.value)).toEqual([gid(4), gid(1), gid(2)]);
+  });
+
+  it("a plain drag onto the FIRST slot makes it the target's main image and the target's old main goes into its gallery", async () => {
+    await mountBoth();
+    dragTo({ container: V1, url: url(1) }, { container: V2, url: url(4) });
+    await waitFor(() => expect(grids[V2].mainUrl).toBe(url(1)));
+    expect(grids[V2].imageUrls).toEqual([url(1), url(4), url(2)]);
+    expect(grids[V1].mainUrl).toBe(url(2));
+    const [galleries, , , removed, moves] = lastEmission();
+    expect(removed).toEqual([{ variantId: V1, removedMainGid: gid(1) }]);
+    expect(galleries).toEqual([{ variantId: V2, fileGids: [gid(1), gid(4), gid(2)], mainGid: gid(1), expectedMainGid: gid(4) }]);
+    expect(moves).toEqual([expect.objectContaining({ gid: gid(1), targetVariantId: V2, targetExpectedMainGid: gid(4), targetPosition: 0 })]);
+  });
+
+  it("Ctrl/Cmd COPIES: the source keeps its main image, nothing is removed, no move is declared", async () => {
+    await mountBoth();
+    dragTo({ container: V1, url: url(1) }, { container: V2, url: url(2) }, true);
+    await waitFor(() => expect(grids[V2].imageUrls).toContain(url(1)));
+    expect(grids[V1].mainUrl).toBe(url(1));
+    expect(grids[V1].imageUrls).toEqual([url(1), url(2), url(3)]);
+    const [galleries, , , removed, moves] = lastEmission();
+    expect(removed).toEqual([]);
+    expect(moves).toEqual([]);
+    expect(galleries.map((g: any) => g.variantId)).toEqual([V2]);
+    expect(galleries[0].fileGids).toContain(gid(1));
+  });
+
+  it("a gallery image (not the main) still moves on a plain drag and is no main-image move", async () => {
+    await mountBoth();
+    dragTo({ container: V1, url: url(3) }, { container: V2, url: url(2) });
+    await waitFor(() => expect(grids[V1].imageUrls).toEqual([url(1), url(2)]));
+    const [galleries, , , removed, moves] = lastEmission();
+    expect(removed).toEqual([]);
+    expect(moves).toEqual([]);
+    expect(galleries.map((g: any) => g.variantId).sort()).toEqual([V1, V2]);
+  });
+
+  it("Discard (the reset key) takes the whole move back: both galleries show what is stored and the emission is empty", async () => {
+    const { rerender } = await mountBoth();
+    dragTo({ container: V1, url: url(1) }, { container: V2, url: url(4) });
+    await waitFor(() => expect(grids[V2].mainUrl).toBe(url(1)));
+    rerender(ui({ resetKey: 1 }));
+    await waitFor(() => expect(apiCalls.filter((c) => c.path === "/api/product-variants").length).toBeGreaterThan(1));
+    fireEvent.click(await screen.findByText("Red"));
+    await waitFor(() => expect(grids[V1].mainUrl).toBe(url(1)));
+    const [galleries, , , removed, moves] = lastEmission();
+    expect(galleries).toEqual([]);
+    expect(removed).toEqual([]);
+    expect(moves).toEqual([]);
+  });
+
+  it("a target with its own unsaved main-image change refuses the move with a message and changes nothing", async () => {
+    await mountBoth();
+    // the target's own main image is removed (Ctrl-drop onto the product gallery): an unsaved main-image change
+    dragTo({ container: V2, url: url(4) }, { container: "product", url: url(1) }, true);
+    await waitFor(() => expect(lastEmission()[3]).toEqual([{ variantId: V2, removedMainGid: gid(4) }]));
+    onPendingChange.mockClear();
+    dragTo({ container: V1, url: url(1) }, { container: V2, url: url(2) });
+    await screen.findByText(/Save the pending main image changes of these variants first/);
+    expect(onPendingChange).not.toHaveBeenCalled();
+    expect(grids[V1].mainUrl).toBe(url(1));
+  });
+
+  it("the move is only emitted while both sides still stand: undoing the target's gallery ends it, the source removal stays an ordinary removal", async () => {
+    await mountBoth();
+    dragTo({ container: V1, url: url(1) }, { container: V2, url: url(2) });
+    await waitFor(() => expect(lastEmission()[4]).toHaveLength(1));
+    // the merchant takes the moved image out of the target again (Ctrl-drop onto the product gallery)
+    dragTo({ container: V2, url: url(1) }, { container: "product", url: url(3) }, true);
+    await waitFor(() => expect(lastEmission()[4]).toEqual([]));
+  });
+
+  it("the editor's REAL emission of a move (slot one and a later slot) is accepted by the route's validation", async () => {
+    for (const overUrl of [url(4), url(2)]) {
+      for (const k of Object.keys(grids)) delete grids[k];
+      onPendingChange.mockClear();
+      const { unmount } = await mountBoth();
+      dragTo({ container: V1, url: url(1) }, { container: V2, url: overUrl });
+      await waitFor(() => expect(lastEmission()[4]).toHaveLength(1));
+      const [galleries, , , removed, moves] = lastEmission();
+      const intents = new Map<string, MoveIntentView>();
+      for (const g of galleries) intents.set(g.variantId, { fileGids: g.fileGids, removedMainGid: g.removedMainGid ?? null, mainGid: g.mainGid ?? null });
+      for (const r of removed) intents.set(r.variantId, { fileGids: null, removedMainGid: r.removedMainGid, mainGid: null });
+      expect(validateMainMoves(moves, intents)).toEqual([]);
+      unmount();
+      cleanup();
+    }
   });
 });

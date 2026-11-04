@@ -38,6 +38,8 @@ let onAttach: (() => void) | null;
 let attachFailFor: string | null;
 let attachLagFor: string | null;
 let createdCounter: number;
+// How many variants the product has: defaults to the number of scripted variants; undefined answer = not answered.
+let variantCountOverride: number | null | undefined;
 const updateMany = vi.fn();
 
 vi.mock("~/shopify.server", () => ({
@@ -52,6 +54,9 @@ vi.mock("~/shopify.server", () => ({
             return reply({
               data: {
                 product: {
+                  ...((variantCountOverride === undefined ? Object.keys(variants).length : variantCountOverride) === null
+                    ? {}
+                    : { variantsCount: { count: variantCountOverride === undefined ? Object.keys(variants).length : variantCountOverride } }),
                   media: {
                     pageInfo: { hasNextPage: false, endCursor: null },
                     nodes: Object.entries(productMedia).map(([id, mediaContentType]) => ({ id, mediaContentType })),
@@ -193,6 +198,7 @@ beforeEach(() => {
   attachFailFor = null;
   attachLagFor = null;
   createdCounter = 0;
+  variantCountOverride = undefined;
   updateMany.mockReset();
   productMedia = Object.fromEntries([1, 2, 3, 4, 5, 6].map((n) => [img(n), "IMAGE"]));
   libraryFiles = {};
@@ -575,13 +581,19 @@ describe("R4: the variant is left with a promoted main and an empty gallery", ()
     expect(orderOf(bulk()![0])).toEqual([{ kind: "file", value: img(2) }]);
   });
 
-  it("NOT written: a variant already [main] that becomes [] after an edit (R3: the fallback is accepted there)", async () => {
-    variants[V1] = { main: img(1), gallery: [img(2)] };
+  it("NOT written (R3): a variant whose stored list is only its own main image [main] that becomes [] after an edit loses nothing", async () => {
+    variants[V1] = { main: img(1), gallery: [img(1)] };
     await post({ variantGalleries: [{ variantId: V1, fileGids: [], galleryOnly: true }] });
     const v = bulk()![0];
     expect(galleryOf(v)).toEqual([]);
     expect(orderOf(v)).toBeUndefined();
     expect("mediaId" in v).toBe(false);
+  });
+
+  it("NOT written: a variant with a main image and an empty stored list stays as it is (nothing was lost)", async () => {
+    variants[V1] = { main: img(1), gallery: [] };
+    await post({ variantGalleries: [{ variantId: V1, fileGids: [], galleryOnly: true }] });
+    expect(orderOf(bulk()![0])).toBeUndefined();
   });
 
   it("NOT written: a variant left with no image at all", async () => {
@@ -599,6 +611,300 @@ describe("R4: the variant is left with a promoted main and an empty gallery", ()
     const v = bulk()![0];
     expect(galleryOf(v)).toEqual([img(5)]);
     expect(orderOf(v)).toEqual([{ kind: "file", value: img(2) }, { kind: "file", value: img(5) }]);
+  });
+});
+
+describe("point 1: a variant left with only its main image shows only that image (more than one variant)", () => {
+  const MAIN_ONLY = (g: string) => JSON.stringify([{ kind: "file", value: g }]);
+
+  it("the last non-main gallery image is removed: the main-only entry is written in the same variant input", async () => {
+    variants[V1] = { main: img(1), gallery: [img(2)] };
+    const res = await post({ variantGalleries: [{ variantId: V1, fileGids: [], galleryOnly: true, expectedMainGid: img(1) }] });
+    expect(res.success).toBe(true);
+    const v = bulk()![0];
+    expect("mediaId" in v).toBe(false);
+    expect(galleryOf(v)).toEqual([]);
+    expect(orderOf(v)).toEqual([{ kind: "file", value: img(1) }]);
+    expect(names().includes("metafieldsSet")).toBe(false);
+    expect(variants[V1].order).toBe(MAIN_ONLY(img(1)));
+  });
+
+  it("ANY edit that empties the list, not only the two-image case (three images, all non-main removed)", async () => {
+    variants[V1] = { main: img(1), gallery: [img(2), img(3), img(5)] };
+    await post({ variantGalleries: [{ variantId: V1, fileGids: [img(1)], galleryOnly: true, expectedMainGid: img(1) }] });
+    const v = bulk()![0];
+    expect(galleryOf(v)).toEqual([]);
+    expect(orderOf(v)).toEqual([{ kind: "file", value: img(1) }]);
+  });
+
+  it("a client order that carries only the main image is the same entry; an EMPTY client order does not delete it", async () => {
+    variants[V1] = { main: img(1), gallery: [img(2)] };
+    await post({
+      variantGalleries: [{ variantId: V1, fileGids: [], galleryOnly: true, expectedMainGid: img(1) }],
+      variantGalleryOrder: [{ variantId: V1, orderJson: "" }],
+    });
+    expect(orderOf(bulk()![0])).toEqual([{ kind: "file", value: img(1) }]);
+    expect(names().includes("metafieldsDelete")).toBe(false);
+  });
+
+  it("SINGLE variant (Shopify's default variant counts as one): no entry, the fallback to all product media is right", async () => {
+    variants = { [V1]: { main: img(1), gallery: [img(2)] } };
+    await post({ variantGalleries: [{ variantId: V1, fileGids: [], galleryOnly: true, expectedMainGid: img(1) }] });
+    const v = bulk()![0];
+    expect(galleryOf(v)).toEqual([]);
+    expect(orderOf(v)).toBeUndefined();
+  });
+
+  it("SINGLE variant, R4 removal: the promoted image gets no entry either", async () => {
+    variants = { [V1]: { main: img(1), gallery: [img(2)] } };
+    await post(removal(V1, img(1)));
+    const v = bulk()![0];
+    expect(v.mediaId).toBe(img(2));
+    expect(orderOf(v)).toBeUndefined();
+    expect(variants[V1].order).toBeFalsy();
+  });
+
+  it("count not answered: nothing is created (the previous fallback behaviour)", async () => {
+    variantCountOverride = null;
+    variants[V1] = { main: img(1), gallery: [img(2)] };
+    await post({ variantGalleries: [{ variantId: V1, fileGids: [], galleryOnly: true, expectedMainGid: img(1) }] });
+    expect(orderOf(bulk()![0])).toBeUndefined();
+  });
+
+  it("R4 with more than one variant keeps working, the variant count is read from Shopify (not from the request)", async () => {
+    variants = { [V1]: { main: img(1), gallery: [img(2)] }, [V2]: { main: img(4), gallery: [] }, ["gid://shopify/ProductVariant/3"]: { main: null, gallery: [] } };
+    await post(removal(V1, img(1)));
+    expect(orderOf(bulk()![0])).toEqual([{ kind: "file", value: img(2) }]);
+    expect(calls.some((c) => c.name === "productMediaPage")).toBe(true);
+  });
+
+  it("a gallery that still has images gets no entry; with links in the order the entry is not written", async () => {
+    variants[V1] = { main: img(1), gallery: [img(2), img(3)] };
+    await post({ variantGalleries: [{ variantId: V1, fileGids: [img(3)], galleryOnly: true, expectedMainGid: img(1) }] });
+    expect(orderOf(bulk()![0])).toBeUndefined();
+    calls = [];
+    variants[V1] = { main: img(1), gallery: [img(2)], links: ["https://youtu.be/abcdefghijk"], order: JSON.stringify([{ kind: "file", value: img(1) }, { kind: "file", value: img(2) }, { kind: "url", value: "https://youtu.be/abcdefghijk" }]) };
+    await post({
+      variantGalleries: [{ variantId: V1, fileGids: [], galleryOnly: true, expectedMainGid: img(1) }],
+      variantExternalVideos: [{ variantId: V1, urls: ["https://youtu.be/abcdefghijk"] }],
+      variantGalleryOrder: [{ variantId: V1, orderJson: JSON.stringify([{ kind: "file", value: img(1) }, { kind: "url", value: "https://youtu.be/abcdefghijk" }]) }],
+    });
+    expect(orderOf(bulk()![0])).toEqual([{ kind: "file", value: img(1) }, { kind: "url", value: "https://youtu.be/abcdefghijk" }]);
+  });
+
+  it("no image left at all: stays empty, no entry", async () => {
+    variants[V1] = { main: img(1), gallery: [] };
+    await post(removal(V1, img(1)));
+    const v = bulk()![0];
+    expect(v.mediaId).toBeNull();
+    expect(orderOf(v)).toBeUndefined();
+  });
+
+  it("REMOVING the entry: a gallery image added later widens it (no client order)", async () => {
+    variants[V1] = { main: img(1), gallery: [img(2)] };
+    await post({ variantGalleries: [{ variantId: V1, fileGids: [], galleryOnly: true, expectedMainGid: img(1) }] });
+    expect(variants[V1].order).toBe(MAIN_ONLY(img(1)));
+    calls = [];
+    await post({ variantGalleries: [{ variantId: V1, fileGids: [img(5)], galleryOnly: true, expectedMainGid: img(1) }] });
+    expect(orderOf(bulk()![0])).toEqual([{ kind: "file", value: img(1) }, { kind: "file", value: img(5) }]);
+  });
+
+  it("REMOVING the entry: the product now has ONE variant, any write of the variant deletes a stored main-only entry", async () => {
+    variants = { [V1]: { main: img(1), gallery: [], order: MAIN_ONLY(img(1)) } };
+    const res = await post({ variantGalleries: [{ variantId: V1, fileGids: [], galleryOnly: true, expectedMainGid: img(1) }] });
+    expect(res.success).toBe(true);
+    expect(orderOf(bulk()![0])).toBeUndefined();
+    const del = calls.find((c) => c.name === "metafieldsDelete");
+    expect(del?.variables.metafields).toEqual([{ ownerId: V1, namespace: "custom", key: "variant_gallery_order" }]);
+  });
+
+  it("an entry in effect on a multi-variant product survives an unrelated write of the variant (re-written, not deleted)", async () => {
+    variants[V1] = { main: img(1), gallery: [], order: MAIN_ONLY(img(1)) };
+    await post({ variantGalleries: [{ variantId: V1, fileGids: [], galleryOnly: true, expectedMainGid: img(1) }] });
+    expect(orderOf(bulk()![0])).toEqual([{ kind: "file", value: img(1) }]);
+    expect(names().includes("metafieldsDelete")).toBe(false);
+  });
+
+  it("promoteIfEmpty of a variant whose list holds exactly one image: that image is the main and shown alone (more than one variant only)", async () => {
+    variants[V1] = { main: null, gallery: [img(2)] };
+    await post({ variantGalleries: [{ variantId: V1, fileGids: [img(2)], promoteIfEmpty: true }] });
+    const v = bulk()![0];
+    expect(v.mediaId).toBe(img(2));
+    expect(orderOf(v)).toEqual([{ kind: "file", value: img(2) }]);
+    calls = [];
+    variants = { [V1]: { main: null, gallery: [img(2)] } };
+    await post({ variantGalleries: [{ variantId: V1, fileGids: [img(2)], promoteIfEmpty: true }] });
+    expect(orderOf(bulk()![0])).toBeUndefined();
+  });
+});
+
+describe("point 2: moving a main image to another variant (both variants, one write, or neither)", () => {
+  const mv = (over: Record<string, unknown> = {}) => ({ gid: img(1), sourceVariantId: V1, sourceExpectedMainGid: img(1), targetVariantId: V2, targetExpectedMainGid: img(4), targetPosition: 1, ...over });
+  // the editor's statements for a drop on a LATER slot of V2 ([4, 1, 5]) and for slot one ([1, 4, 5])
+  const later = () => ({
+    removedMainImages: [{ variantId: V1, removedMainGid: img(1) }],
+    variantGalleries: [{ variantId: V2, fileGids: [img(4), img(1), img(5)], galleryOnly: true, expectedMainGid: img(4) }],
+    variantGalleryOrder: [{ variantId: V2, orderJson: JSON.stringify([{ kind: "file", value: img(4) }, { kind: "file", value: img(1) }, { kind: "file", value: img(5) }]) }],
+    mainMoves: [mv()],
+  });
+  const slotOne = () => ({
+    removedMainImages: [{ variantId: V1, removedMainGid: img(1) }],
+    variantGalleries: [{ variantId: V2, fileGids: [img(1), img(4), img(5)], mainGid: img(1), expectedMainGid: img(4) }],
+    variantGalleryOrder: [{ variantId: V2, orderJson: JSON.stringify([{ kind: "file", value: img(1) }, { kind: "file", value: img(4) }, { kind: "file", value: img(5) }]) }],
+    mainMoves: [mv({ targetPosition: 0 })],
+  });
+  const byId = (id: string) => bulk()!.find((v) => v.id === id);
+
+  it("dropped on a later slot: both variants are written in ONE productVariantsBulkUpdate; the target keeps its main, the source promotes its first own image", async () => {
+    const res = await post(later());
+    expect(res.success).toBe(true);
+    expect(bulkCount()).toBe(1);
+    expect(byId(V1).mediaId).toBe(img(2));
+    expect(galleryOf(byId(V1))).toEqual([img(3)]);
+    expect("mediaId" in byId(V2)).toBe(false);
+    expect(galleryOf(byId(V2))).toEqual([img(1), img(5)]);
+    // the target's order carries the moved image at exactly the dropped position
+    expect(orderOf(byId(V2)).map((e: any) => e.value)).toEqual([img(4), img(1), img(5)]);
+    expect(variants[V1].main).toBe(img(2));
+    expect(variants[V2].gallery).toEqual([img(1), img(5)]);
+  });
+
+  it("dropped on slot one: the moved image becomes the target's main, the target's old main goes into its gallery", async () => {
+    const res = await post(slotOne());
+    expect(res.success).toBe(true);
+    expect(bulkCount()).toBe(1);
+    expect(byId(V2).mediaId).toBe(img(1));
+    expect(galleryOf(byId(V2))).toEqual([img(4), img(5)]);
+    expect(byId(V1).mediaId).toBe(img(2));
+    expect(variants[V1].main).toBe(img(2));
+    expect(variants[V2].main).toBe(img(1));
+  });
+
+  it("the source has no image left: it ends with no main (unset) and no order entry", async () => {
+    variants[V1] = { main: img(1), gallery: [] };
+    const res = await post(later());
+    expect(res.success).toBe(true);
+    expect(byId(V1).mediaId).toBeNull();
+    expect(orderOf(byId(V1))).toBeUndefined();
+    expect(galleryOf(byId(V2))).toEqual([img(1), img(5)]);
+  });
+
+  it("the source's next gallery entry is a video: the first IMAGE moves up, the video stays", async () => {
+    productMedia[vid(1)] = "VIDEO";
+    variants[V1] = { main: img(1), gallery: [vid(1), img(3)] };
+    await post(later());
+    expect(byId(V1).mediaId).toBe(img(3));
+    expect(galleryOf(byId(V1))).toEqual([vid(1)]);
+  });
+
+  it("the source is left with only the promoted image (more than one variant): it shows only that image", async () => {
+    variants[V1] = { main: img(1), gallery: [img(2)] };
+    await post(later());
+    expect(byId(V1).mediaId).toBe(img(2));
+    expect(galleryOf(byId(V1))).toEqual([]);
+    expect(orderOf(byId(V1))).toEqual([{ kind: "file", value: img(2) }]);
+  });
+
+  it("a stale tab, SOURCE side: its main changed elsewhere: BOTH variants are refused, nothing is written", async () => {
+    variants[V1].main = img(2);
+    const res = await post(later());
+    expect(res.success).toBe(false);
+    expect(res.refusals).toEqual(expect.arrayContaining([{ variantId: V1, code: "mainChangedElsewhere" }, { variantId: V2, code: "moveCounterpartRefused" }]));
+    expect(bulkCount()).toBe(0);
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(names().includes("productReorderMedia")).toBe(false);
+  });
+
+  it("a stale tab, TARGET side: its main changed elsewhere: BOTH variants are refused, the source keeps its main", async () => {
+    variants[V2].main = img(5);
+    const res = await post(later());
+    expect(res.success).toBe(false);
+    expect(res.refusals).toEqual(expect.arrayContaining([{ variantId: V2, code: "mainChangedElsewhere" }, { variantId: V1, code: "moveCounterpartRefused" }]));
+    expect(bulkCount()).toBe(0);
+    expect(variants[V1].main).toBe(img(1));
+  });
+
+  it("a refusal for another reason (the promoted library image cannot be attached) also refuses the OTHER variant", async () => {
+    libraryFiles[img(9)] = "READY";
+    variants[V1] = { main: img(1), gallery: [img(9)] };
+    attachFailFor = img(9);
+    const res = await post(later());
+    expect(res.success).toBe(false);
+    expect(bulkCount()).toBe(0);
+    expect(res.refusals).toEqual(expect.arrayContaining([{ variantId: V1, code: "attachFailed" }, { variantId: V2, code: "moveCounterpartRefused" }]));
+    expect(variants[V2].gallery).toEqual([img(5)]);
+  });
+
+  it("a failed read refuses both and writes nothing (nothing uploaded either)", async () => {
+    lookupFails = "variants";
+    const res = await post({ ...later(), newMedia: [{ resourceUrl: "https://staged/x.jpg", kind: "image" }] });
+    expect(res.success).toBe(false);
+    expect(names().includes("productCreateMedia")).toBe(false);
+    expect(bulkCount()).toBe(0);
+    expect(res.refusals.map((r: any) => r.variantId).sort()).toEqual([V1, V2]);
+  });
+
+  it("a retry after the move landed is a no-op for both variants (idempotent), success", async () => {
+    expect((await post(later())).success).toBe(true);
+    calls = [];
+    updateMany.mockReset();
+    const again = await post(later());
+    expect(again.success).toBe(true);
+    expect(bulkCount()).toBe(0);
+    expect(variants[V1].main).toBe(img(2));
+    expect(variants[V2].gallery).toEqual([img(1), img(5)]);
+  });
+
+  it("a retry after a failed write (userErrors) writes the move once, then nothing again", async () => {
+    bulkErrors = [{ message: "boom" }];
+    const failed = await post(later());
+    expect(failed.success).toBe(false);
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(variants[V1].main).toBe(img(1));
+    bulkErrors = [];
+    calls = [];
+    expect((await post(slotOne())).success).toBe(true);
+    expect(variants[V2].main).toBe(img(1));
+    expect(variants[V1].main).toBe(img(2));
+    calls = [];
+    expect((await post(slotOne())).success).toBe(true);
+    expect(bulkCount()).toBe(0);
+  });
+
+  it("if the two variants were NOT written atomically and only the SOURCE landed: the retry is refused for both, the image is on no variant but never gone from the product", async () => {
+    variants[V1].main = img(2); // the source half of an earlier call landed, the target half did not
+    const res = await post(later());
+    expect(res.success).toBe(false);
+    expect(bulkCount()).toBe(0);
+    expect(productMedia[img(1)]).toBe("IMAGE");
+  });
+
+  it("only the TARGET landed (image in both): the retry completes the move", async () => {
+    variants[V2].gallery = [img(1), img(5)];
+    const res = await post(later());
+    expect(res.success).toBe(true);
+    expect(variants[V1].main).toBe(img(2));
+  });
+
+  it("a malformed move is refused before anything is created or written", async () => {
+    const bad = { ...later(), variantGalleries: [{ variantId: V2, fileGids: [img(4), img(5)], galleryOnly: true, expectedMainGid: img(4) }] };
+    const res = await post({ ...bad, newMedia: [{ resourceUrl: "https://staged/x.jpg", kind: "image" }] });
+    expect(res.success).toBe(false);
+    expect(calls.length).toBe(0);
+    expect(res.errors.join(" ")).toMatch(/mainMoves\[0\]/);
+  });
+
+  it("a move to a target WITHOUT a main image: dropping on slot one makes the moved image its main", async () => {
+    variants[V2] = { main: null, gallery: [img(5)] };
+    const res = await post({
+      removedMainImages: [{ variantId: V1, removedMainGid: img(1) }],
+      variantGalleries: [{ variantId: V2, fileGids: [img(1), img(5)], mainGid: img(1), expectedMainGid: null }],
+      mainMoves: [mv({ targetExpectedMainGid: null, targetPosition: 0 })],
+    });
+    expect(res.success).toBe(true);
+    expect(variants[V2].main).toBe(img(1));
+    expect(variants[V2].gallery).toEqual([img(5)]);
+    expect(variants[V1].main).toBe(img(2));
   });
 });
 

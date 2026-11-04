@@ -4,7 +4,7 @@ import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, 
 import { useFetcher } from "react-router";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
-import { buildVariantEmission, displayMain, isImageGid, orderShowingMain, orderWithoutFiles, isFileKindGid, parseGalleryOrder, galleryWithout, visibleFileOrder, planVariantDrag, type DragEntry, type PendingMain, type RemovedMainEmission, type VariantGalleryEmission } from "../../services/variant-main-image.shared";
+import { buildVariantEmission, displayMain, isImageGid, orderShowingMain, orderWithoutFiles, isFileKindGid, parseGalleryOrder, galleryWithout, visibleFileOrder, planVariantDrag, type DragEntry, type MainMove, type PendingMain, type RemovedMainEmission, type VariantGalleryEmission } from "../../services/variant-main-image.shared";
 import { useI18n } from "../../contexts/I18nContext";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import { answerPredatesSave, altConfirmKey, monotonicNow } from "./alt-load-guard";
@@ -111,7 +111,7 @@ interface VariantImageManagerProps {
   onRemoveBulk: (ids: string[]) => void;
   onSetAction: (action: "copy" | "move" | null) => void;
   imageManagerSettings: ImageManagerSettings;
-  onPendingChange?: (variantGalleries: VariantGalleryEmission[], mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>, removedMainImages?: RemovedMainEmission[]) => void;
+  onPendingChange?: (variantGalleries: VariantGalleryEmission[], mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>, removedMainImages?: RemovedMainEmission[], mainMoves?: MainMove[]) => void;
   /** Notified whenever the merchant adds / removes a YouTube or Vimeo URL on
    *  any variant. The shape mirrors the /api/update-variant-galleries body
    *  field so the hook can pass it straight through. */
@@ -323,6 +323,11 @@ export function VariantImageManager({
   // by that one branch of the drag handler and by nothing else; Discard, a save and a
   // product switch clear it.
   const [pendingMains, setPendingMains] = useState<Record<string, PendingMain>>({});
+  // Explicit intent: a main image MOVED to another variant (plain drag of the main image onto another
+  // variant's gallery). It ties the source's removal and the target's list together so the server writes
+  // both or neither. Discard, a save and a product switch clear it; it ends by itself once either side
+  // is not pending any more (`effectiveMoves`).
+  const [pendingMoves, setPendingMoves] = useState<MainMove[]>([]);
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>>([]);
   const [webpError, setWebpError] = useState<string | null>(null);
   // A media write (delete, upload) the server refused; shown above the gallery.
@@ -759,6 +764,7 @@ export function VariantImageManager({
     setSelectedGalleryItems(new Map());
     setRemovedMains({});
     setPendingMains({});
+    setPendingMoves([]);
     // Critical: the per-variant external-video URLs and the combined
     // gallery-order JSON also have to be cleared on Cancel / product switch,
     // otherwise a URL the merchant typed for product A but never saved would
@@ -925,6 +931,7 @@ export function VariantImageManager({
       setSelectedGalleryItems(new Map());
       setRemovedMains({});
       setPendingMains({});
+      setPendingMoves([]);
     }
 
     appFetch(`/api/product-variants?productId=${encodeURIComponent(pid)}`, { signal: variantsAbort.signal })
@@ -1533,6 +1540,21 @@ export function VariantImageManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variants, pendingMains, urlToGid, effectiveRemovals]);
 
+  /** The moves that still apply: the source's removal of that image is in effect and the target still
+   *  holds the image (in its pending list or as its chosen main). Anything else ends the move; the
+   *  remaining statements are then ordinary, independent ones. */
+  const effectiveMoves = useMemo(
+    () => pendingMoves.filter(m => {
+      if (effectiveRemovals[m.sourceVariantId] !== m.gid) return false;
+      const list = pendingVariantGalleries[m.targetVariantId];
+      return effectivePendingMains[m.targetVariantId]?.gid === m.gid || (!!list && list.includes(m.gid));
+    }),
+    [pendingMoves, effectiveRemovals, effectivePendingMains, pendingVariantGalleries],
+  );
+  useEffect(() => {
+    if (effectiveMoves.length !== pendingMoves.length) setPendingMoves(effectiveMoves);
+  }, [effectiveMoves, pendingMoves]);
+
   /** An image that could move up as a variant's main image: any MediaImage. A library image
    *  the product does not hold yet is attached by the server on the save (fileUpdate) before
    *  it becomes the main image, so the editor does not skip it; a video, link, 3D model or
@@ -1566,6 +1588,64 @@ export function VariantImageManager({
       isCandidate: promoteEmpty ? (g => (isPromotable(g) || stagedImageRefs.has(g)) && !!fileUrlMap[g]) : isPromotable,
       isStagedImage: promoteEmpty ? (r => stagedImageRefs.has(r)) : undefined,
     });
+  };
+
+  /** A variant's gallery tiles in the order the merchant SEES them: saved order JSON first (honouring
+   *  per-kind value lookups), then whatever the order does not cover (files, links, models). */
+  const orderedVariantTiles = (variantId: string) => {
+    const variant = variants.find(v => v.id === variantId);
+    const storedGids = pendingVariantGalleries[variantId] ?? variant?.galleryFileGids ?? [];
+    // The drag works on what the gallery SHOWS (displayMain). The first slot IS the main
+    // image: an image dropped there becomes the main image (the old main image moves to
+    // the drop position and stays in the gallery), the main image dragged away hands
+    // the first slot to the next image, and nothing but this branch ever chooses a main
+    // image (planVariantDrag decides; the save carries it as an explicit intent).
+    const shownDrag = variant ? displayFor(variant) : displayMain({ nativeMainGid: undefined, removed: false, stored: storedGids });
+    const gids = shownDrag.gids;
+    const fileUrls = gids.map(gid => fileUrlMap[gid]).filter(Boolean) as string[];
+    const externalUrls = pendingExternalVideos[variantId] ?? variant?.externalVideoUrls ?? [];
+    const modelUrls = pendingVariant3dModels[variantId] ?? variant?.threeDModelUrls ?? [];
+    // Build the same ordered display list that VariantGallerySection
+    // shows the merchant — saved order JSON first (honouring per-kind
+    // value lookups), then tail-append any item the order metafield
+    // doesn't cover. Without this, dragging a video / 3D model fired a
+    // drag-end whose URL wasn't in the (file-only) variantUrls list →
+    // indexOf returned -1 → the if-guard rejected the move and nothing
+    // happened. The merchant couldn't reorder mixed galleries.
+    const orderJsonRaw = orderShowingMain(
+      pendingGalleryOrder[variantId] ?? variant?.galleryOrderJson ?? null,
+      shownDrag.mainGid,
+    );
+    const fileSet = new Set(fileUrls);
+    const externalSet = new Set(externalUrls);
+    const modelSet = new Set(modelUrls);
+    let variantUrls: string[] = [];
+    if (orderJsonRaw) {
+      try {
+        const parsed = JSON.parse(orderJsonRaw) as Array<{ kind: string; value: string }>;
+        const seenFile = new Set<string>();
+        const seenExternal = new Set<string>();
+        const seenModel = new Set<string>();
+        for (const entry of (Array.isArray(parsed) ? parsed : [])) {
+          if (entry?.kind === "file") {
+            const u = fileUrlMap[entry.value];
+            if (u && fileSet.has(u) && !seenFile.has(u)) { variantUrls.push(u); seenFile.add(u); }
+          } else if (entry?.kind === "url") {
+            if (externalSet.has(entry.value) && !seenExternal.has(entry.value)) { variantUrls.push(entry.value); seenExternal.add(entry.value); }
+          } else if (entry?.kind === "model") {
+            if (modelSet.has(entry.value) && !seenModel.has(entry.value)) { variantUrls.push(entry.value); seenModel.add(entry.value); }
+          }
+        }
+        for (const u of fileUrls) if (!seenFile.has(u)) variantUrls.push(u);
+        for (const u of externalUrls) if (!seenExternal.has(u)) variantUrls.push(u);
+        for (const u of modelUrls) if (!seenModel.has(u)) variantUrls.push(u);
+      } catch {
+        variantUrls = [...fileUrls, ...externalUrls, ...modelUrls];
+      }
+    } else {
+      variantUrls = [...fileUrls, ...externalUrls, ...modelUrls];
+    }
+    return { variant, shownDrag, variantUrls, externalSet, modelSet };
   };
 
   // Variants that have no effective main image (neither native Shopify main nor any gallery image
@@ -1609,7 +1689,7 @@ export function VariantImageManager({
       // last, so re-sync it explicitly or the next Save replays stale pending state.
       if (emittedPendingRef.current) {
         emittedPendingRef.current = false;
-        onPendingChange?.([], pendingMediaOrderRef.current, [], []);
+        onPendingChange?.([], pendingMediaOrderRef.current, [], [], []);
       }
       return;
     }
@@ -1621,8 +1701,8 @@ export function VariantImageManager({
       pendingMain: effectivePendingMains,
       variants: variants.map(v => ({ id: v.id, mainGid: mainGidOfVariant(v), hasNativeImage: !v.defaultImageUrl ? false : undefined, galleryFileGids: v.galleryFileGids })),
     });
-    onPendingChange?.(galleries, pendingMediaOrderRef.current, pendingProductNewMedia, removedMainImages);
-  }, [pendingVariantGalleries, pendingProductNewMedia, effectiveRemovals, effectivePendingMains, variants]); // eslint-disable-line react-hooks/exhaustive-deps
+    onPendingChange?.(galleries, pendingMediaOrderRef.current, pendingProductNewMedia, removedMainImages, effectiveMoves);
+  }, [pendingVariantGalleries, pendingProductNewMedia, effectiveRemovals, effectivePendingMains, effectiveMoves, variants]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const imageManagerTitlePulseStyle = useMemo<React.CSSProperties | undefined>(() => {
     if (hasAnyVariantMissingMainImage) {
@@ -2045,58 +2125,7 @@ export function VariantImageManager({
           handleProductReorder(arrayMove(urls, oldIndex, newIndex));
         }
       } else {
-        const variant = variants.find(v => v.id === sourceContainerId);
-        const storedGids = pendingVariantGalleries[sourceContainerId] ?? variant?.galleryFileGids ?? [];
-        // The drag works on what the gallery SHOWS (displayMain). The first slot IS the main
-        // image: an image dropped there becomes the main image (the old main image moves to
-        // the drop position and stays in the gallery), the main image dragged away hands
-        // the first slot to the next image, and nothing but this branch ever chooses a main
-        // image (planVariantDrag decides; the save carries it as an explicit intent).
-        const shownDrag = variant ? displayFor(variant) : displayMain({ nativeMainGid: undefined, removed: false, stored: storedGids });
-        const gids = shownDrag.gids;
-        const fileUrls = gids.map(gid => fileUrlMap[gid]).filter(Boolean) as string[];
-        const externalUrls = pendingExternalVideos[sourceContainerId] ?? variant?.externalVideoUrls ?? [];
-        const modelUrls = pendingVariant3dModels[sourceContainerId] ?? variant?.threeDModelUrls ?? [];
-        // Build the same ordered display list that VariantGallerySection
-        // shows the merchant — saved order JSON first (honouring per-kind
-        // value lookups), then tail-append any item the order metafield
-        // doesn't cover. Without this, dragging a video / 3D model fired a
-        // drag-end whose URL wasn't in the (file-only) variantUrls list →
-        // indexOf returned -1 → the if-guard rejected the move and nothing
-        // happened. The merchant couldn't reorder mixed galleries.
-        const orderJsonRaw = orderShowingMain(
-          pendingGalleryOrder[sourceContainerId] ?? variant?.galleryOrderJson ?? null,
-          shownDrag.mainGid,
-        );
-        const fileSet = new Set(fileUrls);
-        const externalSet = new Set(externalUrls);
-        const modelSet = new Set(modelUrls);
-        let variantUrls: string[] = [];
-        if (orderJsonRaw) {
-          try {
-            const parsed = JSON.parse(orderJsonRaw) as Array<{ kind: string; value: string }>;
-            const seenFile = new Set<string>();
-            const seenExternal = new Set<string>();
-            const seenModel = new Set<string>();
-            for (const entry of (Array.isArray(parsed) ? parsed : [])) {
-              if (entry?.kind === "file") {
-                const u = fileUrlMap[entry.value];
-                if (u && fileSet.has(u) && !seenFile.has(u)) { variantUrls.push(u); seenFile.add(u); }
-              } else if (entry?.kind === "url") {
-                if (externalSet.has(entry.value) && !seenExternal.has(entry.value)) { variantUrls.push(entry.value); seenExternal.add(entry.value); }
-              } else if (entry?.kind === "model") {
-                if (modelSet.has(entry.value) && !seenModel.has(entry.value)) { variantUrls.push(entry.value); seenModel.add(entry.value); }
-              }
-            }
-            for (const u of fileUrls) if (!seenFile.has(u)) variantUrls.push(u);
-            for (const u of externalUrls) if (!seenExternal.has(u)) variantUrls.push(u);
-            for (const u of modelUrls) if (!seenModel.has(u)) variantUrls.push(u);
-          } catch {
-            variantUrls = [...fileUrls, ...externalUrls, ...modelUrls];
-          }
-        } else {
-          variantUrls = [...fileUrls, ...externalUrls, ...modelUrls];
-        }
+        const { variant, variantUrls, externalSet, modelSet } = orderedVariantTiles(sourceContainerId);
 
         {
           // Position 0 is the variant's main image, which only a MediaImage can be. The check
@@ -2222,6 +2251,51 @@ export function VariantImageManager({
     }
 
     if (sourceContainerId !== "product") {
+      // A variant's MAIN image dragged onto another variant: a plain drag MOVES it (like a gallery image),
+      // Ctrl/Cmd copies it (the branch below). The source's first own image moves up, the image takes the
+      // position it was dropped on in the target (slot 1 = the target's new main image). One statement
+      // (`pendingMoves`) ties the two variants together so the server writes both or neither.
+      const moveSource = variants.find(v => v.id === sourceContainerId);
+      const moveGid = moveSource ? mainGidOfVariant(moveSource) : undefined;
+      const isStoredMainTile = !!moveSource?.defaultImageUrl &&
+        (moveSource.defaultImageUrl === url || moveSource.defaultImageUrl.split("?")[0] === url.split("?")[0]) &&
+        !effectivePendingMains[sourceContainerId] && !effectiveRemovals[sourceContainerId];
+      if (!isCtrlHeldRef.current && isStoredMainTile) {
+        if (!moveGid || !isImageGid(moveGid)) { setMediaError(t.imageManager.mainNotNameable); return; }
+        const moveTarget = variants.find(v => v.id === targetContainerId);
+        if (!moveTarget) return;
+        if (effectiveRemovals[targetContainerId] || effectivePendingMains[targetContainerId] ||
+            effectiveMoves.some(m => m.sourceVariantId === targetContainerId || m.targetVariantId === targetContainerId)) {
+          setMediaError(t.imageManager.mainMoveSaveFirst);
+          return;
+        }
+        const { shownDrag: targetShown, variantUrls: targetUrls, externalSet: targetExternal, modelSet: targetModels } = orderedVariantTiles(targetContainerId);
+        if (targetShown.mainGid === moveGid) return;
+        const movedUrl = fileUrlMap[moveGid] ?? url;
+        const withoutMoved = targetUrls.filter(u => u !== movedUrl);
+        const overIdx = overUrl ? withoutMoved.indexOf(overUrl) : -1;
+        // The first slot of a target that shows a main image makes the moved image its new main image.
+        const slotOne = overIdx === 0 && targetShown.mainGid !== null;
+        const insertAt = overIdx === -1 ? withoutMoved.length : overIdx;
+        const nextUrls = [...withoutMoved.slice(0, insertAt), movedUrl, ...withoutMoved.slice(insertAt)];
+        const refs = nextUrls.map(u => (u === movedUrl ? moveGid : (targetExternal.has(u) || targetModels.has(u)) ? u : fileRefOfUrl(u)));
+        if (refs.some(r => !r)) { setMediaError(t.imageManager.tileNotResolvable); return; }
+        setMediaError(cur => (cur === t.imageManager.mainMoveSaveFirst || cur === t.imageManager.tileNotResolvable ? null : cur));
+        handleVariantReorder(targetContainerId, refs as string[], slotOne ? moveGid : null);
+        setRemovedMains(prev => ({ ...prev, [sourceContainerId]: moveGid }));
+        setPendingMoves(prev => [
+          ...prev.filter(m => m.sourceVariantId !== sourceContainerId && m.targetVariantId !== targetContainerId),
+          {
+            gid: moveGid,
+            sourceVariantId: sourceContainerId,
+            sourceExpectedMainGid: moveGid,
+            targetVariantId: targetContainerId,
+            targetExpectedMainGid: mainGidOfVariant(moveTarget) ?? null,
+            targetPosition: slotOne ? 0 : insertAt,
+          },
+        ]);
+        return;
+      }
       if (isCtrlHeldRef.current) {
         // Variant → Variant + Ctrl: copy (keep in source)
         setPendingVariantGalleries(p => {
@@ -2239,11 +2313,8 @@ export function VariantImageManager({
         });
       } else {
         // Variant → Variant: move (remove from source, add to target) in single update.
-        // A variant's MAIN image is not in its stored list, so a plain drag of the main
-        // image adds it to the target and the source keeps it as its main image: a copy
-        // by design (a main image is removed only by the remove button, a Ctrl-drop on the
-        // product gallery or by deleting the medium). A chosen-but-unsaved main image that
-        // is moved away ends that choice.
+        // A variant's stored MAIN image never gets here (it is moved above); this is a gallery
+        // image. A chosen-but-unsaved main image that is moved away ends that choice.
         setPendingMains(p => (p[sourceContainerId]?.gid === gid ? Object.fromEntries(Object.entries(p).filter(([k]) => k !== sourceContainerId)) : p));
         setPendingVariantGalleries(p => {
           const targetVariant = variants.find(v => v.id === targetContainerId);
@@ -2339,7 +2410,7 @@ export function VariantImageManager({
         onGalleryOrderChange?.({ ...pendingGalleryOrderRef.current, [targetContainerId]: newOrderJson });
       }
     }
-  }, [pendingProductImageOrder, effectiveProductImages, variants, pendingVariantGalleries, pendingGalleryOrder, pendingExternalVideos, pendingVariant3dModels, fileUrlMap, urlToGid, locallyExcludedMainGids, effectivePendingMains, imageMetas, t, handleProductReorder, handleVariantReorder, onGalleryOrderChange]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pendingProductImageOrder, effectiveProductImages, variants, pendingVariantGalleries, pendingGalleryOrder, pendingExternalVideos, pendingVariant3dModels, fileUrlMap, urlToGid, locallyExcludedMainGids, effectivePendingMains, effectiveRemovals, effectiveMoves, imageMetas, t, handleProductReorder, handleVariantReorder, onGalleryOrderChange]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // prepend=true → image lands at position 0 (main image slot, triggered by placeholder click)
   // prepend=false → image appended to end of gallery

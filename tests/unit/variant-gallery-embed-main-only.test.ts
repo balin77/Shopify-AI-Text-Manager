@@ -80,3 +80,21 @@ describe('variant-gallery-embed: an order of only a link (no image left)', () =>
     expect(items.length).toBeGreaterThan(1);
   });
 });
+
+describe('variant-gallery-embed: why the main-only entry is written for MORE than one variant only', () => {
+  it('the embed has no single-variant special case: on a product with ONE variant the entry would hide every other product image', async () => {
+    // `render` builds a product with exactly one variant (Shopify's default variant is one too)
+    const withEntry = await render({
+      featured_image: img(102),
+      metafields: { custom: { variant_gallery: mf([]), variant_gallery_order: mf([{ kind: 'file', value: GID(102) }]) } },
+    });
+    expect(withEntry).toHaveLength(1);
+    const without = await render({ featured_image: img(102), metafields: { custom: {} } });
+    expect(without).toHaveLength(4); // the fallback is what a single-variant product should keep
+  });
+
+  it('a variant with NO main image and an empty gallery falls back to all media whatever the order says about files', async () => {
+    const items = await render({ featured_image: null, metafields: { custom: {} } });
+    expect(items).toHaveLength(4);
+  });
+});

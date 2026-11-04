@@ -216,3 +216,34 @@ describe("sixth review: hook", () => {
     expect(calls[1].retainedCreatedGids).toEqual(["gid://shopify/MediaImage/80"]);
   });
 });
+
+describe("point 2: a main-image move", () => {
+  const V2 = "gid://shopify/ProductVariant/2";
+  const move = { gid: "gid://shopify/MediaImage/1", sourceVariantId: V1, sourceExpectedMainGid: "gid://shopify/MediaImage/1", targetVariantId: V2, targetExpectedMainGid: null, targetPosition: 0 };
+
+  it("the save carries the move; a partner refusal is worded for the merchant and the failed save keeps the move pending", async () => {
+    let n = 0;
+    answer = () =>
+      ++n === 1
+        ? { success: false, errors: ["x"], refusals: [{ variantId: V1, code: "mainChangedElsewhere" }, { variantId: V2, code: "moveCounterpartRefused" }] }
+        : { success: true, createdMedia: [] };
+    const { result } = renderHook(() => useVariantImageManager());
+    act(() => result.current.handlePendingChange([{ variantId: V2, fileGids: ["gid://shopify/MediaImage/1"], mainGid: "gid://shopify/MediaImage/1", expectedMainGid: null }], [], [], [{ variantId: V1, removedMainGid: "gid://shopify/MediaImage/1" }], [move]));
+    let out: any;
+    await act(async () => { out = await result.current.handleApply("gid://shopify/Product/1"); });
+    expect(calls[0].mainMoves).toEqual([move]);
+    expect(out.error).toContain("not moved");
+    // the failed save keeps everything pending: the retry sends the same move
+    await act(async () => { await result.current.handleApply("gid://shopify/Product/1"); });
+    expect(calls[1].mainMoves).toEqual([move]);
+  });
+
+  it("Discard (resetForProduct) clears the move", async () => {
+    answer = () => ({ success: true, createdMedia: [] });
+    const { result } = renderHook(() => useVariantImageManager());
+    act(() => result.current.handlePendingChange([], [], [], [], [move]));
+    act(() => result.current.resetForProduct());
+    await act(async () => { await result.current.handleApply("gid://shopify/Product/1"); });
+    expect(calls[0].mainMoves).toEqual([]);
+  });
+});

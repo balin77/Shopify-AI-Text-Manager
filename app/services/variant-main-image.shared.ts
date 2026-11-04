@@ -341,7 +341,16 @@ export interface VariantLookup {
   models?: string[];
 }
 
-export type MainRefusal = "mainChangedElsewhere" | "lookupFailed" | "attachFailed" | "attachNotConfirmed" | "notAnImage" | "variantNotFound" | "mainFileGone";
+export type MainRefusal =
+  | "mainChangedElsewhere"
+  | "lookupFailed"
+  | "attachFailed"
+  | "attachNotConfirmed"
+  | "notAnImage"
+  | "variantNotFound"
+  | "mainFileGone"
+  /** The other variant of a main-image MOVE was refused, so this one is left alone too. */
+  | "moveCounterpartRefused";
 
 export interface VariantWritePlan {
   /** `write` = send it; `skip` = nothing to do for this variant (an idempotent replay); `refuse` = do not touch the variant. */
@@ -353,6 +362,8 @@ export interface VariantWritePlan {
   gallery: string[];
   /** The rewritten order JSON when the main image changed or the stored order needs it. */
   order?: string;
+  /** The stored `variant_gallery_order` must be deleted (a main-only entry that no longer applies). */
+  clearOrder?: boolean;
   /** The image that becomes the main image in this write (promotion or explicit choice). */
   promoted?: string | null;
   /** A MediaImage the product does not hold: it must be attached (fileUpdate) before `mediaId` can be set. */
@@ -384,7 +395,7 @@ export function mainOnlyOrder(mainGid: string): string {
  * A main image is only ever set from a lookup that succeeded (fail closed).
  * `productMedia` = the product's media (GID -> media type) from the same lookup.
  */
-export function planVariantWrite(input: {
+export interface PlanVariantWriteInput {
   fileGids: readonly string[] | null;
   galleryOnly?: boolean;
   promoteIfEmpty?: boolean;
@@ -399,7 +410,57 @@ export function planVariantWrite(input: {
   /** GIDs created in THIS request: a removal does not promote them (the editor shows no promoted image for an
    *  unsaved upload); a variant with no native image DOES get its first own image, created ones included. */
   createdGids?: ReadonlySet<string>;
-}): VariantWritePlan {
+  /** How many variants the product has right now (fresh read); null / absent = unknown. The main-only
+   *  order entry is written only for MORE than one, and never kept for exactly one. */
+  variantCount?: number | null;
+}
+
+export function planVariantWrite(input: PlanVariantWriteInput): VariantWritePlan {
+  return applyMainOnlyRule(planVariantWriteCore(input), input);
+}
+
+/**
+ * A variant that has a main image and NO other gallery image shows ONLY that image on the storefront when
+ * its `variant_gallery_order` is exactly `[{file: main}]` (the embed puts `variant.featured_image` first
+ * and never reaches the product-media fallback). Without the entry it falls back to ALL product media.
+ * Owner decision (2026-11): wanted when the product has MORE THAN ONE variant (a single variant, Shopify's
+ * default variant included, keeps the fallback: the entry would hide every other product image) and the
+ * write EMPTIES the list, i.e. promotes an image into `mediaId` or removes the last non-main image from a
+ * stored list. A stored `[main]` that becomes `[]` loses nothing and gets no entry (R3).
+ *  - more than one variant: written when something was lost, and an entry already in effect is kept
+ *    (re-written, so an empty client order cannot delete it);
+ *  - exactly one variant: an entry in effect is DELETED (the conditions no longer hold);
+ *  - count unknown (no fresh count): nothing is created, nothing in effect is touched;
+ *  - gallery images left, a link or model in the order, no main image: not this rule's business (a stored
+ *    main-only entry with gallery images is expanded by the plan itself, a client order wins).
+ * Whether the gallery is "activated" is deliberately NOT asked: there is no setting for it (only the theme
+ * embed, whose state the save never depends on): the entry has no effect while the embed is off and gives
+ * the right result when it is switched on later.
+ */
+function applyMainOnlyRule(plan: VariantWritePlan, input: PlanVariantWriteInput): VariantWritePlan {
+  const lk = input.lookup ?? null;
+  if (plan.action !== "write" || !lk) return plan;
+  const finalMain = plan.mediaId !== undefined ? plan.mediaId : lk.main;
+  if (!finalMain || plan.gallery.length > 0) return plan;
+  const effective = plan.order ?? input.clientOrderJson ?? lk.order;
+  const entries = parseGalleryOrder(effective) ?? [];
+  if (entries.some(e => e.kind !== "file")) return plan;
+  const effMainOnly = entries.length === 1 && entries[0].value === finalMain;
+  const count = input.variantCount ?? null;
+  const lost = !!plan.promoted || galleryWithout(lk.gallery, lk.main).length > 0;
+  if (count !== null && count > 1) {
+    if (!lost && !effMainOnly) return plan;
+    const { clearOrder: _clear, ...rest } = plan;
+    return { ...rest, order: mainOnlyOrder(finalMain) };
+  }
+  if (count === 1 && (effMainOnly || (plan.order && entries.length > 0))) {
+    const { order: _order, ...rest } = plan;
+    return lk.order || input.clientOrderJson ? { ...rest, clearOrder: true } : rest;
+  }
+  return plan;
+}
+
+function planVariantWriteCore(input: PlanVariantWriteInput): VariantWritePlan {
   const lk = input.lookup ?? null;
   const touchesMain = !!input.removedMainGid || !!input.mainGid || !!input.promoteIfEmpty;
   if (touchesMain && !lk) return refuse("lookupFailed");
@@ -414,7 +475,6 @@ export function planVariantWrite(input: {
     let order: string | null = null;
     if (base.promoted) {
       order = orderJson ? orderAfterMainChange(orderJson, removedMain, base.promoted) : null;
-      if (!order && base.gallery.length === 0) order = mainOnlyOrder(base.promoted);
     } else if (!input.clientOrderJson && lk?.order && finalMain && base.gallery.length > 0) {
       // A stale single-entry "main only" order must not hide a gallery image added later.
       const entries = parseGalleryOrder(lk.order);
@@ -578,4 +638,102 @@ export function planVariantDrag(entries: readonly DragEntry[], fromId: string, t
     order: [first.id, ...moved.filter((e) => e.id !== first.id).map((e) => e.id)],
     newMain: first.id,
   };
+}
+
+/**
+ * MOVING a variant's main image to another variant (owner decision 2026-11: a plain drag of the main image
+ * onto another variant's gallery moves it, Ctrl/Cmd copies). One explicit intent that names BOTH sides:
+ *  - the source variant loses `gid` as its main image (its first own gallery image moves up, rule R2);
+ *  - the target variant gets `gid` at the position it was dropped on (`targetPosition`, 0 = the first slot,
+ *    which makes it the target's main image and moves the target's old main into the gallery).
+ * The per-variant statements (`removedMainGid` on the source, the target's list / `mainGid`) travel in the
+ * ordinary `variantGalleries` / `removedMainImages`; this object only ties them together so the server
+ * writes BOTH or NEITHER (see `planMainMove`).
+ */
+export interface MainMove {
+  /** The moved image (a MediaImage). */
+  gid: string;
+  sourceVariantId: string;
+  /** The source's main image the editor showed: must be `gid`. */
+  sourceExpectedMainGid: string;
+  targetVariantId: string;
+  /** The target's main image the editor showed (null = none). */
+  targetExpectedMainGid: string | null;
+  /** Where `gid` was dropped in the target's visible order, 0-based. */
+  targetPosition: number;
+}
+
+/** What the validation needs to know about a variant's statement in the same request. */
+export interface MoveIntentView {
+  fileGids: readonly string[] | null;
+  removedMainGid: string | null;
+  mainGid: string | null;
+}
+
+/**
+ * Errors of a malformed move (empty = fine): a move must have a removal on the source and the image in
+ * the target's list or as its chosen main, each variant may be in one move only, and the position must
+ * agree with what the target states. Pure: the route refuses the whole request before anything is written.
+ */
+export function validateMainMoves(moves: readonly MainMove[], intents: ReadonlyMap<string, MoveIntentView>): string[] {
+  const errors: string[] = [];
+  const seen = new Set<string>();
+  for (const [i, m] of moves.entries()) {
+    const tag = `mainMoves[${i}]`;
+    if (!m || typeof m.gid !== "string" || typeof m.sourceVariantId !== "string" || typeof m.targetVariantId !== "string") {
+      errors.push(`${tag}: malformed`);
+      continue;
+    }
+    if (!isImageGid(m.gid)) errors.push(`${tag}: only an image can be moved as a main image`);
+    if (m.sourceVariantId === m.targetVariantId) errors.push(`${tag}: source and target are the same variant`);
+    if (m.sourceExpectedMainGid !== m.gid) errors.push(`${tag}: the source's expected main image is not the moved image`);
+    for (const id of [m.sourceVariantId, m.targetVariantId]) {
+      if (seen.has(id)) errors.push(`${tag}: variant ${id} is part of more than one move`);
+      seen.add(id);
+    }
+    const src = intents.get(m.sourceVariantId);
+    const tgt = intents.get(m.targetVariantId);
+    if (!src || src.removedMainGid !== m.gid || src.mainGid) errors.push(`${tag}: the source does not state the removal of the moved image`);
+    if (!tgt) {
+      errors.push(`${tag}: the target variant has no statement`);
+      continue;
+    }
+    if (tgt.removedMainGid) errors.push(`${tag}: the target must not remove its main image in the same move`);
+    const inList = !!tgt.fileGids && tgt.fileGids.includes(m.gid);
+    if (tgt.mainGid !== m.gid && !inList) errors.push(`${tag}: the target does not hold the moved image`);
+    if (tgt.mainGid && tgt.mainGid !== m.gid) errors.push(`${tag}: the target chooses another main image`);
+    if (m.targetPosition === 0 && m.targetExpectedMainGid !== null && tgt.mainGid !== m.gid) {
+      errors.push(`${tag}: dropped on the first slot but the target does not make it the main image`);
+    }
+  }
+  return errors;
+}
+
+export type MainMoveDecision =
+  | { kind: "proceed" }
+  /** The fresh read already shows the move: nothing is written for either variant. */
+  | { kind: "done" }
+  | { kind: "refuse"; side: "source" | "target"; code: MainRefusal };
+
+/**
+ * Decides a move against the FRESH read of both variants, before anything is planned or written:
+ *  - the source's main image still is the moved image: proceed, provided the target's main image still is
+ *    the one the editor showed (or already the moved image);
+ *  - the source's main image is not the moved image any more: when the target already holds the image
+ *    (gallery or main) our own earlier write landed (a retry, a double click) = done, nothing to write;
+ *    otherwise the main image was changed elsewhere = refused.
+ * "Done" cannot tell our own earlier write from someone else's identical copy; it then changes nothing,
+ * which is the safe side (nothing is lost, nothing is overwritten).
+ */
+export function planMainMove(move: MainMove, source: VariantLookup | null, target: VariantLookup | null): MainMoveDecision {
+  if (!source) return { kind: "refuse", side: "source", code: "variantNotFound" };
+  if (!target) return { kind: "refuse", side: "target", code: "variantNotFound" };
+  const targetHolds = target.main === move.gid || target.gallery.includes(move.gid);
+  if (source.main !== move.gid) {
+    return targetHolds ? { kind: "done" } : { kind: "refuse", side: "source", code: "mainChangedElsewhere" };
+  }
+  if (target.main !== move.targetExpectedMainGid && target.main !== move.gid) {
+    return { kind: "refuse", side: "target", code: "mainChangedElsewhere" };
+  }
+  return { kind: "proceed" };
 }

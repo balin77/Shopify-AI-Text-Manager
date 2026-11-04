@@ -1990,6 +1990,8 @@ export const de = {
     mainOnlyImage: "Das ist das einzige Bild dieser Variante, es bleibt das Hauptbild. Füge zuerst ein weiteres Bild hinzu.",
     tileNotResolvable: "Eine Kachel dieser Galerie kann gerade nicht eindeutig zugeordnet werden, deshalb wurde nichts verschoben. Lade das Produkt neu und versuche es erneut.",
     mediaNotDroppable: "Ein 3D-Modell oder ein externes Video lässt sich nicht in die Bildergalerie einer Variante ziehen. Füge es über das Plus der Variantengalerie hinzu.",
+    mainMoveNotSaved: "Das Hauptbild wurde nicht verschoben: Die Variante «{variant}» konnte dabei nicht gespeichert werden, deshalb blieb keine der beiden Varianten verändert. Lade das Produkt neu und wiederhole das Verschieben bei Bedarf.",
+    mainMoveSaveFirst: "Speichere zuerst die ausstehenden Hauptbild-Änderungen dieser Varianten und verschiebe das Hauptbild danach.",
     mainNotNameable: "Dieses Hauptbild kann gerade nicht eindeutig bestimmt werden. Lade das Produkt neu und versuche es erneut.",
     uploadFailedFiles: "Upload fehlgeschlagen für: {files}. Diese Dateien wurden nicht hinzugefügt.",
     altImageNotFound: "Dieses Bild wurde am Produkt nicht mehr gefunden (es wird evtl. noch hochgeladen oder wurde gelöscht). Lade die Seite neu und versuche es erneut.",
