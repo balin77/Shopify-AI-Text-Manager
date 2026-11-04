@@ -727,6 +727,11 @@ export function VariantImageManager({
   // A key={productId} remount was deliberately rejected (redundant reconcile
   // calls on every product re-visit).
   const variantsReqIdRef = useRef(0);
+  // The product whose variants the list below currently holds. A re-read of THAT product (after a
+  // save, an alt template apply, ...) must not swap the list for the spinner: that unmounted every
+  // variant gallery, so each one closed again and the page jumped. Only a different product (or
+  // none loaded yet) shows the spinner.
+  const variantsLoadedForRef = useRef<string | null>(null);
   const variantsAbortRef = useRef<AbortController | null>(null);
 
   // Cross-gallery drag state
@@ -921,7 +926,7 @@ export function VariantImageManager({
     const variantsAbort = new AbortController();
     variantsAbortRef.current = variantsAbort;
     const isStale = () => variantsReqIdRef.current !== reqId;
-    if (!opts?.silent) setIsLoadingVariants(true);
+    if (!opts?.silent && variantsLoadedForRef.current !== pid) setIsLoadingVariants(true);
     // A silent poll must not clear a genuine error banner either — it is
     // forbidden from re-raising one, so clearing would leave the section
     // showing an empty state where a real failure had been reported.
@@ -1047,6 +1052,7 @@ export function VariantImageManager({
           : mapped;
         const sortedVariants = realVariants.sort((a, b) => a.position - b.position);
         setVariants(sortedVariants);
+        variantsLoadedForRef.current = pid;
         onVariantsLoaded?.(sortedVariants);
         // Only a read that LANDED ends what depends on it (a removed main image that the
         // promoted image has replaced): a failed read leaves that state as it is.

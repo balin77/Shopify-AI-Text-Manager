@@ -709,6 +709,7 @@ export const guideEs: GuideCopy = {
           heading: "Crear galerías",
           paragraphs: [
             "Arriba está la galería del producto y debajo una galería por variante. Arrastra imágenes desde la galería del producto o desde tu biblioteca de archivos de Shopify a una variante, ordénalas arrastrando y cópialas o muévelas entre variantes. También se admiten vídeos, enlaces de YouTube/Vimeo y modelos 3D.",
+            "Tras guardar, las galerías de variantes que tenía abiertas siguen abiertas, y la vista («Todas» o «Sin asignar») y su selección se mantienen; las imágenes se recargan en segundo plano. Solo al cambiar a otro producto la vista empieza de nuevo.",
             "Si la variante de destino ya tiene una imagen (en su galería o como imagen principal), la app rechaza el movimiento o la copia, indica la variante en el cuadro de información y no cambia nada: la imagen se queda donde estaba. Esto también vale para el mismo archivo guardado con dos nombres, siempre que la app pueda reconocerlo como el mismo archivo.",
           ],
         },

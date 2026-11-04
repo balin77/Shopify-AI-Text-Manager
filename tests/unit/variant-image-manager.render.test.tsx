@@ -26,7 +26,7 @@ const grids: Record<string, any> = {};
 vi.mock("~/components/image-manager/SortableImageGrid", () => ({
   SortableImageGrid: (p: any) => {
     grids[p.containerId] = p;
-    return null;
+    return <div data-testid={`grid-${p.containerId}`} />;
   },
 }));
 const picker: { onAdd?: (items: any[]) => void } = {};
@@ -53,6 +53,8 @@ vi.mock("react-router", async (orig) => {
 });
 
 let apiCalls: Array<{ path: string; body: any }>;
+// When set, /api/product-variants answers only after this promise settles (a read in flight).
+let variantsGate: Promise<void> | null = null;
 let variantsAnswer: () => any;
 let saveAnswer: (path: string, body: any) => any;
 vi.mock("~/utils/app-fetch", () => ({
@@ -60,6 +62,7 @@ vi.mock("~/utils/app-fetch", () => ({
     const path = String(input).split("?")[0];
     const body = init?.body ? JSON.parse(init.body) : undefined;
     apiCalls.push({ path, body });
+    if (path === "/api/product-variants" && variantsGate) await variantsGate;
     const payload = path === "/api/product-variants" ? variantsAnswer() : saveAnswer(path, body);
     return { ok: true, status: 200, json: async () => payload };
   }),
@@ -145,6 +148,7 @@ const lastEmission = () => onPendingChange.mock.calls.at(-1) as any[];
 beforeEach(() => {
   for (const k of Object.keys(grids)) delete grids[k];
   apiCalls = [];
+  variantsGate = null;
   onPendingChange = vi.fn();
   onDirtyChange = vi.fn();
   onGalleryOrderChange = vi.fn();
@@ -202,9 +206,8 @@ describe("dragging an image to the first slot of the variant's own gallery", () 
     drag(V1, url(3), url(1));
     await waitFor(() => expect(grids[V1].mainUrl).toBe(url(3)));
     rerender(ui({ resetKey: 1 }));
-    // A reset re-reads the variants (the list is rebuilt, collapsed again): open the gallery again.
+    // A reset re-reads the variants IN PLACE: the open gallery stays open (round 3, point 2).
     await waitFor(() => expect(apiCalls.filter((c) => c.path === "/api/product-variants").length).toBeGreaterThan(1));
-    fireEvent.click(await screen.findByText("Red"));
     await waitFor(() => expect(grids[V1].mainUrl).toBe(url(1)));
     expect(grids[V1].imageUrls).toEqual([url(1), url(2), url(3)]);
     const [galleries, , , removed] = lastEmission();
@@ -337,7 +340,6 @@ describe("B1: deleting a variant's main image while a gallery edit is pending", 
     // another read (a poll, a reload) lands with the promoted image as the native one
     variantsAnswer = () => variantsPayload({ v1Main: 2, v1Gallery: [gid(3)] });
     rerender(ui({ variantReloadKey: 1 }));
-    fireEvent.click(await screen.findByText("Red"));
     await waitFor(() => expect(grids[V1]?.mainUrl).toBe(url(2)));
     await waitFor(() => expect(JSON.stringify(lastEmission()[0])).not.toContain("removedMainGid"));
     expect(lastEmission()[3]).toEqual([]);
@@ -367,7 +369,6 @@ describe("handleVariantReorder takes the basis of a main choice from the EFFECTI
     await waitFor(() => expect(grids[V1].mainUrl).toBe(url(3)));
     variantsAnswer = () => variantsPayload({ v1Main: 4, v1Gallery: [gid(1), gid(2), gid(3)] }); // somebody set 4 meanwhile
     rerender(ui({ variantReloadKey: 1 }));
-    fireEvent.click(await screen.findByText("Red"));
     await waitFor(() => expect(grids[V1]?.mainUrl).toBe(url(4)));
     drag(V1, url(1), grids[V1].imageUrls[0]);
     await waitFor(() => expect(grids[V1].mainUrl).toBe(url(1)));
@@ -471,7 +472,6 @@ describe("third review: renders", () => {
     // a later read shows the promoted image as the native one: the choice is still pending, based on it
     variantsAnswer = () => variantsPayload({ v1Main: 2, v1Gallery: [gid(3)] });
     rerender(ui({ variantReloadKey: 1 }));
-    fireEvent.click(await screen.findByText("Red"));
     await waitFor(() => expect(lastEmission()[0][0]).toMatchObject({ variantId: V1, mainGid: gid(3), expectedMainGid: gid(2) }));
   });
 
@@ -767,7 +767,6 @@ describe("point 2: a variant's MAIN image dragged onto another variant (plain = 
     await waitFor(() => expect(grids[V2].mainUrl).toBe(url(1)));
     rerender(ui({ resetKey: 1 }));
     await waitFor(() => expect(apiCalls.filter((c) => c.path === "/api/product-variants").length).toBeGreaterThan(1));
-    fireEvent.click(await screen.findByText("Red"));
     await waitFor(() => expect(grids[V1].mainUrl).toBe(url(1)));
     const [galleries, , , removed, moves] = lastEmission();
     expect(galleries).toEqual([]);
@@ -1027,5 +1026,48 @@ describe("round 3, point 1: a medium the target variant already has is refused B
     dragTo({ container: V1, url: url(3) }, { container: V2, url: url(4) });
     await waitFor(() => expect(grids[V1].imageUrls).toEqual([url(1), url(2)]));
     expect(grids[V2].imageUrls).toContain(url(3));
+  });
+});
+
+describe("round 3, point 2: open variant galleries stay open through the post-save re-read", () => {
+  const variantReads = () => apiCalls.filter((c) => c.path === "/api/product-variants").length;
+
+  it("a save cycle (reset key bump + variant reload) keeps the same gallery element mounted, also while the read is in flight", async () => {
+    const { rerender } = await mount();
+    const gridBefore = await screen.findByTestId(`grid-${V1}`);
+    const readsBefore = variantReads();
+
+    let release!: () => void;
+    variantsGate = new Promise<void>((r) => { release = r; });
+    rerender(ui({ resetKey: 1, variantReloadKey: 1 }));
+    await waitFor(() => expect(variantReads()).toBeGreaterThan(readsBefore));
+    // the read is still out: the gallery has not been swapped for a spinner
+    expect(screen.getByTestId(`grid-${V1}`)).toBe(gridBefore);
+    expect(screen.getByText("Red")).toBeTruthy();
+
+    await act(async () => { release(); variantsGate = null; });
+    await waitFor(() => expect(variantReads()).toBeGreaterThan(readsBefore));
+    expect(screen.getByTestId(`grid-${V1}`)).toBe(gridBefore);
+  });
+
+  it("the filter toggle (all / unassigned) stays through the re-read and keeps its mode", async () => {
+    const { rerender } = await mount();
+    fireEvent.click(await screen.findByText("Unassigned"));
+    let release!: () => void;
+    variantsGate = new Promise<void>((r) => { release = r; });
+    rerender(ui({ resetKey: 1 }));
+    expect(screen.getByText("Unassigned")).toBeTruthy();
+    await act(async () => { release(); variantsGate = null; });
+    expect(screen.getByText("Unassigned")).toBeTruthy();
+    expect((screen.getByText("Unassigned") as HTMLElement).style.fontWeight || (screen.getByText("Unassigned").closest("button") as HTMLElement).style.fontWeight).toBe("700");
+  });
+
+  it("a DIFFERENT product still starts from the loading state (the old product's galleries are not shown)", async () => {
+    const { rerender } = await mount();
+    let release!: () => void;
+    variantsGate = new Promise<void>((r) => { release = r; });
+    rerender(ui({ productId: "gid://shopify/Product/2" }));
+    await waitFor(() => expect(screen.queryByTestId(`grid-${V1}`)).toBeNull());
+    await act(async () => { release(); variantsGate = null; });
   });
 });
