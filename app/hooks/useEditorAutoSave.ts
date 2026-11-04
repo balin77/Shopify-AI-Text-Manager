@@ -230,7 +230,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       const carriesSomething =
         Object.keys(partial.values).length > 0 ||
         (partial.altValues !== undefined && Object.keys(partial.altValues).length > 0);
-      if (setOwnSavesInFlight && itemId && carriesSomething) {
+      if (setOwnSavesInFlight && itemId && (carriesSomething || partial.holdsView)) {
         const entry: OwnSaveInFlight = {
           itemId,
           locale: partial.locale,

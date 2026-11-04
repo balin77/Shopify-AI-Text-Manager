@@ -121,6 +121,7 @@ export interface FieldHandlerProps {
   pendingCopyFieldItemIdRef: { current: string | null };
   pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string; step1Partial?: object } | null };
   acceptedPrimaryValueRef: { current: { fieldKey: string; value: string } | null };
+  foreignStep1Ref: { current: { partial: object; saved: boolean | null } | null };
   foreignAcceptPrimaryStepRef: { current: { itemId: string; fieldKey: string; previous: string | undefined; partial: object } | null };
   initialLoadSuccessfulRef: { current: boolean };
   retryCountRef: { current: number };
@@ -332,6 +333,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
     foreignAcceptPrimaryStepRef,
+    foreignStep1Ref,
     initialLoadSuccessfulRef,
     retryCountRef,
     submitAIAction,
@@ -1568,7 +1570,9 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     // ONLY the accepted field: other fields may hold unsaved input, which
     // stays dirty for its own Save rather than riding along here.
     foreignForm[fieldKey] = suggestion;
-    partialSaveRef.current = { locale: L, marketId: "", values: { [fieldKey]: suggestion } };
+    const step1Partial = { locale: L, marketId: "", values: { [fieldKey]: suggestion } };
+    partialSaveRef.current = step1Partial;
+    foreignStep1Ref.current = { partial: step1Partial, saved: null };
     savedLocaleRef.current = L;
     savedMarketIdRef.current = selectedMarketId;
     savedItemIdRef.current = requestItemId;
@@ -1677,7 +1681,8 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
           // field, so nothing of the L view is saved by it — handled as a full
           // save it overlaid every field on screen as an L translation and
           // marked unsaved input clean.
-          const stepPartial = { locale: L, marketId: selectedMarketId, values: {} };
+          // holdsView: counted as an own save in flight (a view switch is refused while it is out), although it carries no field.
+          const stepPartial = { locale: L, marketId: selectedMarketId, values: {}, holdsView: true };
           partialSaveRef.current = stepPartial;
           // The request's own description is its identity: only ITS answer settles the staged overlay.
           foreignAcceptPrimaryStepRef.current = { itemId: requestItemId, fieldKey, previous: stepPrevious, partial: stepPartial };

@@ -220,6 +220,12 @@ export async function handleUpdateProduct(
     // The two attribute refusals (unknown status, malformed category) also come BEFORE any write: they used
     // to be answered by updatePrimaryProduct, after the alt texts had already been written. Same bodies.
     if (params.locale === params.primaryLocale) {
+      if (params.title !== undefined && !params.title.trim()) {
+        return json(
+          { success: false, error: "Title cannot be empty for the primary language. Please enter a title." },
+          { status: 400 },
+        );
+      }
       if (params.status !== undefined && changedAttributeFields.includes("status") && !isValidProductStatus(params.status.trim().toUpperCase())) {
         return json({ success: false, error: `Unknown product status "${params.status}".` }, { status: 400 });
       }

@@ -90,6 +90,8 @@ export interface PartialSave {
   altValues?: Record<number, string>;
   /** The form deliberately withholds `changedFields` (accept-and-translate writes the translations itself). */
   withheld?: boolean;
+  /** Counts as an own save in flight (view switches are refused) although it carries no field or alt text. */
+  holdsView?: boolean;
 }
 
 export interface ResolvedField {

@@ -1171,18 +1171,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (!stepTwoRefused) return otherwise;
     const key = String((data as { error?: string; errorKey?: string }).errorKey || (data as { error?: string }).error || "");
     const content = t.content as Record<string, string> | undefined;
-    if (key === "seoOtherHalfUnreadable") {
+    if (key === "seoOtherHalfUnreadable" && foreignStep1Ref.current?.saved === true) {
       return String(content?.seoOtherHalfUnreadablePrimaryStep
         || "The text in this language was saved, but the translation into the main language was not: the other half of the SEO text could not be read from Shopify. Please try again.");
     }
-    // EVERY other refusal of step 2: the foreign text was saved by step 1, whatever the reason said next.
+    // EVERY other refusal of step 2: when step 1 really answered success the foreign text IS saved; where it
+    // was refused (or has not answered) nothing is claimed.
+    if (foreignStep1Ref.current?.saved !== true) return otherwise;
     const saved = String(content?.foreignAcceptPrimaryStepSaved || "The text in this language was saved, but the translation into the main language was not.");
     return `${saved} ${otherwise}`.trim();
   };
   /** The refusal of a save of an item that is NOT on screen: said with its name. */
-  const showRefusalOfOtherItem = (itemId: string | undefined | null, data: unknown) => {
+  const showRefusalOfOtherItem = (itemId: string | undefined | null, data: unknown, stepTwoRefused = false) => {
     const name = itemNameOf(itemId);
-    const text = localizedUnconfirmedFields(data, true) || translateErrorMessage(String((data as { error?: string }).error || ""), t);
+    const text = stepTwoRefusalText(data, stepTwoRefused, localizedUnconfirmedFields(data, true) || translateErrorMessage(String((data as { error?: string }).error || ""), t));
     showInfoBox(name ? `${name}: ${text}` : text, "critical");
   };
   /**
@@ -2204,6 +2206,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    * primary value, and the saved-primary overlay is staged up front (`previous` = what it held before, so a
    * refused save can give it back). Armed when that save is sent; cleared by its answer.
    */
+  /** Step 1 of a FOREIGN accept-and-translate (the text in this language), by its request identity, and how it ended. */
+  const foreignStep1Ref = useRef<{ partial: object; saved: boolean | null } | null>(null);
   const foreignAcceptPrimaryStepRef = useRef<{ itemId: string; fieldKey: string; previous: string | undefined; partial: object } | null>(null);
 
   /**
@@ -2215,6 +2219,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const abandonAcceptAndTranslate = (refusedItemId: string | null | undefined): boolean => {
     const pending = pendingTranslationAfterSaveRef.current;
     const refusedPartial = inFlightPartialRef.current;
+    if (foreignStep1Ref.current && foreignStep1Ref.current.partial === refusedPartial) foreignStep1Ref.current.saved = false;
     // Identity of the REFUSED request: only step 1's own save abandons the pending step 2 (a refused
     // earlier Save-bar save of the same item does not). Without a recorded identity: the item decides.
     const isStepOne = !!pending && (pending.step1Partial
@@ -3450,19 +3455,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const pendingRedirectMessage = buildRedirectMessage(redirectNoteOf(fetcher.data), t);
       // Only the ANSWER of the save that staged a foreign accept's main-language overlay makes it stand;
       // an earlier save answering first must not drop the rollback of a later refusal.
+      if (foreignStep1Ref.current && foreignStep1Ref.current.partial === partial) foreignStep1Ref.current.saved = true;
       if (foreignAcceptPrimaryStepRef.current && foreignAcceptPrimaryStepRef.current.partial === partial) {
         foreignAcceptPrimaryStepRef.current = null;
       }
 
-      // Check if there's a pending translation to start after this save
-      if (pendingTranslationAfterSaveRef.current) {
+      // Check if there's a pending translation to start after this save - but only the ANSWER of step 1's
+      // own save acts on it: an earlier save answering while step 1 is still queued must not consume it.
+      const pendingStep = pendingTranslationAfterSaveRef.current;
+      if (pendingStep && (!pendingStep.step1Partial || pendingStep.step1Partial === partial)) {
         if (pendingRedirectMessage) {
           showInfoBox(
             pendingRedirectMessage.text,
             pendingRedirectMessage.tone
           );
         }
-        const { fieldKey, sourceText, targetLocales, contextTitle, itemId } = pendingTranslationAfterSaveRef.current;
+        const { fieldKey, sourceText, targetLocales, contextTitle, itemId } = pendingStep;
         pendingTranslationAfterSaveRef.current = null;
         // Step 2 of accept-and-translate: a run of the item started while the
         // primary save was out. The primary text IS saved; the translation into
@@ -3964,7 +3972,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (!isSavedItemCurrent) {
         // A queued save of a product the merchant has left: its refusal is said with
         // the product's name, not swallowed.
-        showRefusalOfOtherItem(refusedItemId, fetcher.data);
+        showRefusalOfOtherItem(refusedItemId, fetcher.data, stepTwoRefused);
       }
       if (isSavedItemCurrent) {
         const translatedError = stepTwoRefusalText(
@@ -4068,7 +4076,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // answer. Left alone, the pending flag stuck and refused every later
       // "translate all" as racing a save that had long ended.
       processedSaveResponseRef.current = fetcher.data;
-      abandonAcceptAndTranslate(inFlightScopeRef.current?.sentFields?.itemId ?? savedItemIdRef.current);
+      const stepTwoRefusedNoKey = abandonAcceptAndTranslate(inFlightScopeRef.current?.sentFields?.itemId ?? savedItemIdRef.current);
       forgetAndRebaseline();
       isSavePendingRef.current = false;
       settleOwnSaveFor(inFlightPartialRef.current);
@@ -4092,7 +4100,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         rollbackCopyAltText();
       }
       if (savedItemIdRef.current === selectedItemIdRef.current) {
-        showInfoBox(translateErrorMessage("", t), "critical");
+        showInfoBox(stepTwoRefusalText(fetcher.data, stepTwoRefusedNoKey, translateErrorMessage("", t)), "critical");
       }
       savedItemIdRef.current = null;
     }
@@ -4354,6 +4362,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
     foreignAcceptPrimaryStepRef,
+    foreignStep1Ref,
     initialLoadSuccessfulRef,
     retryCountRef,
     submitAIAction,
