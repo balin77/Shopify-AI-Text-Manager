@@ -950,6 +950,13 @@ describe("one-sided SEO save (the other half is a passenger the server did not w
     expect(db.productImage.update).not.toHaveBeenCalled();
   });
 
+  it("an EMPTY STRING half in Shopify is omitted too (product writer), not only null", async () => {
+    const w = installAdmin({ seoRead: () => ({ data: { product: { seo: { title: "", description: "" } } } }) });
+    makeDb();
+    await savePrimary(w.admin, { metaDescription: "D-new", changedFields: JSON.stringify(["metaDescription"]) });
+    expect(JSON.stringify(sentSeo(w))).toBe('{"description":"D-new"}');
+  });
+
   it("a full save (both halves) does not read at all and cannot be refused", async () => {
     const w = installAdmin({ seoRead: () => { throw new Error("must not be asked"); } });
     makeDb();

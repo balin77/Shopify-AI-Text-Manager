@@ -964,7 +964,7 @@ async function readOtherSeoHalf(
   const data = (await response.json()) as any;
   const seo = data.data?.product?.seo;
   if (!seo) throw new Error("no SEO in the answer");
-  return { title: seo.title ?? undefined, description: seo.description ?? undefined };
+  return { title: seo.title || undefined, description: seo.description || undefined };
 }
 
 async function updatePrimaryProduct(

@@ -1548,7 +1548,11 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     // accepted field is not flagged "dirty" — everything here saves automatically,
     // so the Save button must stay inactive.
     const overlayLocaleKey = buildLocaleKey(L, "");
-    const prevOverlay = localTranslationsRef.current[translationKey]?.[overlayLocaleKey];
+    // The deleted marks step 1 is about to clear (layer mark and this locale's mark), to put back on undo.
+    const layerMark = translationKey;
+    const localeMark = buildLocaleDeletedKey(translationKey, "", L);
+    const hadLayerMark = deletedTranslationKeysRef.current.has(layerMark);
+    const hadLocaleMark = deletedTranslationKeysRef.current.has(localeMark);
     const prevOriginal = originalLoadedValuesRef.current[fieldKey];
     const prevBaseline = baselineValuesRef.current[fieldKey];
     const transResult = dataLoader.onTranslateFieldComplete(
@@ -1581,8 +1585,11 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     const undoStep1 = () => {
       const entry = localTranslationsRef.current[translationKey];
       if (entry && entry[overlayLocaleKey] === suggestion) {
-        if (prevOverlay === undefined) delete entry[overlayLocaleKey];
-        else entry[overlayLocaleKey] = prevOverlay;
+        // The text was never stored: the entry goes (what step 1 replaced was no confirmed value either), and the
+        // deleted marks step 1 cleared come back, so a field the merchant had cleared still reads as cleared.
+        delete entry[overlayLocaleKey];
+        if (hadLayerMark) deletedTranslationKeysRef.current.add(layerMark);
+        if (hadLocaleMark) deletedTranslationKeysRef.current.add(localeMark);
       }
       const put = (ref: { current: Record<string, string> }, prev: string | undefined) => {
         if (ref.current[fieldKey] !== suggestion) return;

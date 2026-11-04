@@ -764,4 +764,43 @@ describe("a REFUSED accept-and-translate save takes back everything the flow arm
     await switchTo(h, "de");
     expect(h.editor.current.state.editableValues.seoTitle).toBe("SEO conf");
   });
+
+  it("(M1z) a refused step 1 deletes its overlay entry; a value an earlier unstored press had staged does not come back", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "A text");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    // A second press of the same field while the first step 1 is still out stages over "A text".
+    setFieldSuggestion(scope("fr"), "seoTitle", "B text");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(40);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(60);
+    const overlay = h.editor.current.helpers.getValidationOverlays().localTranslations;
+    expect(overlay.meta_title?.fr).toBeUndefined();
+  });
+
+  it("(M2z) a refused step 1 puts back the deleted marks it cleared: a field the merchant had cleared still reads as cleared", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    await act(async () => { h.editor.current.handlers.handleClearField("title"); });
+    await tick(20);
+    const marksBefore = [...h.editor.current.helpers.getValidationOverlays().deletedKeys].sort();
+    expect(marksBefore.length).toBeGreaterThan(0);
+    setFieldSuggestion(scope("fr"), "title", "Titre KI");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("title"); });
+    await tick(20);
+    expect([...h.editor.current.helpers.getValidationOverlays().deletedKeys].sort()).not.toEqual(marksBefore);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(60);
+    expect([...h.editor.current.helpers.getValidationOverlays().deletedKeys].sort()).toEqual(marksBefore);
+  });
 });

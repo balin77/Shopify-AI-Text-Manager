@@ -2261,7 +2261,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const confirmedValue = primaryConfirmedRef.current[step.itemId]?.[step.fieldKey];
       if (confirmedValue) overlay[step.fieldKey] = confirmedValue.value;
       else delete overlay[step.fieldKey];
-      if (Object.keys(overlay).length === 0) delete savedPrimaryValuesRef.current[step.itemId];
+      if (Object.keys(overlay).length === 0) {
+        delete savedPrimaryValuesRef.current[step.itemId];
+        delete dataLoader.refs.overlayLifeRef.current[step.itemId];
+      }
     };
     const outcome: AcceptOutcome = { stepTwoRefused: false, step1Saved: null, step2Dropped: false };
     if (!refusedPartial) return outcome;

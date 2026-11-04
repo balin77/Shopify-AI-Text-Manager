@@ -640,8 +640,8 @@ export class ShopifyContentService {
         const node = data.data?.node;
         if (!node || !node.seo) throw new Error("no SEO in the answer");
         const currentSeo = node.seo;
-        if (!hasTitle) seo.title = currentSeo.title ?? undefined;
-        if (!hasDescription) seo.description = currentSeo.description ?? undefined;
+        if (!hasTitle) seo.title = currentSeo.title || undefined;
+        if (!hasDescription) seo.description = currentSeo.description || undefined;
       } catch (error: unknown) {
         // The other half cannot be read: NOTHING is saved. The old stand-ins (the editor's value of the
         // half, or dropping it) either overwrote Shopify's value with an older one or sent one half alone,

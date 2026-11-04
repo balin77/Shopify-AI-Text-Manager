@@ -1943,6 +1943,18 @@ describe('ShopifyContentService.buildPreservedSeo()', () => {
     expect(seo).toEqual({ title: undefined, description: 'only a description' });
   });
 
+  it('an EMPTY STRING half from Shopify is omitted too (collection writer), not only null', async () => {
+    const service = new ShopifyContentService(adminWithSeo({ title: '', description: 'x' }));
+    const seo = await service.buildPreservedSeo(productId, undefined, 'D');
+    expect(JSON.stringify(seo)).toBe('{"description":"D"}');
+  });
+
+  it('an EMPTY STRING description from Shopify is omitted too (the other direction)', async () => {
+    const service = new ShopifyContentService(adminWithSeo({ title: 'x', description: '' }));
+    const seo = await service.buildPreservedSeo(productId, 'T', undefined);
+    expect(JSON.stringify(seo)).toBe('{"title":"T"}');
+  });
+
   it('returns null when neither side was sent, so the caller omits `seo` entirely', async () => {
     const admin = adminWithSeo(null);
     const service = new ShopifyContentService(admin);
