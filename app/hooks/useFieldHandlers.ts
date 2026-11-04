@@ -1585,8 +1585,9 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     const undoStep1 = () => {
       const entry = localTranslationsRef.current[translationKey];
       if (entry && entry[overlayLocaleKey] === suggestion) {
-        // The text was never stored: the entry goes (what step 1 replaced was no confirmed value either), and the
-        // deleted marks step 1 cleared come back, so a field the merchant had cleared still reads as cleared.
+        // The text was never stored: the entry goes. What step 1 replaced may have been a CONFIRMED foreign value
+        // (see KNOWN_ISSUES), which is not put back. The deleted marks step 1 cleared come back, so a field the
+        // merchant had cleared still reads as cleared.
         delete entry[overlayLocaleKey];
         if (hadLayerMark) deletedTranslationKeysRef.current.add(layerMark);
         if (hadLocaleMark) deletedTranslationKeysRef.current.add(localeMark);
