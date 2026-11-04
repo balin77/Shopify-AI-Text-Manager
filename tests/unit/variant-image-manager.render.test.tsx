@@ -1321,7 +1321,7 @@ describe("round 3 review fix: the gallery selection survives a save cycle of the
 });
 
 describe("round 3 review fix: library picks and the selection drop refuse a medium the variant already has", () => {
-  const MSG = "already has this image";
+  const MSG = "already has:";
   const pick = (item: Record<string, unknown>) => {
     act(() => grids[V1].onOpenPicker());
     act(() => picker.onAdd!([{ source: "library", kind: "image", alt: null, ...item }]));
@@ -1334,6 +1334,19 @@ describe("round 3 review fix: library picks and the selection drop refuse a medi
     expect(screen.getByTestId("infobox").textContent).toContain(MSG);
     pick({ gid: gid(1), previewUrl: url(1), assetUrl: url(1) });
     expect(onPendingChange.mock.calls.length).toBe(before);
+  });
+
+  it("a batch with a held image and a new one adds the new one and names only the refused one", async () => {
+    await mount();
+    act(() => grids[V1].onOpenPicker());
+    act(() => picker.onAdd!([
+      { source: "library", kind: "image", alt: "Held one", gid: gid(2), previewUrl: url(2), assetUrl: url(2) },
+      { source: "library", kind: "image", alt: "Fresh one", gid: gid(4), previewUrl: url(4), assetUrl: url(4) },
+    ]));
+    const msg = screen.getByTestId("infobox").textContent ?? "";
+    expect(msg).toContain("Held one");
+    expect(msg).not.toContain("Fresh one");
+    await waitFor(() => expect(lastEmission()[0][0].fileGids).toContain(gid(4)));
   });
 
   it("the same file under another GID is recognised; a different medium is still added", async () => {
@@ -1369,6 +1382,29 @@ describe("round 3 review fix: library picks and the selection drop refuse a medi
     expect(screen.getByTestId("infobox").textContent).toContain("Blue");
     expect(onPendingChange.mock.calls.length).toBe(before);
     expect(grids[V1].imageUrls).toEqual([url(1), url(2), url(3)]);
+    r.unmount();
+  });
+
+  it("L3: a refused drop (target holds the image) shows ONLY that message, not also the 3D/video one", async () => {
+    variantsAnswer = () => {
+      const b: any = variantsPayload();
+      b.variants[1] = { ...b.variants[1], galleryJson: JSON.stringify([gid(2)]) };
+      return b;
+    };
+    const r = render(ui({ activeAction: "copy" }));
+    fireEvent.click(await screen.findByText("Show all"));
+    fireEvent.click(await screen.findByText("Red"));
+    fireEvent.click(await screen.findByText("Blue"));
+    await waitFor(() => expect(grids[V2]?.imageUrls?.length).toBeGreaterThan(0));
+    act(() => grids.product.onOpenPicker());
+    act(() => picker.onAdd!([{ source: "upload", resourceUrl: "https://staged/m.glb", kind: "model", previewUrl: "blob:http://localhost/m", persistentPreviewUrl: "" }]));
+    await waitFor(() => expect(grids.product.imageUrls).toContain("blob:http://localhost/m"));
+    act(() => grids.product.onSelect("blob:http://localhost/m", true));
+    act(() => grids.product.onSelect(url(2), true));
+    act(() => grids[V2].onDropToPlaceholder());
+    const msg = screen.getByTestId("infobox").textContent ?? "";
+    expect(msg).toContain("Blue");
+    expect(screen.queryByText(/cannot be dragged into a variant's image gallery/)).toBeNull();
     r.unmount();
   });
 });

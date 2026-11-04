@@ -2583,10 +2583,12 @@ export function VariantImageManager({
         })
         .filter(Boolean) as string[]
     )];
-    if (refusedAny) setMediaError(t.imageManager.mediaNotDroppable);
 
     const newGids = [...bulkGids, ...galleryGids];
-    if (newGids.length === 0) return;
+    if (newGids.length === 0) {
+      if (refusedAny) setMediaError(t.imageManager.mediaNotDroppable);
+      return;
+    }
     // A selected medium the target already shows: the whole action is refused BEFORE anything changes
     // (a move would take it off its source without adding it anywhere).
     for (const [key, sourceId] of selectedGalleryItems.entries()) {
@@ -2595,6 +2597,8 @@ export function VariantImageManager({
       const ref = fileRefOfUrl(u);
       if (ref && !notFileEntry(ref, u) && refuseIfTargetHolds(targetVariantId, ref, u)) return;
     }
+    // (only after the refusal above: a refused action shows its own message and nothing else)
+    if (refusedAny) setMediaError(t.imageManager.mediaNotDroppable);
     setPendingVariantGalleries(p => {
       const targetVariant = variants.find(v => v.id === targetVariantId);
       const existing = p[targetVariantId] ?? targetVariant?.galleryFileGids ?? [];
@@ -2643,21 +2647,32 @@ export function VariantImageManager({
   // depending on whether the modal was opened from a variant section or the
   // product gallery. Closes the modal afterwards — except for URL adds,
   // which leave it open so the merchant can pile more.
-  const handleModalAdd = useCallback((items: AddedItem[]) => {
-    if (!pickerTarget || items.length === 0) return;
+  const handleModalAdd = useCallback((pickedItems: AddedItem[]) => {
+    if (!pickerTarget || pickedItems.length === 0) return;
+    let items = pickedItems;
 
     // A library image the target variant already shows (gallery entry, main image, or the same file under
-    // another GID) is refused BEFORE anything changes; the modal stays open so the pick can be corrected.
+    // another GID) is NOT added; the rest of the batch (uploads, links, other library files) is. The picker
+    // closes after this call whatever happens, so refusing the whole batch would lose uploads: only the
+    // refused ones are named in the message.
     if (pickerTarget.mode === "variant") {
       const pickTarget = variants.find(v => v.id === pickerTarget.variantId);
       if (pickTarget) {
         const shownGids = displayFor(pickTarget).gids;
-        const held = items.some(it =>
+        const refused = items.filter(it =>
           it.source === "library" && it.kind !== "model" &&
           variantHoldsMedium({ shownGids, ref: it.gid, tileUrl: it.assetUrl ?? it.previewUrl, fileUrlMap, urlToGid }));
-        if (held) {
-          showInfoBox(t.imageManager.targetAlreadyHasMedium.replace("{variant}", pickTarget.title), "warning");
-          return;
+        if (refused.length > 0) {
+          const names = refused.map(it => {
+            if (it.source !== "library") return "";
+            const alt = it.alt?.trim();
+            if (alt) return alt;
+            const file = (it.assetUrl ?? "").split("?")[0].split("/").pop();
+            return file || it.gid;
+          }).join(", ");
+          showInfoBox(t.imageManager.libraryPickAlreadyHeld.replace("{variant}", pickTarget.title).replace("{names}", names), "warning");
+          items = items.filter(it => !refused.includes(it));
+          if (items.length === 0) return;
         }
       }
     }

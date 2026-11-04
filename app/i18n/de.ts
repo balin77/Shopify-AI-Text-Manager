@@ -1996,6 +1996,7 @@ export const de = {
     mainMoveNotSaved: "Das Hauptbild wurde nicht verschoben: Eine der beiden beteiligten Varianten konnte nicht gespeichert werden, deshalb blieb keine der beiden verändert. Lade das Produkt neu und wiederhole das Verschieben bei Bedarf.",
     mainMoveSaveFirst: "Speichere zuerst die ausstehenden Hauptbild-Änderungen dieser Varianten und verschiebe das Hauptbild danach.",
     targetAlreadyHasMedium: "„{variant}“ hat dieses Bild bereits. Es wurde nichts verschoben oder kopiert.",
+    libraryPickAlreadyHeld: "„{variant}“ hat bereits: {names}. Das wurde nicht hinzugefügt, alles andere schon.",
     openManager: "Alle anzeigen",
     closeFullView: "Zurück zum Produkt",
     variantsNotLoadedAction: "Die Varianten dieses Produkts sind gerade nicht geladen. Es wurde nichts gespeichert oder gelöscht. Warte einen Moment, bis sie wieder erscheinen, oder lade sie über „Erneut versuchen“ neu.",

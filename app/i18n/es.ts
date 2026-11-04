@@ -1975,6 +1975,7 @@ export const es: Translation = {
     mainMoveNotSaved: "La imagen principal no se movió: una de las dos variantes implicadas no se pudo guardar, así que ninguna de las dos cambió. Recarga el producto y repite el movimiento si hace falta.",
     mainMoveSaveFirst: "Guarda primero los cambios pendientes de la imagen principal de estas variantes y mueve la imagen principal después.",
     targetAlreadyHasMedium: "«{variant}» ya tiene esta imagen. No se movió ni se copió nada.",
+    libraryPickAlreadyHeld: "«{variant}» ya tiene: {names}. Eso no se añadió; todo lo demás sí.",
     openManager: "Mostrar todas",
     closeFullView: "Volver al producto",
     variantsNotLoadedAction: "Las variantes de este producto no están cargadas ahora mismo. No se guardó ni se eliminó nada. Espera un momento a que vuelvan a aparecer o recárgalas con «Reintentar».",

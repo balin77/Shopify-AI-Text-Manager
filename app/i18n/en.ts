@@ -1995,6 +1995,7 @@ export const en: Translation = {
     mainMoveNotSaved: "The main image was not moved: one of the two variants involved could not be saved, so neither variant was changed. Reload the product and repeat the move if needed.",
     mainMoveSaveFirst: "Save the pending main image changes of these variants first, then move the main image.",
     targetAlreadyHasMedium: "“{variant}” already has this image. Nothing was moved or copied.",
+    libraryPickAlreadyHeld: "“{variant}” already has: {names}. That was not added; everything else was.",
     openManager: "Show all",
     closeFullView: "Back to the product",
     variantsNotLoadedAction: "The variants of this product are not loaded right now. Nothing was saved or deleted. Wait a moment until they appear again, or reload them with “Try again”.",
