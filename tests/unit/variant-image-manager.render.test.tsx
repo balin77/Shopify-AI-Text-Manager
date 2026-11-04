@@ -1095,7 +1095,7 @@ describe("round 3, point 3: the manager is a switch between a product-image prev
     await screen.findByText("Show all");
     expect(view().dataset.imView).toBe("preview");
     expect(hidden(screen.getByText("Red"))).toBe(true);
-    expect(hidden(grids.product ? screen.getByTestId("grid-product") : null)).toBe(false);
+    expect(hidden(await screen.findByTestId("grid-product"))).toBe(false);
     expect(screen.queryByText("Back to the product")).toBeNull();
     // the product preview is clipped to one row and not operable
     const clip = screen.getByTestId("grid-product").parentElement!.parentElement as HTMLElement;
