@@ -2631,6 +2631,22 @@ export function VariantImageManager({
   const handleModalAdd = useCallback((items: AddedItem[]) => {
     if (!pickerTarget || items.length === 0) return;
 
+    // A library image the target variant already shows (gallery entry, main image, or the same file under
+    // another GID) is refused BEFORE anything changes; the modal stays open so the pick can be corrected.
+    if (pickerTarget.mode === "variant") {
+      const pickTarget = variants.find(v => v.id === pickerTarget.variantId);
+      if (pickTarget) {
+        const shownGids = displayFor(pickTarget).gids;
+        const held = items.some(it =>
+          it.source === "library" && it.kind !== "model" &&
+          variantHoldsMedium({ shownGids, ref: it.gid, tileUrl: it.assetUrl ?? it.previewUrl, fileUrlMap, urlToGid }));
+        if (held) {
+          showInfoBox(t.imageManager.targetAlreadyHasMedium.replace("{variant}", pickTarget.title), "warning");
+          return;
+        }
+      }
+    }
+
     // Pre-seed mediaMetaMap so library tiles render with the right overlay
     // immediately instead of waiting for the next /api/product-variants
     // refetch. Uploads + library items both go here.
@@ -2792,7 +2808,7 @@ export function VariantImageManager({
     // this callback (parent ordering); intentionally omitted from deps —
     // they are captured via closure at call-time, never re-bound.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickerTarget, variants]);
+  }, [pickerTarget, variants, fileUrlMap, urlToGid, pendingVariantGalleries, pendingGalleryOrder, effectivePendingMains, effectiveRemovals, pendingProductNewMedia, t]);
 
   // Called the moment the merchant hits "Add link" inside the modal. Wired
   // in both modes — product-mode URLs ride through the same handleModalAdd

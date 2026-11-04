@@ -1288,3 +1288,56 @@ describe("round 3 review fix: the gallery selection survives a save cycle of the
     await waitFor(() => expect(grids.product.selectedUrls.has(url(2))).toBe(false));
   });
 });
+
+describe("round 3 review fix: library picks and the selection drop refuse a medium the variant already has", () => {
+  const MSG = "already has this image";
+  const pick = (item: Record<string, unknown>) => {
+    act(() => grids[V1].onOpenPicker());
+    act(() => picker.onAdd!([{ source: "library", kind: "image", alt: null, ...item }]));
+  };
+
+  it("a library pick of an image in the variant's gallery or its main image changes nothing and says why", async () => {
+    await mount();
+    const before = onPendingChange.mock.calls.length;
+    pick({ gid: gid(2), previewUrl: url(2), assetUrl: url(2) });
+    expect(screen.getByTestId("infobox").textContent).toContain(MSG);
+    pick({ gid: gid(1), previewUrl: url(1), assetUrl: url(1) });
+    expect(onPendingChange.mock.calls.length).toBe(before);
+  });
+
+  it("the same file under another GID is recognised; a different medium is still added", async () => {
+    variantsAnswer = () => {
+      const b: any = variantsPayload();
+      b.mediaMap[gid(55)] = "https://cdn.shopify.com/s/files/2.jpg?v=9";
+      b.mediaMetaMap[gid(55)] = { kind: "image", previewUrl: "https://cdn.shopify.com/s/files/2.jpg?v=9" };
+      return b;
+    };
+    await mount();
+    const before = onPendingChange.mock.calls.length;
+    pick({ gid: gid(55), previewUrl: url(2), assetUrl: "https://cdn.shopify.com/s/files/2.jpg?v=9" });
+    expect(onPendingChange.mock.calls.length).toBe(before);
+    pick({ gid: gid(4), previewUrl: url(4), assetUrl: url(4) });
+    await waitFor(() => expect(lastEmission()[0][0].fileGids).toContain(gid(4)));
+  });
+
+  it("the selection drop (move) of an image the target already has is refused whole, the source keeps it", async () => {
+    variantsAnswer = () => {
+      const b: any = variantsPayload();
+      b.variants[1] = { ...b.variants[1], galleryJson: JSON.stringify([gid(2)]) };
+      return b;
+    };
+    const r = render(ui({ activeAction: "move" }));
+    fireEvent.click(await screen.findByText("Show all"));
+    fireEvent.click(await screen.findByText("Red"));
+    fireEvent.click(await screen.findByText("Blue"));
+    await waitFor(() => expect(grids[V2]?.imageUrls?.length).toBeGreaterThan(0));
+    act(() => grids[V1].onSelect(url(2), true));
+    const before = onPendingChange.mock.calls.length;
+    expect(typeof grids[V2].onDropToPlaceholder).toBe("function");
+    act(() => grids[V2].onDropToPlaceholder());
+    expect(screen.getByTestId("infobox").textContent).toContain("Blue");
+    expect(onPendingChange.mock.calls.length).toBe(before);
+    expect(grids[V1].imageUrls).toEqual([url(1), url(2), url(3)]);
+    r.unmount();
+  });
+});
