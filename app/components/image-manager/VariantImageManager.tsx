@@ -45,6 +45,8 @@ import {
  *  by itself after these pauses, so the galleries come back without the merchant leaving the product. */
 export const VARIANTS_RETRY_DELAYS_MS = [3000, 8000, 20000];
 
+const useIsomorphicLayoutEffect = typeof document !== "undefined" ? useLayoutEffect : useEffect;
+
 const imageManagerCollision: CollisionDetection = (args) => {
   const hits = pointerWithin(args);
   // No closestCenter fallback: releasing in genuine empty space must abort
@@ -385,7 +387,7 @@ export function VariantImageManager({
   const closeFullView = () => setFullView(false);
   // Scroll and focus follow the switch: opening starts at the top with the close button focused, closing
   // puts the page back where it was and focuses the button that opened it.
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (prevFullViewRef.current === fullView) return;
     prevFullViewRef.current = fullView;
     const scroller = scrollerOf();

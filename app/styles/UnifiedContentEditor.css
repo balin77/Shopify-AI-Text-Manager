@@ -483,6 +483,3 @@
 .unified-editor-container.im-full .im-hide-when-full {
   display: none;
 }
-.field-editor-area.im-full > :not(:first-child) {
-  display: none;
-}

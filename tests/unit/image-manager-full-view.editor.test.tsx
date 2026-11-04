@@ -51,13 +51,18 @@ const items = [1, 2].map((n) => ({
 }));
 
 let view: { open: boolean; set: (v: boolean) => void };
+let editorRef: { current: any } = { current: null };
+// The save's action answers only when the test says so (a save "in flight").
+let posts: Array<Record<string, string>> = [];
+let answerSave: (body: Record<string, unknown>) => void = () => {};
+let holdSaves = false;
 
 function Page({ withManager }: { withManager: boolean }) {
   const { items: loaded } = useLoaderData() as { items: any[] };
   const fetcher = useFetcher();
   const [full, setFull] = useState(false);
   view = { open: full, set: setFull };
-  const editor = useUnifiedContentEditor({
+  const editor: any = useUnifiedContentEditor({
     config: PRODUCTS_CONFIG,
     items: loaded,
     shopLocales: [{ locale: "de", primary: true, published: true }],
@@ -67,6 +72,7 @@ function Page({ withManager }: { withManager: boolean }) {
     t: en,
     initialItemId: items[0].id,
   } as any);
+  editorRef.current = editor;
   return (
     <UnifiedContentEditor
       config={PRODUCTS_CONFIG}
@@ -91,7 +97,11 @@ function Page({ withManager }: { withManager: boolean }) {
 function mount(withManager: boolean) {
   const router = createMemoryRouter([
     { path: "/api/product-images", loader: async () => ({ success: true, images: [] }) },
-    { path: "/", element: <Page withManager={withManager} />, loader: async () => ({ items }), action: async () => ({ success: true }) },
+    { path: "/", element: <Page withManager={withManager} />, loader: async () => ({ items }), action: async ({ request }: any) => {
+      posts.push(Object.fromEntries((await request.formData()) as any) as Record<string, string>);
+      if (!holdSaves) return { success: true };
+      return new Promise((resolve) => { answerSave = resolve as any; });
+    } },
   ]);
   return render(
     <AppProvider i18n={polarisEn}>
@@ -111,6 +121,7 @@ const hiddenByStyle = (el: HTMLElement) => {
 describe("image manager full view in the editor", () => {
   beforeEach(() => {
     try { window.localStorage.clear(); } catch { /* none */ }
+    posts = []; holdSaves = false;
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true }), text: async () => "" })));
   });
 
@@ -165,5 +176,88 @@ describe("image manager full view in the editor", () => {
     await tick(20);
     expect(container.querySelector(".im-full")).toBeNull();
     expect(hiddenByStyle(titleInput())).toBe(false);
+  });
+});
+
+describe("image manager full view: sidebar, mobile toolbar, saves in flight", () => {
+  beforeEach(() => {
+    try { window.localStorage.clear(); } catch { /* none */ }
+    posts = []; holdSaves = false;
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true }), text: async () => "" })));
+  });
+  const hiddenUp = (el: HTMLElement | null) => {
+    for (let n: HTMLElement | null = el; n; n = n.parentElement) if (n.style.display === "none") return true;
+    return false;
+  };
+
+  it("the right SEO sidebar and its resizer are hidden (kept mounted, same element) in the full view", async () => {
+    const { container } = mount(true);
+    await tick(80);
+    const sidebar = container.querySelector(".seo-sidebar-container") as HTMLElement;
+    const resizer = container.querySelector(".sidebar-resizer") as HTMLElement;
+    expect(sidebar).toBeTruthy();
+    expect(hiddenUp(sidebar)).toBe(false);
+    fireEvent.click(screen.getByText("open"));
+    await tick(20);
+    expect(hiddenUp(sidebar)).toBe(true);
+    expect(hiddenUp(resizer)).toBe(true);
+    expect(container.querySelector(".seo-sidebar-container")).toBe(sidebar);
+    fireEvent.click(screen.getByText("close"));
+    await tick(20);
+    expect(hiddenUp(sidebar)).toBe(false);
+    expect(container.querySelector(".seo-sidebar-container")).toBe(sidebar);
+  });
+
+  it("the phone toolbar keeps only its language part: its actions are hidden but mounted", async () => {
+    const { container } = mount(true);
+    await tick(80);
+    const more = container.querySelector(".toolbar-mobile-only button[aria-label=\"More actions\"]") as HTMLElement;
+    expect(more).toBeTruthy();
+    expect(hiddenUp(more)).toBe(false);
+    fireEvent.click(screen.getByText("open"));
+    await tick(20);
+    expect(hiddenUp(more)).toBe(true);
+    expect(container.querySelector(".toolbar-mobile-only button[aria-label=\"More actions\"]")).toBe(more);
+    fireEvent.click(screen.getByText("close"));
+    await tick(20);
+    expect(hiddenUp(more)).toBe(false);
+  });
+
+  it("every hidden block is hidden by an explicit class, not by its position", async () => {
+    const { container } = mount(true);
+    await tick(80);
+    fireEvent.click(screen.getByText("open"));
+    await tick(20);
+    const area = container.querySelector(".field-editor-area") as HTMLElement;
+    const later = Array.from(area.children).slice(1) as HTMLElement[];
+    expect(later.length).toBeGreaterThan(0);
+    for (const el of later) expect(el.classList.contains("im-hide-when-full")).toBe(true);
+  });
+
+  it("a text save that is in flight when the view switches finishes and keeps the typed input mounted", async () => {
+    holdSaves = true;
+    mount(true);
+    await tick(80);
+    const input = titleInput();
+    fireEvent.change(input, { target: { value: "Produkt 1 neu" } });
+    await tick(20);
+    await act(async () => { editorRef.current.handlers.handleSave(); });
+    await tick(30);
+    expect(posts.length).toBe(1);
+    expect(posts[0].title).toBe("Produkt 1 neu");
+    expect(editorRef.current.state.isSavingCurrentItem).toBe(true);
+    fireEvent.click(screen.getByText("open"));
+    await tick(20);
+    expect(editorRef.current.state.isSavingCurrentItem).toBe(true);
+    fireEvent.click(screen.getByText("close"));
+    await tick(20);
+    expect(posts.length).toBe(1);
+    expect(document.contains(input)).toBe(true);
+    await act(async () => { answerSave({ success: true }); });
+    await tick(50);
+    expect(editorRef.current.state.isSavingCurrentItem).toBe(false);
+    expect(posts.length).toBe(1);
+    expect(document.contains(input)).toBe(true);
+    expect((input as HTMLInputElement).value).toBe("Produkt 1 neu");
   });
 });

@@ -1813,6 +1813,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
                   disableBulkActions={isEmbedTechnical}
+                  languageOnly={imFull}
                   translateAllDisabledHint={state.currentLanguage === primaryLocale ? translateAllSaveFirstHint : undefined}
                   isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
                   reloadResourceId={selectedItem.id}
@@ -2350,7 +2351,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     the text they summarise, and above the cards that describe
                     the item rather than what it says. */}
                 {searchEngineFields.length > 0 && !isFieldsLoading && (
-                  <div style={{ marginTop: "1rem" }}>
+                  <div className="im-hide-when-full" style={{ marginTop: "1rem" }}>
                     <Card padding="400">
                       <BlockStack gap="400">
                         <Text as="h2" variant="headingMd">
@@ -2369,7 +2370,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     foreign-locale branch still renders nothing — there is no
                     translation to make. */}
                 {config.contentType === "products" && subResourceState && subResourceHandlers && selectedItem && (
-                  <div style={{ marginTop: "1rem" }}>
+                  <div className="im-hide-when-full" style={{ marginTop: "1rem" }}>
                     <OptionsField
                       options={selectedItem.options ?? []}
                       isPrimaryLocale={state.currentLanguage === primaryLocale}
@@ -2466,7 +2467,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 {config.contentType === "products" && subResourceState && subResourceHandlers &&
                   ((selectedItem?.metafields?.length ?? 0) > 0 ||
                     (state.currentLanguage === primaryLocale && (selectedItem?.clearedMetafields?.length ?? 0) > 0)) && (
-                  <div style={{ marginTop: "1rem" }}>
+                  <div className="im-hide-when-full" style={{ marginTop: "1rem" }}>
                     <MetafieldsField
                       metafields={selectedItem?.metafields ?? []}
                       clearedMetafields={selectedItem?.clearedMetafields ?? []}
@@ -2504,7 +2505,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     than things it says, and mixed into the text fields they
                     pushed the actual content off the first screen. */}
                 {detailsFields.length > 0 && !isFieldsLoading && (
-                  <div style={{ marginTop: "1rem" }}>
+                  <div className="im-hide-when-full" style={{ marginTop: "1rem" }}>
                     <Card padding="400">
                       <BlockStack gap="400">
                         <Text as="h2" variant="headingMd">
@@ -2606,7 +2607,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               width: 8,
               flexShrink: 0,
               cursor: "col-resize",
-              display: "flex",
+              display: imFull ? "none" : "flex",
               alignItems: "center",
               justifyContent: "center",
               marginInline: -4,
@@ -2630,7 +2631,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           <div
             ref={sidebarElRef}
             className="seo-sidebar-container"
-            style={{ width: sidebarWidth ?? "var(--app-editor-sidebar-width)", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}
+            style={{ width: sidebarWidth ?? "var(--app-editor-sidebar-width)", flexShrink: 0, display: imFull ? "none" : "flex", flexDirection: "column", overflow: "hidden" }}
           >
             {/* Way back to the content. `open` can survive a resize past the
                 breakpoint, where the sidebar is shown normally and this row

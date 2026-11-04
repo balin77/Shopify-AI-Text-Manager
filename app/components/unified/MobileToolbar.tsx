@@ -11,7 +11,7 @@
  */
 
 import type { ReloadResourceType } from "../../utils/reload-resource-type";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Card, Button, Popover, ActionList, Tooltip } from "@shopify/polaris";
 import { MenuHorizontalIcon } from "@shopify/polaris-icons";
 import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../../utils/contentEditor.utils";
@@ -68,6 +68,8 @@ interface MobileToolbarProps {
   onClearAll: () => void;
   /** Hides Translate All / Clear All — used for locked app-embed technical groups. */
   disableBulkActions?: boolean;
+  /** The image manager's full view is open: only the language / market part stays; the actions are hidden (not unmounted). */
+  languageOnly?: boolean;
   /** Greys out Translate All with this reason (e.g. a primary draft that has
    *  to be saved first). */
   translateAllDisabledHint?: string;
@@ -116,6 +118,7 @@ export function MobileToolbar({
   onClearAll,
   itemActions,
   disableBulkActions = false,
+  languageOnly = false,
   translateAllDisabledHint,
   isTranslatingGlobal = false,
   reloadResourceId,
@@ -139,6 +142,7 @@ export function MobileToolbar({
 
   const togglePopover = useCallback(() => setPopoverActive((prev) => !prev), []);
   const closePopover = useCallback(() => setPopoverActive(false), []);
+  useEffect(() => { if (languageOnly) setPopoverActive(false); }, [languageOnly]);
 
   // Global store state for translation (persists across navigation)
   const isTranslating = isTranslatingGlobal;
@@ -173,7 +177,7 @@ export function MobileToolbar({
 
         {/* Right: Reload icon + More Actions Popover. Save/Discard are handled
             by the native Shopify save bar (AppSaveBar in UnifiedContentEditor). */}
-        <div style={{ flexShrink: 0, display: "flex", gap: "0.25rem", alignItems: "center" }}>
+        <div style={{ flexShrink: 0, display: languageOnly ? "none" : "flex", gap: "0.25rem", alignItems: "center" }}>
           <ReloadButton
             resourceId={reloadResourceId}
             resourceType={reloadResourceType}
