@@ -235,7 +235,7 @@ async function loadLiveSeoHalves(gateway: ShopifyApiGateway, ids: string[]): Pro
       const data = (await response.json()) as { data?: { nodes?: Array<{ id?: string; seo?: { title?: string | null; description?: string | null } | null } | null> } };
       for (const node of data.data?.nodes ?? []) {
         if (!node?.id || !node.seo) continue;
-        out.set(node.id, { title: node.seo.title ?? undefined, description: node.seo.description ?? undefined });
+        out.set(node.id, { title: node.seo.title || undefined, description: node.seo.description || undefined });
       }
     } catch (err: unknown) {
       logger.warn("[bulk-editor] live SEO read failed; the one-sided SEO cells of this chunk are refused", {

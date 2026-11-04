@@ -119,9 +119,9 @@ export interface FieldHandlerProps {
   /** Tracks the fieldKey of a copy save so the response handler can clear the loading state. */
   pendingCopyFieldKeyRef: { current: string | null };
   pendingCopyFieldItemIdRef: { current: string | null };
-  pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string } | null };
+  pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string; step1Partial?: object } | null };
   acceptedPrimaryValueRef: { current: { fieldKey: string; value: string } | null };
-  foreignAcceptPrimaryStepRef: { current: { itemId: string; fieldKey: string; previous: string | undefined } | null };
+  foreignAcceptPrimaryStepRef: { current: { itemId: string; fieldKey: string; previous: string | undefined; partial: object } | null };
   initialLoadSuccessfulRef: { current: boolean };
   retryCountRef: { current: number };
 
@@ -418,7 +418,7 @@ const refuseUnsavedSource = (): void => {
 const submitOwnFieldSave = (
   fieldKey: string,
   value: string,
-  opts: { markChanged?: boolean; fromTranslate?: boolean } = {},
+  opts: { markChanged?: boolean; fromTranslate?: boolean; onPartial?: (partial: object) => void } = {},
 ): boolean => {
   if (!selectedItemId) return false;
   const locale = currentLanguage;
@@ -452,7 +452,9 @@ const submitOwnFieldSave = (
       [fieldKey]: value,
     };
   }
-  partialSaveRef.current = { locale, marketId, values: { [fieldKey]: value }, altIndices: [], withheld: isPrimary && opts.markChanged === false };
+  const ownPartial = { locale, marketId, values: { [fieldKey]: value }, altIndices: [], withheld: isPrimary && opts.markChanged === false };
+  partialSaveRef.current = ownPartial;
+  opts.onPartial?.(ownPartial);
   savedLocaleRef.current = locale;
   savedMarketIdRef.current = marketId;
   savedItemIdRef.current = selectedItemId;
@@ -1648,11 +1650,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
             savedPrimaryValuesRef.current[requestItemId] = {};
           }
           // Remembered so a REFUSED save gives the overlay back (nothing was stored under it).
-          foreignAcceptPrimaryStepRef.current = {
-            itemId: requestItemId,
-            fieldKey,
-            previous: savedPrimaryValuesRef.current[requestItemId][fieldKey],
-          };
+          const stepPrevious = savedPrimaryValuesRef.current[requestItemId][fieldKey];
           savedPrimaryValuesRef.current[requestItemId][fieldKey] = primaryTranslated;
 
           const primaryForm: Record<string, string> = {
@@ -1679,7 +1677,10 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
           // field, so nothing of the L view is saved by it — handled as a full
           // save it overlaid every field on screen as an L translation and
           // marked unsaved input clean.
-          partialSaveRef.current = { locale: L, marketId: selectedMarketId, values: {} };
+          const stepPartial = { locale: L, marketId: selectedMarketId, values: {} };
+          partialSaveRef.current = stepPartial;
+          // The request's own description is its identity: only ITS answer settles the staged overlay.
+          foreignAcceptPrimaryStepRef.current = { itemId: requestItemId, fieldKey, previous: stepPrevious, partial: stepPartial };
           safeSubmit(primaryForm, { method: "POST" });
         }
 
@@ -1781,7 +1782,13 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
   // `changedFields` (the flow is about to write its translations itself).
   // After save completes, the useEffect will trigger the translation.
   debugLog.acceptAndTranslate(' Saving primary text first, then will translate');
-  submitOwnFieldSave(fieldKey, suggestion, { markChanged: false });
+  submitOwnFieldSave(fieldKey, suggestion, {
+    markChanged: false,
+    // Step 1's request identity: only ITS refusal abandons the pending step 2.
+    onPartial: (partial) => {
+      if (pendingTranslationAfterSaveRef.current) pendingTranslationAfterSaveRef.current.step1Partial = partial;
+    },
+  });
 };
 
 const handleRejectSuggestion = useCallback((fieldKey: string) => {

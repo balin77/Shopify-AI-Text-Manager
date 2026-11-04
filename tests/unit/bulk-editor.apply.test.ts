@@ -692,6 +692,18 @@ describe("applyBulkDiff — cell-granular partial failures (Plan §4.4/§12)", (
     expect(JSON.stringify(input.seo)).toBe('{"title":"New SEO title"}');
   });
 
+  it('product: an EMPTY STRING half from Shopify is omitted too, not only null', async () => {
+    const { admin, calls } = mockAdmin({
+      respond: liveSeo([{ id: "gid://shopify/Product/1", seo: { title: "", description: "" } }]),
+    });
+    await applyBulkDiff(
+      { db: mockDb() as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry("field.seoTitle", "New SEO title")],
+    );
+    const input = calls.find((c) => c.query.includes("productUpdate("))!.variables?.input as { seo: Record<string, unknown> };
+    expect(JSON.stringify(input.seo)).toBe('{"title":"New SEO title"}');
+  });
+
   it("collection: the live read fails -> a CELL failure, NOT A SINGLE collectionUpdate, nothing half-written", async () => {
     const { admin, calls } = mockAdmin({
       respond: (q) => { if (q.includes("bulkEditorLiveSeo")) throw new Error("throttled"); return undefined; },

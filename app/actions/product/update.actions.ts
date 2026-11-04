@@ -217,6 +217,17 @@ export async function handleUpdateProduct(
   try {
     const gateway = new ShopifyApiGateway(context.admin, context.session.shop);
 
+    // The two attribute refusals (unknown status, malformed category) also come BEFORE any write: they used
+    // to be answered by updatePrimaryProduct, after the alt texts had already been written. Same bodies.
+    if (params.locale === params.primaryLocale) {
+      if (params.status !== undefined && changedAttributeFields.includes("status") && !isValidProductStatus(params.status.trim().toUpperCase())) {
+        return json({ success: false, error: `Unknown product status "${params.status}".` }, { status: 400 });
+      }
+      if (params.category !== undefined && changedAttributeFields.includes("category") && !parseCategoryId(params.category).valid) {
+        return json({ success: false, error: `"${params.category}" is not a product category.` }, { status: 400 });
+      }
+    }
+
     // A ONE-SIDED primary SEO save needs the other half from Shopify, and a failed read refuses the whole
     // save. That read comes FIRST: nothing below (alt texts included) may be written for a refused save.
     if (params.locale === params.primaryLocale && (params.seoTitle !== undefined) !== (params.metaDescription !== undefined)) {

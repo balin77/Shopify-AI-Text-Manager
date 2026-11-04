@@ -462,4 +462,68 @@ describe("a REFUSED accept-and-translate save takes back everything the flow arm
     await switchTo(h, "de");
     expect(h.editor.current.state.editableValues.seoTitle).toBe("SEO");
   });
+
+  it("(M1') an EARLIER save answering success before step 2 does not drop step 2's rollback", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    // While the AI works, an ordinary Save-bar save of another field goes out (ahead of step 2).
+    await act(async () => { h.editor.current.handlers.handleValueChange("title", "Titre neuf"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    // The earlier save answers FIRST, successfully.
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(50);
+    // Then step 2 is refused.
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "seoOtherHalfUnreadable", errorKey: "seoOtherHalfUnreadable" });
+    await tick(50);
+    await switchTo(h, "de");
+    expect(h.editor.current.state.editableValues.seoTitle).toBe("SEO");
+  });
+
+  it("(M2) a refused EARLIER save of the same item does not drop the queued accept-and-translate follow-up", async () => {
+    const h = mount();
+    await tick(50);
+    await act(async () => { h.editor.current.handlers.handleValueChange("seoTitle", "SEO neu"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    setFieldSuggestion(scope("de"), "title", "KI Titel");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("title"); });
+    await tick(20);
+    expect(h.savesPosted().length).toBeGreaterThanOrEqual(1);
+    // The Save-bar save is refused; step 1 (queued behind it) then succeeds.
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(50);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(100);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toHaveLength(1);
+  });
+
+  it("(Low) EVERY refusal of foreign step 2 says the foreign text was saved, not only the SEO one", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    h.showInfoBox.mockClear();
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(50);
+    const critical = h.showInfoBox.mock.calls.filter(([, tone]) => tone === "critical").map(([m]) => String(m));
+    expect(critical).toEqual(["The text in this language was saved, but the translation into the main language was not. Shopify refused"]);
+  });
 });

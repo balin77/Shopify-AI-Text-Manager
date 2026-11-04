@@ -927,6 +927,19 @@ describe("one-sided SEO save (the other half is a passenger the server did not w
     expect(sentSeo(w)).toEqual({ title: "T-live", description: "D-new" });
   });
 
+  it.each([
+    ["status", { status: "BOGUS", changedAttributeFields: JSON.stringify(["status"]) }, /Unknown product status/],
+    ["category", { category: "gid://shopify/Product/9", changedAttributeFields: JSON.stringify(["category"]) }, /not a product category/],
+  ] as const)("an invalid %s is refused BEFORE the alt texts are written", async (_n, fields, pattern) => {
+    const w = installAdmin();
+    const db = makeDb([{ id: "img-1", mediaId: MEDIA }]);
+    const result = body(await savePrimary(w.admin, { ...fields, imageAltTexts: JSON.stringify({ 0: "Neuer Alt" }) }));
+    expect(result.success).toBe(false);
+    expect(String(result.error)).toMatch(pattern);
+    expect(w.of("updateMedia")).toHaveLength(0);
+    expect(db.productImage.update).not.toHaveBeenCalled();
+  });
+
   it("a full save (both halves) does not read at all and cannot be refused", async () => {
     const w = installAdmin({ seoRead: () => { throw new Error("must not be asked"); } });
     makeDb();

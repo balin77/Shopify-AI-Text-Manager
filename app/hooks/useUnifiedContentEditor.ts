@@ -1167,12 +1167,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    * The sentence of a refused STEP TWO of a foreign accept-and-translate: the text in this language WAS saved
    * (step one), only the main-language translation was not - so the generic "nothing was saved" must not be said.
    */
-  const stepTwoRefusalText = (data: unknown, stepTwoRefused: boolean): string => {
-    if (!stepTwoRefused) return "";
+  const stepTwoRefusalText = (data: unknown, stepTwoRefused: boolean, otherwise: string): string => {
+    if (!stepTwoRefused) return otherwise;
     const key = String((data as { error?: string; errorKey?: string }).errorKey || (data as { error?: string }).error || "");
-    if (key !== "seoOtherHalfUnreadable") return "";
-    return String((t.content as Record<string, string>)?.seoOtherHalfUnreadablePrimaryStep
-      || "The text in this language was saved, but the translation into the main language was not: the other half of the SEO text could not be read from Shopify. Please try again.");
+    const content = t.content as Record<string, string> | undefined;
+    if (key === "seoOtherHalfUnreadable") {
+      return String(content?.seoOtherHalfUnreadablePrimaryStep
+        || "The text in this language was saved, but the translation into the main language was not: the other half of the SEO text could not be read from Shopify. Please try again.");
+    }
+    // EVERY other refusal of step 2: the foreign text was saved by step 1, whatever the reason said next.
+    const saved = String(content?.foreignAcceptPrimaryStepSaved || "The text in this language was saved, but the translation into the main language was not.");
+    return `${saved} ${otherwise}`.trim();
   };
   /** The refusal of a save of an item that is NOT on screen: said with its name. */
   const showRefusalOfOtherItem = (itemId: string | undefined | null, data: unknown) => {
@@ -2182,6 +2187,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     targetLocales: string[];
     contextTitle: string;
     itemId: string;
+    /** The description of step 1's own save request: the identity that abandons this step when refused. */
+    step1Partial?: object;
   } | null>(null);
 
   // Ref to store the accepted primary locale value during Accept & Translate flow
@@ -2197,7 +2204,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    * primary value, and the saved-primary overlay is staged up front (`previous` = what it held before, so a
    * refused save can give it back). Armed when that save is sent; cleared by its answer.
    */
-  const foreignAcceptPrimaryStepRef = useRef<{ itemId: string; fieldKey: string; previous: string | undefined } | null>(null);
+  const foreignAcceptPrimaryStepRef = useRef<{ itemId: string; fieldKey: string; previous: string | undefined; partial: object } | null>(null);
 
   /**
    * A save answer that REFUSED. Takes back everything an accept-and-translate flow armed for the item the
@@ -2207,16 +2214,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    */
   const abandonAcceptAndTranslate = (refusedItemId: string | null | undefined): boolean => {
     const pending = pendingTranslationAfterSaveRef.current;
-    if (pending && (!refusedItemId || pending.itemId === refusedItemId)) {
+    const refusedPartial = inFlightPartialRef.current;
+    // Identity of the REFUSED request: only step 1's own save abandons the pending step 2 (a refused
+    // earlier Save-bar save of the same item does not). Without a recorded identity: the item decides.
+    const isStepOne = !!pending && (pending.step1Partial
+      ? pending.step1Partial === refusedPartial
+      : (!refusedItemId || pending.itemId === refusedItemId));
+    if (pending && isStepOne) {
       pendingTranslationAfterSaveRef.current = null;
       acceptedPrimaryValueRef.current = null;
       setIsAcceptAndTranslateFlow(false);
     }
     const step = foreignAcceptPrimaryStepRef.current;
-    const partial = inFlightPartialRef.current;
-    const isStepTwo = !!step && (!refusedItemId || step.itemId === refusedItemId) &&
-      !!partial && Object.keys(partial.values ?? {}).length === 0 && (partial.altIndices ?? []).length === 0;
-    if (!step || !isStepTwo) return false;
+    // Step 2 is identified by the request it was sent as, not by the shape of its description.
+    if (!step || step.partial !== refusedPartial) return false;
     foreignAcceptPrimaryStepRef.current = null;
     const overlay = savedPrimaryValuesRef.current[step.itemId];
     if (overlay) {
@@ -3437,8 +3448,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // redirect after "Accept & Translate" was swallowed and the merchant went
       // on believing the old URL still resolved.
       const pendingRedirectMessage = buildRedirectMessage(redirectNoteOf(fetcher.data), t);
-      // The save that staged a foreign accept's main-language overlay was answered successfully: it stands.
-      foreignAcceptPrimaryStepRef.current = null;
+      // Only the ANSWER of the save that staged a foreign accept's main-language overlay makes it stand;
+      // an earlier save answering first must not drop the rollback of a later refusal.
+      if (foreignAcceptPrimaryStepRef.current && foreignAcceptPrimaryStepRef.current.partial === partial) {
+        foreignAcceptPrimaryStepRef.current = null;
+      }
 
       // Check if there's a pending translation to start after this save
       if (pendingTranslationAfterSaveRef.current) {
@@ -3953,11 +3967,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         showRefusalOfOtherItem(refusedItemId, fetcher.data);
       }
       if (isSavedItemCurrent) {
-        const translatedError =
+        const translatedError = stepTwoRefusalText(
+          fetcher.data,
+          stepTwoRefused,
           localizedUnconfirmedFields(fetcher.data) ||
-          localizedThemeSaveIssues(fetcher.data) ||
-          stepTwoRefusalText(fetcher.data, stepTwoRefused) ||
-          translateErrorMessage(String(fetcher.data.error || ""), t);
+            localizedThemeSaveIssues(fetcher.data) ||
+            translateErrorMessage(String(fetcher.data.error || ""), t),
+        );
         showInfoBox(translatedError, "critical");
       }
     } else if (fetcher.data && !fetcher.data.success && 'errorKey' in fetcher.data && isSavePendingRef.current && isSaveAnswerShape) {
@@ -4010,7 +4026,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         showInfoBox(keyName ? `${keyName}: ${keyText}` : keyText, "critical");
       }
       if (isSavedItemCurrent) {
-        const errorMessage = stepTwoRefusalText(fetcher.data, stepTwoRefused) || errorKeyMessage(fetcher.data);
+        const errorMessage = stepTwoRefusalText(fetcher.data, stepTwoRefused, errorKeyMessage(fetcher.data));
         showInfoBox(errorMessage, "critical");
 
         // Auto-restore empty fields to their original values (discard empty edits)
