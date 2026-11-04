@@ -1,4 +1,4 @@
-﻿import { version as reactVersion, useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+﻿import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { captureRemoved, reinsertRemoved, splitDeleteAnswer, removePendingNewMedia, queuedResourceUrls, stripRefsFromGalleries, unsentUrls, urlNeedsRestore, type RemovedEntry } from "./delete-rollback";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip } from "@shopify/polaris";
 import { useFetcher } from "react-router";
@@ -43,12 +43,6 @@ import {
 // fall back to closestCenter when pointer is outside all droppables.
 /** A variants read that failed (the limiter's 429 under fast clicking, a network blip) is tried again
  *  by itself after these pauses, so the galleries come back without the merchant leaving the product. */
-/** The `inert` attribute: React 18 passes an unknown attribute through as a string, React 19 knows it as a
- *  boolean (and would drop the empty string). Chosen by the running version, so an upgrade keeps it. */
-function inertProps(on: boolean): Record<string, string | boolean> {
-  if (!on) return {};
-  return Number.parseInt(reactVersion, 10) >= 19 ? { inert: true } : { inert: "" };
-}
 export const VARIANTS_RETRY_DELAYS_MS = [3000, 8000, 20000];
 
 const useIsomorphicLayoutEffect = typeof document !== "undefined" ? useLayoutEffect : useEffect;
@@ -797,6 +791,8 @@ export function VariantImageManager({
   const variantsCurrent = variantsKnown && !variantsRefreshing;
   const variantsCurrentRef = useRef(true);
   variantsCurrentRef.current = variantsCurrent;
+  // The latest state an async handler must read after an await (a closure would hold the render it started in).
+  const uploadStateRef = useRef<{ variants: VariantWithGallery[]; urlToGid: Record<string, string>; locallyExcludedMainGids: Set<string> }>({ variants: [], urlToGid: {}, locallyExcludedMainGids: new Set() });
   useEffect(() => { onVariantsCurrentChange?.(variantsCurrent); }, [variantsCurrent]); // eslint-disable-line react-hooks/exhaustive-deps
   /** THE guard for every path that changes a variant's pending state (drags, drops, picks, link / 3D
    *  / upload adds, removals, reorders): while the variants are not current (read in flight or failed)
@@ -2054,6 +2050,7 @@ export function VariantImageManager({
   const displayedUrlsRef = useRef<{ shown: (container: string) => Set<string>; gidOf: (url: string) => string | undefined; isSettling: (gid: string) => boolean }>({
     shown: () => new Set(), gidOf: () => undefined, isSettling: () => false,
   });
+  uploadStateRef.current = { variants, urlToGid, locallyExcludedMainGids };
   displayedUrlsRef.current = {
     shown: (container: string) => new Set(container === "product" ? displayedProductUrls : orderedVariantTiles(container).variantUrls),
     gidOf: (url: string) => urlToGid[url] ?? Object.entries(urlToGid).find(([u]) => u.split("?")[0] === url.split("?")[0])?.[1],
@@ -3142,7 +3139,7 @@ export function VariantImageManager({
     if (!deleteConfirm) return;
     // Deleting an image takes it off every variant that uses it: with the variants unknown (a read that
     // failed or is still out) neither the warning nor the removal of its entries can be right.
-    if (!variantsKnown) {
+    if (!variantsCurrentRef.current) {
       setDeleteConfirm(null);
       setMediaError(t.imageManager.variantsNotLoadedAction);
       return;
@@ -3473,7 +3470,7 @@ export function VariantImageManager({
       deletedAltLookup,
     );
     setIsDeleting(false);
-  }, [deleteConfirm, variantsKnown, urlToGid, fileUrlMap, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, pendingGalleryOrder, pendingExternalVideos, pendingVariant3dModels, effectivePendingMains, effectiveMoves, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t, fetchVariantsForProduct]);
+  }, [deleteConfirm, urlToGid, fileUrlMap, variants, effectiveProductImages, productId, onSettlingMediaResolved, pendingVariantGalleries, pendingGalleryOrder, pendingExternalVideos, pendingVariant3dModels, effectivePendingMains, effectiveMoves, locallyExcludedMainGids, pendingProductImageOrder, selectedGalleryItems, pendingProductNewMedia, t, fetchVariantsForProduct]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;
@@ -3542,6 +3539,8 @@ export function VariantImageManager({
     setWebpError(null); // clear any stale error before a fresh upload
     setMediaError(null);
     const failedFiles: string[] = [];
+    const skippedFiles: string[] = [];
+    const startedProductId = productIdRef.current;
     for (const file of files) {
       try {
         const res = await appFetch("/api/staged-upload", {
@@ -3561,8 +3560,16 @@ export function VariantImageManager({
 
         await uploadToStagedTarget({ url, httpMethod, parameters }, file);
 
+        // The upload takes a while: the variants may have been re-read (or the product switched) meanwhile.
+        // Appending to a stale list (or to another product) would write the wrong gallery, so the file is
+        // NOT added; the merchant is told which ones to upload again.
+        if (productIdRef.current !== startedProductId || !variantsCurrentRef.current) {
+          skippedFiles.push(file.name);
+          continue;
+        }
         if (resourceUrl) {
           setPendingVariantGalleries(p => {
+            const { variants, urlToGid, locallyExcludedMainGids } = uploadStateRef.current;
             const variant = variants.find(v => v.id === variantId);
             const current = p[variantId] ?? variant?.galleryFileGids ?? [];
             const mainGid = variant?.defaultImageUrl
@@ -3580,10 +3587,12 @@ export function VariantImageManager({
         failedFiles.push(file.name);
       }
     }
-    if (failedFiles.length > 0) {
+    if (skippedFiles.length > 0 && productIdRef.current === startedProductId) {
+      setMediaError(t.imageManager.uploadSkippedNotCurrent.replace("{files}", skippedFiles.join(", ")));
+    } else if (failedFiles.length > 0) {
       setMediaError(t.imageManager.uploadFailedFiles.replace("{files}", failedFiles.join(", ")));
     }
-  }, [variants, urlToGid, locallyExcludedMainGids, t]);
+  }, [t]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUploadToProductGallery = useCallback(async (files: File[]) => {
     setWebpError(null); // clear any stale error before a fresh upload
@@ -4556,12 +4565,12 @@ export function VariantImageManager({
               ? <LocalizedMediaNotReplaceable reason="model3d" />
               : <LocalizedMediaReplaceButtons mediaId={productSingleSelectedGid} />)}
             {productSelectedUrls.length > 0 && (
-              <DisabledActionTooltip hint={variantsKnown ? undefined : t.imageManager.variantsNotLoadedAction}>
+              <DisabledActionTooltip hint={variantsCurrent ? undefined : t.imageManager.variantsNotLoadedAction}>
               <Button
                 size="slim"
                 tone="critical"
                 variant="secondary"
-                disabled={isDeleting || !variantsKnown}
+                disabled={isDeleting || !variantsCurrent}
                 onClick={() => {
                   const urlSetForCount = new Set(productSelectedUrls);
                   const gidSet = new Set(productSelectedUrls.map(url => urlToGid[url]).filter(Boolean));
@@ -4770,10 +4779,11 @@ export function VariantImageManager({
               {variantError && !(variantsLoadedForRef.current === productId && variants.length > 0) ? null : variants.length === 0 ? (
             <Text as="p" tone="subdued">{t.imageManager.noVariants}</Text>
           ) : (
-            // While the re-read of an already known product has failed the list stays (open galleries
-            // included) but cannot be operated: the variants are not known to be current, so nothing
-            // may be written for them (same gate as the delete and the save).
-            <div data-variants-list style={!variantsCurrent ? { pointerEvents: "none", opacity: 0.6 } : undefined} aria-disabled={!variantsCurrent ? true : undefined} {...inertProps(!variantsCurrent)}>
+            // While the variants are not current (re-read in flight or failed) the list stays mounted and
+            // EDITABLE for text (alt inputs keep focus): nothing locks the whole list, because that stole
+            // focus mid-typing. Writes to variant state are refused centrally (`refuseIfVariantsNotCurrent`)
+            // and the gallery drop targets are disabled.
+            <div data-variants-list aria-busy={!variantsCurrent ? true : undefined}>
             {variants.map(v => {
               const storedGids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
               const nativeMainGid = mainGidOfVariant(v);

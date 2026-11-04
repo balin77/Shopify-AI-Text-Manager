@@ -2004,6 +2004,7 @@ export const en: Translation = {
     mainMoveInvalid: "The main image move could not be saved because the two variants no longer fit together. Nothing was changed. Discard the pending image changes and repeat the move.",
     mainNotNameable: "This main image cannot be identified right now. Reload the product and try again.",
     uploadFailedFiles: "Upload failed for: {files}. These files were not added.",
+    uploadSkippedNotCurrent: "Not added: {files}. The variants of this product were refreshed while uploading. Please upload these files again.",
     altImageNotFound: "This image could not be found on the product any more (it may still be uploading or was deleted). Reload the page and try again.",
     altTemplateSaveFailed: "The alt text template could not be saved. Please try again.",
     altTemplateDeleteFailed: "The alt text template could not be deleted. Please try again.",

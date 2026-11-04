@@ -1984,6 +1984,7 @@ export const es: Translation = {
     mainMoveInvalid: "No se pudo guardar el movimiento de la imagen principal porque las dos variantes ya no encajan. No se cambió nada. Descarta los cambios de imagen pendientes y repite el movimiento.",
     mainNotNameable: "Ahora mismo no se puede identificar esta imagen principal. Recarga el producto e inténtalo de nuevo.",
     uploadFailedFiles: "Error al subir: {files}. Estos archivos no se añadieron.",
+    uploadSkippedNotCurrent: "No se añadió: {files}. Las variantes de este producto se recargaron durante la subida. Vuelve a subir estos archivos.",
     altImageNotFound: "Esta imagen ya no se encuentra en el producto (puede que aún se esté subiendo o que se haya eliminado). Recarga la página e inténtalo de nuevo.",
     altTemplateSaveFailed: "No se pudo guardar la plantilla de texto alternativo. Inténtalo de nuevo.",
     altTemplateDeleteFailed: "No se pudo eliminar la plantilla de texto alternativo. Inténtalo de nuevo.",

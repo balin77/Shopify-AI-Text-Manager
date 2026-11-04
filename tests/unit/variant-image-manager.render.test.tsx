@@ -75,6 +75,8 @@ vi.mock("~/utils/app-fetch", () => ({
   appFetchJson: vi.fn(),
 }));
 
+let stagedGate: Promise<void> = Promise.resolve();
+vi.mock("~/utils/staged-upload.client", () => ({ uploadToStagedTarget: vi.fn(async () => { await stagedGate; }) }));
 import { VariantImageManager, VARIANTS_RETRY_DELAYS_MS } from "~/components/image-manager/VariantImageManager";
 import { planVariantWrite, validateMainMoves, type MoveIntentView } from "~/services/variant-main-image.shared";
 
@@ -1260,10 +1262,61 @@ describe("round 3, point 4: a variants read refused by the rate limiter (429)", 
     await new Promise((r) => setTimeout(r, 2200));
     expect(variantReads()).toBe(readsBefore + 1);
     expect(cur).toHaveBeenLastCalledWith(false);
-    expect((document.querySelector("[data-variants-list]") as HTMLElement).hasAttribute("inert")).toBe(true);
+    expect((document.querySelector("[data-variants-list]") as HTMLElement).getAttribute("aria-busy") === "true").toBe(true);
     await act(async () => { release(); variantsGate = null; });
     await waitFor(() => expect(cur).toHaveBeenLastCalledWith(true));
   }, 12000);
+
+  it("M3: typing in a variant alt input during a re-read keeps the element, focus and value", async () => {
+    const { rerender } = await mount();
+    act(() => grids[V1].onSelect(url(2), true));
+    const input = (await screen.findAllByRole("textbox"))[0] as HTMLTextAreaElement;
+    act(() => input.focus());
+    fireEvent.change(input, { target: { value: "Typed alt" } });
+    let release!: () => void;
+    variantsGate = new Promise<void>((r) => { release = r; });
+    rerender(ui({ variantReloadKey: 1 }));
+    await waitFor(() => expect((document.querySelector("[data-variants-list]") as HTMLElement).getAttribute("aria-busy")).toBe("true"));
+    const after = screen.getAllByRole("textbox")[0] as HTMLTextAreaElement;
+    expect(after).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe("Typed alt");
+    fireEvent.change(input, { target: { value: "Typed alt more" } });
+    expect(input.value).toBe("Typed alt more");
+    await act(async () => { release(); variantsGate = null; });
+  });
+
+  it("M2: an upload that finishes while the variants are being re-read is NOT appended to the stale list, and the file is named", async () => {
+    saveAnswer = (path) => (path === "/api/staged-upload" ? { url: "https://staged/up", resourceUrl: "https://staged/new.jpg", parameters: [], httpMethod: "PUT" } : { success: true });
+    const { rerender } = await mount();
+    let releaseUpload!: () => void;
+    stagedGate = new Promise<void>((r) => { releaseUpload = r; });
+    let uploading!: Promise<void>;
+    act(() => { uploading = grids[V1].onUploadToGallery([new File(["x"], "pic.jpg", { type: "image/jpeg" })]); });
+    let releaseRead!: () => void;
+    variantsGate = new Promise<void>((r) => { releaseRead = r; });
+    rerender(ui({ variantReloadKey: 1 }));
+    await waitFor(() => expect((document.querySelector("[data-variants-list]") as HTMLElement).getAttribute("aria-busy")).toBe("true"));
+    onPendingChange.mockClear();
+    await act(async () => { releaseUpload(); stagedGate = Promise.resolve(); await uploading; });
+    expect(onPendingChange).not.toHaveBeenCalled();
+    expect(screen.getByText(/Not added: pic\.jpg/)).toBeTruthy();
+    await act(async () => { releaseRead(); variantsGate = null; });
+  });
+
+  it("M1: the delete control is disabled while a re-read is IN FLIGHT, and a confirmation already open is refused", async () => {
+    const { rerender } = await mount();
+    act(() => grids.product.onSelect(url(1), true));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    let release!: () => void;
+    variantsGate = new Promise<void>((r) => { release = r; });
+    rerender(ui({ variantReloadKey: 1 }));
+    await waitFor(() => expect((document.querySelector("[data-variants-list]") as HTMLElement).getAttribute("aria-busy") === "true").toBe(true));
+    fireEvent.click(await screen.findByRole("button", { name: "Yes, delete now" }));
+    expect(apiCalls.some((c) => c.path === "/api/delete-product-images")).toBe(false);
+    expect(screen.getByText(/variants of this product are not loaded/)).toBeTruthy();
+    await act(async () => { release(); variantsGate = null; });
+  });
 
   it("a silent settling poll that itself fails does not cancel the scheduled retry", async () => {
     VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length, 2500);

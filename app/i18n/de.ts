@@ -2005,6 +2005,7 @@ export const de = {
     mainMoveInvalid: "Das Verschieben des Hauptbilds konnte nicht gespeichert werden, weil die beiden Varianten nicht mehr zusammenpassen. Es wurde nichts geändert. Verwirf die ausstehenden Bildänderungen und wiederhole das Verschieben.",
     mainNotNameable: "Dieses Hauptbild kann gerade nicht eindeutig bestimmt werden. Lade das Produkt neu und versuche es erneut.",
     uploadFailedFiles: "Upload fehlgeschlagen für: {files}. Diese Dateien wurden nicht hinzugefügt.",
+    uploadSkippedNotCurrent: "Nicht hinzugefügt: {files}. Die Varianten dieses Produkts wurden während des Hochladens neu geladen. Bitte lade diese Dateien noch einmal hoch.",
     altImageNotFound: "Dieses Bild wurde am Produkt nicht mehr gefunden (es wird evtl. noch hochgeladen oder wurde gelöscht). Lade die Seite neu und versuche es erneut.",
     altTemplateSaveFailed: "Die Alt-Text-Vorlage konnte nicht gespeichert werden. Bitte erneut versuchen.",
     altTemplateDeleteFailed: "Die Alt-Text-Vorlage konnte nicht gelöscht werden. Bitte erneut versuchen.",
