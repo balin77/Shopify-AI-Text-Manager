@@ -1109,17 +1109,27 @@ export function VariantImageManager({
           : mapped;
         const sortedVariants = realVariants.sort((a, b) => a.position - b.position);
         setVariants(sortedVariants);
-        // The selection of this product survives the re-read, minus what no longer exists.
+        // The selection of this product survives the re-read, minus what no longer exists (a Discard clears it).
         setSelectedGalleryItems(prev => {
           if (prev.size === 0) return prev;
           const known = new Set(Object.values((mediaMap ?? {}) as Record<string, string>).map(u => u.split("?")[0]));
           const galleryIds = new Set(["product", ...sortedVariants.map(v => v.id)]);
+          const lookup = displayedUrlsRef.current;
+          // 3D model and external video urls are tiles of a variant list, not media of the map (a model's
+          // GLB url is on the CDN too): they are checked against the fresh variant lists.
+          const listed = new Set(sortedVariants.flatMap(v => [...(v.threeDModelUrls ?? []), ...(v.externalVideoUrls ?? [])]));
           const next = new Map(prev);
           for (const key of prev.keys()) {
             const sep = key.indexOf("::");
             const container = sep === -1 ? key : key.slice(0, sep);
             const url = sep === -1 ? "" : key.slice(sep + 2);
-            if (!galleryIds.has(container) || (url.includes("cdn.shopify.com") && !known.has(url.split("?")[0]))) next.delete(key);
+            if (!galleryIds.has(container)) { next.delete(key); continue; }
+            if (listed.has(url) || known.has(url.split("?")[0])) continue;
+            // Not in the fresh media map: a tile of a medium that is gone (it HAS a gid) is dropped unless
+            // Shopify is still processing it; a tile with no gid (blob / staging preview, library asset)
+            // stays only while its gallery still shows it.
+            const oldGid = lookup.gidOf(url);
+            if (oldGid ? !lookup.isSettling(oldGid) : !lookup.shown(container).has(url)) next.delete(key);
           }
           return next.size === prev.size ? prev : next;
         });
@@ -1995,6 +2005,18 @@ export function VariantImageManager({
         && !baseUrls.includes(u) && !pendingPreviews.includes(u));
     return [...baseUrls, ...settlingPreviews, ...pendingPreviews];
   }, [showAll, fullView, pendingProductImageOrder, effectiveProductImages, urlToGid, assignedGids, variants.length, pendingProductNewMedia, unsettledMedia]);
+
+  // What a gallery shows right now (the product gallery or a variant's), read by the landing variants
+  // read to prune the selection: a tile whose key is not a CDN url (blob / staging preview, settling
+  // medium, library asset, 3D url) cannot be checked against the media map, only against the list.
+  const displayedUrlsRef = useRef<{ shown: (container: string) => Set<string>; gidOf: (url: string) => string | undefined; isSettling: (gid: string) => boolean }>({
+    shown: () => new Set(), gidOf: () => undefined, isSettling: () => false,
+  });
+  displayedUrlsRef.current = {
+    shown: (container: string) => new Set(container === "product" ? displayedProductUrls : orderedVariantTiles(container).variantUrls),
+    gidOf: (url: string) => urlToGid[url] ?? Object.entries(urlToGid).find(([u]) => u.split("?")[0] === url.split("?")[0])?.[1],
+    isSettling: (gid: string) => unsettledMedia.some(m => m.mediaId === gid),
+  };
 
 
   // Per-gallery selected URL sets — same URL in different galleries is independent
@@ -3944,7 +3966,8 @@ export function VariantImageManager({
   if (altDraftApiRef) {
     altDraftApiRef.current = {
       flush: flushAltDrafts,
-      discard: discardAltDrafts,
+      // A Discard takes the tile selection back too (the parent's copy is cleared by its reset).
+      discard: () => { setSelectedGalleryItems(new Map()); discardAltDrafts(); },
       hasUnsentDrafts: () => unsentAltDrafts(
         dirtyUrlsRef.current,
         localAltTextsRef.current,

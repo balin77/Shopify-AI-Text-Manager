@@ -1311,6 +1311,52 @@ describe("round 3 review fix: the gallery selection survives a save cycle of the
     await waitFor(() => expect(grids.product.selectedUrls.has(url(2))).toBe(false));
   });
 
+  it("M2: Discard clears the selection (also after a Ctrl copy) and the parent hears about it", async () => {
+    const altDraftApiRef: any = { current: null };
+    const onSel = vi.fn();
+    await mount({ altDraftApiRef, onGallerySelectionGidsChange: onSel, activeAction: "copy" });
+    act(() => grids.product.onSelect(url(2), true));
+    await waitFor(() => expect(grids.product.selectedUrls.has(url(2))).toBe(true));
+    await waitFor(() => expect(onSel).toHaveBeenLastCalledWith([gid(2)]));
+    // a copy to V2 keeps the selection (the action stays on)
+    act(() => grids[V2]?.onDropToPlaceholder?.());
+    expect(grids.product.selectedUrls.has(url(2))).toBe(true);
+    act(() => altDraftApiRef.current.discard());
+    await waitFor(() => expect(grids.product.selectedUrls.has(url(2))).toBe(false));
+    await waitFor(() => expect(onSel).toHaveBeenLastCalledWith([]));
+  });
+
+  it("M2: a re-read keeps a selected 3D url, drops a non-CDN key no gallery shows any more", async () => {
+    const MODEL = "https://cdn.shopify.com/m.glb";
+    variantsAnswer = () => {
+      const base = variantsPayload();
+      return { ...base, variants: [{ ...base.variants[0], threeDModelsJson: JSON.stringify([MODEL]), threeDPreviewsJson: JSON.stringify([""]) }, base.variants[1]] };
+    };
+    const { rerender } = await mount();
+    act(() => grids[V1].onSelect(MODEL, true));
+    act(() => grids.product.onSelect("blob:http://localhost/gone", true));
+    await waitFor(() => expect(grids[V1].selectedUrls.has(MODEL)).toBe(true));
+    rerender(ui({ resetKey: 1, variantReloadKey: 1 }));
+    await waitFor(() => expect(apiCalls.filter((c) => c.path === "/api/product-variants").length).toBeGreaterThan(1));
+    await waitFor(() => expect(grids.product.selectedUrls.has("blob:http://localhost/gone")).toBe(false));
+    expect(grids[V1].selectedUrls.has(MODEL)).toBe(true);
+  });
+
+  it("M2: a library-pick tile (not product media) stays selected through a re-read while its gallery shows it", async () => {
+    const { rerender } = await mount();
+    const before = new Set<string>(grids[V1].imageUrls);
+    act(() => grids[V1].onOpenPicker());
+    act(() => picker.onAdd!([{ source: "library", kind: "image", alt: null, gid: "gid://shopify/MediaImage/77", previewUrl: "https://cdn.shopify.com/s/files/lib77.jpg", assetUrl: "https://cdn.shopify.com/s/files/lib77.jpg" }]));
+    await waitFor(() => expect(grids[V1].imageUrls.some((u: string) => !before.has(u))).toBe(true));
+    const tile = grids[V1].imageUrls.find((u: string) => !before.has(u));
+    act(() => grids[V1].onSelect(tile, true));
+    await waitFor(() => expect(grids[V1].selectedUrls.has(tile)).toBe(true));
+    rerender(ui({ variantReloadKey: 1 }));
+    await waitFor(() => expect(apiCalls.filter((c) => c.path === "/api/product-variants").length).toBeGreaterThan(1));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(grids[V1].selectedUrls.has(tile)).toBe(true);
+  });
+
   it("switching to another product clears the selection", async () => {
     const { rerender } = await mount();
     act(() => grids.product.onSelect(url(2), true));
