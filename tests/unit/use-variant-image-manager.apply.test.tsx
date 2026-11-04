@@ -288,6 +288,14 @@ describe("round 3, point 4: a bulk upload assigned to a variant that is not load
     expect(calls).toHaveLength(1);
   });
 
+  it("L1: resetForProduct resets the not-current flag", () => {
+    const { result } = renderHook(() => useVariantImageManager());
+    act(() => result.current.handleVariantsCurrentChange(false));
+    expect(result.current.variantsCurrent).toBe(false);
+    act(() => result.current.resetForProduct());
+    expect(result.current.variantsCurrent).toBe(true);
+  });
+
   it("with the variant known the same save goes out and keeps the stored gallery", async () => {
     answer = () => ({ success: true, createdMedia: [] });
     const { result } = renderHook(() => useVariantImageManager());

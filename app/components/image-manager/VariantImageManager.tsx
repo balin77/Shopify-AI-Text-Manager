@@ -793,7 +793,10 @@ export function VariantImageManager({
   variantsCurrentRef.current = variantsCurrent;
   // The latest state an async handler must read after an await (a closure would hold the render it started in).
   const uploadStateRef = useRef<{ variants: VariantWithGallery[]; urlToGid: Record<string, string>; locallyExcludedMainGids: Set<string> }>({ variants: [], urlToGid: {}, locallyExcludedMainGids: new Set() });
-  useEffect(() => { onVariantsCurrentChange?.(variantsCurrent); }, [variantsCurrent]); // eslint-disable-line react-hooks/exhaustive-deps
+  // (re-reported on a product switch and on every reset: the page's flag is reset by its own reset and by
+  // this component's unmount, so it never outlives what it describes)
+  useEffect(() => { onVariantsCurrentChange?.(variantsCurrent); }, [variantsCurrent, productId, resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { onVariantsCurrentChange?.(true); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   /** THE guard for every path that changes a variant's pending state (drags, drops, picks, link / 3D
    *  / upload adds, removals, reorders): while the variants are not current (read in flight or failed)
    *  they would be built from a stale list and a save would REPLACE the stored gallery with it. */

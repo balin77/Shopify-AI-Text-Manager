@@ -555,6 +555,8 @@ export function useVariantImageManager() {
     // missingMainImageProductIds is intentionally NOT reset — it is cross-product
     // sidebar state; clearing it would drop markers for all other products.
     setVariantsForBulk([]);
+    variantsCurrentRef.current = true;
+    setVariantsCurrent(true);
     setSelectedGalleryGids([]);
     setResetCounter(c => c + 1);
   }, []);
