@@ -1284,6 +1284,55 @@ describe("round 3, point 4: a variants read refused by the rate limiter (429)", 
     expect(screen.getByTestId(`grid-${V1}`)).toBe(gridBefore);
   });
 
+  const NOT_LOADED = /variants of this product are not loaded right now/;
+  const dragToV1 = () => act(() => {
+    dnd.onDragEnd?.({ active: { id: `product::${url(4)}`, data: { current: { url: url(4), containerId: "product" } } }, over: { id: `${V1}::${url(2)}` } });
+  });
+
+  it("HIGH: a product -> variant drag while the re-read FAILED changes nothing pending and says why", async () => {
+    VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length);
+    const { rerender } = await mount();
+    variantsRefuse = 1;
+    rerender(ui({ variantReloadKey: 1 }));
+    await waitFor(() => expect(screen.getByText("Could not load variants.")).toBeTruthy());
+    onPendingChange.mockClear();
+    dragToV1();
+    expect(onPendingChange).not.toHaveBeenCalled();
+    expect(screen.getByText(NOT_LOADED)).toBeTruthy();
+    // once the read lands the same drag works
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.queryByText("Could not load variants.")).toBeNull());
+    dragToV1();
+    await waitFor(() => expect(lastEmission()[0][0].fileGids).toContain(gid(4)));
+  });
+
+  it("HIGH: a re-read IN FLIGHT locks the list and refuses the drag too (stale list), and the gallery drop is disabled", async () => {
+    const { rerender } = await mount();
+    let release!: () => void;
+    variantsGate = new Promise<void>((r) => { release = r; });
+    rerender(ui({ variantReloadKey: 1 }));
+    await waitFor(() => expect((document.querySelector("[data-variants-list]") as HTMLElement).hasAttribute("inert")).toBe(true));
+    onPendingChange.mockClear();
+    dragToV1();
+    expect(onPendingChange).not.toHaveBeenCalled();
+    expect(screen.getByText(NOT_LOADED)).toBeTruthy();
+    await act(async () => { release(); variantsGate = null; });
+    await waitFor(() => expect((document.querySelector("[data-variants-list]") as HTMLElement).hasAttribute("inert")).toBe(false));
+  });
+
+  it("HIGH: a library pick through the still-open picker is refused while the variants are not current", async () => {
+    VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length);
+    const { rerender } = await mount();
+    act(() => grids[V1].onOpenPicker());
+    variantsRefuse = 1;
+    rerender(ui({ variantReloadKey: 1 }));
+    await waitFor(() => expect(screen.getByText("Could not load variants.")).toBeTruthy());
+    onPendingChange.mockClear();
+    act(() => picker.onAdd!([{ source: "library", kind: "image", alt: null, gid: gid(4), previewUrl: url(4), assetUrl: url(4) }]));
+    expect(onPendingChange).not.toHaveBeenCalled();
+    expect(screen.getByText(NOT_LOADED)).toBeTruthy();
+  });
+
   it("a silent settling poll that itself fails does not cancel the scheduled retry", async () => {
     VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length, 2500);
     variantsRefuse = 2; // the first read and the first (silent) poll are refused

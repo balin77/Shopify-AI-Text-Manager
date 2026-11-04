@@ -1,4 +1,4 @@
-﻿import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+﻿import { version as reactVersion, useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { captureRemoved, reinsertRemoved, splitDeleteAnswer, removePendingNewMedia, queuedResourceUrls, stripRefsFromGalleries, unsentUrls, urlNeedsRestore, type RemovedEntry } from "./delete-rollback";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip } from "@shopify/polaris";
 import { useFetcher } from "react-router";
@@ -43,6 +43,12 @@ import {
 // fall back to closestCenter when pointer is outside all droppables.
 /** A variants read that failed (the limiter's 429 under fast clicking, a network blip) is tried again
  *  by itself after these pauses, so the galleries come back without the merchant leaving the product. */
+/** The `inert` attribute: React 18 passes an unknown attribute through as a string, React 19 knows it as a
+ *  boolean (and would drop the empty string). Chosen by the running version, so an upgrade keeps it. */
+function inertProps(on: boolean): Record<string, string | boolean> {
+  if (!on) return {};
+  return Number.parseInt(reactVersion, 10) >= 19 ? { inert: true } : { inert: "" };
+}
 export const VARIANTS_RETRY_DELAYS_MS = [3000, 8000, 20000];
 
 const useIsomorphicLayoutEffect = typeof document !== "undefined" ? useLayoutEffect : useEffect;
@@ -782,6 +788,20 @@ export function VariantImageManager({
   // The variants of the open product are known (read and landed): until then a save must not act on
   // them and nothing may be written or cleared for a variant the editor knows nothing about.
   const variantsKnown = variantsLoadedForRef.current === productId && !isLoadingVariants && !variantError;
+  // A non-silent re-read of an ALREADY loaded product is in flight (after a save, a Discard): the list
+  // stays on screen but is not known to be current until the read lands.
+  const [variantsRefreshing, setVariantsRefreshing] = useState(false);
+  const variantsCurrent = variantsKnown && !variantsRefreshing;
+  const variantsCurrentRef = useRef(true);
+  variantsCurrentRef.current = variantsCurrent;
+  /** THE guard for every path that changes a variant's pending state (drags, drops, picks, link / 3D
+   *  / upload adds, removals, reorders): while the variants are not current (read in flight or failed)
+   *  they would be built from a stale list and a save would REPLACE the stored gallery with it. */
+  const refuseIfVariantsNotCurrent = (): boolean => {
+    if (variantsCurrentRef.current) return false;
+    setMediaError(t.imageManager.variantsNotLoadedAction);
+    return true;
+  };
   const variantsAbortRef = useRef<AbortController | null>(null);
 
   // Cross-gallery drag state
@@ -988,6 +1008,7 @@ export function VariantImageManager({
     // forbidden from re-raising one, so clearing would leave the section
     // showing an empty state where a real failure had been reported.
     if (!opts?.silent) setVariantError(null);
+    if (!opts?.silent && variantsLoadedForRef.current === pid) setVariantsRefreshing(true);
     if (resetState) {
       setPendingVariantGalleries({});
       if (variantsLoadedForRef.current !== pid) setSelectedGalleryItems(new Map());
@@ -1181,7 +1202,7 @@ export function VariantImageManager({
       // leave the spinner up forever, with the variant list replaced by it
       // until the next save or product switch. Whoever is the current request
       // owns the flag.
-      .finally(() => { if (!isStale()) setIsLoadingVariants(false); });
+      .finally(() => { if (!isStale()) { setIsLoadingVariants(false); setVariantsRefreshing(false); } });
   }, [t.imageManager.variantsLoadError, onVariantsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
   fetchVariantsRef.current = fetchVariantsForProduct;
 
@@ -2061,6 +2082,7 @@ export function VariantImageManager({
    *  place a main image is chosen); `undefined`/`null` = the first slot did not change and
    *  whatever main image was chosen so far stays as it is. */
   const handleVariantReorder = useCallback((variantId: string, newItems: string[], newMain?: string | null) => {
+    if (refuseIfVariantsNotCurrent()) return;
     // `newItems` is the unified post-reorder sequence — each entry is either
     // a file GID / staged resourceUrl OR a URL (external video or .glb 3D
     // model). Split the three so each lands in the correct pending slot,
@@ -2208,7 +2230,7 @@ export function VariantImageManager({
     const containerId = overStr.includes("::") ? overStr.split("::")[0] : overStr;
 
     // Start auto-expand timer when entering a new variant container (ref prevents redundant resets)
-    if (containerId !== "product" && containerId !== currentOverContainerRef.current) {
+    if (variantsCurrentRef.current && containerId !== "product" && containerId !== currentOverContainerRef.current) {
       currentOverContainerRef.current = containerId;
       if (autoExpandTimerRef.current) clearTimeout(autoExpandTimerRef.current);
       autoExpandTimerRef.current = setTimeout(() => setAutoExpandId(containerId), 700);
@@ -2233,6 +2255,8 @@ export function VariantImageManager({
     const overStr = over.id as string;
     const sepIdx = overStr.indexOf("::");
     const targetContainerId = sepIdx !== -1 ? overStr.slice(0, sepIdx) : overStr;
+    // Anything that touches a variant gallery (as source or target) needs current variants.
+    if ((sourceContainerId !== "product" || targetContainerId !== "product") && refuseIfVariantsNotCurrent()) return;
     // overUrl semantics:
     //   - string: dropped on a specific tile (URL of that tile)
     //   - null:   dropped on the container itself (whitespace)
@@ -2590,6 +2614,7 @@ export function VariantImageManager({
   // prepend=true → image lands at position 0 (main image slot, triggered by placeholder click)
   // prepend=false → image appended to end of gallery
   const handleDropToVariant = useCallback((targetVariantId: string, prepend = false) => {
+    if (refuseIfVariantsNotCurrent()) return;
     const bulkGids = bulkItems
       .filter(i => selectedBulkIds.has(i.uniqueId) && i.status === "ready")
       .map(i => i.resourceUrl);
@@ -2671,6 +2696,8 @@ export function VariantImageManager({
   // which leave it open so the merchant can pile more.
   const handleModalAdd = useCallback((pickedItems: AddedItem[]) => {
     if (!pickerTarget || pickedItems.length === 0) return;
+    // The picker (a portalled modal) can still be open while the variants are not current.
+    if (pickerTarget.mode === "variant" && refuseIfVariantsNotCurrent()) return;
     let items = pickedItems;
 
     // A library image the target variant already shows (gallery entry, main image, or the same file under
@@ -2884,6 +2911,7 @@ export function VariantImageManager({
   // hook on every mutation so its handleApply can ship the changes alongside
   // the regular gallery save without an extra round-trip.
   const handleAddExternalVideoUrl = useCallback((variantId: string, url: string) => {
+    if (refuseIfVariantsNotCurrent()) return;
     setPendingExternalVideos(prev => {
       const variant = variants.find(v => v.id === variantId);
       const current = prev[variantId] ?? variant?.externalVideoUrls ?? [];
@@ -2895,6 +2923,7 @@ export function VariantImageManager({
   }, [variants, onExternalVideosChange]);
 
   const handleRemoveExternalVideoUrl = useCallback((variantId: string, url: string) => {
+    if (refuseIfVariantsNotCurrent()) return;
     setPendingExternalVideos(prev => {
       const variant = variants.find(v => v.id === variantId);
       const current = prev[variantId] ?? variant?.externalVideoUrls ?? [];
@@ -2911,6 +2940,7 @@ export function VariantImageManager({
   // library-picked model (no admin-side snapshot) still adds — the
   // storefront falls back to its "3D" wordmark placeholder for that slot.
   const handleAddThreeDModelUrl = useCallback((variantId: string, url: string, previewUrl: string = "") => {
+    if (refuseIfVariantsNotCurrent()) return;
     const variant = variants.find(v => v.id === variantId);
     setPendingVariant3dModels(prev => {
       const current = prev[variantId] ?? variant?.threeDModelUrls ?? [];
@@ -2930,6 +2960,7 @@ export function VariantImageManager({
   }, [variants, pendingVariant3dModels, onThreeDModelsChange, onThreeDPreviewsChange]);
 
   const handleRemoveThreeDModelUrl = useCallback((variantId: string, url: string) => {
+    if (refuseIfVariantsNotCurrent()) return;
     const variant = variants.find(v => v.id === variantId);
     const currentModels = pendingVariant3dModels[variantId] ?? variant?.threeDModelUrls ?? [];
     const idx = currentModels.indexOf(url);
@@ -2951,6 +2982,7 @@ export function VariantImageManager({
   }, [variants, pendingVariant3dModels, onThreeDModelsChange, onThreeDPreviewsChange]);
 
   const handleRemoveFromGallery = useCallback((variantId: string, urls: string[]) => {
+    if (refuseIfVariantsNotCurrent()) return;
     const urlSet = new Set(urls);
     const variant = variants.find(v => v.id === variantId);
     // Removing the main image of a variant in a pending move (or the moved image itself) is refused.
@@ -3485,6 +3517,7 @@ export function VariantImageManager({
   }, [productId, productTitle, startWebPPolling, pendingProductImageOrder, productImages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUploadToVariant = useCallback(async (variantId: string, files: File[]) => {
+    if (refuseIfVariantsNotCurrent()) return;
     setWebpError(null); // clear any stale error before a fresh upload
     setMediaError(null);
     const failedFiles: string[] = [];
@@ -4719,7 +4752,7 @@ export function VariantImageManager({
             // While the re-read of an already known product has failed the list stays (open galleries
             // included) but cannot be operated: the variants are not known to be current, so nothing
             // may be written for them (same gate as the delete and the save).
-            <div data-variants-list style={variantError ? { pointerEvents: "none", opacity: 0.6 } : undefined} aria-disabled={variantError ? true : undefined} {...(variantError ? ({ inert: "" } as Record<string, string>) : {})}>
+            <div data-variants-list style={!variantsCurrent ? { pointerEvents: "none", opacity: 0.6 } : undefined} aria-disabled={!variantsCurrent ? true : undefined} {...inertProps(!variantsCurrent)}>
             {variants.map(v => {
               const storedGids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
               const nativeMainGid = mainGidOfVariant(v);
@@ -4794,6 +4827,7 @@ export function VariantImageManager({
                 threeDModelUrls={pendingVariant3dModels[v.id] ?? v.threeDModelUrls ?? []}
                 onRemoveThreeDModelUrl={handleRemoveThreeDModelUrl}
                 onBrowseLibrary={() => setPickerTarget({ mode: "variant", variantId: v.id })}
+                dropDisabled={!variantsCurrent}
                 replacements={variantReplacementsByUrl}
                 productMediaIds={productMediaIds}
               />

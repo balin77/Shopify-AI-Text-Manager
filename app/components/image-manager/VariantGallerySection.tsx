@@ -75,6 +75,8 @@ interface VariantGallerySectionProps {
    *  parent owns the modal so its selection callback can update pending
    *  gallery state without re-mounting on every variant. */
   onBrowseLibrary?: () => void;
+  /** The variants are not known to be current: this gallery accepts no drop. */
+  dropDisabled?: boolean;
   /**
    * Per tile URL: the per-language replacement its medium shows (foreign
    * language only). The SAME entries as the product gallery's: one replacement
@@ -132,6 +134,7 @@ export function VariantGallerySection({
   // videos. Parent inspects the URL pattern (.glb) to route to the right
   // metafield.
   onBrowseLibrary,
+  dropDisabled,
   replacements,
   productMediaIds,
 }: VariantGallerySectionProps) {
@@ -142,7 +145,7 @@ export function VariantGallerySection({
     : t.common?.requiresSecondLanguage;
   const [open, setOpen] = useState(false);
   const isOpen = open || forceOpen;
-  const { setNodeRef: setDropRef } = useDroppable({ id: variant.id });
+  const { setNodeRef: setDropRef } = useDroppable({ id: variant.id, disabled: !!dropDisabled });
   const effectiveExternalVideoUrls = externalVideoUrls ?? variant.externalVideoUrls ?? [];
   const effectiveThreeDModelUrls = threeDModelUrls ?? variant.threeDModelUrls ?? [];
   // Parallel array to effectiveThreeDModelUrls: index N is the preview JPG
