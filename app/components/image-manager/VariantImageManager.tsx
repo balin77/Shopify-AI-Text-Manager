@@ -1,4 +1,4 @@
-﻿import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+﻿import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { captureRemoved, reinsertRemoved, splitDeleteAnswer, removePendingNewMedia, queuedResourceUrls, stripRefsFromGalleries, unsentUrls, urlNeedsRestore, type RemovedEntry } from "./delete-rollback";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip } from "@shopify/polaris";
 import { useFetcher } from "react-router";
@@ -157,6 +157,10 @@ interface VariantImageManagerProps {
    *  so a save during a delete that then fails would clear variant main images
    *  on Shopify for media that still exists. */
   onDeletingChange?: (deleting: boolean) => void;
+  /** Full view (the whole manager over the editor's content area) instead of the product-image preview.
+   *  The owner may hold the state so the editor can hide its text fields; absent = the manager keeps its own. */
+  fullView?: boolean;
+  onFullViewChange?: (open: boolean) => void;
   resetKey?: number;
   variantReloadKey?: number;
   currentLanguage?: string;
@@ -236,6 +240,8 @@ export function VariantImageManager({
   settlingMedia,
   onSettlingMediaResolved,
   resetKey,
+  fullView: fullViewProp,
+  onFullViewChange,
   onDeletingChange,
   variantReloadKey,
   currentLanguage,
@@ -357,10 +363,37 @@ export function VariantImageManager({
   const stagedUrlCheckedProductIdRef = useRef<string | null>(null);
   const onProductImagesRefreshedRef = useRef(onProductImagesRefreshed);
   useEffect(() => { onProductImagesRefreshedRef.current = onProductImagesRefreshed; }, [onProductImagesRefreshed]);
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [isProductGalleryExpanded, setIsProductGalleryExpanded] = useState(false);
-  const [productGalleryHasOverflow, setProductGalleryHasOverflow] = useState(false);
-  const productGalleryInnerRef = useRef<HTMLDivElement | null>(null);
+  // Normal view = only the product images as a preview; full view = the whole manager over the
+  // editor's content area (round 3, point 3). The view is a CSS switch on mounted content, never an
+  // unmount, so drafts, running saves and refs survive. The owner (the products page) may hold the
+  // state so the editor can hide its text fields; without an owner the manager keeps its own.
+  const [localFullView, setLocalFullView] = useState(false);
+  const fullView = fullViewProp ?? localFullView;
+  const setFullView = (next: boolean) => { if (onFullViewChange) onFullViewChange(next); else setLocalFullView(next); };
+  const managerRootRef = useRef<HTMLDivElement | null>(null);
+  const savedScrollRef = useRef(0);
+  const prevFullViewRef = useRef(fullView);
+  const scrollerOf = () => managerRootRef.current?.closest(".field-editor-area") as HTMLElement | null;
+  const openFullView = () => {
+    savedScrollRef.current = scrollerOf()?.scrollTop ?? 0;
+    setFullView(true);
+  };
+  const closeFullView = () => setFullView(false);
+  // Scroll and focus follow the switch: opening starts at the top with the close button focused, closing
+  // puts the page back where it was and focuses the button that opened it.
+  useLayoutEffect(() => {
+    if (prevFullViewRef.current === fullView) return;
+    prevFullViewRef.current = fullView;
+    const scroller = scrollerOf();
+    const root = managerRootRef.current;
+    if (fullView) {
+      if (scroller) scroller.scrollTop = 0;
+      root?.querySelector<HTMLElement>("[data-im-close] button")?.focus();
+    } else {
+      if (scroller) scroller.scrollTop = savedScrollRef.current;
+      root?.querySelector<HTMLElement>("[data-im-open] button")?.focus();
+    }
+  }, [fullView]);
   const [showAll, setShowAll] = useState(true);
   const [thumbSize, setThumbSize] = useState(imageManagerSettings.thumbSize ?? 80);
   const thumbSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1869,7 +1902,7 @@ export function VariantImageManager({
   // pipeline runs productCreateMedia and /api/product-variants refetches.
   const displayedProductUrls = useMemo(() => {
     const order = pendingProductImageOrder ?? effectiveProductImages.map(i => i.url);
-    const baseUrls = (showAll || variants.length === 0)
+    const baseUrls = (showAll || !fullView || variants.length === 0)
       ? order
       : order.filter(url => {
           const gid = urlToGid[url];
@@ -1888,27 +1921,13 @@ export function VariantImageManager({
     const settlingPreviews = unsettledMedia
       // Its GID is known, so it obeys the same "hide what a variant already
       // uses" filter as every other saved tile.
-      .filter(m => showAll || variants.length === 0 || !assignedGids.has(m.mediaId))
+      .filter(m => showAll || !fullView || variants.length === 0 || !assignedGids.has(m.mediaId))
       .map(m => m.previewUrl)
       .filter((u): u is string => typeof u === "string" && u.length > 0
         && !baseUrls.includes(u) && !pendingPreviews.includes(u));
     return [...baseUrls, ...settlingPreviews, ...pendingPreviews];
-  }, [showAll, pendingProductImageOrder, effectiveProductImages, urlToGid, assignedGids, variants.length, pendingProductNewMedia, unsettledMedia]);
+  }, [showAll, fullView, pendingProductImageOrder, effectiveProductImages, urlToGid, assignedGids, variants.length, pendingProductNewMedia, unsettledMedia]);
 
-  // Detect whether the product gallery overflows the single-row collapsed height
-  useEffect(() => {
-    const el = productGalleryInnerRef.current;
-    if (!el) return;
-    const collapsedMax = thumbSize + 24;
-    const measure = () => {
-      const overflow = el.scrollHeight > collapsedMax + 1;
-      setProductGalleryHasOverflow(overflow);
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [displayedProductUrls, thumbSize, isProductGalleryExpanded]);
 
   // Per-gallery selected URL sets — same URL in different galleries is independent
   const selectedUrlsByGallery = useMemo(() => {
@@ -4162,6 +4181,7 @@ export function VariantImageManager({
       onDragOver={handleSharedDragOver}
       onDragEnd={handleSharedDragEnd}
     >
+    <div ref={managerRootRef} data-im-view={fullView ? "full" : "preview"}>
     <Card padding="400">
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center">
@@ -4176,21 +4196,18 @@ export function VariantImageManager({
           >
             <Text as="h3" variant="headingSm">{t.imageManager.title}</Text>
           </span>
-          <Button
-            size="slim"
-            variant="plain"
-            onClick={() => setIsExpanded(e => !e)}
-          >
-            {isExpanded ? t.imageManager.collapse : t.imageManager.expand}
-          </Button>
+          {fullView ? (
+            <span key="im-close" data-im-close>
+              <Button size="slim" onClick={closeFullView}>{t.imageManager.closeFullView}</Button>
+            </span>
+          ) : (
+            <span key="im-open" data-im-open>
+              <Button size="slim" variant="plain" onClick={openFullView}>{t.imageManager.openManager}</Button>
+            </span>
+          )}
         </InlineStack>
 
-        <div style={{
-          maxHeight: isExpanded ? "none" : 320,
-          overflowY: isExpanded ? "visible" : "auto",
-          overflowX: "hidden",
-          paddingRight: isExpanded ? 0 : 4,
-        }}>
+        <div>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {mediaError && (
         <Banner tone="critical" onDismiss={() => setMediaError(null)}>
@@ -4205,6 +4222,7 @@ export function VariantImageManager({
 
       {/* Produktbilder allgemein */}
       <div>
+        <div style={fullView ? undefined : { display: "none" }}>
         <InlineStack align="space-between" blockAlign="center">
         <InlineStack gap="200" blockAlign="center">
           <Text as="h3" variant="headingSm">{t.imageManager.productPhotos}</Text>
@@ -4282,7 +4300,8 @@ export function VariantImageManager({
           />
         </InlineStack>
         </InlineStack>
-        <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
+        </div>
+        <div style={{ marginTop: 6, display: fullView ? "flex" : "none", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"
             checked={displayedProductUrls.length > 0 && displayedProductUrls.every(url => (selectedUrlsByGallery.get("product") ?? new Set()).has(url))}
@@ -4298,13 +4317,12 @@ export function VariantImageManager({
         </div>
         <div style={{ position: "relative", marginTop: 8 }}>
           <div
-            style={{
-              maxHeight: isProductGalleryExpanded ? "none" : thumbSize + 24,
-              overflowY: isProductGalleryExpanded ? "visible" : "hidden",
-              overflowX: "hidden",
-            }}
-            ref={(el) => { setProductDropRef(el); productGalleryInnerRef.current = el; }}
+            // Preview: one clipped row that is not operable; a click on it opens the full view.
+            style={fullView ? { overflowX: "hidden" } : { maxHeight: thumbSize + 24, overflow: "hidden", cursor: "pointer" }}
+            onClick={fullView ? undefined : openFullView}
+            ref={setProductDropRef}
           >
+          <div style={fullView ? undefined : { pointerEvents: "none" }}>
             <SortableImageGrid
               containerId="product"
               imageUrls={displayedProductUrls}
@@ -4325,35 +4343,13 @@ export function VariantImageManager({
               replacements={replacementsByUrl}
             />
           </div>
-          {(productGalleryHasOverflow || isProductGalleryExpanded) && (
-            <div
-              style={{
-                position: "absolute",
-                left: 0,
-                right: 0,
-                bottom: 0,
-                transform: "translateY(50%)",
-                display: "flex",
-                justifyContent: "center",
-                background: "white",
-                borderRadius: 4,
-                zIndex: 1,
-              }}
-            >
-              <Button
-                size="slim"
-                variant="plain"
-                onClick={() => setIsProductGalleryExpanded(e => !e)}
-              >
-                {isProductGalleryExpanded ? t.imageManager.showLess : t.imageManager.showAll}
-              </Button>
-            </div>
-          )}
+          </div>
         </div>
 
+        <div style={fullView ? undefined : { display: "none" }}>
         {/* Selection info bar for product gallery */}
         {selectedGalleryItems.size > 0 && (
-          <div style={{ marginTop: (productGalleryHasOverflow || isProductGalleryExpanded) ? 20 : 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <Text as="span" variant="bodySm" tone="subdued">
               {t.imageManager.selectedCount.replace("{count}", String(selectedGalleryItems.size))}
             </Text>
@@ -4554,8 +4550,10 @@ export function VariantImageManager({
           </div>
         )}
         <LocalizedMediaOrphanNotice />
+        </div>
       </div>
 
+      <div style={fullView ? { display: "flex", flexDirection: "column", gap: 16 } : { display: "none" }}>
       <Divider />
 
       {/* Varianten-Galerien */}
@@ -4661,11 +4659,13 @@ export function VariantImageManager({
           )}
         </div>
       </div>
+      </div>
 
         </div>
         </div>
       </BlockStack>
     </Card>
+    </div>
     <DragOverlay>
       {activeDragUrl ? (() => {
         // Non-image tiles can't render the resourceUrl directly as an <img>

@@ -128,6 +128,8 @@ function ui(extra: Record<string, unknown> = {}) {
 }
 async function mount(extra: Record<string, unknown> = {}) {
   const r = render(ui(extra));
+  // The manager starts as a product-image preview: "Show all" opens the full view with the variant galleries.
+  fireEvent.click(await screen.findByText("Show all"));
   // The variant galleries start collapsed: open the first one like a merchant does.
   fireEvent.click(await screen.findByText("Red"));
   try {
@@ -622,6 +624,7 @@ describe("fifth review: renders", () => {
   it("H-1: a variant with no native image shows the first own image as the main one once it has a pending gallery (an upload included)", async () => {
     variantsAnswer = () => variantsPayload({ v1Main: null, v1Gallery: [] });
     render(ui());
+    fireEvent.click(await screen.findByText("Show all"));
     fireEvent.click(await screen.findByText("Red"));
     await waitFor(() => expect(grids[V1]).toBeDefined());
     expect(grids[V1].mainUrl).toBeNull(); // opening promotes nothing
@@ -679,6 +682,7 @@ describe("sixth review: renders", () => {
   it("L3: an empty variant's display skips a reference without a visible file and shows the first visible image", async () => {
     variantsAnswer = () => variantsPayload({ v1Main: null, v1Gallery: [gid(99), gid(2)] }); // 99 has no url anywhere
     render(ui());
+    fireEvent.click(await screen.findByText("Show all"));
     fireEvent.click(await screen.findByText("Red"));
     await waitFor(() => expect(grids[V1]).toBeDefined());
     act(() => grids[V1].onOpenPicker());
@@ -1069,5 +1073,100 @@ describe("round 3, point 2: open variant galleries stay open through the post-sa
     rerender(ui({ productId: "gid://shopify/Product/2" }));
     await waitFor(() => expect(screen.queryByTestId(`grid-${V1}`)).toBeNull());
     await act(async () => { release(); variantsGate = null; });
+  });
+});
+
+describe("round 3, point 3: the manager is a switch between a product-image preview and a full view", () => {
+  const view = () => document.querySelector("[data-im-view]") as HTMLElement;
+  const hidden = (el: Element | null) => {
+    for (let n = el as HTMLElement | null; n; n = n.parentElement) if (n.style?.display === "none") return true;
+    return false;
+  };
+
+  it("starts as a preview: only the product images and \"Show all\", no variant galleries, no controls", async () => {
+    render(ui());
+    await screen.findByText("Show all");
+    expect(view().dataset.imView).toBe("preview");
+    expect(hidden(screen.getByText("Red"))).toBe(true);
+    expect(hidden(grids.product ? screen.getByTestId("grid-product") : null)).toBe(false);
+    expect(screen.queryByText("Back to the product")).toBeNull();
+    // the product preview is clipped to one row and not operable
+    const clip = screen.getByTestId("grid-product").parentElement!.parentElement as HTMLElement;
+    expect(clip.style.maxHeight).toBe("104px");
+  });
+
+  it("\"Show all\" opens the full view: variant galleries and controls are shown, the product row is unclipped", async () => {
+    render(ui());
+    fireEvent.click(await screen.findByText("Show all"));
+    expect(view().dataset.imView).toBe("full");
+    expect(hidden(screen.getByText("Red"))).toBe(false);
+    expect(screen.getByText("Back to the product")).toBeTruthy();
+    const clip = screen.getByTestId("grid-product").parentElement!.parentElement as HTMLElement;
+    expect(clip.style.maxHeight).toBe("");
+    // no inner scroller any more
+    expect(view().querySelector("[style*='max-height: 320']")).toBeNull();
+  });
+
+  it("closing returns to the preview, the scroll position before opening and focus on the opener; opening scrolls to the top and focuses the close button", async () => {
+    const r = render(<div className="field-editor-area">{ui()}</div>);
+    const scroller = r.container.querySelector(".field-editor-area") as HTMLElement;
+    scroller.scrollTop = 420;
+    fireEvent.click(await screen.findByText("Show all"));
+    expect(scroller.scrollTop).toBe(0);
+    expect(document.activeElement?.textContent).toBe("Back to the product");
+    scroller.scrollTop = 900;
+    fireEvent.click(screen.getByText("Back to the product"));
+    expect(view().dataset.imView).toBe("preview");
+    expect(scroller.scrollTop).toBe(420);
+    expect(document.activeElement?.textContent).toBe("Show all");
+  });
+
+  it("closing is not Discard: a pending gallery change and its emission survive the switch both ways", async () => {
+    await mount();
+    drag(V1, url(3), url(1));
+    await waitFor(() => expect(grids[V1].mainUrl).toBe(url(3)));
+    const emissions = onPendingChange.mock.calls.length;
+    fireEvent.click(screen.getByText("Back to the product"));
+    expect(view().dataset.imView).toBe("preview");
+    expect(grids[V1].mainUrl).toBe(url(3));
+    fireEvent.click(screen.getByText("Show all"));
+    expect(grids[V1].mainUrl).toBe(url(3));
+    expect(lastEmission()[0]).toEqual([expect.objectContaining({ variantId: V1, mainGid: gid(3) })]);
+    expect(onPendingChange.mock.calls.length).toBeGreaterThanOrEqual(emissions);
+  });
+
+  it("a save cycle (re-read in flight) while switching views changes neither view nor the open galleries", async () => {
+    const { rerender } = await mount();
+    const gridBefore = screen.getByTestId(`grid-${V1}`);
+    let release!: () => void;
+    variantsGate = new Promise<void>((r) => { release = r; });
+    rerender(ui({ resetKey: 1, variantReloadKey: 1 }));
+    fireEvent.click(screen.getByText("Back to the product"));
+    expect(view().dataset.imView).toBe("preview");
+    await act(async () => { release(); variantsGate = null; });
+    expect(view().dataset.imView).toBe("preview");
+    fireEvent.click(screen.getByText("Show all"));
+    expect(screen.getByTestId(`grid-${V1}`)).toBe(gridBefore);
+  });
+
+  it("switching to another product keeps the full view (it loads the new product's variants)", async () => {
+    const { rerender } = await mount();
+    rerender(ui({ productId: "gid://shopify/Product/2" }));
+    await waitFor(() => expect(apiCalls.some((c) => c.path === "/api/product-variants")).toBe(true));
+    expect(view().dataset.imView).toBe("full");
+    expect(screen.getByText("Back to the product")).toBeTruthy();
+  });
+
+  it("an owner that holds the state drives the view (the editor hides its text fields from it)", async () => {
+    const onFullViewChange = vi.fn();
+    const { rerender } = render(ui({ fullView: false, onFullViewChange }));
+    fireEvent.click(await screen.findByText("Show all"));
+    expect(onFullViewChange).toHaveBeenCalledWith(true);
+    // not owned by the manager now: nothing switched until the owner says so
+    expect(view().dataset.imView).toBe("preview");
+    rerender(ui({ fullView: true, onFullViewChange }));
+    expect(view().dataset.imView).toBe("full");
+    fireEvent.click(screen.getByText("Back to the product"));
+    expect(onFullViewChange).toHaveBeenLastCalledWith(false);
   });
 });

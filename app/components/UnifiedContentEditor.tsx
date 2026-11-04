@@ -263,6 +263,10 @@ interface UnifiedContentEditorProps {
   /** Optional: replaces the image-gallery field for Pro/Max users */
   imageGalleryReplacement?: React.ReactNode;
 
+  /** The image manager's FULL view is open: every other text element of the editor is hidden (kept
+   *  mounted, so typed text, running saves and refs survive) and the manager takes the content area. */
+  imageManagerFullView?: boolean;
+
   /** Optional: Variant Image Manager für Pro/Max */
   showImageManager?: boolean;
 
@@ -354,8 +358,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     showImageManager,
     imageManager,
     imageGalleryReplacement,
+    imageManagerFullView,
     extraMissingPrimaryIds,
   } = props;
+  // Only with a manager to show: the class switches the text elements off by CSS, never by unmounting.
+  const imFull = !!imageManagerFullView && !!imageGalleryReplacement;
+  // A field wrapper that exists whenever a manager is mounted (so toggling the view only flips its
+  // style and never remounts the field).
+  const hideWhenFull = (key: string, node: ReactNode): ReactNode =>
+    imageGalleryReplacement ? <div key={key} style={imFull ? { display: "none" } : undefined}>{node}</div> : node;
 
   const { locale } = useI18n();
 
@@ -945,7 +956,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         </BlockStack>
       );
     }
-    return renderEditorField(field);
+    return hideWhenFull(field.key, renderEditorField(field));
   };
 
   /**
@@ -1731,7 +1742,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         </div>
 
         {/* Middle: Content Editor */}
-        <div className="unified-editor-container" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+        <div className={`unified-editor-container${imFull ? " im-full" : ""}`} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
           {selectedItem ? (
             <>
 
@@ -1952,7 +1963,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 )}
 
                 {/* Operation Buttons */}
-                <div style={{ marginTop: "1rem" }}>
+                <div className="im-hide-when-full" style={{ marginTop: "1rem" }}>
                   <Card padding="400">
                   <InlineStack align="space-between" blockAlign="center" gap="300">
                     {/* Left: Translate All + Clear All Buttons */}
@@ -2171,15 +2182,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               )}
 
               {/* Scrollable Content Area */}
-              <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
+              <div className={`field-editor-area${imFull ? " im-full" : ""}`} style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
                 <Card padding="600">
                   <BlockStack gap="500">
                     {/* Card heading for products */}
-                    {config.contentType === "products" && (
+                    {config.contentType === "products" && hideWhenFull("card-heading", (
                       <Text as="h2" variant="headingMd" fontWeight="bold">
                         {t.products?.productCardTitle || "Product"}
                       </Text>
-                    )}
+                    ))}
                     {/* Field Search (always visible when available) */}
                     {onFieldSearch && (
                       <div className="field-search-always-clear" style={{ outline: 'none', marginBottom: '0.5rem' }} onKeyDown={(e) => {

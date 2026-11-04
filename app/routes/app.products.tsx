@@ -486,6 +486,9 @@ export default function ProductsPage() {
 
   // Image Manager state (Pro/Max only - always call hook, gated in UI)
   const imageManagerState = useVariantImageManager();
+  // The image manager's full view (it takes the editor's content area; the text fields stay mounted but
+  // hidden). It stays open when another product is selected: the view is a mode of the editor.
+  const [imageManagerFullView, setImageManagerFullView] = useState(false);
   // The image manager's alt-text DRAFTS: the save bar's Save sends them (flush)
   // and its Discard takes them back; the manager fills this ref.
   const altDraftApiRef = useRef<AltDraftApi | null>(null);
@@ -1351,6 +1354,7 @@ export default function ProductsPage() {
             },
             onSaveResponse: editor.helpers.trackRetranslationTasks,
           } : undefined}
+          imageManagerFullView={imageManagerFullView && showImageManager}
           imageGalleryReplacement={showImageManager && editor.selectedItem ? (
             <VariantImageManager
               productId={editor.selectedItem.id}
@@ -1391,6 +1395,8 @@ export default function ProductsPage() {
               settlingMedia={imageManagerState.settlingMedia}
               onSettlingMediaResolved={imageManagerState.handleSettlingMediaResolved}
               resetKey={imageManagerState.resetCounter}
+              fullView={imageManagerFullView}
+              onFullViewChange={setImageManagerFullView}
               currentLanguage={editor.state.currentLanguage}
               selectedMarketId={editor.state.selectedMarketId}
               primaryLocale={primaryLocale}

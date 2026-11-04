@@ -1995,6 +1995,8 @@ export const en: Translation = {
     mainMoveNotSaved: "The main image was not moved: one of the two variants involved could not be saved, so neither variant was changed. Reload the product and repeat the move if needed.",
     mainMoveSaveFirst: "Save the pending main image changes of these variants first, then move the main image.",
     targetAlreadyHasMedium: "“{variant}” already has this image. Nothing was moved or copied.",
+    openManager: "Show all",
+    closeFullView: "Back to the product",
     mainMoveInvalid: "The main image move could not be saved because the two variants no longer fit together. Nothing was changed. Discard the pending image changes and repeat the move.",
     mainNotNameable: "This main image cannot be identified right now. Reload the product and try again.",
     uploadFailedFiles: "Upload failed for: {files}. These files were not added.",
