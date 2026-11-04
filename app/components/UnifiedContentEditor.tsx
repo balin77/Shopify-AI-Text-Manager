@@ -363,6 +363,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   } = props;
   // Only with a manager to show: the class switches the text elements off by CSS, never by unmounting.
   const imFull = !!imageManagerFullView && !!imageGalleryReplacement;
+  // The right sidebar's section: the full view forces the image-processing part (the SEO part is hidden).
+  const hasImagePanels = !!showImageManager && !!imageManager;
+  const rightTab: "seo" | "images" = imFull && hasImagePanels ? "images" : (imageManager?.activeRightTab ?? "seo");
+  // Without image-processing tabs there is nothing to keep of the sidebar in the full view.
+  const sidebarHiddenInFull = imFull && !hasImagePanels;
   // A field wrapper that exists whenever a manager is mounted (so toggling the view only flips its
   // style and never remounts the field).
   const hideWhenFull = (key: string, node: ReactNode): ReactNode =>
@@ -2607,7 +2612,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               width: 8,
               flexShrink: 0,
               cursor: "col-resize",
-              display: imFull ? "none" : "flex",
+              display: sidebarHiddenInFull ? "none" : "flex",
               alignItems: "center",
               justifyContent: "center",
               marginInline: -4,
@@ -2631,7 +2636,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           <div
             ref={sidebarElRef}
             className="seo-sidebar-container"
-            style={{ width: sidebarWidth ?? "var(--app-editor-sidebar-width)", flexShrink: 0, display: imFull ? "none" : "flex", flexDirection: "column", overflow: "hidden" }}
+            style={{ width: sidebarWidth ?? "var(--app-editor-sidebar-width)", flexShrink: 0, display: sidebarHiddenInFull ? "none" : "flex", flexDirection: "column", overflow: "hidden" }}
           >
             {/* Way back to the content. `open` can survive a resize past the
                 breakpoint, where the sidebar is shown normally and this row
@@ -2643,8 +2648,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 </Button>
               </div>
             )}
-            {/* Section switch (Pro/Max image manager) */}
+            {/* Section switch (Pro/Max image manager). In the image manager's full view only the
+                image-processing part is offered: the switch is hidden (kept mounted) and the images
+                tab is forced for display, `activeRightTab` itself is untouched so closing restores it. */}
             {showImageManager && imageManager && (
+              <div style={imFull ? { display: "none" } : undefined}>
               <SidebarTabBar
                 size="md"
                 items={[
@@ -2655,11 +2663,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 onSelect={(id) => imageManager.onTabChange(id as "seo" | "images")}
                 containerStyle={{ marginBottom: 8 }}
               />
+              </div>
             )}
             {/* Image-processing tabs. Same component and the same trailing "?"
                 as the SEO card's own tab row one level over — the section used
                 to carry a differently-styled bar and no help at all. */}
-            {showImageManager && imageManager && imageManager.activeRightTab === "images" && (
+            {showImageManager && imageManager && rightTab === "images" && (
               <SidebarTabBar
                 items={[
                   { id: "bulkUpload", label: t.imageManager?.bulkUploadSubTab ?? "Bulk Upload" },
@@ -2683,10 +2692,18 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 them and the whole panel shifts sideways by its width. Same
                 rule as the page scroll containers in responsive.css. */}
             <div style={{ flex: 1, overflowY: "auto", scrollbarGutter: "stable" }}>
-              {(!showImageManager || !imageManager || imageManager.activeRightTab === "seo") && (
+              {/* The SEO part, when it is the active section, stays MOUNTED but hidden by style in the
+                  full view, so opening and closing it never remounts it. */}
+              {(!showImageManager || !imageManager) ? (
                 sidebarRenderer(selectedItem, state.editableValues)
+              ) : (
+                imageManager.activeRightTab === "seo" && (
+                  <div style={rightTab === "seo" ? undefined : { display: "none" }}>
+                    {sidebarRenderer(selectedItem, state.editableValues)}
+                  </div>
+                )
               )}
-              {showImageManager && imageManager && imageManager.activeRightTab === "images" && imageManager.activeImageSubTab === "bulkUpload" && (
+              {showImageManager && imageManager && rightTab === "images" && imageManager.activeImageSubTab === "bulkUpload" && (
                 <BulkImageUploadPanel
                   items={imageManager.bulkItems}
                   selectedUniqueIds={imageManager.selectedBulkIds}
@@ -2701,7 +2718,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   isConfirming={imageManager.isApplying}
                 />
               )}
-              {showImageManager && imageManager && imageManager.activeRightTab === "images" && imageManager.activeImageSubTab === "bulkAltText" && (
+              {showImageManager && imageManager && rightTab === "images" && imageManager.activeImageSubTab === "bulkAltText" && (
                 <BulkAltTextPanel
                   productId={imageManager.productId ?? ""}
                   productTitle={imageManager.productTitle ?? ""}

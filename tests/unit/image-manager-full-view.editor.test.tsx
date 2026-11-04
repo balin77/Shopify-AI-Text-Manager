@@ -57,7 +57,8 @@ let posts: Array<Record<string, string>> = [];
 let answerSave: (body: Record<string, unknown>) => void = () => {};
 let holdSaves = false;
 
-function Page({ withManager }: { withManager: boolean }) {
+function Page({ withManager, panels }: { withManager: boolean; panels?: boolean }) {
+  const [rightTab, setRightTab] = useState<"seo" | "images">("seo");
   const { items: loaded } = useLoaderData() as { items: any[] };
   const fetcher = useFetcher();
   const [full, setFull] = useState(false);
@@ -85,6 +86,14 @@ function Page({ withManager }: { withManager: boolean }) {
       t={en as any}
       revalidator={{ revalidate: vi.fn(), state: "idle" } as any}
       imageManagerFullView={full}
+      renderSidebar={panels ? (() => <div data-testid="seo-part">seo</div>) : undefined}
+      showImageManager={!!panels}
+      imageManager={panels ? ({
+        bulkItems: [], onBulkItemsChange: () => {}, selectedBulkIds: new Set(), activeAction: null, onSetAction: () => {},
+        onBulkSelect: () => {}, onRemoveBulk: () => {}, activeRightTab: rightTab, onTabChange: setRightTab,
+        activeImageSubTab: "bulkUpload", onImageSubTabChange: () => {}, imageManagerSettings: { firstImageBig: false, showAltTags: false, autoAltText: false },
+        variantsForBulk: [], productTitle: "Produkt 1", productId: items[0].id,
+      } as any) : undefined}
       imageGalleryReplacement={withManager ? (
         <div data-testid="manager">
           <button onClick={() => setFull(!full)}>{full ? "close" : "open"}</button>
@@ -94,10 +103,10 @@ function Page({ withManager }: { withManager: boolean }) {
   );
 }
 
-function mount(withManager: boolean) {
+function mount(withManager: boolean, panels = false) {
   const router = createMemoryRouter([
     { path: "/api/product-images", loader: async () => ({ success: true, images: [] }) },
-    { path: "/", element: <Page withManager={withManager} />, loader: async () => ({ items }), action: async ({ request }: any) => {
+    { path: "/", element: <Page withManager={withManager} panels={panels} />, loader: async () => ({ items }), action: async ({ request }: any) => {
       posts.push(Object.fromEntries((await request.formData()) as any) as Record<string, string>);
       if (!holdSaves) return { success: true };
       return new Promise((resolve) => { answerSave = resolve as any; });
@@ -206,6 +215,32 @@ describe("image manager full view: sidebar, mobile toolbar, saves in flight", ()
     await tick(20);
     expect(hiddenUp(sidebar)).toBe(false);
     expect(container.querySelector(".seo-sidebar-container")).toBe(sidebar);
+  });
+
+  it("with the image-processing tabs the sidebar column stays: the bulk upload panel is reachable, the SEO part is hidden but mounted", async () => {
+    const { container } = mount(true, true);
+    await tick(80);
+    const sidebar = container.querySelector(".seo-sidebar-container") as HTMLElement;
+    const seoTab = screen.getAllByText(en.imageManager?.seoScoreTab ?? "SEO Score")[0];
+    expect(seoTab).toBeTruthy();
+    const seoPartEl = screen.getByTestId("seo-part");
+    expect(hiddenUp(seoPartEl)).toBe(false);
+    fireEvent.click(screen.getByText("open"));
+    await tick(20);
+    expect(hiddenUp(sidebar)).toBe(false);
+    // The switch between SEO and images is hidden, the image-processing sub tabs are shown.
+    expect(hiddenUp(screen.getAllByText(en.imageManager?.seoScoreTab ?? "SEO Score")[0])).toBe(true);
+    const bulk = screen.getByText(en.imageManager?.bulkUploadSubTab ?? "Bulk Upload");
+    expect(hiddenUp(bulk)).toBe(false);
+    expect(screen.getByTestId("seo-part")).toBe(seoPartEl);
+    expect(hiddenUp(seoPartEl)).toBe(true);
+    fireEvent.click(screen.getByText("close"));
+    await tick(20);
+    expect(hiddenUp(screen.getAllByText(en.imageManager?.seoScoreTab ?? "SEO Score")[0])).toBe(false);
+    // The SEO section is back (previous tab restored) and the image sub tabs are gone again.
+    expect(screen.queryByText(en.imageManager?.bulkUploadSubTab ?? "Bulk Upload")).toBeNull();
+    expect(screen.getByTestId("seo-part")).toBe(seoPartEl);
+    expect(hiddenUp(seoPartEl)).toBe(false);
   });
 
   it("the phone toolbar keeps only its language part: its actions are hidden but mounted", async () => {
