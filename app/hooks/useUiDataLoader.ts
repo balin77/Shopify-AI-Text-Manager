@@ -217,7 +217,10 @@ export interface UseUiDataLoaderReturn {
   onItemSwitch: () => void;
 
   /** When user clicks ReloadButton */
-  onRefresh: (itemId: string | null) => void;
+  /** `keepConfirmed`: a save of the item is still out (Reload pressed meanwhile) - the values EARLIER
+   *  saves confirmed stay in the overlay, or a read that lags behind them shows the old text again and
+   *  the next save would carry it as a change. Everything else the press discards, as before. */
+  onRefresh: (itemId: string | null, opts?: { keepConfirmed?: boolean }) => void;
 
   /** After a BACKGROUND re-translation this save started has finished and the
    *  loader has been re-read. See the implementation for why it clears exactly
@@ -1415,14 +1418,25 @@ export function useUiDataLoader(
   }, [primaryLocale]);
 
   /** When user clicks ReloadButton */
-  const onRefresh = useCallback((itemId: string | null) => {
+  const onRefresh = useCallback((itemId: string | null, opts?: { keepConfirmed?: boolean }) => {
     debugLog.transition(`onRefresh: itemId=${itemId}`);
     dropPurgeMarks();
     if (itemId && savedPrimaryValuesRef.current[itemId]) {
-      delete savedPrimaryValuesRef.current[itemId];
-      delete primaryConfirmedRef.current[itemId];
-      delete overtakenRef.current[itemId];
-      delete overlayLifeRef.current[itemId];
+      const overlay = savedPrimaryValuesRef.current[itemId];
+      const confirmed = primaryConfirmedRef.current[itemId] ?? {};
+      // Only what a save confirmed (and nobody overtook since); the unconfirmed rest is the press' to drop.
+      const kept = opts?.keepConfirmed
+        ? Object.fromEntries(Object.entries(overlay).filter(([key, value]) => confirmed[key]?.value === value && !(key in (overtakenRef.current[itemId] ?? {}))))
+        : {};
+      if (Object.keys(kept).length > 0) {
+        savedPrimaryValuesRef.current[itemId] = kept;
+        primaryConfirmedRef.current[itemId] = Object.fromEntries(Object.entries(confirmed).filter(([key]) => key in kept));
+      } else {
+        delete savedPrimaryValuesRef.current[itemId];
+        delete primaryConfirmedRef.current[itemId];
+        delete overtakenRef.current[itemId];
+        delete overlayLifeRef.current[itemId];
+      }
     }
     localTranslationsRef.current = {};
     deletedTranslationKeysRef.current.clear();

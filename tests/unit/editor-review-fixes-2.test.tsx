@@ -964,7 +964,8 @@ describe("R15 C1: the server's own normalisation of a sent value is not a differ
     act(() => m.h().handleValueChange("metaDescription", "m"));
     act(() => m.h().handleSave());
     const f = m.sent();
-    expect(f.handle === undefined || f.handle === "ext").toBe(true);
+    // The handle sits unedited in the form: it is named a passenger (the server does not write it) or left out.
+    expect(f.handle === undefined || JSON.parse(f.passengerFields ?? "[]").includes("handle")).toBe(true);
     expect(JSON.parse(f.changedFields ?? "[]")).not.toContain("handle");
   });
 });
@@ -992,8 +993,9 @@ describe("R16 HIGH: the baseline follows the server only for its own normalisati
       act(() => m.h().handleSave());
       const f = m.sent();
       const announced = JSON.parse(f.changedFields ?? "[]");
-      // title is announced, or not sent at all; never the old/third text as an unannounced write
-      expect(f.title === undefined || announced.includes("title")).toBe(true);
+      // title is announced, not sent at all, or named a passenger (the server does not write it); never the
+      // old/third text as an unannounced write
+      expect(f.title === undefined || announced.includes("title") || JSON.parse(f.passengerFields ?? "[]").includes("title")).toBe(true);
     });
   }
 });
@@ -1020,7 +1022,7 @@ describe("R16 HIGH (handle): a stale read after Reload does not make the old han
     act(() => m.h().handleValueChange("metaDescription", "m"));
     act(() => m.h().handleSave());
     const f = m.sent();
-    expect(f.handle === undefined || JSON.parse(f.changedFields ?? "[]").includes("handle")).toBe(true);
+    expect(f.handle === undefined || JSON.parse(f.changedFields ?? "[]").includes("handle") || JSON.parse(f.passengerFields ?? "[]").includes("handle")).toBe(true);
   });
 });
 

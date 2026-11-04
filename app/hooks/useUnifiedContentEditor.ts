@@ -21,6 +21,7 @@ import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey, pr
 import type { PartialSave } from "./useUiDataLoader";
 import { dropSavedFieldsFromFallbackSnapshot, type LoadedFallbackSnapshot } from "../services/editor/discard-fallback.shared";
 import { useEditorAutoSave } from "./useEditorAutoSave";
+import { PASSENGER_FIELDS_KEY, markPassenger } from "../services/editor/passenger-fields.shared";
 import { viewContentFingerprint } from "../services/editor/content-fingerprint.shared";
 import { useEditorAltText } from "./useEditorAltText";
 import type {
@@ -857,7 +858,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const primaryOwnerRef = useRef<OverlayOwners>({});
   /** What each primary form needs to remember (carried-only announcements, withheld changedFields). */
   const formMetaRef = useRef(new WeakMap<FormData, FormMeta>());
-  const staleAgainstServerRef = useRef<(key: string, value: string) => boolean>(() => false);
   /** The event number at which the selected item was last (re)loaded: a loader read. */
   const itemReadSeqRef = useRef(0);
   /** Assigned below (it reads the queue and the in-flight scope). */
@@ -1049,6 +1049,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const field = effectiveFieldDefinitionsRef.current.find((f) => f.key === key);
         if (field?.translationKey) deletedTranslationKeysRef.current.delete(field.translationKey);
         entry.formData.set("changedFields", JSON.stringify(list));
+        // No longer announced: the text is a passenger now (the server does not write it).
+        if (entry.formData.has(PASSENGER_FIELDS_KEY)) markPassenger(entry.formData, key);
       }
       let added = false;
       for (const key of announced) {
@@ -1085,24 +1087,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     } finally {
       if (held) cache[item.id] = held;
     }
-  };
-  staleAgainstServerRef.current = (key, value) => {
-    const item = selectedItemRef.current;
-    const server = serverValueOf(key);
-    if (!item) return false;
-    if (server === undefined || server === value) return false;
-    // What the server makes of a value is not a difference: a slug is sanitised, a text trimmed.
-    const slug = effectiveFieldDefinitionsRef.current.find((f) => f.key === key)?.type === "slug";
-    const norm = (v: string) => (slug ? sanitizeSlug(v) : v.trim());
-    if (norm(value) === server || norm(value) === norm(server)) return false;
-    // Excused: a save of ours confirmed this very value AFTER that read, so the read is a lagging one.
-    const confirmed = primaryConfirmedRef.current[item.id]?.[key];
-    if (confirmed && confirmed.value === value) {
-      if (confirmed.seq > itemReadSeqRef.current) return false;
-      // ...or the read shows a value from before our save (a read that lags behind it).
-      if (dataLoader.refs.preSaveSeenRef.current[`${item.id}|${primaryLocale}||${key}`]?.has(server)) return false;
-    }
-    return true;
   };
   pendingCarriedValueRef.current = (locale, marketId, key) => {
     const itemId = selectedItemIdRef.current;
@@ -1574,7 +1558,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     inFlightScopeRef,
     primaryOwnerRef,
     formMetaRef,
-    staleAgainstServerRef,
     pendingCarriedValueRef,
     primaryConfirmedRef,
     eventSeqRef,
@@ -1702,7 +1685,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     if (refreshTriggered && !isBackgroundRefresh) {
       debugLog.dataLoad(' Data refresh triggered by ReloadButton');
-      dataLoader.onRefresh(selectedItemId);
+      dataLoader.onRefresh(selectedItemId, { keepConfirmed: savesOfItemOut(selectedItemId).length > 0 });
 
       // For templates, skip loading from stale item data after a reload.
       // The page-level reload effect (app.templates.tsx) fetches fresh data from the API

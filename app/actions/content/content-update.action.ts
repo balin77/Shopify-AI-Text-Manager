@@ -21,6 +21,7 @@ import {
   wasEverLive,
 } from "~/services/seo/handle-redirect.shared";
 import type { HandleRedirectNoteCode } from "~/services/seo/handle-redirect.server";
+import { savesNamePassengers, withoutPassengers } from "~/services/editor/passenger-fields.shared";
 
 /** What the client needs to phrase the redirect outcome in its own language. */
 interface HandleRedirectNote {
@@ -34,12 +35,22 @@ interface HandleRedirectNote {
 
 export async function handleUpdateContent(
   ctx: ContentActionHandlerContext,
-  formData: FormData,
+  submittedForm: FormData,
 ): Promise<DataResponse> {
   const { admin, session, contentConfig, db, itemId, shopifyContentService } = ctx;
 
-  const locale = getFormString(formData, "locale");
-  const primaryLocale = getFormString(formData, "primaryLocale");
+  const locale = getFormString(submittedForm, "locale");
+  const primaryLocale = getFormString(submittedForm, "primaryLocale");
+  // A primary save carries every field of the form; the ones the merchant did not change are
+  // PASSENGERS and are not written (passenger-fields.shared.ts): a stale copy of the old text
+  // can never overwrite what Shopify holds by now. Everything below works on the form without them.
+  const { form: formData } =
+    locale === primaryLocale && savesNamePassengers(contentConfig.resourceType, false)
+      ? withoutPassengers(
+          submittedForm,
+          new Set(contentConfig.fieldDefinitions.filter((f) => !!f.translationKey).map((f) => f.key)),
+        )
+      : { form: submittedForm };
   const changedFieldsDebug = getFormString(formData, "changedFields");
   // Market scope for market-specific ("Translate & Adapt") translations.
   // Primary-locale saves are always global — Shopify forbids market-specific

@@ -19,7 +19,7 @@
  * Fixed seeds: a failure carries the seed and the ops. PROPERTY_RUNS / PROPERTY_STEPS /
  * PROPERTY_SEED / PROPERTY_TRACE steer it.
  */
-import { describe, it, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 
 vi.mock("react-router", async (orig) => ({
@@ -46,8 +46,10 @@ const A = "gid://shopify/Product/1";
 const B = "gid://shopify/Product/2";
 const C = "gid://shopify/Product/3";
 
-type Shop = { title: string; meta: string };
+type Shop = { title: string; meta: string; body: string };
 const FIELDS: Array<[keyof Shop, string]> = [["title", "title"], ["meta", "metaDescription"]];
+/** The rich text field is never edited by the random runs; the scripted ones move it from outside. */
+const ALL_FIELDS: Array<[keyof Shop, string]> = [...FIELDS, ["body", "description"]];
 const VALUES = ["a", "b", "c", "d"];
 const OPS = (process.env.PROPERTY_OPS ?? "edit,edit,revert,save,save,answer,answer,answer,lag,fresh,external,away,third,lang,accept").split(",");
 
@@ -61,19 +63,24 @@ function rng(seed: number) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-const item = (id: string, shop: Shop, moved: number) => ({
-  id, title: shop.title, handle: "h", descriptionHtml: `d${moved}`,
+const item = (id: string, shop: Shop, moved: number, rich = false) => ({
+  id, title: shop.title, handle: "h", descriptionHtml: rich ? shop.body : `d${moved}`,
   seo: { title: "", description: shop.meta }, translations: [], marketTranslations: {}, images: [],
 });
 
-async function runOne(seed: number, steps: number) {
+/** One scripted step (the named sequences below): the random runner with its picks fixed. */
+type Step = { op: string; key?: string; val?: string; ok?: boolean; hist?: number; prop?: keyof Shop };
+
+async function runOne(seed: number, steps: number, script?: Step[]): Promise<Shop> {
+  if (script) steps = script.length;
+  const scriptedOk: boolean[] = [];
   const rand = rng(seed);
   const pick = <T,>(xs: T[]) => xs[Math.floor(rand() * xs.length)];
-  const shop: Shop = { title: "a", meta: "b" };
+  const shop: Shop = { title: "a", meta: "b", body: "<p>a</p>" };
   const history: Shop[] = [{ ...shop }];
   let moved = 0;
   const fetcher: any = { state: "idle", data: undefined, submit: vi.fn(), load: vi.fn() };
-  const items = (state: Shop) => [item(A, state, moved), item(B, { title: "other", meta: "" }, 0), item(C, { title: "third", meta: "" }, 0)];
+  const items = (state: Shop) => [item(A, state, moved, !!script?.some((st) => st.prop === "body")), item(B, { title: "other", meta: "", body: "" }, 0), item(C, { title: "third", meta: "", body: "" }, 0)];
   const hook = renderHook(
     (p: any) => useUnifiedContentEditor({
       config: PRODUCTS_CONFIG, items: p.items, shopLocales, primaryLocale: "de", fetcher: { ...p.f },
@@ -108,18 +115,26 @@ async function runOne(seed: number, steps: number) {
       if (sent.itemId !== A) fail(`submitted for ${sent.itemId}`);
       if (sent.locale !== "de") fail(`submitted locale ${sent.locale}`);
       const changed: string[] = JSON.parse(sent.changedFields ?? "[]");
-      if (process.env.PROPERTY_TRACE) console.log("SUBMIT", JSON.stringify({ t: sent.title, m: sent.metaDescription, ch: sent.changedFields, keys: Object.keys(sent).length }), "shop", shop.title + "/" + shop.meta);
-      for (const [prop, key] of FIELDS) {
+      if (process.env.PROPERTY_TRACE) console.log("SUBMIT", Object.keys(sent).join(","), JSON.stringify({ t: sent.title, m: sent.metaDescription, ch: sent.changedFields, keys: Object.keys(sent).length }), "shop", shop.title + "/" + shop.meta);
+      // The server does not write PASSENGERS (a field sent without being announced): the model does
+      // the same. Invariant 1: a field that is sent and not announced must be NAMED a passenger,
+      // whatever Shopify holds - otherwise an old text could be written over a newer one.
+      const passengers: string[] = JSON.parse(sent.passengerFields ?? "[]");
+      const written = new Set<string>();
+      for (const [, key] of ALL_FIELDS) {
         if (!(key in sent)) continue;
-        if (changed.includes(key)) continue;
-        if (sent[key] !== shop[prop] && !shop[prop].startsWith("x")) fail(`sent ${key}=${sent[key]} without changedFields; Shopify holds ${shop[prop]}`);
+        if (changed.includes(key)) { written.add(key); continue; }
+        // An accepted suggestion / own-field save carries ONE field and names no passenger: the merchant
+        // pressed that button for that field, so it is the intent and is written.
+        if (!sent.passengerFields && ALL_FIELDS.filter(([, k]) => k in sent).length === 1) { written.add(key); continue; }
+        if (!passengers.includes(key)) fail(`sent ${key}=${sent[key]} neither announced nor named a passenger; Shopify holds ${shop[ALL_FIELDS.find(([, k]) => k === key)![0]]}`);
       }
       // Shopify processes the request when it arrives (the answer comes later); whether it
       // accepts is decided now, so an external change after this point wins in the model too.
-      const ok = rand() < 0.5;
+      const ok = (scriptedOk.length ? scriptedOk.shift()! : rand() < 0.5);
       if (ok) {
         // Shopify normalises on write (trim): a value typed with spaces is stored trimmed.
-        for (const [prop, key] of FIELDS) if (key in sent) shop[prop] = sent[key].trim();
+        for (const [prop, key] of ALL_FIELDS) if (written.has(key)) shop[prop] = sent[key].trim();
         history.push({ ...shop });
       }
       unanswered.push({ sent, changed, ok });
@@ -135,18 +150,21 @@ async function runOne(seed: number, steps: number) {
       // I3: the screen shows Shopify's value, the merchant's latest typing, or a value of a save out
       // (queued entries count as out too; we do not see them, so allow anything typed earlier only when out).
       const allowed = new Set<string | undefined>([shop[prop], typed[key], ...outValues(key), ...(unanswered.length ? pressed[key] : [])]);
+      if (script) continue; // scripted runs assert the WRITE side (Shopify's final value) only: the display may lag
       if (!allowed.has(val) && process.env.I3 !== "off") fail(`I3 ${key} shows "${val}"; shop ${shop[prop]} typed ${typed[key]} out ${outValues(key)}`);
       if (unanswered.length === 0 && val !== shop[prop] && !st().hasChanges) fail(`I2 ${key} shows "${val}" vs shop "${shop[prop]}" not dirty`);
     }
     if (unanswered.length === 0) for (const [, key] of FIELDS) pressed[key].clear();
-    if (unanswered.length === 0 && st().isSavingCurrentItem && process.env.SPIN !== "off") fail(`spinner stuck`);
+    if (!script && unanswered.length === 0 && st().isSavingCurrentItem && process.env.SPIN !== "off") fail(`spinner stuck`);
   };
 
   try {
   for (let i = 0; i < steps; i++) {
-    const op = pick(OPS);
+    const step = script?.[i];
+    const op = step?.op ?? pick(OPS);
+    if (step?.ok !== undefined && (op === "save" || op === "accept")) scriptedOk.push(step.ok);
     if (op === "edit") {
-      const [, key] = pick(FIELDS); const val = pick(VALUES);
+      const [, key] = step?.key ? FIELDS.find(([, k]) => k === step.key)! : pick(FIELDS); const val = step?.val ?? pick(VALUES);
       if (st().selectedItemId !== A || st().currentLanguage !== "de") continue;
       log.push(`edit ${key}=${val}`);
       typed[key] = val;
@@ -179,7 +197,7 @@ async function runOne(seed: number, steps: number) {
       act(() => h().handleSave());
       await collectSubmits(); await settle();
     } else if (op === "accept") {
-      const [, key] = pick(FIELDS); const val = "s" + pick(VALUES);
+      const [, key] = step?.key ? FIELDS.find(([, k]) => k === step.key)! : pick(FIELDS); const val = step?.val ?? "s" + pick(VALUES);
       log.push(`accept ${key}=${val}`);
       typed[key] = val;
       pressed[key].add(val);
@@ -211,13 +229,18 @@ async function runOne(seed: number, steps: number) {
       await collectSubmits();
       if (unanswered.length > 0 && fetcher.state !== "submitting") { fetcher.state = "submitting"; await rerender(shown, fetcher.data); }
     } else if (op === "lag") {
-      moved++; const old = pick(history); log.push(`lag ${old.title}/${old.meta}`);
+      moved++; const old = step?.hist !== undefined ? history[step.hist] : pick(history); log.push(`lag ${old.title}/${old.meta}`);
       await rerender(old, fetcher.data);
     } else if (op === "external") {
-      const [prop] = pick(FIELDS); moved++;
-      shop[prop] = "x" + i; history.length = 0; history.push({ ...shop });
+      const [prop] = step?.prop ? [step.prop] : pick(FIELDS); moved++;
+      shop[prop] = step?.val ?? "x" + i; if (!script) history.length = 0; history.push({ ...shop });
       log.push(`external ${prop}=x${i}`);
       await rerender(shop, fetcher.data);
+    } else if (op === "reload") {
+      // The Reload button: the editor re-reads the item in place, the loader answers with `shown`.
+      moved++; log.push("reload");
+      await act(async () => { hook.result.current.helpers.triggerDataRefresh(); }); await settle();
+      await rerender(shown, fetcher.data);
     } else if (op === "fresh") {
       moved++; log.push("fresh"); await rerender(shop, fetcher.data);
     } else if (op === "away" || op === "third") {
@@ -243,6 +266,7 @@ async function runOne(seed: number, steps: number) {
     check();
   }
   } finally { hook.unmount(); }
+  return { ...shop };
 }
 
 beforeEach(() => { try { window.localStorage.clear(); } catch { /* none */ } });
@@ -263,4 +287,43 @@ describe("overlapping primary saves: a model of Shopify against the real editor"
   it("regression seeds at 24 steps", async () => {
     for (const [seed, steps] of [[2020, 24], [5001, 24], [5091, 24], [5107, 24], [2059, 24], [7016, 20]]) await runOne(seed, steps);
   }, 60_000);
+  // The five documented ways an OLD text could be written back (KNOWN_ISSUES, editor part): each is a
+  // fixed sequence over the real hook against the model of Shopify, which does not write a field a
+  // save sends without announcing (the server's passenger rule). The run fails when the editor sends
+  // such a field without naming it a passenger (invariant 1); the end state is asserted on top.
+  const T = (key: string, val: string): Step[] => [{ op: "edit", key, val }];
+  const SAVE = (ok = true): Step[] => [{ op: "save", ok }];
+  const ANSWER: Step[] = [{ op: "answer" }];
+  const scenarios: Array<[string, Step[], Partial<Shop>]> = [
+    ["(a) a reload during a save, then a delayed read of the old text, then the next save",
+      [...T("title", "c"), ...SAVE(), ...ANSWER, ...T("metaDescription", "d"), ...SAVE(), { op: "reload" }, { op: "lag", hist: 0 },
+        ...ANSWER, ...T("metaDescription", "e"), ...SAVE(), ...ANSWER],
+      { title: "c", meta: "e" }],
+    ["(b) a field that rides along while an outside change lands, then a delayed read of the old text",
+      [...T("title", "c"), ...SAVE(), ...ANSWER, ...T("metaDescription", "d"), ...SAVE(), { op: "external", prop: "title", val: "x1" },
+        { op: "lag", hist: 1 }, ...ANSWER, ...T("metaDescription", "e"), ...SAVE(), ...ANSWER],
+      { title: "x1", meta: "e" }],
+    ["(c) a later read with the old content, twice, then a save of another field",
+      [...T("title", "c"), ...SAVE(), ...ANSWER, { op: "lag", hist: 0 }, { op: "reload" }, { op: "lag", hist: 0 },
+        ...T("metaDescription", "d"), ...SAVE(), ...ANSWER, { op: "lag", hist: 0 }, ...T("metaDescription", "e"), ...SAVE(), ...ANSWER],
+      { title: "c", meta: "e" }],
+    ["(d1) a delayed read of the old text while someone set a third value",
+      [...T("title", "c"), ...SAVE(), ...ANSWER, { op: "external", prop: "title", val: "x9" }, { op: "lag", hist: 1 },
+        ...T("metaDescription", "d"), ...SAVE(), ...ANSWER],
+      { title: "x9", meta: "d" }],
+    ["(d2) a delayed read of our text while someone changed it back to the old one in the admin",
+      [...T("title", "c"), ...SAVE(), ...ANSWER, { op: "external", prop: "title", val: "a" }, { op: "lag", hist: 1 },
+        ...T("metaDescription", "d"), ...SAVE(), ...ANSWER],
+      { title: "a", meta: "d" }],
+    ["(e) the rich text changed in the admin while another field is saved",
+      [...T("title", "c"), ...SAVE(), { op: "external", prop: "body", val: "<p>x</p>" }, { op: "lag", hist: 0 }, ...ANSWER,
+        ...T("title", "d"), ...SAVE(), ...ANSWER],
+      { title: "d", body: "<p>x</p>" }],
+  ];
+  for (const [name, script, expected] of scenarios) {
+    it(`${name}: Shopify keeps the newer text`, async () => {
+      const finalShop = await runOne(1, script.length, script);
+      for (const [key, value] of Object.entries(expected)) expect(finalShop[key as keyof Shop]).toBe(value);
+    }, 30_000);
+  }
 });

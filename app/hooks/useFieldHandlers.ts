@@ -40,6 +40,7 @@ import { partialLocaleCounts } from "../services/translations/partial-result.sha
 import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
 import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 import { fallbackFieldsAfterDiscard, type LoadedFallbackSnapshot } from "../services/editor/discard-fallback.shared";
+import { PASSENGER_FIELDS_KEY, passengerKeysOf, savesNamePassengers } from "../services/editor/passenger-fields.shared";
 import { buildOwnSaveForm, isUnsavedPrimarySource, hasUnsavedPrimaryTranslateSource } from "../services/editor/own-field-save.shared";
 import { applyAltTranslateAllAnswer, forLocaleAltResults } from "../services/alt-text-feedback.shared";
 
@@ -585,6 +586,13 @@ const handleSave = () => {
     if (changedFields.length > 0) {
       formDataObj.changedFields = JSON.stringify(changedFields);
       debugLog.save(' Changed fields (translations will be deleted on server):', changedFields);
+    }
+
+    // The fields sent without the merchant having changed them are PASSENGERS: the server does not
+    // write them (passenger-fields.shared.ts), so an old text can never go over a newer one.
+    if (savesNamePassengers(config.resourceType, isThemeContentType(config.contentType))) {
+      const passengers = passengerKeysOf(Object.keys(formDataObj), changedFields, effectiveFieldDefinitions);
+      if (passengers.length > 0) formDataObj[PASSENGER_FIELDS_KEY] = JSON.stringify(passengers);
     }
 
     // PLAN §Phase 3 — a SEPARATE list, because it answers a different question.
