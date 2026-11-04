@@ -1267,6 +1267,23 @@ describe("round 3, point 4: a variants read refused by the rate limiter (429)", 
     await waitFor(() => expect(screen.queryByText("Could not load variants.")).toBeNull());
   }, 12000);
 
+  it("a refused re-read of a loaded product keeps the open galleries mounted (inert) with the banner above them", async () => {
+    VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length);
+    const { rerender } = await mount();
+    const gridBefore = screen.getByTestId(`grid-${V1}`);
+    variantsRefuse = 1;
+    rerender(ui({ variantReloadKey: 1 }));
+    await waitFor(() => expect(screen.getByText("Could not load variants.")).toBeTruthy());
+    expect(screen.getByTestId(`grid-${V1}`)).toBe(gridBefore);
+    const list = document.querySelector("[data-variants-list]") as HTMLElement;
+    expect(list.hasAttribute("inert")).toBe(true);
+    expect(list.style.pointerEvents).toBe("none");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.queryByText("Could not load variants.")).toBeNull());
+    expect((document.querySelector("[data-variants-list]") as HTMLElement).hasAttribute("inert")).toBe(false);
+    expect(screen.getByTestId(`grid-${V1}`)).toBe(gridBefore);
+  });
+
   it("a silent settling poll that itself fails does not cancel the scheduled retry", async () => {
     VARIANTS_RETRY_DELAYS_MS.splice(0, VARIANTS_RETRY_DELAYS_MS.length, 2500);
     variantsRefuse = 2; // the first read and the first (silent) poll are refused
@@ -1393,6 +1410,35 @@ describe("round 3 review fix: library picks and the selection drop refuse a medi
     expect(msg).toContain("Held one");
     expect(msg).not.toContain("Fresh one");
     await waitFor(() => expect(lastEmission()[0][0].fileGids).toContain(gid(4)));
+  });
+
+  it("a same-file-other-GID item next to a fresh one: the held one is NOT added, the fresh one is", async () => {
+    variantsAnswer = () => {
+      const b: any = variantsPayload();
+      b.mediaMap[gid(55)] = "https://cdn.shopify.com/s/files/2.jpg?v=9";
+      b.mediaMetaMap[gid(55)] = { kind: "image", previewUrl: "https://cdn.shopify.com/s/files/2.jpg?v=9" };
+      return b;
+    };
+    await mount();
+    act(() => grids[V1].onOpenPicker());
+    act(() => picker.onAdd!([
+      { source: "library", kind: "image", alt: "Twin", gid: gid(55), previewUrl: url(2), assetUrl: "https://cdn.shopify.com/s/files/2.jpg?v=9" },
+      { source: "library", kind: "image", alt: "Fresh", gid: gid(4), previewUrl: url(4), assetUrl: url(4) },
+    ]));
+    await waitFor(() => expect(lastEmission()[0][0].fileGids).toContain(gid(4)));
+    expect(lastEmission()[0][0].fileGids).not.toContain(gid(55));
+    expect(screen.getByTestId("infobox").textContent).toContain("Twin");
+  });
+
+  it("L3: picking the same library file (not on the product yet) a second time is recognised as held", async () => {
+    await mount();
+    const item = { source: "library", kind: "image", alt: "Lib", gid: "gid://shopify/MediaImage/77", previewUrl: "https://cdn.shopify.com/s/files/lib77.jpg", assetUrl: "https://cdn.shopify.com/s/files/lib77.jpg" };
+    act(() => grids[V1].onOpenPicker());
+    act(() => picker.onAdd!([item]));
+    expect(screen.getByTestId("infobox").textContent).toBe("");
+    act(() => grids[V1].onOpenPicker());
+    act(() => picker.onAdd!([item]));
+    expect(screen.getByTestId("infobox").textContent).toContain("Lib");
   });
 
   it("the same file under another GID is recognised; a different medium is still added", async () => {

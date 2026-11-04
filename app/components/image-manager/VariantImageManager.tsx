@@ -4703,17 +4703,24 @@ export function VariantImageManager({
             <div style={{ padding: 16, display: "flex", justifyContent: "center" }}>
               <Spinner size="small" />
             </div>
-          ) : variantError ? (
-            <Banner
-              tone="warning"
-              action={{ content: t.imageManager.variantsRetry, onAction: () => { variantsRetryAttemptRef.current = 0; fetchVariantsForProduct(productId, false); } }}
-            >
-              <p>{variantError}</p>
-            </Banner>
-          ) : variants.length === 0 ? (
+          ) : (
+            <>
+              {variantError && (
+              <Banner
+                tone="warning"
+                action={{ content: t.imageManager.variantsRetry, onAction: () => { variantsRetryAttemptRef.current = 0; fetchVariantsForProduct(productId, false); } }}
+              >
+                <p>{variantError}</p>
+              </Banner>
+              )}
+              {variantError && !(variantsLoadedForRef.current === productId && variants.length > 0) ? null : variants.length === 0 ? (
             <Text as="p" tone="subdued">{t.imageManager.noVariants}</Text>
           ) : (
-            variants.map(v => {
+            // While the re-read of an already known product has failed the list stays (open galleries
+            // included) but cannot be operated: the variants are not known to be current, so nothing
+            // may be written for them (same gate as the delete and the save).
+            <div data-variants-list style={variantError ? { pointerEvents: "none", opacity: 0.6 } : undefined} aria-disabled={variantError ? true : undefined} {...(variantError ? ({ inert: "" } as Record<string, string>) : {})}>
+            {variants.map(v => {
               const storedGids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
               const nativeMainGid = mainGidOfVariant(v);
               // What the gallery SHOWS (displayMain): the main image once, at the place the saved
@@ -4791,7 +4798,10 @@ export function VariantImageManager({
                 productMediaIds={productMediaIds}
               />
               );
-            })
+            })}
+            </div>
+            )}
+            </>
           )}
         </div>
       </div>
