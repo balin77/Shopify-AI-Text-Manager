@@ -258,6 +258,7 @@ export const guideEn: GuideCopy = {
       ],
       tips: [
         "SEO title and meta description have their own length limits. The AI keeps to them, and the counter under the field shows where Google would cut the text off.",
+        "If you change only the SEO title or only the meta description and the app cannot read the other one from Shopify at that moment, nothing is saved: the text stays in the field and the app asks you to try again. In the bulk editor and the AI bulk fix, only that one item or cell is not saved.",
       ],
     },
 

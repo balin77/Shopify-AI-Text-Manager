@@ -41,12 +41,12 @@ import {
 
 // Prefer sortable items (compound id '::') over plain container droppables;
 // fall back to closestCenter when pointer is outside all droppables.
-/** A variants read that failed (the limiter's 429 under fast clicking, a network blip) is tried again
- *  by itself after these pauses, so the galleries come back without the merchant leaving the product. */
 /** Two landing callbacks of parked reads of one product: both run, in order; one alone is kept as it is. */
 export function composeOnLanded(a?: () => void, b?: () => void): (() => void) | undefined {
   return a && b ? () => { a(); b(); } : (b ?? a);
 }
+/** A variants read that failed (the limiter's 429 under fast clicking, a network blip) is tried again
+ *  by itself after these pauses, so the galleries come back without the merchant leaving the product. */
 export const VARIANTS_RETRY_DELAYS_MS = [3000, 8000, 20000];
 
 const useIsomorphicLayoutEffect = typeof document !== "undefined" ? useLayoutEffect : useEffect;

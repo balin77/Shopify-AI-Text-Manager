@@ -258,6 +258,7 @@ export const guideEs: GuideCopy = {
       ],
       tips: [
         "El título SEO y la meta descripción tienen sus propios límites de longitud. La IA los respeta, y el contador bajo el campo muestra dónde cortaría Google el texto.",
+        "Si cambias solo el título SEO o solo la meta descripción y la app no puede leer en ese momento la otra desde Shopify, no se guarda nada: el texto se queda en el campo y la app te pide que lo intentes de nuevo. En el editor masivo y en la corrección masiva con IA, solo ese elemento o esa celda no se guarda.",
       ],
     },
 

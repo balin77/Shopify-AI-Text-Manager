@@ -261,6 +261,7 @@ export const guideDe: GuideCopy = {
       ],
       tips: [
         "SEO-Titel und Meta-Beschreibung haben eigene Längenvorgaben. Die KI hält sich daran, und der Zeichenzähler unter dem Feld zeigt, wie Google den Text abschneiden würde.",
+        "Ändern Sie nur den SEO-Titel oder nur die Meta-Beschreibung und kann die App die jeweils andere in diesem Moment nicht aus Shopify lesen, wird nichts gespeichert: Der Text bleibt im Feld stehen, und die App bittet Sie, es erneut zu versuchen. Im Bulk-Editor und bei der KI-Korrektur für mehrere Einträge wird dann nur dieser eine Eintrag bzw. diese eine Zelle nicht gespeichert.",
       ],
     },
 
