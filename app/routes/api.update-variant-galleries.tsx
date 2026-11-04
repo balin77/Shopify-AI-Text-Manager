@@ -6,6 +6,7 @@ import type { MediaKind } from "../components/image-manager/types";
 import { invalidateVariantDefsCache } from "./api.product-variants";
 import {
   planVariantWrite,
+  applyMainOnlyRule,
   orderAfterMainChange,
   orderRestrictedToLinks,
   normalizeOrderHead,
@@ -68,6 +69,34 @@ async function runLookupQuery(
 }
 
 /**
+ * How many variants the product has: `variantsCount { count }`, and when that document is refused,
+ * `variants(first: 2)` (2 = "more than one"). Any failure = null = "unknown": the main-only order entry is
+ * then neither created nor deleted. Never `hasOnlyDefaultVariant`.
+ */
+export async function lookupVariantCount(graphql: AdminGraphql, productId: string): Promise<number | null> {
+  const first = await runLookupQuery(
+    graphql,
+    "variant count",
+    `query productVariantCount($id: ID!) {
+      product(id: $id) { variantsCount { count } }
+    }`,
+    { id: productId },
+  );
+  const count = first?.product?.variantsCount?.count;
+  if (typeof count === "number" && Number.isFinite(count) && count >= 0) return count;
+  const second = await runLookupQuery(
+    graphql,
+    "variant count fallback",
+    `query productVariantsFirstTwo($id: ID!) {
+      product(id: $id) { variants(first: 2) { nodes { id } } }
+    }`,
+    { id: productId },
+  );
+  const nodes = second?.product?.variants?.nodes;
+  return Array.isArray(nodes) ? nodes.length : null;
+}
+
+/**
  * A fresh read of what Shopify holds for this product: which media exist, and for
  * the named variants their native image, stored gallery and stored order. The
  * route does not trust the client for "what the current main image is". `null` =
@@ -82,7 +111,6 @@ export async function lookupProductMedia(
 ): Promise<ProductMediaLookup | null> {
   try {
     const media = new Map<string, string>();
-    let variantCount: number | null = null;
     let after: string | null = null;
     for (let page = 0; page < MEDIA_MAX_PAGES; page++) {
       const data = await runLookupQuery(
@@ -90,7 +118,6 @@ export async function lookupProductMedia(
         "product media",
         `query productMediaPage($id: ID!, $first: Int!, $after: String) {
           product(id: $id) {
-            variantsCount { count }
             media(first: $first, after: $after) {
               pageInfo { hasNextPage endCursor }
               nodes { id mediaContentType }
@@ -101,8 +128,6 @@ export async function lookupProductMedia(
       );
       const conn = data?.product?.media;
       if (!conn) return null;
-      const count = data?.product?.variantsCount?.count;
-      if (typeof count === "number" && Number.isFinite(count)) variantCount = count;
       for (const n of conn.nodes ?? []) media.set(n.id, n.mediaContentType);
       if (!conn.pageInfo?.hasNextPage) break;
       after = conn.pageInfo.endCursor ?? null;
@@ -152,7 +177,8 @@ export async function lookupProductMedia(
         });
       }
     }
-    return { media, variants, variantCount };
+    // Asked apart from the media pages: a refusal of the count document must never block a main-image save.
+    return { media, variants, variantCount: await lookupVariantCount(graphql, productId) };
   } catch (err) {
     console.warn("[update-variant-galleries] lookup failed", err instanceof Error ? err.message : "unknown");
     return null;
@@ -335,8 +361,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     knownModelGids = {},
     variantGalleryOrder = [],
     retainedCreatedGids = [],
-    mainMoves = [],
   } = body;
+  // Normalised once: absent / null = none; anything but an array is refused cleanly below.
+  const rawMoves: unknown = (body as { mainMoves?: unknown }).mainMoves;
+  const mainMoves: MainMove[] = Array.isArray(rawMoves) ? (rawMoves as MainMove[]) : [];
 
   const errors: string[] = [];
   // Steps that already mutated Shopify, so a partial failure is traceable.
@@ -402,7 +430,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // A main-image MOVE must be well-formed before anything is created or written: both statements present,
   // consistent with each other. A malformed one is a client bug or a direct POST; nothing is done for it.
-  if (Array.isArray(mainMoves) && mainMoves.length > 0) {
+  if (rawMoves !== undefined && rawMoves !== null && !Array.isArray(rawMoves)) {
+    errors.push("mainMoves: must be an array; nothing was uploaded and nothing was written");
+    return fail();
+  }
+  if (mainMoves.length > 0) {
     const views = new Map<string, { fileGids: readonly string[] | null; removedMainGid: string | null; mainGid: string | null }>();
     for (const vg of variantGalleries) {
       views.set(vg.variantId, { fileGids: vg.fileGids, removedMainGid: vg.removedMainGid ?? null, mainGid: vg.mainGid ?? null });
@@ -425,7 +457,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ...variantGalleries.filter(v => v.removedMainGid || v.mainGid || v.promoteIfEmpty).map(v => v.variantId),
       ...removedMainImages.map(r => r?.variantId),
       // both variants of a move are checked against the fresh read, the target too
-      ...(Array.isArray(mainMoves) ? mainMoves.flatMap(m => [m.sourceVariantId, m.targetVariantId]) : []),
+      ...mainMoves.flatMap(m => [m.sourceVariantId, m.targetVariantId]),
     ].filter((id): id is string => typeof id === "string");
     if (touching.length > 0) {
       const pre = await lookupProductMedia(admin.graphql as unknown as AdminGraphql, productId, touching);
@@ -936,6 +968,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const refusedVariants: Array<{ variantId: string; code: MainRefusal }> = [];
   // The plan each written variant got, for the local mirror.
   const plans = new Map<string, VariantWritePlan>();
+  // Variants of a move the fresh read already shows as done: nothing at all is written for them, their
+  // client order included (it could overwrite a newer one from another tab).
+  const doneMoveVariants = new Set<string>();
   const writtenByBulk = new Set<string>();
   let lookedFinal: ProductMediaLookup | null = null;
   if (intents.size > 0) {
@@ -964,6 +999,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ...(Array.isArray(retainedCreatedGids) ? retainedCreatedGids : []).filter((g): g is string => typeof g === "string" && !!lookup?.media.has(g)),
       ]);
       plans.clear();
+      doneMoveVariants.clear();
       // Moves are decided against the fresh read of BOTH variants first: a move that is already done
       // writes nothing for either, one the read contradicts refuses both.
       const moveVerdict = new Map<string, { kind: "done" } | { kind: "refuse"; code: MainRefusal }>();
@@ -974,6 +1010,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const d = planMainMove(move, src, tgt);
         if (d.kind === "proceed") continue;
         if (d.kind === "done") {
+          doneMoveVariants.add(move.sourceVariantId);
+          doneMoveVariants.add(move.targetVariantId);
           moveVerdict.set(move.sourceVariantId, { kind: "done" });
           moveVerdict.set(move.targetVariantId, { kind: "done" });
         } else {
@@ -1003,7 +1041,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           plans.set(intent.variantId, { action: "refuse", refusal: "mainFileGone", mediaId: undefined, gallery: [] });
           continue;
         }
-        const plan = planVariantWrite({
+        const planInput = {
             fileGids: intent.fileGids,
             galleryOnly: intent.galleryOnly,
             promoteIfEmpty: intent.promoteIfEmpty,
@@ -1018,9 +1056,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             // for it); a variant with NO native image gets its first own image, a created one included.
             createdGids: createdGidSet,
             variantCount: lookup?.variantCount ?? null,
-        });
-        // A reference to a file that no longer exists is not written back into the gallery.
-        if (deadFiles.size > 0) plan.gallery = plan.gallery.filter((g) => !deadFiles.has(g));
+        };
+        let plan = planVariantWrite(planInput);
+        // A reference to a file that no longer exists is not written back into the gallery; the main-only
+        // rule is applied again on the filtered list (a list that was only dead references is empty now).
+        if (deadFiles.size > 0) {
+          plan = applyMainOnlyRule({ ...plan, gallery: plan.gallery.filter((g) => !deadFiles.has(g)) }, planInput);
+        }
         plans.set(intent.variantId, plan);
       }
       coupleMoves();
@@ -1282,6 +1324,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // taken out of it.
       const plan = plans.get(variantId);
       if (plan?.action === "skip") {
+        if (doneMoveVariants.has(variantId)) continue;
         if (orderJson === null) { orderDeletes.add(variantId); continue; }
         const removed = intents.get(variantId)?.removedMainGid ?? null;
         const cleaned = removed && orderJson ? orderAfterMainChange(orderJson, removed, null) : orderJson;

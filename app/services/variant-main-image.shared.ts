@@ -437,7 +437,7 @@ export function planVariantWrite(input: PlanVariantWriteInput): VariantWritePlan
  * embed, whose state the save never depends on): the entry has no effect while the embed is off and gives
  * the right result when it is switched on later.
  */
-function applyMainOnlyRule(plan: VariantWritePlan, input: PlanVariantWriteInput): VariantWritePlan {
+export function applyMainOnlyRule(plan: VariantWritePlan, input: PlanVariantWriteInput): VariantWritePlan {
   const lk = input.lookup ?? null;
   if (plan.action !== "write" || !lk) return plan;
   const finalMain = plan.mediaId !== undefined ? plan.mediaId : lk.main;
@@ -445,13 +445,20 @@ function applyMainOnlyRule(plan: VariantWritePlan, input: PlanVariantWriteInput)
   const effective = plan.order ?? input.clientOrderJson ?? lk.order;
   const entries = parseGalleryOrder(effective) ?? [];
   if (entries.some(e => e.kind !== "file")) return plan;
-  const effMainOnly = entries.length === 1 && entries[0].value === finalMain;
+  // (a client order that was cleared or is empty is no statement: the STORED entry counts as in effect)
+  const storedEntries = parseGalleryOrder(lk.order) ?? [];
+  const storedMainOnly = storedEntries.length === 1 && storedEntries[0].kind === "file" && storedEntries[0].value === finalMain;
+  const effMainOnly = (entries.length === 1 && entries[0].value === finalMain) || storedMainOnly;
   const count = input.variantCount ?? null;
   const lost = !!plan.promoted || galleryWithout(lk.gallery, lk.main).length > 0;
   if (count !== null && count > 1) {
     if (!lost && !effMainOnly) return plan;
     const { clearOrder: _clear, ...rest } = plan;
     return { ...rest, order: mainOnlyOrder(finalMain) };
+  }
+  if (count === null && storedMainOnly && !plan.order) {
+    // unknown count: an entry in effect is untouched, even when the editor sent an empty order
+    return { ...plan, order: lk.order! };
   }
   if (count === 1 && (effMainOnly || (plan.order && entries.length > 0))) {
     const { order: _order, ...rest } = plan;

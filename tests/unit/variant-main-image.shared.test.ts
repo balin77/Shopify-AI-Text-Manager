@@ -377,7 +377,7 @@ describe("the main-only rule (point 1)", () => {
     expect(emptied(1, stored)).toMatchObject({ clearOrder: true });
     expect(emptied(1, stored).order).toBeUndefined();
     const unknown = emptied(null, stored);
-    expect(unknown.order).toBeUndefined();
+    expect(unknown.order).toBe(mainOnlyOrder(img(1))); // kept as it is, never deleted
     expect(unknown.clearOrder).toBeUndefined();
   });
   it("an entry for ANOTHER main image is not kept: it is replaced by the new one when something was lost", () => {
@@ -427,5 +427,15 @@ describe("validateMainMoves / planMainMove (point 2)", () => {
     expect(planMainMove(move, L(img(2)), L(img(1), [img(4)]))).toEqual({ kind: "done" });
     expect(planMainMove(move, L(img(2)), L(img(4), [img(1)]))).toEqual({ kind: "done" });
     expect(planMainMove(move, null, L(img(4)))).toMatchObject({ kind: "refuse", code: "variantNotFound" });
+  });
+});
+
+describe("review fixes (shared)", () => {
+  const all = new Map([[img(1), "IMAGE"], [img(2), "IMAGE"]]);
+  it("L1: an unknown count keeps an entry in effect in the plan itself (so a client clear cannot delete it); an empty client order is no statement", () => {
+    const p = planVariantWrite({ fileGids: [], galleryOnly: true, expectedMainGid: img(1), lookup: { main: img(1), gallery: [], order: mainOnlyOrder(img(1)) }, clientOrderJson: null, productMedia: all, variantCount: null });
+    expect(p.order).toBe(mainOnlyOrder(img(1)));
+    const multi = planVariantWrite({ fileGids: [], galleryOnly: true, expectedMainGid: img(1), lookup: { main: img(1), gallery: [], order: mainOnlyOrder(img(1)) }, clientOrderJson: "[]", productMedia: all, variantCount: 2 });
+    expect(multi.order).toBe(mainOnlyOrder(img(1)));
   });
 });

@@ -806,4 +806,56 @@ describe("point 2: a variant's MAIN image dragged onto another variant (plain = 
       cleanup();
     }
   });
+
+  it("H1: dragging the moved image BACK to the source takes the move back: the image is on the source again and on no other variant only by choice", async () => {
+    await mountBoth();
+    dragTo({ container: V1, url: url(1) }, { container: V2, url: url(2) });
+    await waitFor(() => expect(grids[V1].mainUrl).toBe(url(2)));
+    dragTo({ container: V2, url: url(1) }, { container: V1, url: url(2) });
+    await waitFor(() => expect(grids[V1].mainUrl).toBe(url(1)));
+    expect(grids[V2].imageUrls).not.toContain(url(1));
+    const [galleries, , , removed, moves] = lastEmission();
+    expect(removed).toEqual([]);
+    expect(moves).toEqual([]);
+    expect(JSON.stringify(galleries)).not.toContain("removedMainGid");
+  });
+
+  it("M1: a variant that is part of a pending move (as target) cannot start another move of ITS main image: save first", async () => {
+    await mountBoth();
+    dragTo({ container: V1, url: url(1) }, { container: V2, url: url(2) });
+    await waitFor(() => expect(lastEmission()[4]).toHaveLength(1));
+    onPendingChange.mockClear();
+    dragTo({ container: V2, url: url(4) }, { container: V1, url: url(2) });
+    await screen.findByText(/Save the pending main image changes of these variants first/);
+    expect(onPendingChange).not.toHaveBeenCalled();
+  });
+
+  it("L6: a target whose own main image cannot be named is refused (never guessed at)", async () => {
+    variantsAnswer = () => {
+      const b = variantsPayload();
+      b.variants[1] = { ...b.variants[1], image: { url: "https://cdn.shopify.com/s/files/99.jpg?v=1" } };
+      return b;
+    };
+    await mount();
+    dragTo({ container: V1, url: url(1) }, { container: V2, url: url(2) });
+    await screen.findByText(/This main image cannot be identified right now/);
+    expect(grids[V1].mainUrl).toBe(url(1));
+  });
+
+  it("M1: a chained move (the target of one move is the SOURCE of the next) is refused with save first, so validateMainMoves never sees a variant twice", async () => {
+    const V3 = "gid://shopify/ProductVariant/3";
+    variantsAnswer = () => {
+      const b = variantsPayload();
+      b.variants[1] = { ...b.variants[1], galleryJson: JSON.stringify([gid(2)]) };
+      b.variants.push({ shopifyGid: V3, title: "Green", sku: "g", position: 3, galleryJson: "[]", image: { url: url(3) }, selectedOptions: [] } as any);
+      return b;
+    };
+    await mount();
+    dragTo({ container: V1, url: url(1) }, { container: V2, url: url(2) });
+    await waitFor(() => expect(lastEmission()[4]).toHaveLength(1));
+    onPendingChange.mockClear();
+    dragTo({ container: V2, url: url(4) }, { container: V3, url: url(3) });
+    await screen.findByText(/Save the pending main image changes of these variants first/);
+    expect(onPendingChange).not.toHaveBeenCalled();
+  });
 });

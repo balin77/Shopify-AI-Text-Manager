@@ -2260,12 +2260,31 @@ export function VariantImageManager({
       const isStoredMainTile = !!moveSource?.defaultImageUrl &&
         (moveSource.defaultImageUrl === url || moveSource.defaultImageUrl.split("?")[0] === url.split("?")[0]) &&
         !effectivePendingMains[sourceContainerId] && !effectiveRemovals[sourceContainerId];
+      // The image comes BACK to the variant that is losing it in a pending removal / move (dragged out of the
+      // other variant's gallery onto it): the removal is taken back instead of inserting a reference the
+      // removal would strip (the image would be on no variant). Plain: it leaves the other gallery;
+      // Ctrl/Cmd (copy): the other gallery keeps it.
+      if (effectiveRemovals[targetContainerId] === gid) {
+        setRemovedMains(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== targetContainerId)));
+        if (!isCtrlHeldRef.current) {
+          setPendingMains(p => (p[sourceContainerId]?.gid === gid ? Object.fromEntries(Object.entries(p).filter(([k]) => k !== sourceContainerId)) : p));
+          setPendingVariantGalleries(p => {
+            const sv = variants.find(v => v.id === sourceContainerId);
+            return { ...p, [sourceContainerId]: (p[sourceContainerId] ?? sv?.galleryFileGids ?? []).filter(g => g !== gid) };
+          });
+        }
+        return;
+      }
       if (!isCtrlHeldRef.current && isStoredMainTile) {
         if (!moveGid || !isImageGid(moveGid)) { setMediaError(t.imageManager.mainNotNameable); return; }
         const moveTarget = variants.find(v => v.id === targetContainerId);
         if (!moveTarget) return;
+        // a target whose own main image cannot be named here is never guessed at
+        if (moveTarget.defaultImageUrl && !mainGidOfVariant(moveTarget)) { setMediaError(t.imageManager.mainNotNameable); return; }
         if (effectiveRemovals[targetContainerId] || effectivePendingMains[targetContainerId] ||
-            effectiveMoves.some(m => m.sourceVariantId === targetContainerId || m.targetVariantId === targetContainerId)) {
+            effectiveMoves.some(m =>
+              m.sourceVariantId === targetContainerId || m.targetVariantId === targetContainerId ||
+              m.sourceVariantId === sourceContainerId || m.targetVariantId === sourceContainerId)) {
           setMediaError(t.imageManager.mainMoveSaveFirst);
           return;
         }

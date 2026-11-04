@@ -40,6 +40,7 @@ let attachLagFor: string | null;
 let createdCounter: number;
 // How many variants the product has: defaults to the number of scripted variants; undefined answer = not answered.
 let variantCountOverride: number | null | undefined;
+let variantCountMode: "count" | "fallback" | "none";
 const updateMany = vi.fn();
 
 vi.mock("~/shopify.server", () => ({
@@ -54,9 +55,6 @@ vi.mock("~/shopify.server", () => ({
             return reply({
               data: {
                 product: {
-                  ...((variantCountOverride === undefined ? Object.keys(variants).length : variantCountOverride) === null
-                    ? {}
-                    : { variantsCount: { count: variantCountOverride === undefined ? Object.keys(variants).length : variantCountOverride } }),
                   media: {
                     pageInfo: { hasNextPage: false, endCursor: null },
                     nodes: Object.entries(productMedia).map(([id, mediaContentType]) => ({ id, mediaContentType })),
@@ -64,6 +62,22 @@ vi.mock("~/shopify.server", () => ({
                 },
               },
             });
+          }
+          // The variant count is its own small document. "count": the first answers; "fallback": the first is
+          // refused (schema level) and `variants(first: 2)` answers; "none": both fail (unknown).
+          if (name === "productVariantCount" || name === "productVariantsFirstTwo") {
+            const n = variantCountOverride === undefined ? Object.keys(variants).length : variantCountOverride;
+            const refuse = () => {
+              const e: any = new Error("GraphQL query failed");
+              e.body = { errors: [{ message: "Field 'variantsCount' doesn't exist on type 'Product'" }] };
+              throw e;
+            };
+            if (name === "productVariantCount") {
+              if (variantCountMode !== "count" || n === null) refuse();
+              return reply({ data: { product: { variantsCount: { count: n } } } });
+            }
+            if (variantCountMode === "none" || n === null) refuse();
+            return reply({ data: { product: { variants: { nodes: Array.from({ length: Math.min(2, n as number) }, (_, i) => ({ id: `gid://shopify/ProductVariant/${i + 1}` })) } } } });
           }
           if (name === "variantsForGalleries") {
             variantsCalls += 1;
@@ -199,6 +213,7 @@ beforeEach(() => {
   attachLagFor = null;
   createdCounter = 0;
   variantCountOverride = undefined;
+  variantCountMode = "count";
   updateMany.mockReset();
   productMedia = Object.fromEntries([1, 2, 3, 4, 5, 6].map((n) => [img(n), "IMAGE"]));
   libraryFiles = {};
@@ -905,6 +920,96 @@ describe("point 2: moving a main image to another variant (both variants, one wr
     expect(variants[V2].main).toBe(img(1));
     expect(variants[V2].gallery).toEqual([img(5)]);
     expect(variants[V1].main).toBe(img(2));
+  });
+});
+
+describe("review fixes (route)", () => {
+  const MAIN_ONLY = (g: string) => JSON.stringify([{ kind: "file", value: g }]);
+  const emptyEdit = () => ({ variantGalleries: [{ variantId: V1, fileGids: [], galleryOnly: true, expectedMainGid: img(1) }] });
+  const later = () => ({
+    removedMainImages: [{ variantId: V1, removedMainGid: img(1) }],
+    variantGalleries: [{ variantId: V2, fileGids: [img(4), img(1), img(5)], galleryOnly: true, expectedMainGid: img(4) }],
+    variantGalleryOrder: [{ variantId: V2, orderJson: JSON.stringify([{ kind: "file", value: img(4) }, { kind: "file", value: img(1) }, { kind: "file", value: img(5) }]) }],
+    mainMoves: [{ gid: img(1), sourceVariantId: V1, sourceExpectedMainGid: img(1), targetVariantId: V2, targetExpectedMainGid: img(4), targetPosition: 1 }],
+  });
+
+  it("M2: a move that is already DONE writes nothing for either variant, not even the target's client order", async () => {
+    expect((await post(later())).success).toBe(true);
+    calls = [];
+    variants[V2].order = JSON.stringify([{ kind: "file", value: img(5) }]); // a newer order from another tab
+    const res = await post(later());
+    expect(res.success).toBe(true);
+    expect(names().includes("metafieldsSet")).toBe(false);
+    expect(names().includes("metafieldsDelete")).toBe(false);
+    expect(bulkCount()).toBe(0);
+    expect(variants[V2].order).toBe(JSON.stringify([{ kind: "file", value: img(5) }]));
+  });
+
+  it("L1: an unknown count never deletes an entry in effect, even when the editor sends an empty order ([] or empty string)", async () => {
+    variantCountOverride = null;
+    for (const orderJson of ["[]", ""]) {
+      calls = [];
+      variants[V1] = { main: img(1), gallery: [], order: MAIN_ONLY(img(1)) };
+      await post({ ...emptyEdit(), variantGalleryOrder: [{ variantId: V1, orderJson }] });
+      expect(names().includes("metafieldsDelete")).toBe(false);
+      expect(orderOf(bulk()![0])).toEqual([{ kind: "file", value: img(1) }]);
+    }
+  });
+
+  it("L1: with more than one variant an empty order ([]) does not delete the entry either", async () => {
+    variants[V1] = { main: img(1), gallery: [], order: MAIN_ONLY(img(1)) };
+    await post({ ...emptyEdit(), variantGalleryOrder: [{ variantId: V1, orderJson: "[]" }] });
+    expect(names().includes("metafieldsDelete")).toBe(false);
+    expect(orderOf(bulk()![0])).toEqual([{ kind: "file", value: img(1) }]);
+  });
+
+  it("L2: a list that held only a DEAD reference is empty after the filter: the entry is written (the rule runs on the filtered list)", async () => {
+    delete productMedia[img(2)]; // image 2 no longer exists
+    variants[V1] = { main: img(1), gallery: [img(2)] };
+    await post({ variantGalleries: [{ variantId: V1, fileGids: [img(2)], galleryOnly: true, expectedMainGid: img(1) }] });
+    const v = bulk()![0];
+    expect(galleryOf(v)).toEqual([]);
+    expect(orderOf(v)).toEqual([{ kind: "file", value: img(1) }]);
+  });
+
+  it("L3: when the count document is refused, `variants(first: 2)` answers (2 = more than one, 1 = one)", async () => {
+    variantCountMode = "fallback";
+    variants[V1] = { main: img(1), gallery: [img(2)] };
+    await post(emptyEdit());
+    expect(names()).toContain("productVariantsFirstTwo");
+    expect(orderOf(bulk()![0])).toEqual([{ kind: "file", value: img(1) }]);
+    calls = [];
+    variants = { [V1]: { main: img(1), gallery: [img(2)] } };
+    await post(emptyEdit());
+    expect(orderOf(bulk()![0])).toBeUndefined();
+  });
+
+  it("L3: both count documents refused: the save still goes through, nothing is created or deleted for the entry", async () => {
+    variantCountMode = "none";
+    variants[V1] = { main: img(1), gallery: [img(2)] };
+    const res = await post(emptyEdit());
+    expect(res.success).toBe(true);
+    expect(orderOf(bulk()![0])).toBeUndefined();
+    expect(names().includes("metafieldsDelete")).toBe(false);
+  });
+
+  it("L3: a main-image save (move / removal) is NOT blocked by a refused count document", async () => {
+    variantCountMode = "none";
+    const res = await post(later());
+    expect(res.success).toBe(true);
+    expect(variants[V1].main).toBe(img(2));
+  });
+
+  it("L4: mainMoves that is not an array is refused cleanly before anything happens; null / absent mean none", async () => {
+    for (const bad of ["x", { a: 1 }, 5]) {
+      calls = [];
+      const res = await post({ ...later(), mainMoves: bad });
+      expect(res.success).toBe(false);
+      expect(res.errors.join(" ")).toMatch(/mainMoves/);
+      expect(calls.length).toBe(0);
+    }
+    const ok = await post({ variantGalleries: [{ variantId: V2, fileGids: [img(5)], galleryOnly: true, expectedMainGid: img(4) }], mainMoves: null });
+    expect(ok.success).toBe(true);
   });
 });
 
