@@ -71,7 +71,11 @@ const item = (id: string, shop: Shop, moved: number, rich = false) => ({
 /** One scripted step (the named sequences below): the random runner with its picks fixed. */
 type Step = { op: string; key?: string; val?: string; ok?: boolean; hist?: number; prop?: keyof Shop };
 
+/** The fields the model's Shopify wrote per request of the last run: asserted by the scripted sequences. */
+let lastWrites: Array<{ written: string[]; changed: string[] }> = [];
+
 async function runOne(seed: number, steps: number, script?: Step[]): Promise<Shop> {
+  lastWrites = [];
   if (script) steps = script.length;
   const scriptedOk: boolean[] = [];
   const rand = rng(seed);
@@ -127,10 +131,13 @@ async function runOne(seed: number, steps: number, script?: Step[]): Promise<Sho
         // An accepted suggestion / own-field save carries ONE field and names no passenger: the merchant
         // pressed that button for that field, so it is the intent and is written.
         if (!sent.passengerFields && ALL_FIELDS.filter(([, k]) => k in sent).length === 1) { written.add(key); continue; }
+        // A carry-only announcement dropped after a refused carrier: still written, never purged.
+        if (JSON.parse(sent.writtenUnannounced ?? "[]").includes(key)) { written.add(key); continue; }
         if (!passengers.includes(key)) fail(`sent ${key}=${sent[key]} neither announced nor named a passenger; Shopify holds ${shop[ALL_FIELDS.find(([, k]) => k === key)![0]]}`);
       }
       // Shopify processes the request when it arrives (the answer comes later); whether it
       // accepts is decided now, so an external change after this point wins in the model too.
+      lastWrites.push({ written: [...written], changed });
       const ok = (scriptedOk.length ? scriptedOk.shift()! : rand() < 0.5);
       if (ok) {
         // Shopify normalises on write (trim): a value typed with spaces is stored trimmed.
@@ -324,6 +331,10 @@ describe("overlapping primary saves: a model of Shopify against the real editor"
     it(`${name}: Shopify keeps the newer text`, async () => {
       const finalShop = await runOne(1, script.length, script);
       for (const [key, value] of Object.entries(expected)) expect(finalShop[key as keyof Shop]).toBe(value);
+      // Shopify was sent exactly the announced fields: a passenger is never among the written ones.
+      expect(lastWrites.length).toBeGreaterThan(0);
+      for (const w of lastWrites) expect(w.written.sort()).toEqual([...w.changed].filter((k) => w.written.includes(k)).sort());
+      for (const w of lastWrites) for (const k of w.written) expect(w.changed).toContain(k);
     }, 30_000);
   }
 });

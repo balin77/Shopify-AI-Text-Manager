@@ -776,6 +776,9 @@ describe("R13 M1: a carried-value announcement does not outlive its carrier", ()
     const forms = formsOf(m);
     expect(forms[1].title).toBe("rouge");
     expect(JSON.parse(forms[1].changedFields ?? "[]")).toEqual(["seoTitle"]);
+    // no longer announced, but still WRITTEN (the refused carrier may have stored something else): not a passenger
+    expect(JSON.parse(forms[1].writtenUnannounced ?? "[]")).toContain("title");
+    expect(JSON.parse(forms[1].passengerFields ?? "[]")).not.toContain("title");
   });
   it("control: the carrier is confirmed, the typed-back title IS announced", async () => {
     const items = [{ id: A, title: "rouge" }, { id: B, title: "vert" }];
@@ -1563,5 +1566,62 @@ describe("translate runs: a refused answer releases the spinner, a tracked run i
     await m.rerender([{ id: A, title: "rouge", frTitle: "noir" }], { success: false, error: "busy", rateLimited: true });
     expect(isOperationActive(A, "__translateAllForLocale__fr")).toBe(true);
     window.history.pushState({}, "", "/");
+  });
+});
+
+describe("M1: Reload during the save of the field itself keeps what that save carries", () => {
+  const OK = (n: number) => ({ success: true, actionType: "updateContent", n });
+  it("edit meta d, Save, Reload while out, a lagging read, answer: the next save does not write the old meta", async () => {
+    const old = [{ id: A, title: "Old", seoDesc: "b" } as any, { id: B, title: "vert" }];
+    const m = mount(old, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("metaDescription", "d"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(old);
+    await act(async () => { m.hook.result.current.helpers.triggerDataRefresh(); });
+    await m.rerender([{ id: A, title: "Old", seoDesc: "b", x: 1 } as any, old[1]]);
+    m.fetcher.state = "loading";
+    await m.rerender([{ id: A, title: "Old", seoDesc: "b", x: 1 } as any, old[1]], OK(1));
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "Old", seoDesc: "b", x: 1 } as any, old[1]], OK(1));
+    await m.flush();
+    expect(m.hook.result.current.state.editableValues.metaDescription).toBe("d");
+    act(() => m.h().handleValueChange("title", "New"));
+    act(() => m.h().handleSave());
+    const f = m.sent();
+    const written = f.metaDescription !== undefined && !JSON.parse(f.passengerFields ?? "[]").includes("metaDescription");
+    expect(!written || f.metaDescription === "d").toBe(true);
+    expect(f.metaDescription === undefined || f.metaDescription === "d" || JSON.parse(f.passengerFields ?? "[]").includes("metaDescription")).toBe(true);
+    expect(JSON.parse(f.changedFields ?? "[]")).not.toContain("metaDescription");
+  });
+});
+
+describe("Reload with no save out and a lagging read", () => {
+  const OK = (n: number) => ({ success: true, actionType: "updateContent", n });
+  it("the field shows the old text but is not a change; the next save names it a passenger (not written)", async () => {
+    const old = [{ id: A, title: "Old" }, { id: B, title: "vert" }];
+    const m = mount(old, "de");
+    await m.flush();
+    act(() => m.h().handleValueChange("title", "New"));
+    act(() => m.h().handleSave());
+    m.fetcher.state = "submitting";
+    await m.rerender(old);
+    m.fetcher.state = "loading";
+    await m.rerender(old, OK(1));
+    m.fetcher.state = "idle";
+    await m.rerender([{ id: A, title: "New" }, old[1]], OK(1));
+    await m.flush();
+    await act(async () => { m.hook.result.current.helpers.triggerDataRefresh(); });
+    await m.rerender([{ id: A, title: "Old", x: 1 } as any, old[1]], OK(1));
+    await m.flush();
+    const s = m.hook.result.current.state;
+    expect(s.editableValues.title).toBe("Old");
+    expect(s.hasChanges).toBe(false);
+    act(() => m.h().handleValueChange("metaDescription", "m"));
+    act(() => m.h().handleSave());
+    const f = m.sent();
+    expect(JSON.parse(f.changedFields ?? "[]")).toEqual(["metaDescription"]);
+    expect(JSON.parse(f.passengerFields ?? "[]")).toContain("title");
   });
 });

@@ -104,6 +104,8 @@ interface WorldConfig {
   /** Throw from translationsRemove. */
   removeThrows?: boolean;
   locales?: Array<{ locale: string; primary: boolean; published: boolean }>;
+  /** Answer to the one-sided SEO read (getProductSeo); may throw. */
+  seoRead?: () => any;
 }
 
 function installAdmin(config: WorldConfig = {}) {
@@ -126,6 +128,10 @@ function installAdmin(config: WorldConfig = {}) {
     const variables = options?.variables;
     const answer = (body: unknown) => ({ ok: true, json: async () => body });
 
+    if (query.includes("getProductSeo")) {
+      calls.push({ kind: "seoRead", variables });
+      return answer(config.seoRead ? config.seoRead() : { data: { product: { seo: { title: "T-live", description: "D-live" } } } });
+    }
     if (query.includes("translationsRegister")) {
       calls.push({ kind: "register", variables });
       return answer(
@@ -846,5 +852,32 @@ describe("response shapes the client reads", () => {
     db.product.findUnique.mockResolvedValue({ shop: "other.myshopify.com", images: [] });
     const r: any = await saveForeign(w.admin, { title: "x" });
     expect(r.init?.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("one-sided SEO save (the other half is a passenger the server did not write)", () => {
+  const sentSeo = (w: ReturnType<typeof installAdmin>) => w.of("productUpdate")[0].variables.input.seo;
+  const fallback = JSON.stringify({ title: "T-client" });
+
+  it("normal path: the other half comes from the fresh read", async () => {
+    const w = installAdmin();
+    makeDb();
+    await savePrimary(w.admin, { metaDescription: "D-new", seoFallback: fallback, changedFields: JSON.stringify(["metaDescription"]) });
+    expect(sentSeo(w)).toEqual({ title: "T-live", description: "D-new" });
+  });
+
+  it("the read throws: the client's value of that half is carried, never one half alone", async () => {
+    const w = installAdmin({ seoRead: () => { throw new Error("throttled"); } });
+    makeDb();
+    await savePrimary(w.admin, { metaDescription: "D-new", seoFallback: fallback, changedFields: JSON.stringify(["metaDescription"]) });
+    expect(sentSeo(w)).toEqual({ title: "T-client", description: "D-new" });
+  });
+
+  it("the read answers null data: the client's value of that half is carried", async () => {
+    const w = installAdmin({ seoRead: () => ({ data: null }) });
+    makeDb();
+    await savePrimary(w.admin, { metaDescription: "D-new", seoFallback: fallback, changedFields: JSON.stringify(["metaDescription"]) });
+    expect(sentSeo(w)).toEqual({ title: "T-client", description: "D-new" });
   });
 });

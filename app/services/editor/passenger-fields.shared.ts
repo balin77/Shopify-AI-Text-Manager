@@ -62,11 +62,18 @@ export function parsePassengerKeys(raw: string | null | undefined): string[] {
   }
 }
 
-/** A queued form that stops announcing a key (see the hand-on rules): its text is a passenger from then on. */
-export function markPassenger(formData: FormData, key: string): void {
-  const list = parsePassengerKeys(formData.get(PASSENGER_FIELDS_KEY) as string | null);
+/** The form field naming keys that are sent UNANNOUNCED and meant to be WRITTEN (the server ignores it). */
+export const WRITTEN_UNANNOUNCED_KEY = "writtenUnannounced";
+
+/**
+ * A queued form stops announcing a key (a carry-only announcement the refused carrier made unnecessary):
+ * the text stays WRITTEN, only the purge/re-translation goes. It is not a passenger: the merchant typed
+ * it back over a carrier that may have written something else, and that typing is an intent.
+ */
+export function markWrittenUnannounced(formData: FormData, key: string): void {
+  const list = parsePassengerKeys(formData.get(WRITTEN_UNANNOUNCED_KEY) as string | null);
   if (list.includes(key)) return;
-  formData.set(PASSENGER_FIELDS_KEY, JSON.stringify([...list, key]));
+  formData.set(WRITTEN_UNANNOUNCED_KEY, JSON.stringify([...list, key]));
 }
 
 /**
@@ -77,14 +84,16 @@ export function markPassenger(formData: FormData, key: string): void {
 export function withoutPassengers(
   formData: FormData,
   allowedKeys: ReadonlySet<string>,
-): { form: FormData; dropped: string[] } {
+): { form: FormData; dropped: string[]; droppedValues: Record<string, string> } {
   const passengers = parsePassengerKeys(formData.get(PASSENGER_FIELDS_KEY) as string | null);
-  if (passengers.length === 0) return { form: formData, dropped: [] };
+  if (passengers.length === 0) return { form: formData, dropped: [], droppedValues: {} };
   const changed = new Set(parsePassengerKeys(formData.get("changedFields") as string | null));
   const dropped = passengers.filter((key) => allowedKeys.has(key) && !changed.has(key) && formData.has(key));
-  if (dropped.length === 0) return { form: formData, dropped: [] };
+  if (dropped.length === 0) return { form: formData, dropped: [], droppedValues: {} };
   const drop = new Set(dropped);
   const form = new FormData();
   for (const [key, value] of formData.entries()) if (!drop.has(key)) form.append(key, value);
-  return { form, dropped };
+  const droppedValues: Record<string, string> = {};
+  for (const key of dropped) droppedValues[key] = String(formData.get(key));
+  return { form, dropped, droppedValues };
 }

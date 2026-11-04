@@ -21,7 +21,7 @@ import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey, pr
 import type { PartialSave } from "./useUiDataLoader";
 import { dropSavedFieldsFromFallbackSnapshot, type LoadedFallbackSnapshot } from "../services/editor/discard-fallback.shared";
 import { useEditorAutoSave } from "./useEditorAutoSave";
-import { PASSENGER_FIELDS_KEY, markPassenger } from "../services/editor/passenger-fields.shared";
+import { markWrittenUnannounced } from "../services/editor/passenger-fields.shared";
 import { viewContentFingerprint } from "../services/editor/content-fingerprint.shared";
 import { useEditorAltText } from "./useEditorAltText";
 import type {
@@ -1049,8 +1049,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const field = effectiveFieldDefinitionsRef.current.find((f) => f.key === key);
         if (field?.translationKey) deletedTranslationKeysRef.current.delete(field.translationKey);
         entry.formData.set("changedFields", JSON.stringify(list));
-        // No longer announced: the text is a passenger now (the server does not write it).
-        if (entry.formData.has(PASSENGER_FIELDS_KEY)) markPassenger(entry.formData, key);
+        // No longer announced, still WRITTEN: the merchant typed it back, and the refused save may have
+        // written something else (a refusal is not always "nothing stored").
+        markWrittenUnannounced(entry.formData, key);
       }
       let added = false;
       for (const key of announced) {
@@ -1685,7 +1686,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     if (refreshTriggered && !isBackgroundRefresh) {
       debugLog.dataLoad(' Data refresh triggered by ReloadButton');
-      dataLoader.onRefresh(selectedItemId, { keepConfirmed: savesOfItemOut(selectedItemId).length > 0 });
+      const outNow = savesOfItemOut(selectedItemId).length > 0;
+      dataLoader.onRefresh(selectedItemId, {
+        keepConfirmed: outNow,
+        keepKeys: outNow ? new Set(Object.keys(primaryOwnerRef.current[selectedItemId!] ?? {})) : undefined,
+      });
 
       // For templates, skip loading from stale item data after a reload.
       // The page-level reload effect (app.templates.tsx) fetches fresh data from the API

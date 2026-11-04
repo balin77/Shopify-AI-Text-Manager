@@ -611,6 +611,8 @@ export class ShopifyContentService {
     resourceGid: string,
     seoTitle: string | undefined,
     seoDescription: string | undefined,
+    /** The client's value of a half it did not change: used when Shopify's cannot be read, so one half is never sent alone. */
+    fallback?: { title?: string; description?: string },
   ): Promise<{ title?: string; description?: string } | null> {
     const hasTitle = seoTitle !== undefined;
     const hasDescription = seoDescription !== undefined;
@@ -635,18 +637,20 @@ export class ShopifyContentService {
           { variables: { id: resourceGid } }
         );
         const data = await response.json();
-        const currentSeo = data.data?.node?.seo || {};
+        const node = data.data?.node;
+        if (!node || !node.seo) throw new Error("no SEO in the answer");
+        const currentSeo = node.seo;
         if (!hasTitle) seo.title = currentSeo.title ?? undefined;
         if (!hasDescription) seo.description = currentSeo.description ?? undefined;
       } catch (error: unknown) {
-        // On lookup failure, drop the missing side (JSON.stringify omits undefined)
-        // rather than sending "" and clearing it — Shopify then leaves it unchanged.
+        // On lookup failure carry the client's value of the missing half (it never sends one half alone: that
+        // would clear the other); without one, drop the missing side (JSON.stringify omits undefined).
         loggers.translation('warn', '[buildPreservedSeo] Failed to fetch current SEO for preservation', {
           resourceGid,
           error: error instanceof Error ? error.message : String(error),
         });
-        if (!hasTitle) seo.title = undefined;
-        if (!hasDescription) seo.description = undefined;
+        if (!hasTitle) seo.title = fallback?.title;
+        if (!hasDescription) seo.description = fallback?.description;
       }
     }
 
@@ -1151,6 +1155,8 @@ export class ShopifyContentService {
      *  translations it would mark stale), and an attribute edit must not be
      *  dropped just because the save also starts a translation. */
     changedAttributeFields?: string[];
+    /** The client's unchanged SEO halves (not written themselves): the fallback of a one-sided SEO write. */
+    seoFallback?: { title?: string; description?: string };
     /**
      * Market scope for this save. "" (or undefined) = global (applies to all
      * markets, legacy behaviour). Non-empty = gid://shopify/Market/<id>, saving a
@@ -1725,7 +1731,7 @@ export class ShopifyContentService {
         });
       } else if (resourceType === 'Collection') {
         // Preserve the untouched SEO half on partial saves (see buildPreservedSeo).
-        const preservedSeo = await this.buildPreservedSeo(resourceId, updates.seoTitle, updates.metaDescription);
+        const preservedSeo = await this.buildPreservedSeo(resourceId, updates.seoTitle, updates.metaDescription, params.seoFallback);
         updatedResource = await this.updateCollection(resourceId, {
           title: updates.title,
           handle: updates.handle,

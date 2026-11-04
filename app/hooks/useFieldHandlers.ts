@@ -1654,12 +1654,8 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
             primaryLocale,
             [fieldKey]: primaryTranslated,
           };
-          // Products reject any primary-locale update without a non-empty title
-          // (updatePrimaryProduct); include the real primary title for non-title
-          // single-field saves.
-          if (config.contentType === "products" && fieldKey !== "title") {
-            primaryForm.title = getItemFieldValue(selectedItem!, "title", primaryLocale, config);
-          }
+          // No title rides along: an absent title is "not sent" for updatePrimaryProduct (only a sent, empty one is
+          // refused), and one read from a click-time item could be stale and would be written unannounced.
           if (config.resourceType === "ShopPolicy" && selectedItem?.type) {
             primaryForm.policyType = selectedItem.type;
           }

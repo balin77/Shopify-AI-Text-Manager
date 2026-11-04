@@ -37,3 +37,15 @@ describe("forgetOwnedKeys", () => {
     expect(s.confirmed.A).toBeDefined();
   });
 });
+
+describe("recordConfirmedValues and passengers", () => {
+  it("a passenger was not written: it is not recorded as confirmed; an announced key is, even if also listed", () => {
+    const s = base();
+    recordConfirmedValues(
+      s.confirmed, "A",
+      { title: "t", handle: "h", changedFields: JSON.stringify(["title"]), passengerFields: JSON.stringify(["handle", "title"]) },
+      new Set(), s.cacheByItem.A,
+    );
+    expect(Object.keys(s.confirmed.A)).toEqual(["title"]);
+  });
+});

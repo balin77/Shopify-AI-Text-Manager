@@ -44,13 +44,13 @@ export async function handleUpdateContent(
   // A primary save carries every field of the form; the ones the merchant did not change are
   // PASSENGERS and are not written (passenger-fields.shared.ts): a stale copy of the old text
   // can never overwrite what Shopify holds by now. Everything below works on the form without them.
-  const { form: formData } =
+  const { form: formData, droppedValues: passengerValues } =
     locale === primaryLocale && savesNamePassengers(contentConfig.resourceType, false)
       ? withoutPassengers(
           submittedForm,
           new Set(contentConfig.fieldDefinitions.filter((f) => !!f.translationKey).map((f) => f.key)),
         )
-      : { form: submittedForm };
+      : { form: submittedForm, droppedValues: {} as Record<string, string> };
   const changedFieldsDebug = getFormString(formData, "changedFields");
   // Market scope for market-specific ("Translate & Adapt") translations.
   // Primary-locale saves are always global — Shopify forbids market-specific
@@ -447,6 +447,15 @@ export async function handleUpdateContent(
         productFormData.set("changedAttributeFields", changedAttributesStr);
       }
 
+      // The SEO fallback: a one-sided SEO write must carry the other half; if Shopify cannot be read for it,
+      // the client's value of that (unchanged) half is used, never an empty one (see updatePrimaryProduct).
+      if ("seoTitle" in passengerValues || "metaDescription" in passengerValues) {
+        productFormData.set("seoFallback", JSON.stringify({
+          ...("seoTitle" in passengerValues ? { title: passengerValues.seoTitle } : {}),
+          ...("metaDescription" in passengerValues ? { description: passengerValues.metaDescription } : {}),
+        }));
+      }
+
       // Pass imageAltTexts if present
       const imageAltTextsStr = getFormString(formData, "imageAltTexts");
       if (imageAltTextsStr) {
@@ -567,6 +576,10 @@ export async function handleUpdateContent(
           ? safeJsonParse<number[]>(changedAltTextIndicesStr, [])
           : undefined,
       changedAttributeFields: locale === primaryLocale ? changedAttributeFields : undefined,
+      seoFallback: {
+        ...("seoTitle" in passengerValues ? { title: passengerValues.seoTitle } : {}),
+        ...("metaDescription" in passengerValues ? { description: passengerValues.metaDescription } : {}),
+      },
       marketId,
     });
 

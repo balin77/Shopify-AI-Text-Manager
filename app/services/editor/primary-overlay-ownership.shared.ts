@@ -29,7 +29,11 @@ export function recordConfirmedValues(
 ): void {
   if (!sentFields || !overlay) return;
   const byKey = (confirmed[itemId] ??= {});
+  // A passenger was not written (passenger-fields.shared.ts): the save confirms nothing about it.
+  const passengers = new Set<string>();
+  try { for (const k of JSON.parse(sentFields.passengerFields ?? "[]") as string[]) passengers.add(k); } catch { /* none */ }
   for (const [key, value] of Object.entries(sentFields)) {
+    if (passengers.has(key) && !(sentFields.changedFields && (JSON.parse(sentFields.changedFields) as string[]).includes(key))) continue;
     // Only a key the overlay still holds: after a Reload dropped it, nothing restores it.
     if (!unconfirmed.has(key) && key in overlay) byKey[key] = { value, seq };
   }

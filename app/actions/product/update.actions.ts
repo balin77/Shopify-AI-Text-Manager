@@ -75,6 +75,8 @@ interface UpdateProductParams {
   handle?: string;
   seoTitle?: string;
   metaDescription?: string;
+  /** The client's unchanged SEO halves (not written themselves): the fallback when the other half cannot be read. */
+  seoFallback?: { title?: string; description?: string };
   productType?: string;
   // ── PLAN_CONTENT_CREATION §Phase 3 merchandising attributes ──────────────
   // Not translatable (Shopify stores one value per product), so these only
@@ -170,6 +172,7 @@ export async function handleUpdateProduct(
     seoTitle: getFormStringOrNull(formData, "seoTitle") ?? undefined,
     metaDescription: getFormStringOrNull(formData, "metaDescription") ?? undefined,
     productType: getFormStringOrNull(formData, "productType") ?? undefined,
+    seoFallback: getFormJSON<{ title?: string; description?: string }>(formData, "seoFallback") || undefined,
     // §Phase 3 attributes. Read on EVERY save and filtered by locale at the
     // write, not here: an attribute arriving on a foreign-locale save is a
     // client bug, and dropping it silently at parse time would hide it.
@@ -989,19 +992,20 @@ async function updatePrimaryProduct(
           { variables: { id: productId } }
         );
         const currentSeoData = await currentSeoResponse.json() as any;
-        const currentSeo = currentSeoData.data?.product?.seo || {};
+        const productNode = currentSeoData.data?.product;
+        if (!productNode?.seo) throw new Error("no SEO in the answer");
+        const currentSeo = productNode.seo;
         if (!hasSeoTitle) seoInput.title = currentSeo.title ?? undefined;
         if (!hasSeoDescription) seoInput.description = currentSeo.description ?? undefined;
       } catch (seoError: unknown) {
-        // If the lookup fails, fall back to omitting the missing side entirely
-        // (JSON.stringify drops undefined) rather than sending an empty string
-        // that would clear it. Worst case Shopify leaves it unchanged.
+        // If the lookup fails, carry the CLIENT's value of the missing half (never one half alone: that
+        // would clear the other); without one, omit the side entirely rather than send an empty string.
         loggers.product("warn", "Failed to fetch current SEO for preservation", {
           productId,
           error: seoError instanceof Error ? seoError.message : String(seoError),
         });
-        if (!hasSeoTitle) seoInput.title = undefined;
-        if (!hasSeoDescription) seoInput.description = undefined;
+        if (!hasSeoTitle) seoInput.title = params.seoFallback?.title;
+        if (!hasSeoDescription) seoInput.description = params.seoFallback?.description;
       }
     }
 

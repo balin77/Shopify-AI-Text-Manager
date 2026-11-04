@@ -58,9 +58,10 @@ describe('partial SEO writes go through the one merge', () => {
     const src = read('src/services/shopify-content.service.ts');
     const body = src.slice(src.indexOf('async buildPreservedSeo('));
     const failure = body.slice(body.indexOf('catch'), body.indexOf('return seo;'));
-    // `undefined` is dropped by JSON.stringify and leaves Shopify's value
-    // alone; `''` would clear it.
-    expect(failure).toMatch(/seo\.title = undefined/);
-    expect(failure).toMatch(/seo\.description = undefined/);
+    // The client's value of the unchanged half (undefined where it sent none: dropped by
+    // JSON.stringify, leaves Shopify's value alone); `''` would clear it.
+    expect(failure).toMatch(/seo\.title = fallback\?\.title/);
+    expect(failure).toMatch(/seo\.description = fallback\?\.description/);
+    expect(failure).not.toMatch(/= ''|= ""/);
   });
 });

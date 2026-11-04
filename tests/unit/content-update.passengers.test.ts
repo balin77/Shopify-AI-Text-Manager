@@ -19,6 +19,7 @@ vi.mock("~/actions/product/shared/action-context", () => ({
 }));
 
 import { handleUpdateContent } from "~/actions/content/content-update.action";
+import { ShopifyContentService } from "../../src/services/shopify-content.service";
 
 const SHOP = "test-shop.myshopify.com";
 let redirectsLooked: number;
@@ -166,5 +167,37 @@ describe("handleUpdateContent: passengers are not written", () => {
     expect(sent.metaDescription).toBe("new meta");
     expect(sent.changedFields).toBe(JSON.stringify(["metaDescription"]));
     for (const gone of ["title", "descriptionHtml", "handle", "seoTitle", "productType"]) expect(gone in sent).toBe(false);
+  });
+});
+
+describe("the SEO fallback: an unchanged SEO half the server did not write", () => {
+  it("is handed to the writers so a one-sided SEO write never goes out alone", async () => {
+    const updateContent = vi.fn(async () => ({ success: true }));
+    await handleUpdateContent(
+      ctx(COLLECTIONS_CONFIG, "gid://shopify/Collection/1", updateContent),
+      form({ seoTitle: "T-client", metaDescription: "M", changedFields: JSON.stringify(["metaDescription"]), passengerFields: JSON.stringify(["seoTitle"]) }),
+    );
+    const arg = (updateContent.mock.calls[0] as unknown[])[0] as { updates: Record<string, string>; seoFallback: Record<string, string> };
+    expect(arg.updates).toEqual({ metaDescription: "M" });
+    expect(arg.seoFallback).toEqual({ title: "T-client" });
+
+    await handleUpdateContent(
+      ctx(PRODUCTS_CONFIG, "gid://shopify/Product/1", vi.fn()),
+      form({ seoTitle: "T-client", metaDescription: "M", changedFields: JSON.stringify(["metaDescription"]), passengerFields: JSON.stringify(["seoTitle"]) }),
+    );
+    expect(JSON.parse(String(productForm!.get("seoFallback")))).toEqual({ title: "T-client" });
+  });
+});
+
+describe("buildPreservedSeo (collections)", () => {
+  const make = (answer: () => unknown) =>
+    new ShopifyContentService({ graphql: async () => ({ json: async () => answer() }) } as never);
+  it("throws -> carries the client's half; null node -> same; fresh read -> the live half", async () => {
+    expect(await make(() => { throw new Error("x"); }).buildPreservedSeo("gid://c/1", undefined, "D", { title: "T-client" }))
+      .toEqual({ title: "T-client", description: "D" });
+    expect(await make(() => ({ data: null })).buildPreservedSeo("gid://c/1", undefined, "D", { title: "T-client" }))
+      .toEqual({ title: "T-client", description: "D" });
+    expect(await make(() => ({ data: { node: { seo: { title: "T-live", description: "x" } } } })).buildPreservedSeo("gid://c/1", undefined, "D", { title: "T-client" }))
+      .toEqual({ title: "T-live", description: "D" });
   });
 });

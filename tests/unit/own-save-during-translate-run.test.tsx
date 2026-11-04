@@ -379,3 +379,31 @@ describe("own saves during a translate-all run are refused before anything is st
     expect(String(last[0])).toContain("product type was not translated");
   });
 });
+
+describe("foreign accept-and-translate: the primary base save carries only the translated field", () => {
+  beforeEach(() => {
+    clearAllForResource(ID);
+    __resetSuggestionStore();
+    try { window.localStorage.clear(); } catch { /* none */ }
+    window.history.replaceState({}, "", "/app/products");
+  });
+  afterEach(() => { vi.restoreAllMocks(); window.history.replaceState({}, "", "/"); });
+
+  it("no title (read from a click-time item) rides along, so a stale one cannot be written unannounced", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    const primary = h.savesPosted().find((p) => p.locale === "de");
+    expect(primary).toBeTruthy();
+    expect(primary!.seoTitle).toBe("SEO de");
+    expect("title" in primary!).toBe(false);
+  });
+});
