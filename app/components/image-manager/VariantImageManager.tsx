@@ -786,7 +786,7 @@ export function VariantImageManager({
   // a read lands and on a product switch. `variantsLoadedForRef` cannot tell: for a re-read of an
   // ALREADY loaded product (after a save, a Discard) it equals the product while the read failed.
   const variantsRetryChainRef = useRef<string | null>(null);
-  const fetchVariantsRef = useRef<((pid: string, resetState: boolean) => void) | null>(null);
+  const fetchVariantsRef = useRef<((pid: string, resetState: boolean, opts?: { silent?: boolean; onLanded?: () => void }) => void) | null>(null);
   useEffect(() => () => { if (variantsRetryTimerRef.current) clearTimeout(variantsRetryTimerRef.current); }, []);
   // The variants of the open product are known (read and landed): until then a save must not act on
   // them and nothing may be written or cleared for a variant the editor knows nothing about.
@@ -807,6 +807,9 @@ export function VariantImageManager({
     return true;
   };
   const variantsAbortRef = useRef<AbortController | null>(null);
+  // The request id of the non-silent read in flight (0: none) and the silent read that waits for it.
+  const nonSilentReqRef = useRef(0);
+  const queuedSilentRef = useRef<{ pid: string; opts?: { silent?: boolean; onLanded?: () => void } } | null>(null);
 
   // Cross-gallery drag state
   const [activeDragUrl, setActiveDragUrl] = useState<string | null>(null);
@@ -998,7 +1001,14 @@ export function VariantImageManager({
   // below, which re-fetches every few seconds: without it the whole variant
   // list would blink through its spinner on every tick.
   const fetchVariantsForProduct = useCallback((pid: string, resetState: boolean, opts?: { silent?: boolean; onLanded?: () => void }) => {
+    // A silent read (settling poll, post-delete read) never aborts or supersedes a non-silent one: that read
+    // owns `variantsRefreshing` / the error banner / the retry chain. It waits and runs when that read is done.
+    if (opts?.silent && nonSilentReqRef.current !== 0) {
+      queuedSilentRef.current = { pid, opts };
+      return;
+    }
     const reqId = ++variantsReqIdRef.current;
+    if (!opts?.silent) nonSilentReqRef.current = reqId;
     // (a silent poll leaves a scheduled retry of a failed read alone)
     if (!opts?.silent && variantsRetryTimerRef.current) { clearTimeout(variantsRetryTimerRef.current); variantsRetryTimerRef.current = null; }
     // A newer read ends the older one outright (a read held back by the rate
@@ -1200,13 +1210,20 @@ export function VariantImageManager({
         setVariantError(t.imageManager.variantsLoadError);
         armRetry();
       })
-      // Clearing is NOT gated on `silent`: every call shares variantsReqIdRef,
-      // so a poll tick landing while a non-silent load is in flight makes that
-      // load stale — it skips its own clear — and a silent-only clear would
-      // leave the spinner up forever, with the variant list replaced by it
-      // until the next save or product switch. Whoever is the current request
-      // owns the flag.
-      .finally(() => { if (!isStale()) { setIsLoadingVariants(false); setVariantsRefreshing(false); } });
+      // Only the current request clears the flags. A silent read cannot supersede a non-silent one any more
+      // (it waits), so a flag set by a non-silent read is cleared only when THAT read ends: it landed, or it
+      // failed and set the error banner (and the retry chain), which keeps the list "not current" by itself.
+      .finally(() => {
+        if (isStale()) return;
+        setIsLoadingVariants(false);
+        setVariantsRefreshing(false);
+        if (nonSilentReqRef.current === reqId) {
+          nonSilentReqRef.current = 0;
+          const queued = queuedSilentRef.current;
+          queuedSilentRef.current = null;
+          if (queued && productIdRef.current === queued.pid) fetchVariantsRef.current?.(queued.pid, false, queued.opts);
+        }
+      });
   }, [t.imageManager.variantsLoadError, onVariantsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
   fetchVariantsRef.current = fetchVariantsForProduct;
 
