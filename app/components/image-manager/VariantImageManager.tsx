@@ -28,7 +28,7 @@ import { uploadToStagedTarget } from "../../utils/staged-upload.client";
 import { appFetch } from "../../utils/app-fetch";
 import { splitLoadedAltTexts, altFieldView } from "./alt-market-layer";
 import { planAltFlush, planImmediateAltSave, hasImmediateAltSave, restoreAltDrafts, revertAltDraftsWithoutPrimary, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, altSaveInView, altDraftUrlsOfDeletedMedia, strandedAltDraftUrls, dropAltDrafts, partitionAltQueue, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
-import { fileTilesByUrl, gidForUrl, tilesByUrl, isModel3dGid } from "./url-gid";
+import { fileTilesByUrl, gidForUrl, tilesByUrl, isModel3dGid, variantHoldsMedium } from "./url-gid";
 import { altSuggestionInView, altSuggestionsOfProduct, planAcceptAltSuggestion, shouldTranslateAfterSave, withAltSuggestion, withoutAltSuggestion, type AltSuggestionMap } from "./alt-suggestion";
 import { AISuggestionBanner } from "../AISuggestionBanner";
 import { AutoGrowTextarea } from "../unified/AutoGrowTextarea";
@@ -1596,6 +1596,16 @@ export function VariantImageManager({
     });
   };
 
+  /** Point 1: refuses (BEFORE any state change) a move or copy into a variant that already shows the
+   *  medium, main image included. The message names the target variant. Returns true when refused. */
+  const refuseIfTargetHolds = (variantId: string, ref: string, tileUrl?: string): boolean => {
+    const target = variants.find(v => v.id === variantId);
+    if (!target) return false;
+    if (!variantHoldsMedium({ shownGids: displayFor(target).gids, ref, tileUrl, fileUrlMap, urlToGid })) return false;
+    showInfoBox(t.imageManager.targetAlreadyHasMedium.replace("{variant}", target.title), "warning");
+    return true;
+  };
+
   /** A variant's gallery tiles in the order the merchant SEES them: saved order JSON first (honouring
    *  per-kind value lookups), then whatever the order does not cover (files, links, models). */
   const orderedVariantTiles = (variantId: string) => {
@@ -2296,6 +2306,9 @@ export function VariantImageManager({
         }
         return;
       }
+      // The target already shows this medium (a gallery entry, its main image, or the same file under
+      // another GID): a move would only take it off the source, a copy changes nothing. Refused.
+      if (refuseIfTargetHolds(targetContainerId, gid, url)) return;
       // The moved image dragged ONWARD to a third variant would drop its coupling: refused (undo = back to the source).
       if (!isCtrlHeldRef.current && effectiveMoves.some(m => m.targetVariantId === sourceContainerId && m.gid === gid)) {
         setMediaError(t.imageManager.mainMoveSaveFirst);
@@ -2399,6 +2412,8 @@ export function VariantImageManager({
           return;
         }
       }
+      // The variant already shows this medium (its main image included): refused with a message.
+      if (refuseIfTargetHolds(targetContainerId, gid, url)) return;
       setPendingVariantGalleries(p => {
         const existing = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
         if (existing.includes(gid)) return p;
@@ -2479,6 +2494,14 @@ export function VariantImageManager({
 
     const newGids = [...bulkGids, ...galleryGids];
     if (newGids.length === 0) return;
+    // A selected medium the target already shows: the whole action is refused BEFORE anything changes
+    // (a move would take it off its source without adding it anywhere).
+    for (const [key, sourceId] of selectedGalleryItems.entries()) {
+      if (sourceId === targetVariantId) continue;
+      const u = (() => { const sep = key.indexOf("::"); return sep !== -1 ? key.slice(sep + 2) : key; })();
+      const ref = fileRefOfUrl(u);
+      if (ref && !notFileEntry(ref, u) && refuseIfTargetHolds(targetVariantId, ref, u)) return;
+    }
     setPendingVariantGalleries(p => {
       const targetVariant = variants.find(v => v.id === targetVariantId);
       const existing = p[targetVariantId] ?? targetVariant?.galleryFileGids ?? [];

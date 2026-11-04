@@ -709,6 +709,7 @@ export const guideEn: GuideCopy = {
           heading: "Building galleries",
           paragraphs: [
             "The product gallery sits at the top, with one gallery per variant below. Drag images from the product gallery or your Shopify file library into a variant, sort them by dragging, and copy or move them between variants. Videos, YouTube/Vimeo links and 3D models are supported too.",
+            "If the target variant already has an image (in its gallery or as its main image), the app refuses the move or copy, names the variant in the info box and changes nothing — the image stays where it was. This also applies to the same file stored under two names, as long as the app can recognise it as the same file.",
           ],
         },
         {

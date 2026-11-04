@@ -717,6 +717,7 @@ export const guideDe: GuideCopy = {
           heading: "Galerien zusammenstellen",
           paragraphs: [
             "Oben liegt die Produktgalerie, darunter eine Galerie pro Variante. Bilder ziehen Sie aus der Produktgalerie oder Ihrer Shopify-Dateibibliothek in eine Variante, sortieren sie per Ziehen und kopieren oder verschieben sie zwischen Varianten. Auch Videos, YouTube-/Vimeo-Links und 3D-Modelle sind möglich.",
+            "Hat die Ziel-Variante ein Bild schon (in ihrer Galerie oder als Hauptbild), lehnt die App das Verschieben oder Kopieren ab, nennt in der Info-Box die Variante und ändert nichts — das Bild bleibt, wo es war. Das gilt auch für dieselbe Datei, die unter zwei Namen vorliegt, sofern die App sie als gleiche Datei erkennen kann.",
           ],
         },
         {

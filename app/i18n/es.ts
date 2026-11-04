@@ -1974,6 +1974,7 @@ export const es: Translation = {
     mediaNotDroppable: "Un modelo 3D o un vídeo externo no se puede arrastrar a la galería de imágenes de una variante. Añádelo con el signo más de la galería de la variante.",
     mainMoveNotSaved: "La imagen principal no se movió: una de las dos variantes implicadas no se pudo guardar, así que ninguna de las dos cambió. Recarga el producto y repite el movimiento si hace falta.",
     mainMoveSaveFirst: "Guarda primero los cambios pendientes de la imagen principal de estas variantes y mueve la imagen principal después.",
+    targetAlreadyHasMedium: "«{variant}» ya tiene esta imagen. No se movió ni se copió nada.",
     mainMoveInvalid: "No se pudo guardar el movimiento de la imagen principal porque las dos variantes ya no encajan. No se cambió nada. Descarta los cambios de imagen pendientes y repite el movimiento.",
     mainNotNameable: "Ahora mismo no se puede identificar esta imagen principal. Recarga el producto e inténtalo de nuevo.",
     uploadFailedFiles: "Error al subir: {files}. Estos archivos no se añadieron.",

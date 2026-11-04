@@ -14,7 +14,7 @@ import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
 import { I18nProvider } from "~/contexts/I18nContext";
 import { PlanProvider } from "~/contexts/PlanContext";
-import { InfoBoxProvider } from "~/contexts/InfoBoxContext";
+import { InfoBoxProvider, useInfoBox } from "~/contexts/InfoBoxContext";
 
 const gid = (n: number) => `gid://shopify/MediaImage/${n}`;
 const url = (n: number) => `https://cdn.shopify.com/s/files/${n}.jpg?v=1`;
@@ -95,10 +95,16 @@ let onPendingChange: ReturnType<typeof vi.fn>;
 let onDirtyChange: ReturnType<typeof vi.fn>;
 let onGalleryOrderChange: ReturnType<typeof vi.fn>;
 
+function InfoProbe() {
+  const { infoBox } = useInfoBox();
+  return <div data-testid="infobox">{infoBox?.message ?? ""}</div>;
+}
+
 function ui(extra: Record<string, unknown> = {}) {
   return (
     <AppProvider i18n={en}>
       <I18nProvider locale="en"><PlanProvider plan={"max" as any} newFeaturesEnabled><InfoBoxProvider>
+        <InfoProbe />
         <VariantImageManager
           productId="gid://shopify/Product/1"
           productImages={productImages}
@@ -935,5 +941,91 @@ describe("pending move: ONE guard refuses every gesture that would contradict it
     await waitFor(() => expect(lastEmission()[0]).toEqual([]));
     expect(lastEmission()[3]).toEqual([]);
     expect(lastEmission()[4]).toEqual([]);
+  });
+});
+
+describe("round 3, point 1: a medium the target variant already has is refused BEFORE any state change", () => {
+  const dragTo = (from: { container: string; url: string }, to: { container: string; url: string }, ctrl = false) =>
+    act(() => {
+      if (ctrl) fireEvent.keyDown(window, { key: "Control" });
+      dnd.onDragEnd?.({
+        active: { id: `${from.container}::${from.url}`, data: { current: { url: from.url, containerId: from.container } } },
+        over: { id: `${to.container}::${to.url}` },
+      });
+      if (ctrl) fireEvent.keyUp(window, { key: "Control" });
+    });
+  async function mountWith(v2: { gallery: number[]; main: number }, extraMedia: Record<string, string> = {}) {
+    variantsAnswer = () => {
+      const b: any = variantsPayload();
+      b.variants[1] = { ...b.variants[1], galleryJson: JSON.stringify(v2.gallery.map(gid)), image: { url: url(v2.main) } };
+      Object.assign(b.mediaMap, extraMedia);
+      for (const k of Object.keys(extraMedia)) b.mediaMetaMap[k] = { kind: "image", previewUrl: extraMedia[k] };
+      return b;
+    };
+    const r = await mount();
+    fireEvent.click(await screen.findByText("Blue"));
+    await waitFor(() => expect(grids[V2]?.imageUrls?.length).toBeGreaterThan(0));
+    return r;
+  }
+  const untouched = (callsBefore: number) => {
+    expect(onPendingChange.mock.calls.length).toBe(callsBefore);
+    expect(grids[V1].imageUrls).toEqual([url(1), url(2), url(3)]);
+    expect(screen.getByTestId("infobox").textContent).toContain("Blue");
+    expect(screen.getByTestId("infobox").textContent).toContain("already has this image");
+  };
+
+  it("a gallery image moved to a variant that has it in its gallery stays on the source, nothing is pending", async () => {
+    await mountWith({ gallery: [2], main: 4 });
+    const before = onPendingChange.mock.calls.length;
+    dragTo({ container: V1, url: url(2) }, { container: V2, url: url(4) });
+    untouched(before);
+    expect(grids[V2].imageUrls).toEqual([url(4), url(2)]);
+  });
+
+  it("a gallery image moved to a variant whose MAIN image it is is refused", async () => {
+    await mountWith({ gallery: [], main: 3 });
+    const before = onPendingChange.mock.calls.length;
+    dragTo({ container: V1, url: url(3) }, { container: V2, url: url(3) });
+    untouched(before);
+    expect(grids[V2].mainUrl).toBe(url(3));
+  });
+
+  it("a MAIN image moved to a variant that has it in its gallery is refused", async () => {
+    await mountWith({ gallery: [1], main: 4 });
+    const before = onPendingChange.mock.calls.length;
+    dragTo({ container: V1, url: url(1) }, { container: V2, url: url(4) });
+    expect(onPendingChange.mock.calls.length).toBe(before);
+    expect(grids[V1].mainUrl).toBe(url(1));
+    expect(screen.getByTestId("infobox").textContent).toContain("Blue");
+  });
+
+  it("a Ctrl/Cmd copy of an image the target has is refused with the message too", async () => {
+    await mountWith({ gallery: [2], main: 4 });
+    const before = onPendingChange.mock.calls.length;
+    dragTo({ container: V1, url: url(2) }, { container: V2, url: url(4) }, true);
+    untouched(before);
+  });
+
+  it("the SAME FILE under another GID (a library file of a product medium) counts as held", async () => {
+    // gid 5 is a library file whose address is image 2's: V2 holds it, V1 drags medium 2
+    await mountWith({ gallery: [5], main: 4 }, { [gid(5)]: "https://cdn.shopify.com/s/files/2.jpg?v=9" });
+    const before = onPendingChange.mock.calls.length;
+    dragTo({ container: V1, url: url(2) }, { container: V2, url: url(4) });
+    untouched(before);
+  });
+
+  it("product gallery -> variant that already shows the image (its main): refused, nothing pending", async () => {
+    await mountWith({ gallery: [2], main: 4 });
+    onPendingChange.mockClear();
+    dragTo({ container: "product", url: url(1) }, { container: V1, url: url(2) });
+    expect(onPendingChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId("infobox").textContent).toContain("Red");
+  });
+
+  it("a medium the target does NOT hold still moves (regression)", async () => {
+    await mountWith({ gallery: [], main: 4 });
+    dragTo({ container: V1, url: url(3) }, { container: V2, url: url(4) });
+    await waitFor(() => expect(grids[V1].imageUrls).toEqual([url(1), url(2)]));
+    expect(grids[V2].imageUrls).toContain(url(3));
   });
 });
