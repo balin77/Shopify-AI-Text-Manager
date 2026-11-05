@@ -1,6 +1,6 @@
 ﻿import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { captureRemoved, reinsertRemoved, splitDeleteAnswer, removePendingNewMedia, queuedResourceUrls, stripRefsFromGalleries, unsentUrls, urlNeedsRestore, type RemovedEntry } from "./delete-rollback";
-import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip } from "@shopify/polaris";
+import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip, Badge, Collapsible } from "@shopify/polaris";
 import { useFetcher } from "react-router";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
@@ -821,6 +821,11 @@ export function VariantImageManager({
   // overContainerId tracked implicitly via autoExpandId
   const isCtrlHeldRef = useRef(false);
   const [autoExpandId, setAutoExpandId] = useState<string | null>(null);
+  // The product gallery's own open/closed state (full view only). Kept per PRODUCT: a re-read or a
+  // save keeps it, a product switch puts it back to open -- the variant galleries do the same by
+  // remounting under new ids.
+  const [productGalleryUi, setProductGalleryUi] = useState<{ productId: string; open: boolean }>({ productId, open: true });
+  const productGalleryOpen = productGalleryUi.productId === productId ? productGalleryUi.open : true;
   const autoExpandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentOverContainerRef = useRef<string | null>(null);
   const sharedSensors = useSensors(
@@ -2258,7 +2263,7 @@ export function VariantImageManager({
     const containerId = overStr.includes("::") ? overStr.split("::")[0] : overStr;
 
     // Start auto-expand timer when entering a new variant container (ref prevents redundant resets)
-    if (variantsCurrentRef.current && containerId !== "product" && containerId !== currentOverContainerRef.current) {
+    if (variantsCurrentRef.current && containerId !== currentOverContainerRef.current) {
       currentOverContainerRef.current = containerId;
       if (autoExpandTimerRef.current) clearTimeout(autoExpandTimerRef.current);
       autoExpandTimerRef.current = setTimeout(() => setAutoExpandId(containerId), 700);
@@ -4265,6 +4270,11 @@ export function VariantImageManager({
   };
 
   const hasAnySelection = selectedBulkIds.size > 0 || selectedGalleryItems.size > 0;
+  // The product gallery body is shown in the preview always; in the full view while it is open or
+  // while a drag hovers it (a collapsed gallery opens like a collapsed variant gallery does). A
+  // selection made in it is KEPT when it collapses: the selection bar below the gallery and its
+  // actions keep working on it.
+  const productGalleryShown = !fullView || productGalleryOpen || autoExpandId === "product";
 
   const isPrimaryLocale = !currentLanguage || currentLanguage === primaryLocale;
 
@@ -4428,10 +4438,24 @@ export function VariantImageManager({
 
       {/* Produktbilder allgemein */}
       <div>
+        {/* Header + gallery body are ONE drop target (like a variant gallery's whole section), so a
+            collapsed product gallery can still be dragged over (auto-expands) and dropped on. */}
+        <div ref={setProductDropRef}>
         <div style={fullView ? undefined : { display: "none" }}>
         <InlineStack align="space-between" blockAlign="center">
         <InlineStack gap="200" blockAlign="center">
-          <Text as="h3" variant="headingSm">{t.imageManager.productPhotos}</Text>
+          <button
+            type="button"
+            data-im-product-toggle
+            aria-expanded={productGalleryShown}
+            aria-controls="product-gallery-body"
+            onClick={() => setProductGalleryUi({ productId, open: !productGalleryOpen })}
+            style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: "4px 0", cursor: "pointer", font: "inherit", color: "inherit" }}
+          >
+            <Text as="span" variant="headingSm">{t.imageManager.productPhotos}</Text>
+            <Badge>{String(displayedProductUrls.length)}</Badge>
+            <Text as="span" tone="subdued"><span aria-hidden="true">{productGalleryShown ? "▲" : "▼"}</span></Text>
+          </button>
           {!isLoadingVariants && variants.length > 0 ? (
             <InlineStack gap="0" blockAlign="center">
               {(["all", "unassigned"] as const).map((mode, i) => {
@@ -4507,6 +4531,7 @@ export function VariantImageManager({
         </InlineStack>
         </InlineStack>
         </div>
+        <Collapsible open={productGalleryShown} id="product-gallery-body" transition={{ duration: "150ms" }}>
         <div style={{ marginTop: 6, display: fullView ? "flex" : "none", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"
@@ -4526,7 +4551,6 @@ export function VariantImageManager({
             // Preview: one clipped row that is not operable; a click on it opens the full view.
             style={fullView ? { overflowX: "hidden" } : { maxHeight: thumbSize + 24, overflow: "hidden", cursor: "pointer" }}
             onClick={fullView ? undefined : openFullView}
-            ref={setProductDropRef}
           >
           <div style={fullView ? undefined : { pointerEvents: "none" }}>
             <SortableImageGrid
@@ -4550,6 +4574,8 @@ export function VariantImageManager({
             />
           </div>
           </div>
+        </div>
+        </Collapsible>
         </div>
 
         <div style={fullView ? undefined : { display: "none" }}>

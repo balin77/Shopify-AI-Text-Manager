@@ -36,13 +36,14 @@ vi.mock("~/components/image-manager/FilePickerModal", () => ({
     return null;
   },
 }));
-const dnd: { onDragEnd?: (e: any) => void } = {};
+const dnd: { onDragEnd?: (e: any) => void; onDragOver?: (e: any) => void } = {};
 vi.mock("@dnd-kit/core", async (orig) => {
   const actual: any = await orig();
   return {
     ...actual,
     DndContext: (p: any) => {
       dnd.onDragEnd = p.onDragEnd;
+      dnd.onDragOver = p.onDragOver;
       return <>{p.children}</>;
     },
   };
@@ -1684,5 +1685,57 @@ describe("round 3 review fix: library picks and the selection drop refuse a medi
     expect(msg).toContain("Blue");
     expect(screen.queryByText(/cannot be dragged into a variant's image gallery/)).toBeNull();
     r.unmount();
+  });
+});
+
+describe("the product gallery collapses like a variant gallery", () => {
+  const toggle = () => document.querySelector("[data-im-product-toggle]") as HTMLElement;
+  const body = () => document.getElementById("product-gallery-body") as HTMLElement;
+
+  it("is open by default; the header (title, count, chevron) closes and opens it", async () => {
+    await mount();
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    expect(toggle().textContent).toContain("Product photos");
+    expect(toggle().textContent).toContain("4");
+    expect(body().getAttribute("aria-hidden")).toBe("false");
+    fireEvent.click(toggle());
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+    expect(body().getAttribute("aria-hidden")).toBe("true");
+    fireEvent.click(toggle());
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("stays collapsed through the post-save re-read (reset key + variants reload), also while the read is in flight", async () => {
+    const { rerender } = await mount();
+    fireEvent.click(toggle());
+    let release!: () => void;
+    variantsGate = new Promise<void>((r) => { release = r; });
+    rerender(ui({ resetKey: 1, variantReloadKey: 1 }));
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+    await act(async () => { release(); variantsGate = null; });
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("is open again after a product switch", async () => {
+    const { rerender } = await mount();
+    fireEvent.click(toggle());
+    rerender(ui({ productId: "gid://shopify/Product/2" }));
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("a drag held over the collapsed gallery opens it (like a collapsed variant gallery) and it closes again after the drag", async () => {
+    await mount();
+    fireEvent.click(toggle());
+    act(() => { dnd.onDragOver?.({ over: { id: "product" } }); });
+    await waitFor(() => expect(toggle().getAttribute("aria-expanded")).toBe("true"), { timeout: 2500 });
+    act(() => { dnd.onDragEnd?.({ active: { id: `${V1}::${url(2)}`, data: { current: { url: url(2), containerId: V1 } } }, over: null }); });
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("collapsing changes no pending state and writes nothing", async () => {
+    await mount();
+    fireEvent.click(toggle());
+    expect(onPendingChange).not.toHaveBeenCalled();
+    expect(apiCalls.filter((c) => c.body !== undefined)).toEqual([]);
   });
 });
