@@ -1799,3 +1799,14 @@ a:focus:not(:focus-visible) {
   box-shadow: none !important;
 }
 
+
+/* Image manager, phones: the gallery frame (dashed border + padding) sat inside
+   three more padded cards, so fewer than 3 tiles fit per row at the default
+   thumb size. Slimmer frame and gap below 768px; desktop is unchanged. */
+@media (max-width: 768px) {
+  .im-grid-frame {
+    padding: 4px !important;
+    gap: 6px !important;
+    border-width: 1px !important;
+  }
+}

@@ -2191,7 +2191,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
               {/* Scrollable Content Area */}
               <div className={`field-editor-area${imFull ? " im-full" : ""}`} style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
-                <Card padding="600">
+                {/* Full image view on a phone: the nested cards/frames ate the width
+                    (fewer than 3 tiles per row), so the paddings shrink on xs only. */}
+                <Card padding={imFull ? { xs: "100", sm: "600" } : "600"}>
                   <BlockStack gap="500">
                     {/* Card heading for products */}
                     {config.contentType === "products" && hideWhenFull("card-heading", (

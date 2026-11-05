@@ -4388,7 +4388,7 @@ export function VariantImageManager({
       onDragEnd={handleSharedDragEnd}
     >
     <div ref={managerRootRef} data-im-view={fullView ? "full" : "preview"}>
-    <Card padding="400">
+    <Card padding={fullView ? { xs: "100", sm: "400" } : "400"}>
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center">
           <span

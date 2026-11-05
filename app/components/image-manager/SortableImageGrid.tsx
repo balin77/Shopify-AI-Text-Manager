@@ -714,12 +714,12 @@ export function SortableImageGrid({
   );
 
   if (skipDndContext) {
-    return <div style={containerStyle}>{inner}</div>;
+    return <div className="im-grid-frame" style={containerStyle}>{inner}</div>;
   }
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <div style={containerStyle}>{inner}</div>
+      <div className="im-grid-frame" style={containerStyle}>{inner}</div>
     </DndContext>
   );
 }
