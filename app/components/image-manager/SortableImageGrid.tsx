@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import type React from "react";
 import { useSortable, SortableContext, rectSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { DndContext, closestCenter, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, useDroppable, type DragEndEvent } from "@dnd-kit/core";
@@ -9,6 +10,34 @@ import { ReplacedMediaBadge } from "../localized-images/ReplacedMediaBadge";
 import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
 // MediaKind is referenced indirectly via ImageMeta.kind — no direct import
 // needed here, but kept as a comment for grep-discoverability of the dispatch.
+
+/** Shared layout of the bottom-left badge stack on a tile (alt / format / 3D).
+ *  Vertical on purpose: the narrowest tile (slider minimum 80px) cannot hold
+ *  two badges side by side. Compact height (14px) keeps a three-badge stack
+ *  clear of the top-left overlays. */
+export const TILE_BADGE_STACK_STYLE: React.CSSProperties = {
+  position: "absolute",
+  left: 4,
+  bottom: 4,
+  maxWidth: "calc(100% - 8px)",
+  display: "flex",
+  flexDirection: "column-reverse",
+  alignItems: "flex-start",
+  gap: 2,
+  pointerEvents: "none",
+};
+export const TILE_BADGE_STYLE: React.CSSProperties = {
+  color: "white",
+  fontSize: 10,
+  fontWeight: 700,
+  padding: "1px 5px",
+  borderRadius: 3,
+  lineHeight: "12px",
+  whiteSpace: "nowrap",
+  maxWidth: "100%",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
 
 function getFormatBadge(url: string, mimeType?: string): { label: string; color: string } | null {
   const lower = url.toLowerCase();
@@ -352,25 +381,6 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
             <svg width={Math.max(18, Math.round(thumbSize * 0.32))} height={Math.max(18, Math.round(thumbSize * 0.32))} viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z" /></svg>
           </div>
         )}
-        {kind === "model" && url && (
-          <div
-            aria-hidden
-            style={{
-              position: "absolute",
-              right: 4,
-              bottom: 4,
-              background: "rgba(0,0,0,0.72)",
-              color: "#fff",
-              font: "700 10px/1 system-ui, sans-serif",
-              letterSpacing: 0.5,
-              padding: "2px 5px",
-              borderRadius: 3,
-              pointerEvents: "none",
-            }}
-          >
-            3D
-          </div>
-        )}
         {kind === "external_video" && meta?.externalHost && (
           <div
             aria-hidden
@@ -424,25 +434,6 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           </div>
         )}
 
-        {/* Alt text badge */}
-        <div
-          title={hasAlt ? currentLocaleAltText : undefined}
-          style={{
-            position: "absolute",
-            bottom: 4,
-            left: 4,
-            background: hasAlt ? "rgba(0,128,96,0.85)" : "rgba(142,31,11,0.75)",
-            color: "white",
-            fontSize: 10,
-            fontWeight: 700,
-            padding: "2px 6px",
-            borderRadius: 3,
-            lineHeight: "14px",
-            cursor: hasAlt ? "default" : "default",
-          }}>
-          {hasAlt ? t.imageManager.altBadge : t.imageManager.noAltBadge}
-        </div>
-
         {/* Conversion / Shopify-processing spinner overlay */}
         {(isConverting || isProcessing) && (
           <div style={{
@@ -466,24 +457,33 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           </div>
         )}
 
-        {/* Format badge */}
-        {formatBadge && (
-          <div style={{
-            position: "absolute",
-            bottom: 4,
-            right: 4,
-            background: formatBadge.color,
-            color: "white",
-            fontSize: 10,
-            fontWeight: 700,
-            padding: "2px 6px",
-            borderRadius: 3,
-            lineHeight: "14px",
-            pointerEvents: "none",
-          }}>
-            {formatBadge.label}
+        {/* Bottom-left badge stack: ONE container for the 3D / format / alt
+            badges. Side by side they cannot fit an 80px tile ("KEIN ALT" +
+            "WebP" + gaps is wider than the tile), so they stack vertically,
+            alt at the bottom (column-reverse), growing upwards. */}
+        <div data-tile-badge-stack style={TILE_BADGE_STACK_STYLE}>
+          <div
+            data-tile-badge="alt"
+            title={hasAlt ? currentLocaleAltText : undefined}
+            style={{
+              ...TILE_BADGE_STYLE,
+              background: hasAlt ? "rgba(0,128,96,0.85)" : "rgba(142,31,11,0.75)",
+              pointerEvents: "auto",
+              cursor: "default",
+            }}>
+            {hasAlt ? t.imageManager.altBadge : t.imageManager.noAltBadge}
           </div>
-        )}
+          {formatBadge && (
+            <div data-tile-badge="format" style={{ ...TILE_BADGE_STYLE, background: formatBadge.color }}>
+              {formatBadge.label}
+            </div>
+          )}
+          {kind === "model" && url && (
+            <div data-tile-badge="3d" style={{ ...TILE_BADGE_STYLE, background: "rgba(0,0,0,0.72)", letterSpacing: 0.5 }}>
+              3D
+            </div>
+          )}
+        </div>
 
         {/* Pending / unsaved badge — sits on top so the merchant immediately
             sees which tiles still need a Save click. The transparent body
