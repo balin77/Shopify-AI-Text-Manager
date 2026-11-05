@@ -233,7 +233,7 @@ button of its own.**
   selectors exclude (`:not(.app-touch-exempt)`); real `<button>`/Polaris buttons
   are untouched. Current carriers: both layers of the `SortableImageGrid` tile,
   the `FilePickerModal` tile and `ReplacedMediaBadge` (a 20px corner symbol that
-  deliberately keeps its size). [touch-exempt-tiles.test.ts](tests/unit/media-tile-touch-target.test.ts)
+  deliberately keeps its size). [touch-exempt-tiles.test.ts](tests/unit/touch-exempt-tiles.test.ts)
   guards it; a new tile with `role="button"` needs the class.
 - **A single-line text field WRAPS and grows; typing or pasting never adds a
   line break.** A one-line `<input>` hid a long title, SEO title or handle past
