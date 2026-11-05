@@ -80,6 +80,7 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Auswahlleiste (Bildverwaltung): Ob die am unteren Rand klebende Leiste im echten Shopify-Admin auf dem Handy über der Navigationsleiste der Shopify-App sichtbar bleibt, ist nicht gemessen (nur im eigenen Testaufbau mit Chromium geprüft).
 - Handy-Ansicht (Bildverwaltung): Wird «Nicht zugewiesen» in einer schmalen Spalte mit «…» gekürzt, zeigt nichts den vollen Text (kein Hinweis beim Darüberfahren). Bei zwei bekannten Beschriftungen vertretbar.
 - Handy-Ansicht (Bildverwaltung): Bei 360 px Breite und deutscher Beschriftung rutscht der WebP-Knopf in eine eigene Zeile und schiebt den Grössenregler eine Zeile tiefer. Die erste Kopfzeile (Produktfotos und Filter) bleibt stabil.
+- Bildverwaltung: Solange eine Galerie als Ablageziel markiert ist (Ziehen, Auswahl in der Galerie oder Kopieren/Verschieben gewählt), liegt der blaue Rahmen im selben 2-px-Streifen am Rand wie der goldene Ring des Hauptbilds und überdeckt ihn dort. Nur Anzeige, nur solange die Markierung steht.
 
 ## Bekannt: 429 und Wiederholung
 

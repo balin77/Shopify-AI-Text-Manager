@@ -80,7 +80,26 @@ describe("closed preview: exactly one row", () => {
     const phoneGap = Number(phoneBlock.match(/\.im-grid-frame\s*\{[^}]*gap:\s*(\d+)px/)![1]);
     expect(phoneGap).toBe(4);
     expect(grid).toMatch(/gap:\s*8,/);
-    expect(2 + phoneGap).toBeGreaterThan(4 - 2 + 1);
+    // the clip ends 2px below the tile's bottom padding edge; any gap >= 4px keeps row 2 outside it
+    expect(phoneGap).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("product gallery header: title and filter are one stable line", () => {
+  const head = manager.slice(manager.indexOf('className="im-head"'), manager.indexOf("<Collapsible open={productGalleryShown}"));
+  const left = head.slice(head.indexOf('className="im-head-left"'), head.indexOf('className="im-head-right"'));
+  it("toggle (title, count, chevron) and filter sit in the same left group", () => {
+    expect(left).toContain("data-im-product-toggle");
+    expect(left).toContain("data-im-filter");
+  });
+  it("the slider and the WebP button are in the right group, not the left", () => {
+    const right = head.slice(head.indexOf('className="im-head-right"'));
+    expect(right).toContain('type="range"');
+    expect(left).not.toContain('type="range"');
+  });
+  it("the left group never wraps; on phones the right group takes its own row", () => {
+    expect(rule(".im-head-left")).toMatch(/flex-wrap:\s*nowrap/);
+    expect(phoneBlock).toMatch(/\.im-head-right\s*\{[^}]*flex:\s*1 1 100%/);
   });
 });
 

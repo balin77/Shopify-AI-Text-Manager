@@ -636,7 +636,7 @@ export function SortableImageGrid({
     gridTemplateColumns: `repeat(auto-fill, ${thumbSize}px)`,
     gap: 8,
     minHeight: 48,
-    // 2px of padding is room for a tile's outward 2px ring (main image / selection) and for the
+    // 2px of padding is room for the main image's outward 2px ring (a selection is an inner border) and for the
     // drop ring (::after, inset 0), so neither is clipped by the gallery's overflow wrapper and
     // the drop ring never covers a tile. justify-content (safe center) is in responsive.css.
     padding: 2,
