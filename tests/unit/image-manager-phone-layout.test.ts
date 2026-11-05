@@ -23,32 +23,58 @@ function rule(selector: string, from = 0): string {
   return css.slice(i, css.indexOf("}", i));
 }
 const phoneBlock = (() => {
-  const i = css.indexOf("/* Image manager, phones: no frame");
+  const i = css.indexOf("/* Image manager, phones: tighter gallery spacing");
   const j = css.indexOf("@media (max-width: 768px) {", i);
   return css.slice(j, css.indexOf("/* Image manager: the selection bar", j));
 })();
 
-describe("phone: the gallery has no frame that takes layout space", () => {
-  it("frame has no border and no padding, the drop feedback is an overlay ring", () => {
-    const frame = rule(".im-grid-frame", css.indexOf("@media (max-width: 768px) {", css.indexOf("/* Image manager, phones: no frame")));
-    expect(frame).toMatch(/padding:\s*0\s*!important/);
-    expect(frame).toMatch(/border:\s*0\s*!important/);
-    // an ::after ring ABOVE the tiles (an inset box-shadow on the frame is hidden under flush tiles,
-    // an outline is clipped by the gallery's overflow wrapper): no pointer events, no layout space
-    const ring = phoneBlock.match(/\.im-grid-frame\[data-drop-target="true"\]::after\s*\{([^}]*)\}/)![1];
+describe("galleries: a centred grid with no frame, on every width", () => {
+  const containerStyle = grid.slice(grid.indexOf("const containerStyle"), grid.indexOf("const inner = ("));
+  it("the grid is a centred auto-fill grid of tile-wide columns with no border and no padding", () => {
+    expect(containerStyle).toMatch(/display:\s*"grid"/);
+    expect(containerStyle).toMatch(/gridTemplateColumns:\s*`repeat\(auto-fill, \$\{thumbSize\}px\)`/);
+    expect(containerStyle).toMatch(/justifyContent:\s*"center"/);
+    expect(containerStyle).not.toMatch(/\bborder:|\bpadding:|flexWrap|isDropTarget/);
+  });
+  it("the drop feedback is an ::after ring above the tiles (global, not phone-only), no outline", () => {
+    const ring = css.match(/\.im-grid-frame\[data-drop-target="true"\]::after\s*\{([^}]*)\}/)![1];
     expect(ring).toMatch(/position:\s*absolute/);
     expect(ring).toMatch(/inset:\s*0/);
     expect(ring).toMatch(/pointer-events:\s*none/);
     expect(ring).toMatch(/box-shadow:\s*inset 0 0 0 2px/);
     expect(ring).toMatch(/z-index:\s*1;/);
-    expect(phoneBlock).toMatch(/\.im-grid-frame\s*\{\s*position:\s*relative/);
-    expect(phoneBlock).not.toMatch(/outline(-offset)?:/);
+    expect(css).toMatch(/\.im-grid-frame\s*\{\s*position:\s*relative/);
+    expect(phoneBlock).not.toMatch(/outline(-offset)?:|data-drop-target/);
+  });
+  it("the phone frame keeps only gap, radius and the 4px bleed", () => {
+    const frame = phoneBlock.match(/\.im-grid-frame\s*\{([^}]*)\}/)![1];
+    expect(frame).not.toMatch(/border:|padding:/);
+    expect(frame).toMatch(/gap:\s*4px/);
   });
   it("the grid marks its frame while something can be dropped on it", () => {
     expect(grid.match(/data-drop-target=\{isDropTarget \? "true" : undefined\}/g)?.length).toBe(2);
   });
+  it("the empty-gallery text spans every column", () => {
+    expect(grid).toMatch(/gridColumn:\s*"1 \/ -1"/);
+  });
   it("the page gutter is halved only while the full view is open", () => {
     expect(phoneBlock).toMatch(/\.unified-content-editor-layout:has\(\.unified-editor-container\.im-full\)\s*\{[^}]*padding-inline:\s*8px/);
+  });
+});
+
+describe("closed preview: exactly one row", () => {
+  const preview = manager.slice(manager.indexOf("// Preview: exactly ONE row"), manager.indexOf("onClick={fullView ? undefined : openFullView}"));
+  it("is clipped to one tile plus the 2px ring room above and below, border-box", () => {
+    expect(preview).toMatch(/maxHeight:\s*thumbSize \+ 4/);
+    expect(preview).toMatch(/padding:\s*2/);
+    expect(preview).toMatch(/boxSizing:\s*"border-box"/);
+    expect(preview).toMatch(/overflow:\s*"hidden"/);
+  });
+  it("the smallest row gap is larger than the ring room, so a second row never shows", () => {
+    // clip = tile + 2 + 2; the next row starts 2 (padding) + tile + gap below the top
+    const gaps = [...css.matchAll(/\.im-grid-frame\s*\{[^}]*gap:\s*(\d+)px/g)].map((m) => Number(m[1]));
+    expect(Math.min(...gaps, 8)).toBeGreaterThanOrEqual(4);
+    expect(grid).toMatch(/gap:\s*8/);
   });
 });
 

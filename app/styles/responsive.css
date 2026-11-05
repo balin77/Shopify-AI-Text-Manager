@@ -1903,18 +1903,32 @@ a:focus:not(:focus-visible) {
   }
 }
 
-/* Image manager, phones: no frame around a gallery. The dashed border + padding sat inside three
-   more padded cards, so fewer than 4 tiles fitted per row at the default thumb size. The frame
-   keeps no layout space (no border, no padding). While something can be dropped on it, a ring is
-   drawn by an ::after overlay ABOVE the tiles (absolute, inset 0, pointer-events none, so drops
-   and drags pass through) plus the inline tint; it is not an outline and not a border, so it
-   takes no space and is not clipped. The gallery bleeds into the card's 4px padding, and the page
-   gutter is halved while the full view is open. Desktop is unchanged. */
+/* Image manager galleries: a centred grid with no frame (see SortableImageGrid). While something can
+   be dropped on a gallery, a tint plus a 2px ring drawn by an ::after overlay ABOVE the tiles marks
+   it; the overlay takes no layout space, is not clipped by the gallery's overflow wrapper and lets
+   pointer events through to the tiles. Same on phones and desktop. */
+.im-grid-frame {
+  position: relative;
+}
+.im-grid-frame[data-drop-target="true"] {
+  background: rgba(0, 91, 211, 0.04);
+}
+.im-grid-frame[data-drop-target="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 2px #005bd3;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Image manager, phones: tighter gallery spacing. The grid itself has no frame on any width (see
+   above); here the gap is 4px, the gallery bleeds into the card's 4px padding, and the page gutter
+   is halved while the full view is open, so 4 tiles of 80px fit at 360px and up. */
 @media (max-width: 768px) {
   .im-grid-frame {
-    padding: 0 !important;
     gap: 4px !important;
-    border: 0 !important;
     border-radius: 0 !important;
     margin-inline: -4px;
   }
@@ -1923,18 +1937,6 @@ a:focus:not(:focus-visible) {
   }
   .im-grid-bleed .im-grid-frame {
     margin-inline: 0;
-  }
-  .im-grid-frame {
-    position: relative;
-  }
-  .im-grid-frame[data-drop-target="true"]::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    box-shadow: inset 0 0 0 2px #005bd3;
-    pointer-events: none;
-    z-index: 1;
   }
   .unified-content-editor-layout:has(.unified-editor-container.im-full) {
     padding-inline: 8px !important;

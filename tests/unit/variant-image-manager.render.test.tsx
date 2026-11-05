@@ -1125,7 +1125,7 @@ describe("round 3, point 3: the manager is a switch between a product-image prev
     expect(screen.queryByText("Back to the product")).toBeNull();
     // the product preview is clipped to one row and not operable
     const clip = screen.getByTestId("grid-product").parentElement!.parentElement as HTMLElement;
-    expect(clip.style.maxHeight).toBe("104px");
+    expect(clip.style.maxHeight).toBe("84px");
   });
 
   it("\"Show all\" opens the full view: variant galleries and controls are shown, the product row is unclipped", async () => {

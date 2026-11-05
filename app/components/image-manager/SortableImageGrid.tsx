@@ -627,16 +627,17 @@ export function SortableImageGrid({
     }
   }
 
+  // A CSS grid of fixed tile-wide columns, centred as a block: the leftover space is split evenly
+  // left and right, tiles keep reading order and the last row stays under the first column. There
+  // is NO border or padding (a frame took layout space and the leftover sat on the right only);
+  // the drop feedback is the ::after ring in responsive.css (data-drop-target).
   const containerStyle: React.CSSProperties = {
-    display: "flex",
-    flexWrap: "wrap",
+    display: "grid",
+    gridTemplateColumns: `repeat(auto-fill, ${thumbSize}px)`,
+    justifyContent: "center",
     gap: 8,
     minHeight: 48,
-    padding: 8,
     borderRadius: 8,
-    border: isDropTarget ? "2px dashed #005bd3" : "2px dashed #e1e3e5",
-    background: isDropTarget ? "rgba(0, 91, 211, 0.04)" : "transparent",
-    transition: "border-color 0.2s, background 0.2s",
   };
 
   const inner = (
@@ -677,7 +678,7 @@ export function SortableImageGrid({
 
       <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
         {imageUrls.length === 0 && !showPlaceholder && (
-          <div style={{ color: "#8c9196", fontSize: 13, padding: "8px 4px" }}>
+          <div style={{ color: "#8c9196", fontSize: 13, padding: "8px 4px", gridColumn: "1 / -1" }}>
             {t.imageManager.noImages}
           </div>
         )}
