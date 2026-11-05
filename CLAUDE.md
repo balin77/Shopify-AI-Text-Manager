@@ -229,11 +229,11 @@ button of its own.**
   enlarges every `[role="button"]` — which put 12px/16px around the picture, so
   the ALT/WebP badges (absolute, anchored to the padded box) landed outside the
   image and each tile grew so wide that one fitted per row. Such an element
-  carries `className="app-media-tile"`, which the three `[role="button"]` touch
-  selectors exclude (`:not(.app-media-tile)`); real `<button>`/Polaris buttons
+  carries `className="app-touch-exempt"`, which the three `[role="button"]` touch
+  selectors exclude (`:not(.app-touch-exempt)`); real `<button>`/Polaris buttons
   are untouched. Current carriers: both layers of the `SortableImageGrid` tile,
   the `FilePickerModal` tile and `ReplacedMediaBadge` (a 20px corner symbol that
-  deliberately keeps its size). [media-tile-touch-target.test.ts](tests/unit/media-tile-touch-target.test.ts)
+  deliberately keeps its size). [touch-exempt-tiles.test.ts](tests/unit/media-tile-touch-target.test.ts)
   guards it; a new tile with `role="button"` needs the class.
 - **A single-line text field WRAPS and grows; typing or pasting never adds a
   line break.** A one-line `<input>` hid a long title, SEO title or handle past

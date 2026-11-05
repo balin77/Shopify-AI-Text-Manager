@@ -1307,8 +1307,10 @@ html {
     width: 100% !important;
   }
 
-  /* Force images to scale down */
-  img {
+  /* Force images to scale down. Images inside a media tile keep their own
+     inline size (square thumbSize + object-fit: cover); height:auto !important
+     made a non-square picture render at its natural ratio (ragged grid). */
+  img:not(.app-touch-exempt img) {
     max-width: 100% !important;
     height: auto !important;
   }
@@ -1317,10 +1319,10 @@ html {
   /* Ensure all buttons meet minimum touch target size. A media TILE carries
      role="button" only for select/drag semantics and is sized by its image
      (thumbSize); padding would push its absolutely positioned badges outside
-     the picture. Tiles opt out with .app-media-tile (see CLAUDE.md, Field chrome). */
+     the picture. Tiles opt out with .app-touch-exempt (see CLAUDE.md, Field chrome). */
   button:not(.help-tooltip-trigger),
   .Polaris-Button,
-  [role="button"]:not(.help-tooltip-trigger):not(.app-media-tile) {
+  [role="button"]:not(.help-tooltip-trigger):not(.app-touch-exempt) {
     min-height: var(--touch-target-min);
     min-width: var(--touch-target-min);
     padding: 12px 16px;
@@ -1644,6 +1646,15 @@ html {
   }
 }
 
+/* The replaced-media badge stays a 20px symbol but gets a 28px invisible hit
+   area (touch-target minimum without swallowing the tile's own selection). */
+.app-media-badge-hit::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+}
+
 /* Touch Device Optimizations (regardless of screen size) */
 @media (hover: none) and (pointer: coarse) {
   /* This targets touch devices specifically */
@@ -1651,7 +1662,7 @@ html {
   /* Increase all interactive element sizes */
   button:not(.help-tooltip-trigger),
   a,
-  [role="button"]:not(.help-tooltip-trigger):not(.app-media-tile),
+  [role="button"]:not(.help-tooltip-trigger):not(.app-touch-exempt),
   [role="link"] {
     min-height: var(--touch-target-min);
     min-width: var(--touch-target-min);
@@ -1679,7 +1690,7 @@ html {
 
   /* Add active/pressed states for better touch feedback */
   button:active,
-  [role="button"]:not(.app-media-tile):active {
+  [role="button"]:not(.app-touch-exempt):active {
     transform: scale(0.97);
     transition: transform 100ms ease-out;
   }

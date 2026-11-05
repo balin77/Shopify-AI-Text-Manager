@@ -197,11 +197,11 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
         userSelect: "none",
       }}
       {...attributes}
-      className="app-media-tile"
+      className="app-touch-exempt"
     >
       <div
         {...listeners}
-        className="app-media-tile"
+        className="app-touch-exempt"
         style={{ cursor: "grab" }}
         onClick={(e) => { e.stopPropagation(); onSelect(!isSelected); }}
         // R4-UX5: this is a selectable/deletable/draggable item whose

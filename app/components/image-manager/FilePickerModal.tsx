@@ -624,7 +624,7 @@ export function FilePickerModal({
       <div
         key={item.id}
         onClick={() => toggleSelected(item.id)}
-        className="app-media-tile"
+        className="app-touch-exempt"
         role="button"
         aria-pressed={isSelected}
         tabIndex={0}
