@@ -1835,9 +1835,21 @@ a:focus:not(:focus-visible) {
   align-items: center;
   min-width: 0;
 }
+/* "Alle" is short and never truncates; only the long label gives way. */
+.im-filter-item:first-child {
+  flex-shrink: 0;
+}
 .im-filter-sep {
   color: #8c9196;
   padding: 0 4px;
+}
+/* No auto min-width: in a narrow desktop column the label truncates instead of the filter being
+   clipped. The touch rule (button { min-width: var(--touch-target-min) }, higher specificity)
+   still gives every filter button its 44px hit area on phones and touch tablets. */
+.im-filter-btn {
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
 }
 .im-filter-label {
   display: block;
@@ -1910,9 +1922,11 @@ a:focus:not(:focus-visible) {
   .im-grid-bleed .im-grid-frame {
     margin-inline: 0;
   }
+  /* An INSET shadow, not an outline (which would be clipped by the product gallery's
+     overflow wrapper); it is painted under the tiles, so it never covers a tile's selection or
+     main-image border. Neither takes layout space. */
   .im-grid-frame[data-drop-target="true"] {
-    outline: 2px dashed #005bd3;
-    outline-offset: -2px;
+    box-shadow: inset 0 0 0 2px #005bd3;
   }
   .unified-content-editor-layout:has(.unified-editor-container.im-full) {
     padding-inline: 8px !important;
@@ -1923,8 +1937,6 @@ a:focus:not(:focus-visible) {
   }
   .im-filter-btn {
     font-size: 12px !important;
-    min-width: 0 !important;
-    max-width: 100%;
   }
   .im-filter {
     gap: 10px;

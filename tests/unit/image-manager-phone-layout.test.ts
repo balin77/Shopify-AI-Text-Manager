@@ -1,8 +1,10 @@
 /**
  * Image manager, phone layout (owner, 2026-11): no frame around a gallery on phones, a header whose
  * title and filter share ONE no-wrap line, and a variant header that is ONE left-aligned line with
- * the SKU giving way first. Source-level guards: the real geometry is measured in a browser harness
- * (see the commit message); these keep the structure and the CSS contract from drifting.
+ * the SKU giving way first. Source-level guards: the real geometry was measured in a Chromium
+ * harness (real editor + image manager markup, Polaris and app CSS; figures in the hand-back of the
+ * change, not in the commit message); these keep the structure and the CSS contract from drifting.
+ * The filter's behaviour is covered by image-manager-filter.test.tsx.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -27,11 +29,14 @@ const phoneBlock = (() => {
 })();
 
 describe("phone: the gallery has no frame that takes layout space", () => {
-  it("frame has no border and no padding, the drop feedback is an outline", () => {
+  it("frame has no border and no padding, the drop feedback is an inset shadow", () => {
     const frame = rule(".im-grid-frame", css.indexOf("@media (max-width: 768px) {", css.indexOf("/* Image manager, phones: no frame")));
     expect(frame).toMatch(/padding:\s*0\s*!important/);
     expect(frame).toMatch(/border:\s*0\s*!important/);
-    expect(phoneBlock).toMatch(/\.im-grid-frame\[data-drop-target="true"\]\s*\{[^}]*outline:\s*2px dashed/);
+    // an INSET shadow: an outline is clipped by the product gallery's overflow wrapper and an
+    // outline-offset overlaps edge tiles' selection / main-image borders
+    expect(phoneBlock).toMatch(/\.im-grid-frame\[data-drop-target="true"\]\s*\{[^}]*box-shadow:\s*inset 0 0 0 2px/);
+    expect(phoneBlock).not.toMatch(/outline(-offset)?:/);
   });
   it("the grid marks its frame while something can be dropped on it", () => {
     expect(grid.match(/data-drop-target=\{isDropTarget \? "true" : undefined\}/g)?.length).toBe(2);
@@ -56,6 +61,26 @@ describe("product gallery header: title and filter are one stable line", () => {
   it("the left group never wraps; on phones the right group takes its own row", () => {
     expect(rule(".im-head-left")).toMatch(/flex-wrap:\s*nowrap/);
     expect(phoneBlock).toMatch(/\.im-head-right\s*\{[^}]*flex:\s*1 1 100%/);
+  });
+});
+
+describe("filter buttons keep their touch target and still truncate", () => {
+  it("the base rule lets the label truncate (min-width 0) without !important, the phone block adds no min-width", () => {
+    const base = rule(".im-filter-btn");
+    expect(base).toMatch(/min-width:\s*0;/);
+    expect(base).not.toMatch(/!important/);
+    const phoneBtn = phoneBlock.match(/\.im-filter-btn\s*\{([^}]*)\}/)![1];
+    expect(phoneBtn).not.toMatch(/min-width/);
+  });
+  it("the touch rule that gives buttons 44px is more specific than .im-filter-btn", () => {
+    expect(css).toMatch(/button:not\(\.help-tooltip-trigger\),[^{]*\{[^}]*min-width:\s*var\(--touch-target-min\)/);
+  });
+  it("the buttons carry no redundant title (the text is visible)", () => {
+    const btn = manager.slice(manager.indexOf('className="im-filter-btn"'), manager.indexOf('className="im-filter-label"'));
+    expect(btn).not.toMatch(/\btitle=/);
+  });
+  it("the bleed and the card padding are cross-referenced", () => {
+    expect(manager).toMatch(/im-grid-bleed[\s\S]{0,80}Card padding|bleeds the galleries into exactly this padding/);
   });
 });
 

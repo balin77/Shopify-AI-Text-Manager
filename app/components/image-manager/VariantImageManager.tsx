@@ -4438,6 +4438,8 @@ export function VariantImageManager({
       onDragCancel={handleSharedDragCancel}
     >
     <div ref={managerRootRef} data-im-view={fullView ? "full" : "preview"}>
+    {/* xs "100" = 4px: the phone CSS (.im-grid-bleed / .im-grid-frame margin-inline: -4px in
+        responsive.css) bleeds the galleries into exactly this padding; change both together. */}
     <Card padding={fullView ? { xs: "100", sm: "400" } : "400"}>
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center">
@@ -4512,7 +4514,6 @@ export function VariantImageManager({
                       type="button"
                       className="im-filter-btn"
                       aria-pressed={active}
-                      title={label}
                       onClick={() => setShowAll(mode === "all")}
                       style={{
                         background: "none",
