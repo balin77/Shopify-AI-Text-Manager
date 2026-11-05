@@ -75,6 +75,9 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Andere fehlgeschlagene Galerie-Speicherungen ohne eigenen Fehlercode zeigen weiterhin die englische Fehlerliste (vorbestehend).
 - Auswahlleiste (Bildverwaltung): Die Schaltflächen «Aus der Variante entfernen» mehrerer Varianten stehen visuell in Variantenreihenfolge (CSS `order`), im DOM und damit in der Tab-Reihenfolge aber in der Reihenfolge, in der die Galerien ihre Auswahl bekamen. Nur die Tab-Reihenfolge weicht ab; bedienbar bleibt alles.
 - Auswahlleiste (Bildverwaltung): Die Leiste wirkt auch auf ein ausgewähltes Bild in einer ZUGEKLAPPTEN Galerie (Alt-Text, Ersetzen, «Übersetzen» speichert sofort). Ein kleines Vorschaubild des Zielbilds in der Leiste zeigt, welches Bild gemeint ist; die Galerie wird dafür nicht aufgeklappt (anders als beim Löschen und der WebP-Umwandlung, die zuerst aufklappen).
+- Auswahlleiste (Bildverwaltung): Das kleine Vorschaubild in der Leiste (`SelectedThumb`) bleibt leer bei einem Produktvideo und bei einem 3D-Modell ohne Vorschaubild. Nur Anzeige; die Aktionen wirken richtig. Behebung günstig (Poster oder Platzhalter-Symbol).
+- Auswahlleiste (Bildverwaltung): Die Beschriftung des WebP-Knopfs (Anzahl der Bilder) ändert sich, nachdem ein Klick die zugeklappte Produktgalerie erst aufgeklappt hat, weil die Auswahl dort erst dann mitzählt. Wirkt kurz verwirrend, nichts wird falsch umgewandelt.
+- Auswahlleiste (Bildverwaltung): Ob die am unteren Rand klebende Leiste im echten Shopify-Admin auf dem Handy über der Navigationsleiste der Shopify-App sichtbar bleibt, ist nicht gemessen (nur im eigenen Testaufbau mit Chromium geprüft).
 
 ## Bekannt: 429 und Wiederholung
 
