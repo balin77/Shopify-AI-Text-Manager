@@ -1801,15 +1801,23 @@ a:focus:not(:focus-visible) {
 
 
 /* Image manager, header of the product gallery: title + count + chevron and the Alle / Nicht
-   zugewiesen filter are ONE no-wrap line (left group); the photo-size slider and the WebP button
-   are the right group. On a phone the right group always takes its own row below, so the header
-   has the same two rows for 0, 3 or 153 photos and for either filter state. */
+   zugewiesen filter are ONE no-wrap line, so the header is the same row for 0, 3 or 153 photos and
+   for either filter state. The slider / WebP button live in .im-tools above it. */
 .im-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   column-gap: 0;
+}
+/* Same left edge as the "Varianten-Galerien" heading and the manager title: on a touch device the
+   rule `.Polaris-InlineStack > * { margin: 4px }` (touch block above) pushes those headings in by
+   4px, so the product header takes the same 4px. Fine pointers have no such margin (equal already). */
+@media (hover: none) and (pointer: coarse) {
+  .im-head,
+  .im-tools {
+    padding-inline-start: 4px;
+  }
 }
 .im-head-left {
   display: flex;
@@ -1818,11 +1826,14 @@ a:focus:not(:focus-visible) {
   gap: 8px;
   min-width: 0;
 }
-.im-head-right {
+/* The size slider (and the WebP button) sit on their own row ABOVE the product header: the slider
+   first, so it never moves; the button follows and wraps below it on a narrow phone. */
+.im-tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  gap: 8px 16px;
+  margin-bottom: 4px;
 }
 .im-filter {
   display: flex;
@@ -1942,10 +1953,6 @@ a:focus:not(:focus-visible) {
   }
   .unified-content-editor-layout:has(.unified-editor-container.im-full) {
     padding-inline: 8px !important;
-  }
-  .im-head-right {
-    flex: 1 1 100%;
-    justify-content: flex-start;
   }
   .im-filter-btn {
     font-size: 12px !important;

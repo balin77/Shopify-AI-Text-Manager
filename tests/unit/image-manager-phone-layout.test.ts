@@ -85,21 +85,39 @@ describe("closed preview: exactly one row", () => {
   });
 });
 
-describe("product gallery header: title and filter are one stable line", () => {
-  const head = manager.slice(manager.indexOf('className="im-head"'), manager.indexOf("<Collapsible open={productGalleryShown}"));
-  const left = head.slice(head.indexOf('className="im-head-left"'), head.indexOf('className="im-head-right"'));
-  it("toggle (title, count, chevron) and filter sit in the same left group", () => {
+describe("product gallery header: title and filter are one stable line, the slider sits above", () => {
+  const full = manager.slice(manager.indexOf('className="im-tools"'), manager.indexOf("<Collapsible open={productGalleryShown}"));
+  const toolsAt = full.indexOf('className="im-tools"');
+  const headAt = full.indexOf('className="im-head"');
+  const tools = full.slice(toolsAt, headAt);
+  const head = full.slice(headAt);
+  const left = head.slice(head.indexOf('className="im-head-left"'));
+  it("toggle (title, count, chevron) and filter sit in the same left group of the header", () => {
     expect(left).toContain("data-im-product-toggle");
     expect(left).toContain("data-im-filter");
   });
-  it("the slider and the WebP button are in the right group, not the left", () => {
-    const right = head.slice(head.indexOf('className="im-head-right"'));
-    expect(right).toContain('type="range"');
-    expect(left).not.toContain('type="range"');
+  it("the slider and the WebP button are in the tools row, which comes BEFORE the header (slider first)", () => {
+    expect(toolsAt).toBeGreaterThanOrEqual(0);
+    expect(toolsAt).toBeLessThan(headAt);
+    expect(tools).toContain('type="range"');
+    expect(tools.indexOf('type="range"')).toBeLessThan(tools.indexOf("webpConvertButton"));
+    expect(head).not.toContain('type="range"');
+    expect(head).not.toContain("webpConvertButton");
   });
-  it("the left group never wraps; on phones the right group takes its own row", () => {
+  it("the tools row stays in the full-view block only (the closed preview has no slider)", () => {
+    const wrapper = manager.slice(manager.lastIndexOf("fullView ? undefined : { display: \"none\" }", manager.indexOf('className="im-tools"')), manager.indexOf('className="im-tools"'));
+    expect(wrapper).toContain('fullView ? undefined : { display: "none" }');
+  });
+  it("the header never wraps its left group", () => {
     expect(rule(".im-head-left")).toMatch(/flex-wrap:\s*nowrap/);
-    expect(phoneBlock).toMatch(/\.im-head-right\s*\{[^}]*flex:\s*1 1 100%/);
+    expect(css).not.toMatch(/\.im-head-right/);
+  });
+  it("the tools row wraps (the WebP button drops below the slider on a narrow phone), never the slider", () => {
+    expect(css).toMatch(/\n\.im-tools\s*\{[^}]*flex-wrap:\s*wrap/);
+  });
+  it("on touch devices header and tools take the 4px the headings carry, so all share one left edge", () => {
+    expect(css).toMatch(/@media \(hover: none\) and \(pointer: coarse\) \{\s*\.im-head,\s*\.im-tools\s*\{\s*padding-inline-start:\s*4px;/);
+    expect(css).toMatch(/\.Polaris-InlineStack > \*\s*\{\s*margin:\s*4px;/);
   });
 });
 

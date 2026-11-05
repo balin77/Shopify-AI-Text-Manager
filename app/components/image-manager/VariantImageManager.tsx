@@ -4484,6 +4484,60 @@ export function VariantImageManager({
             collapsed product gallery can still be dragged over (auto-expands) and dropped on. */}
         <div ref={setProductDropRef}>
         <div style={fullView ? undefined : { display: "none" }}>
+        {/* Size slider (controls the product AND every variant gallery) + WebP button: ABOVE the
+            "Produktfotos" row, below the manager title. The slider is first and never moves; the WebP
+            button (present only while something can be converted) follows it and wraps below on a
+            narrow phone. Only in the full view (the closed preview has none, as before). */}
+        <div className="im-tools" data-im-tools>
+          <input
+            type="range"
+            min={80}
+            max={200}
+            step={10}
+            value={thumbSize}
+            onChange={(e) => {
+              const val = Number(e.target.value);
+              setThumbSize(val);
+              if (thumbSaveTimer.current) clearTimeout(thumbSaveTimer.current);
+              thumbSaveTimer.current = setTimeout(() => {
+                appFetch("/api/image-manager-settings", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ thumbSize: val }),
+                }).catch(() => {});
+              }, 600);
+            }}
+            style={{ width: 80, cursor: "pointer", accentColor: "#005bd3" }}
+            aria-label={t.imageManager.thumbSizeLabel}
+          />
+          {(imagesToConvert.length > 0 || isConvertingWebP) && (
+            <InlineStack gap="200" blockAlign="center">
+              {webpAllowed ? (
+                <Button size="slim" onClick={() => {
+                  // Folded product gallery: the images are not on screen, so the first click only
+                  // unfolds it (nothing is converted unseen); the merchant converts with a second click.
+                  if (fullView && !productGalleryOpen) {
+                    setProductGalleryUi({ productId, open: true });
+                    showInfoBox(String(t.imageManager?.convertUnfolded ?? "The product gallery was folded: it is open now. Check the images, then convert."), "info");
+                    return;
+                  }
+                  handleConvertToWebP(imagesToConvert);
+                }} disabled={isConvertingWebP}>
+                  {isConvertingWebP
+                    ? t.imageManager.webpConverting
+                    : t.imageManager.webpConvertButton.replace("{count}", String(imagesToConvert.length)) + webpFormatBreakdown}
+                </Button>
+              ) : (
+                <Tooltip content={webpPlanNote} dismissOnMouseOut>
+                  <Button size="slim" disabled>
+                    {t.imageManager.webpConvertButton.replace("{count}", String(imagesToConvert.length)) + webpFormatBreakdown}
+                  </Button>
+                </Tooltip>
+              )}
+              {isConvertingWebP && <Spinner size="small" />}
+            </InlineStack>
+          )}
+        </div>
         <div className="im-head" data-im-head>
         <div className="im-head-left">
           <button
@@ -4536,56 +4590,6 @@ export function VariantImageManager({
           ) : (
             <Text as="span" variant="headingSm" tone="subdued">{t.imageManager.general}</Text>
           )}
-        </div>
-        <div className="im-head-right">
-          {(imagesToConvert.length > 0 || isConvertingWebP) && (
-            <InlineStack gap="200" blockAlign="center">
-              {webpAllowed ? (
-                <Button size="slim" onClick={() => {
-                  // Folded product gallery: the images are not on screen, so the first click only
-                  // unfolds it (nothing is converted unseen); the merchant converts with a second click.
-                  if (fullView && !productGalleryOpen) {
-                    setProductGalleryUi({ productId, open: true });
-                    showInfoBox(String(t.imageManager?.convertUnfolded ?? "The product gallery was folded: it is open now. Check the images, then convert."), "info");
-                    return;
-                  }
-                  handleConvertToWebP(imagesToConvert);
-                }} disabled={isConvertingWebP}>
-                  {isConvertingWebP
-                    ? t.imageManager.webpConverting
-                    : t.imageManager.webpConvertButton.replace("{count}", String(imagesToConvert.length)) + webpFormatBreakdown}
-                </Button>
-              ) : (
-                <Tooltip content={webpPlanNote} dismissOnMouseOut>
-                  <Button size="slim" disabled>
-                    {t.imageManager.webpConvertButton.replace("{count}", String(imagesToConvert.length)) + webpFormatBreakdown}
-                  </Button>
-                </Tooltip>
-              )}
-              {isConvertingWebP && <Spinner size="small" />}
-            </InlineStack>
-          )}
-          <input
-            type="range"
-            min={80}
-            max={200}
-            step={10}
-            value={thumbSize}
-            onChange={(e) => {
-              const val = Number(e.target.value);
-              setThumbSize(val);
-              if (thumbSaveTimer.current) clearTimeout(thumbSaveTimer.current);
-              thumbSaveTimer.current = setTimeout(() => {
-                appFetch("/api/image-manager-settings", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ thumbSize: val }),
-                }).catch(() => {});
-              }, 600);
-            }}
-            style={{ width: 80, cursor: "pointer", accentColor: "#005bd3" }}
-            aria-label={t.imageManager.thumbSizeLabel}
-          />
         </div>
         </div>
         </div>
