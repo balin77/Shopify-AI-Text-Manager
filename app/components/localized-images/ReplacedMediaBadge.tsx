@@ -64,6 +64,7 @@ export function ReplacedMediaBadge({
   };
   return (
     <span
+      className="app-media-tile"
       role={interactive ? "button" : "img"}
       aria-label={label}
       aria-pressed={interactive ? showingOriginal : undefined}

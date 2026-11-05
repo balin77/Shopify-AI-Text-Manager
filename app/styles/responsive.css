@@ -1314,10 +1314,13 @@ html {
   }
 
 
-  /* Ensure all buttons meet minimum touch target size */
+  /* Ensure all buttons meet minimum touch target size. A media TILE carries
+     role="button" only for select/drag semantics and is sized by its image
+     (thumbSize); padding would push its absolutely positioned badges outside
+     the picture. Tiles opt out with .app-media-tile (see CLAUDE.md, Field chrome). */
   button:not(.help-tooltip-trigger),
   .Polaris-Button,
-  [role="button"]:not(.help-tooltip-trigger) {
+  [role="button"]:not(.help-tooltip-trigger):not(.app-media-tile) {
     min-height: var(--touch-target-min);
     min-width: var(--touch-target-min);
     padding: 12px 16px;
@@ -1648,7 +1651,7 @@ html {
   /* Increase all interactive element sizes */
   button:not(.help-tooltip-trigger),
   a,
-  [role="button"]:not(.help-tooltip-trigger),
+  [role="button"]:not(.help-tooltip-trigger):not(.app-media-tile),
   [role="link"] {
     min-height: var(--touch-target-min);
     min-width: var(--touch-target-min);
@@ -1676,7 +1679,7 @@ html {
 
   /* Add active/pressed states for better touch feedback */
   button:active,
-  [role="button"]:active {
+  [role="button"]:not(.app-media-tile):active {
     transform: scale(0.97);
     transition: transform 100ms ease-out;
   }
