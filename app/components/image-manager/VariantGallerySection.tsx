@@ -1,6 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Text, Button, InlineStack, Collapsible, Badge, Tooltip } from "@shopify/polaris";
+import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
 import { useDroppable } from "@dnd-kit/core";
 import { altFieldView } from "./alt-market-layer";
 import { useI18n } from "../../contexts/I18nContext";
@@ -96,6 +96,10 @@ interface VariantGallerySectionProps {
   /** False when more than one tile is selected in the whole manager: the alt editor and the
    *  replace buttons belong to ONE selected image (default true). */
   soleSelection?: boolean;
+  /** Reports this gallery's open state (a selection in a folded gallery is hidden). */
+  onOpenChange?: (variantId: string, open: boolean) => void;
+  /** The variant's position: orders several "Remove (n)" buttons in the bar. */
+  order?: number;
 }
 
 export function VariantGallerySection({
@@ -150,6 +154,8 @@ export function VariantGallerySection({
   productMediaIds,
   slots,
   soleSelection = true,
+  onOpenChange,
+  order = 0,
 }: VariantGallerySectionProps) {
   const { t } = useI18n();
   // No foreign locale → alt-text translation is greyed out instead of hidden.
@@ -158,6 +164,10 @@ export function VariantGallerySection({
     : t.common?.requiresSecondLanguage;
   const [open, setOpen] = useState(false);
   const isOpen = open || forceOpen;
+  useEffect(() => {
+    onOpenChange?.(variant.id, open);
+    return () => onOpenChange?.(variant.id, false);
+  }, [open, variant.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const { setNodeRef: setDropRef } = useDroppable({ id: variant.id, disabled: !!dropDisabled });
   const effectiveExternalVideoUrls = externalVideoUrls ?? variant.externalVideoUrls ?? [];
   const effectiveThreeDModelUrls = threeDModelUrls ?? variant.threeDModelUrls ?? [];
@@ -409,6 +419,7 @@ export function VariantGallerySection({
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
             <AutoGrowTextarea
+              aria-label={t.imageManager.altTextForSelected}
               value={currentAltText}
               readOnly={altLocked}
               aria-readonly={altLocked || undefined}
@@ -590,7 +601,14 @@ export function VariantGallerySection({
       {slots !== undefined && (
         <>
           {into("replace", replaceButtons)}
-          {into("remove", removeButton ? <Tooltip content={variant.title}>{removeButton}</Tooltip> : null)}
+          {into("remove", removeButton ? (
+            <span style={{ order: 100 + order, display: "inline-flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+              <span style={{ maxWidth: 96, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <Text as="span" variant="bodySm" tone="subdued">{variant.title}</Text>
+              </span>
+              {removeButton}
+            </span>
+          ) : null)}
           {into("alt", altNode)}
         </>
       )}

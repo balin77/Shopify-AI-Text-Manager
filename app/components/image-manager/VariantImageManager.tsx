@@ -827,6 +827,20 @@ export function VariantImageManager({
   // remounting under new ids.
   const [productGalleryUi, setProductGalleryUi] = useState<{ productId: string; open: boolean }>({ productId, open: true });
   const productGalleryOpen = productGalleryUi.productId === productId ? productGalleryUi.open : true;
+  // Which variant galleries are open (reported by their sections): a selection in a folded one is hidden.
+  const [openVariantIds, setOpenVariantIds] = useState<ReadonlySet<string>>(() => new Set());
+  const reportVariantOpen = useCallback((variantId: string, isOpen: boolean) => {
+    setOpenVariantIds((prev) => {
+      if (prev.has(variantId) === isOpen) return prev;
+      const next = new Set(prev);
+      if (isOpen) next.add(variantId); else next.delete(variantId);
+      return next;
+    });
+  }, []);
+  // Every product change puts the product gallery back to open (also for a product seen before).
+  useEffect(() => { setProductGalleryUi({ productId, open: true }); }, [productId]);
+  // A delete confirmation belongs to the product it was opened on.
+  useEffect(() => { setDeleteConfirm(null); }, [productId]);
   // The selection bar's slots: a variant gallery section renders its alt editor / replace / remove
   // buttons into them (portals), so the bar hosts the existing UI instead of copying it.
   const [altSlotEl, setAltSlotEl] = useState<HTMLElement | null>(null);
@@ -2099,12 +2113,18 @@ export function VariantImageManager({
   // Notify parent of selected GIDs whenever selection or GID map changes
   useEffect(() => {
     if (!onGallerySelectionGidsChange) return;
+    // A selection inside a FOLDED gallery is kept but not on screen: it must not scope an action
+    // (the bulk alt text panel) the merchant cannot see the target of.
     const gids = [...selectedGalleryItems.keys()]
+      .filter(key => {
+        const galleryId = key.slice(0, key.indexOf("::"));
+        return galleryId === "product" ? productGalleryOpen : openVariantIds.has(galleryId);
+      })
       .map(key => key.slice(key.indexOf("::") + 2))
       .map(url => urlToGid[url])
       .filter((g): g is string => Boolean(g));
     onGallerySelectionGidsChange(gids);
-  }, [selectedGalleryItems, urlToGid, onGallerySelectionGidsChange]);
+  }, [selectedGalleryItems, urlToGid, onGallerySelectionGidsChange, productGalleryOpen, openVariantIds]);
 
   const makeSelectHandler = useCallback((sourceVariantId: string | null) =>
     (url: string, sel: boolean) => {
@@ -2275,6 +2295,14 @@ export function VariantImageManager({
       if (autoExpandTimerRef.current) clearTimeout(autoExpandTimerRef.current);
       autoExpandTimerRef.current = setTimeout(() => setAutoExpandId(containerId), 700);
     }
+  }, []);
+
+  const handleSharedDragCancel = useCallback(() => {
+    setActiveDragUrl(null);
+    setActiveDragSourceContainer(null);
+    setAutoExpandId(null);
+    currentOverContainerRef.current = null;
+    if (autoExpandTimerRef.current) { clearTimeout(autoExpandTimerRef.current); autoExpandTimerRef.current = null; }
   }, []);
 
   const handleSharedDragEnd = useCallback((event: DragEndEvent) => {
@@ -4403,6 +4431,7 @@ export function VariantImageManager({
       onDragStart={handleSharedDragStart}
       onDragOver={handleSharedDragOver}
       onDragEnd={handleSharedDragEnd}
+      onDragCancel={handleSharedDragCancel}
     >
     <div ref={managerRootRef} data-im-view={fullView ? "full" : "preview"}>
     <Card padding={fullView ? { xs: "100", sm: "400" } : "400"}>
@@ -4697,6 +4726,8 @@ export function VariantImageManager({
                 skipDndContext
                 forceOpen={autoExpandId === v.id}
                 slots={barSlots}
+                order={variants.indexOf(v)}
+                onOpenChange={reportVariantOpen}
                 soleSelection={selectedGalleryItems.size === 1}
                 externalVideoUrls={pendingExternalVideos[v.id] ?? v.externalVideoUrls ?? []}
                 onAddExternalVideoUrl={handleAddExternalVideoUrl}
@@ -4727,7 +4758,15 @@ export function VariantImageManager({
           alt editor / replace / remove buttons are rendered into the slots below by their own
           section (portals), so there is no second copy of any state or handler. */}
       {fullView && (selectedGalleryItems.size > 0 || deleteConfirm) && (
-        <div className="im-sel-bar" data-im-selection-bar role="region" aria-label={t.imageManager.selectionBar}>
+        <div
+          className="im-sel-bar"
+          data-im-selection-bar
+          role="region"
+          aria-label={t.imageManager.selectionBar}
+          // While a drag runs the bar must not cover tiles that are live drop targets: it is hidden
+          // (layout kept, so nothing jumps) and lets the pointer through.
+          style={activeDragUrl ? { visibility: "hidden", pointerEvents: "none" } : undefined}
+        >
         {deleteConfirm && (
           <div style={{
             padding: "10px 12px",
@@ -4816,6 +4855,8 @@ export function VariantImageManager({
                     const isMainImage = v.defaultImageUrl ? urlSetForCount.has(v.defaultImageUrl) : false;
                     return inGallery || isMainImage;
                   }).length;
+                  // The merchant must SEE what is about to be deleted: unfold the product gallery.
+                  setProductGalleryUi({ productId, open: true });
                   setDeleteConfirm({ urls: productSelectedUrls, affectedVariantCount });
                 }}
               >
@@ -4826,7 +4867,7 @@ export function VariantImageManager({
             )}
             {/* the variant galleries' "Remove (n)" buttons render here */}
             <span ref={setRemoveSlotEl} style={{ display: "contents" }} />
-            <span className="im-sel-iconbtn">
+            <span className="im-sel-iconbtn" style={{ order: 1000 }}>
             <Button
               size="slim"
               variant="plain"
@@ -4856,6 +4897,7 @@ export function VariantImageManager({
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
               <AutoGrowTextarea
+                aria-label={t.imageManager.altTextForSelected}
                 value={productCurrentAltText}
                 readOnly={productAltLocked}
                 aria-readonly={productAltLocked || undefined}

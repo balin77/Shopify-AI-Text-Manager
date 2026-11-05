@@ -1877,12 +1877,10 @@ a:focus:not(:focus-visible) {
   }
 }
 
-/* The product gallery's header toggle is a plain text-like button: the phone touch rule's padding and
-   minimum size would turn it into a grey box. */
+/* The product gallery's header toggle looks like text (no grey box) but keeps the touch target the
+   phone rule gives every button (min-height / min-width). */
 .im-product-toggle {
   padding: 4px 0 !important;
-  min-height: 0 !important;
-  min-width: 0 !important;
   background: none !important;
   border: none !important;
   box-shadow: none !important;

@@ -36,7 +36,7 @@ vi.mock("~/components/image-manager/FilePickerModal", () => ({
     return null;
   },
 }));
-const dnd: { onDragEnd?: (e: any) => void; onDragOver?: (e: any) => void } = {};
+const dnd: { onDragEnd?: (e: any) => void; onDragOver?: (e: any) => void; onDragStart?: (e: any) => void; onDragCancel?: () => void } = {};
 vi.mock("@dnd-kit/core", async (orig) => {
   const actual: any = await orig();
   return {
@@ -44,6 +44,8 @@ vi.mock("@dnd-kit/core", async (orig) => {
     DndContext: (p: any) => {
       dnd.onDragEnd = p.onDragEnd;
       dnd.onDragOver = p.onDragOver;
+      dnd.onDragStart = p.onDragStart;
+      dnd.onDragCancel = p.onDragCancel;
       return <>{p.children}</>;
     },
   };
@@ -183,7 +185,12 @@ beforeEach(() => {
   variantsAnswer = () => variantsPayload();
   saveAnswer = () => ({ success: true, deletedMediaIds: [] });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // The mock tells the manager's four fetchers apart by call order: a fifth useFetcher (or a removed
+  // one) shifts every role, so it must fail loudly here and not as a mysterious wrong-fetcher test.
+  expect(fetcherSeq % 4, "the manager must call useFetcher exactly 4 times per mount").toBe(0);
+});
 
 describe("opening a product", () => {
   it("writes and queues nothing: no pending state is emitted and nothing is posted", async () => {
@@ -1875,12 +1882,119 @@ describe("the sticky selection bar hosts the existing alt editor and selection a
     await waitFor(() => expect(bar()).toBeNull());
   });
 
+  it("the alt boxes in the bar have an accessible name (their label row is hidden on phones)", async () => {
+    await mount();
+    select("product", url(1));
+    expect(screen.getByRole("textbox", { name: "Alt text for selected image" })).toBeTruthy();
+    select("product", url(1), false);
+    select(V1, url(2));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Alt text for selected image" })).toBeTruthy());
+  });
+
   it("a selection survives collapsing its gallery: the bar and its alt box stay", async () => {
     await mount();
     select(V1, url(2));
     await waitFor(() => expect(altBoxes()).toHaveLength(1));
-    fireEvent.click(screen.getByText("Red"));
+    fireEvent.click(screen.getAllByText("Red").find((e) => e.closest("[aria-expanded]")) as HTMLElement);
     expect(altBoxes()).toHaveLength(1);
     expect(bar()).not.toBeNull();
+  });
+});
+
+describe("review fixes: folded galleries, drags, product switches", () => {
+  // the visible Remove label now repeats the variant title: the gallery HEADER is the one that is a toggle
+  const header = (title: string) => screen.getAllByText(title).find((e) => e.closest("[aria-expanded]")) as HTMLElement;
+  const bar = () => document.querySelector("[data-im-selection-bar]") as HTMLElement | null;
+  const toggle = () => document.querySelector("[data-im-product-toggle]") as HTMLElement;
+  const select = (container: string, u: string, on = true) => act(() => grids[container].onSelect(u, on));
+  const dragStart = () => act(() => { dnd.onDragStart?.({ active: { id: `product::${url(1)}`, data: { current: { url: url(1), containerId: "product" } } } }); });
+
+  it("M1: Delete unfolds a folded product gallery before the confirmation shows", async () => {
+    await mount();
+    select("product", url(1));
+    fireEvent.click(toggle());
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(within(bar()!).getByRole("button", { name: "Delete" }));
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "Yes, delete now" })).toBeTruthy();
+  });
+
+  it("M1: a selection in a folded gallery (product or variant) does not scope the bulk panel; unfolding brings it back", async () => {
+    const onGids = vi.fn();
+    await mount({ onGallerySelectionGidsChange: onGids });
+    select("product", url(1));
+    select(V1, url(2));
+    expect(onGids).toHaveBeenLastCalledWith(expect.arrayContaining([gid(1), gid(2)]));
+    fireEvent.click(toggle());
+    expect(onGids).toHaveBeenLastCalledWith([gid(2)]);
+    fireEvent.click(header("Red")); // fold V1
+    expect(onGids).toHaveBeenLastCalledWith([]);
+    fireEvent.click(toggle());
+    expect(onGids).toHaveBeenLastCalledWith([gid(1)]);
+    fireEvent.click(header("Red"));
+    expect(onGids).toHaveBeenLastCalledWith(expect.arrayContaining([gid(1), gid(2)]));
+  });
+
+  it("M2: the bar does not cover live drop targets while a drag runs (hidden, no pointer events, layout kept), and is back after drop and after cancel", async () => {
+    await mount();
+    select("product", url(1));
+    expect(bar()!.style.visibility).toBe("");
+    dragStart();
+    expect(bar()!.style.visibility).toBe("hidden");
+    expect(bar()!.style.pointerEvents).toBe("none");
+    act(() => { dnd.onDragEnd?.({ active: { id: `product::${url(1)}`, data: { current: { url: url(1), containerId: "product" } } }, over: null }); });
+    expect(bar()!.style.visibility).toBe("");
+    dragStart();
+    expect(bar()!.style.visibility).toBe("hidden");
+    act(() => { dnd.onDragCancel?.(); });
+    expect(bar()!.style.visibility).toBe("");
+  });
+
+  it("L7: a cancelled drag stops the pending auto-expand", async () => {
+    await mount();
+    fireEvent.click(toggle());
+    dragStart();
+    act(() => { dnd.onDragOver?.({ over: { id: "product" } }); });
+    act(() => { dnd.onDragCancel?.(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 900)); });
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("L3: a fold does not come back for a product seen before (A fold -> B -> A is open)", async () => {
+    const A = "gid://shopify/Product/1";
+    const { rerender } = await mount();
+    fireEvent.click(toggle());
+    rerender(ui({ productId: "gid://shopify/Product/2" }));
+    rerender(ui({ productId: A }));
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("L4: several Remove buttons name their variant in the visible label and are ordered by variant order", async () => {
+    await mount();
+    fireEvent.click(header("Blue"));
+    await waitFor(() => expect(grids[V2]?.imageUrls?.length).toBeGreaterThan(0));
+    select(V2, url(4));
+    select(V1, url(2));
+    await waitFor(() => expect(within(bar()!).getAllByRole("button", { name: /^Remove \(1\)$/ })).toHaveLength(2));
+    const wraps = within(bar()!).getAllByRole("button", { name: /^Remove \(1\)$/ }).map((b) => b.parentElement as HTMLElement);
+    const byTitle = Object.fromEntries(wraps.map((w) => [w.textContent!.replace(/Remove \(1\)/, "").trim(), Number(w.style.order)]));
+    expect(Object.keys(byTitle).sort()).toEqual(["Blue", "Red"]);
+    expect(byTitle.Red).toBeLessThan(byTitle.Blue);
+  });
+
+  it("L5: the product gallery toggle keeps the phone touch target (no min-size override in its CSS)", async () => {
+    const css = (await import("node:fs")).readFileSync("app/styles/responsive.css", "utf8");
+    const block = css.slice(css.indexOf(".im-product-toggle {"));
+    const rule = block.slice(0, block.indexOf("}"));
+    expect(rule).not.toMatch(/min-(height|width)/);
+  });
+
+  it("L6: an open delete confirmation does not survive a product switch", async () => {
+    const { rerender } = await mount();
+    select("product", url(1));
+    fireEvent.click(within(bar()!).getByRole("button", { name: "Delete" }));
+    expect(screen.getByRole("button", { name: "Yes, delete now" })).toBeTruthy();
+    rerender(ui({ productId: "gid://shopify/Product/2" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Yes, delete now" })).toBeNull());
   });
 });
