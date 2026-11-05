@@ -2044,6 +2044,7 @@ export const de = {
     move: "Verschieben",
     moveActive: "Verschieben aktiv ✕",
     clearSelection: "Auswahl aufheben",
+    selectionBar: "Ausgewählte Bilder",
     variantGalleries: "Varianten-Galerien",
     copyHint: "Kopieren: Galerie-Placeholder klicken",
     moveHint: "Verschieben: Galerie-Placeholder klicken",

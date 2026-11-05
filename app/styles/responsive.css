@@ -1810,3 +1810,80 @@ a:focus:not(:focus-visible) {
     border-width: 1px !important;
   }
 }
+
+/* Image manager: the selection bar. Sticky (not fixed: the app is an iframe) at the bottom of the
+   editor's one scroller while anything is selected; in flow, so it also takes its own height at the
+   end of the content and never permanently covers the last tiles. It hosts the existing alt editor
+   and selection actions. A bar taller than half the scroller scrolls inside itself. */
+.im-sel-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 4px;
+  max-height: 50vh;
+  overflow-y: auto;
+  background: var(--p-color-bg-surface, #fff);
+  border-top: 1px solid var(--app-surface-border-color);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08);
+}
+.im-alt-panel {
+  margin-top: 10px;
+  padding: 10px 12px;
+}
+.im-sel-bar .im-alt-panel {
+  margin-top: 0;
+}
+/* Copy / move / delete / clear: the word on desktop, the icon alone on phones (the accessible name
+   is the word either way). */
+.im-sel-iconbtn .Polaris-Button__Icon {
+  display: none;
+}
+@media (max-width: 768px) {
+  .im-sel-iconbtn .Polaris-Button__Icon {
+    display: flex;
+  }
+  .im-sel-iconbtn .Polaris-Button__Icon ~ * {
+    display: none;
+  }
+  .im-sel-iconbtn .Polaris-Button {
+    padding: 0;
+    justify-content: center;
+    min-width: var(--touch-target-min, 44px) !important;
+    min-height: var(--touch-target-min, 44px);
+  }
+  .im-sel-iconbtn .Polaris-Button .Polaris-Button__Icon {
+    flex-shrink: 0;
+  }
+  .im-sel-iconbtn .Polaris-Button .Polaris-Button__Icon {
+    margin: 0;
+  }
+  .im-sel-bar {
+    padding: 6px 4px;
+    gap: 6px;
+  }
+  .im-sel-bar .im-sel-actions {
+    gap: 6px !important;
+  }
+  /* the box itself says what it is (placeholder); the label row only costs height */
+  .im-sel-bar .im-alt-label {
+    display: none;
+  }
+  .im-sel-bar .im-alt-panel {
+    padding: 6px 8px;
+  }
+}
+
+/* The product gallery's header toggle is a plain text-like button: the phone touch rule's padding and
+   minimum size would turn it into a grey box. */
+.im-product-toggle {
+  padding: 4px 0 !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  background: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}

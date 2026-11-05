@@ -2023,6 +2023,7 @@ export const es: Translation = {
     move: "Mover",
     moveActive: "Mover activo ✕",
     clearSelection: "Deseleccionar",
+    selectionBar: "Imágenes seleccionadas",
     variantGalleries: "Galerías de variantes",
     copyHint: "Copiar: haz clic en el marcador de galería",
     moveHint: "Mover: haz clic en el marcador de galería",

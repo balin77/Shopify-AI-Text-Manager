@@ -1,5 +1,6 @@
 ﻿import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { captureRemoved, reinsertRemoved, splitDeleteAnswer, removePendingNewMedia, queuedResourceUrls, stripRefsFromGalleries, unsentUrls, urlNeedsRestore, type RemovedEntry } from "./delete-rollback";
+import { DuplicateIcon, ArrowRightIcon, DeleteIcon, XIcon } from "@shopify/polaris-icons";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip, Badge, Collapsible } from "@shopify/polaris";
 import { useFetcher } from "react-router";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
@@ -826,6 +827,12 @@ export function VariantImageManager({
   // remounting under new ids.
   const [productGalleryUi, setProductGalleryUi] = useState<{ productId: string; open: boolean }>({ productId, open: true });
   const productGalleryOpen = productGalleryUi.productId === productId ? productGalleryUi.open : true;
+  // The selection bar's slots: a variant gallery section renders its alt editor / replace / remove
+  // buttons into them (portals), so the bar hosts the existing UI instead of copying it.
+  const [altSlotEl, setAltSlotEl] = useState<HTMLElement | null>(null);
+  const [replaceSlotEl, setReplaceSlotEl] = useState<HTMLElement | null>(null);
+  const [removeSlotEl, setRemoveSlotEl] = useState<HTMLElement | null>(null);
+  const barSlots = useMemo(() => ({ alt: altSlotEl, replace: replaceSlotEl, remove: removeSlotEl }), [altSlotEl, replaceSlotEl, removeSlotEl]);
   const autoExpandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentOverContainerRef = useRef<string | null>(null);
   const sharedSensors = useSensors(
@@ -4447,6 +4454,7 @@ export function VariantImageManager({
           <button
             type="button"
             data-im-product-toggle
+            className="im-product-toggle"
             aria-expanded={productGalleryShown}
             aria-controls="product-gallery-body"
             onClick={() => setProductGalleryUi({ productId, open: !productGalleryOpen })}
@@ -4579,210 +4587,6 @@ export function VariantImageManager({
         </div>
 
         <div style={fullView ? undefined : { display: "none" }}>
-        {/* Selection info bar for product gallery */}
-        {selectedGalleryItems.size > 0 && (
-          <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <Text as="span" variant="bodySm" tone="subdued">
-              {t.imageManager.selectedCount.replace("{count}", String(selectedGalleryItems.size))}
-            </Text>
-            <Button
-              size="slim"
-              variant={activeAction === "copy" ? "primary" : "secondary"}
-              onClick={() => onSetAction(activeAction === "copy" ? null : "copy")}
-            >
-              {activeAction === "copy" ? t.imageManager.copyActive : t.imageManager.copy}
-            </Button>
-            <Button
-              size="slim"
-              variant={activeAction === "move" ? "primary" : "secondary"}
-              onClick={() => onSetAction(activeAction === "move" ? null : "move")}
-            >
-              {activeAction === "move" ? t.imageManager.moveActive : t.imageManager.move}
-            </Button>
-            {/* The replacement buttons of the ONE selected medium (foreign language
-                only) sit between "move" and "delete"; nothing renders otherwise. */}
-            {productSingleSelectedGid && (isModel3dGid(productSingleSelectedGid)
-              ? <LocalizedMediaNotReplaceable reason="model3d" />
-              : <LocalizedMediaReplaceButtons mediaId={productSingleSelectedGid} />)}
-            {productSelectedUrls.length > 0 && (
-              <DisabledActionTooltip hint={variantsCurrent ? undefined : t.imageManager.variantsNotLoadedAction}>
-              <Button
-                size="slim"
-                tone="critical"
-                variant="secondary"
-                disabled={isDeleting || !variantsCurrent}
-                onClick={() => {
-                  const urlSetForCount = new Set(productSelectedUrls);
-                  const gidSet = new Set(productSelectedUrls.map(url => urlToGid[url]).filter(Boolean));
-                  const affectedVariantCount = variants.filter(v => {
-                    const gids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
-                    const inGallery = gids.some(gid => gidSet.has(gid));
-                    const isMainImage = v.defaultImageUrl ? urlSetForCount.has(v.defaultImageUrl) : false;
-                    return inGallery || isMainImage;
-                  }).length;
-                  setDeleteConfirm({ urls: productSelectedUrls, affectedVariantCount });
-                }}
-              >
-                {t.imageManager.deleteImage}
-              </Button>
-              </DisabledActionTooltip>
-            )}
-            <Button
-              size="slim"
-              variant="plain"
-              onClick={() => { setSelectedGalleryItems(new Map()); onSetAction(null); }}
-            >
-              {t.imageManager.clearSelection}
-            </Button>
-          </div>
-        )}
-
-        {deleteConfirm && (
-          <div style={{
-            marginTop: 8,
-            padding: "10px 12px",
-            background: "#fff4e4",
-            border: "1px solid #e6a817",
-            borderRadius: 6,
-          }}>
-            <Text as="p" variant="bodyMd" fontWeight="semibold">
-              {t.imageManager.deleteConfirmTitle.replace("{count}", String(deleteConfirm.urls.length))}
-            </Text>
-            <div style={{ marginTop: 4 }}>
-              <Text as="p" variant="bodySm">
-                {t.imageManager.deleteConfirmBody}
-              </Text>
-            </div>
-            {deleteConfirm.affectedVariantCount > 0 && (
-              <div style={{ marginTop: 6, color: "#b44b00" }}>
-                <Text as="p" variant="bodySm">
-                  {t.imageManager.deleteConfirmWithGalleries
-                    .replace("{count}", String(deleteConfirm.urls.length))
-                    .replace("{galleries}", String(deleteConfirm.affectedVariantCount))}
-                </Text>
-              </div>
-            )}
-            <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-              <Button size="slim" tone="critical" loading={isDeleting} onClick={handleConfirmDelete}>
-                {t.imageManager.deleteConfirmBtn}
-              </Button>
-              <Button size="slim" disabled={isDeleting} onClick={() => setDeleteConfirm(null)}>
-                {t.common.cancel}
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Alt text editor for product gallery — only when exactly 1 image is selected */}
-        {productSingleSelected && (
-          <div style={{
-            marginTop: 10,
-            padding: "10px 12px",
-            background: !isPrimaryLocale && !productHasTranslation ? "#fff8f0" : "#f6f6f7",
-            borderRadius: 6,
-            border: `1px solid ${!isPrimaryLocale && !productHasTranslation ? "#e6a817" : "#e1e3e5"}`,
-          }}>
-            <div style={{ marginBottom: 6 }}>
-              <Text as="span" variant="bodySm" tone="subdued">
-                {t.imageManager.altTextForSelected}
-              </Text>
-            </div>
-            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-              <AutoGrowTextarea
-                value={productCurrentAltText}
-                readOnly={productAltLocked}
-                aria-readonly={productAltLocked || undefined}
-                title={productAltLocked ? altNeedsPrimaryHint : undefined}
-                onValueChange={(next) => { if (!productAltLocked) handleAltTextChange(productSingleSelected, next); }}
-                placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : altFieldView({ own: productCurrentAltText, inherited: productInheritedAlt, primaryAlt: productPrimaryAltText, fallbackPlaceholder: t.imageManager.altTextPlaceholder }).placeholder}
-                style={{
-                  flex: "1 1 200px",
-                  minWidth: 180,
-                  // Height and vertical padding come from AutoGrowTextarea's
-                  // class (button height at rest, 44px on touch); a long alt
-                  // text wraps and grows instead of scrolling sideways.
-                  paddingLeft: 8,
-                  paddingRight: 8,
-                  fontSize: 13,
-                  border: "1px solid var(--app-field-border-color)",
-                  borderRadius: "var(--app-field-border-radius)",
-                  outline: "none",
-                  background: !isPrimaryLocale && !productHasTranslation ? "#fff8f0" : "white",
-                }}
-                onFocus={(e) => { e.target.style.borderColor = "#005bd3"; e.target.style.background = "white"; }}
-                onBlur={(e) => {
-                  e.target.style.borderColor = "var(--app-field-border-color)";
-                  e.target.style.background = !isPrimaryLocale && !productHasTranslation ? "#fff8f0" : "white";
-                  // No save here: the text is a draft until the editor's save bar writes it.
-                }}
-              />
-              <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
-                {isPrimaryLocale && (
-                  <DisabledActionTooltip hint={productAltAiBlocked}>
-                    <Button
-                      size="slim"
-                      disabled={altTextFetcher.state !== "idle" || !!productAltAiBlocked}
-                      loading={altTextFetcher.state !== "idle"}
-                      onClick={() => handleGenerateAltTextForImage(productSingleSelected)}
-                    >
-                      {`✨ ${t.imageManager.aiGenerate}`}
-                    </Button>
-                  </DisabledActionTooltip>
-                )}
-                {isPrimaryLocale && (
-                  <DisabledActionTooltip hint={singleLocaleHint ?? (productAltDirty ? translateAltAllSaveFirstHint : undefined)}>
-                    <Button
-                      size="slim"
-                      disabled={altTextFetcher.state !== "idle" || !!singleLocaleHint || productAltDirty}
-                      loading={altTextFetcher.state !== "idle"}
-                      onClick={() => handleTranslateAltTextToAllLocales(productSingleSelected, productCurrentAltText)}
-                    >
-                      {`🌍 ${t.imageManager.translateAltAll}`}
-                    </Button>
-                  </DisabledActionTooltip>
-                )}
-                {!isPrimaryLocale && (
-                  <DisabledActionTooltip hint={productTranslateAltBlocked}>
-                    <Button
-                      size="slim"
-                      disabled={altTextFetcher.state !== "idle" || !!productTranslateAltBlocked}
-                      loading={altTextFetcher.state !== "idle"}
-                      onClick={() => handleTranslateAltTextForImage(productSingleSelected)}
-                    >
-                      {`🌍 ${t.imageManager.translateAlt}`}
-                    </Button>
-                  </DisabledActionTooltip>
-                )}
-              </div>
-            </div>
-            {altSuggestionFor(productSingleSelected) !== undefined && (
-              <AISuggestionBanner
-                fieldType="altText"
-                suggestionText={altSuggestionFor(productSingleSelected) as string}
-                onAccept={() => handleAcceptAltSuggestion(productSingleSelected, false)}
-                onDecline={() => handleRejectAltSuggestion(productSingleSelected)}
-                onAcceptAndTranslate={isPrimaryLocale ? () => handleAcceptAltSuggestion(productSingleSelected, true) : undefined}
-                acceptLabel={t.products?.accept || "Accept"}
-                declineLabel={t.products?.decline || "Decline"}
-                acceptAndTranslateLabel={t.products?.acceptTranslate || "Accept & Translate"}
-                titleLabel={t.products?.aiSuggestion || "AI suggestion:"}
-                singleLocaleHint={singleLocaleHint}
-                disabled={altTextFetcher.state !== "idle"}
-              />
-            )}
-            {productAltLocked && (
-              <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
-                {altNeedsPrimaryHint}
-              </div>
-            )}
-            {!isPrimaryLocale && productPrimaryAltText && (
-              <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
-                <span style={{ fontWeight: 600 }}>{t.imageManager.primaryRef}: </span>
-                {productPrimaryAltText}
-              </div>
-            )}
-          </div>
-        )}
         <LocalizedMediaOrphanNotice />
         </div>
       </div>
@@ -4892,6 +4696,8 @@ export function VariantImageManager({
                 primaryLocale={primaryLocale}
                 skipDndContext
                 forceOpen={autoExpandId === v.id}
+                slots={barSlots}
+                soleSelection={selectedGalleryItems.size === 1}
                 externalVideoUrls={pendingExternalVideos[v.id] ?? v.externalVideoUrls ?? []}
                 onAddExternalVideoUrl={handleAddExternalVideoUrl}
                 onRemoveExternalVideoUrl={handleRemoveExternalVideoUrl}
@@ -4915,6 +4721,238 @@ export function VariantImageManager({
         </div>
         </div>
       </BlockStack>
+      {/* THE selection bar: sticky at the bottom of the editor's one scroller while anything is
+          selected (product gallery or any variant gallery). It hosts the existing UI -- the
+          selection actions and the alt text editor of the one selected image; a variant tile's
+          alt editor / replace / remove buttons are rendered into the slots below by their own
+          section (portals), so there is no second copy of any state or handler. */}
+      {fullView && (selectedGalleryItems.size > 0 || deleteConfirm) && (
+        <div className="im-sel-bar" data-im-selection-bar role="region" aria-label={t.imageManager.selectionBar}>
+        {deleteConfirm && (
+          <div style={{
+            padding: "10px 12px",
+            background: "#fff4e4",
+            border: "1px solid #e6a817",
+            borderRadius: 6,
+          }}>
+            <Text as="p" variant="bodyMd" fontWeight="semibold">
+              {t.imageManager.deleteConfirmTitle.replace("{count}", String(deleteConfirm.urls.length))}
+            </Text>
+            <div style={{ marginTop: 4 }}>
+              <Text as="p" variant="bodySm">
+                {t.imageManager.deleteConfirmBody}
+              </Text>
+            </div>
+            {deleteConfirm.affectedVariantCount > 0 && (
+              <div style={{ marginTop: 6, color: "#b44b00" }}>
+                <Text as="p" variant="bodySm">
+                  {t.imageManager.deleteConfirmWithGalleries
+                    .replace("{count}", String(deleteConfirm.urls.length))
+                    .replace("{galleries}", String(deleteConfirm.affectedVariantCount))}
+                </Text>
+              </div>
+            )}
+            <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+              <Button size="slim" tone="critical" loading={isDeleting} onClick={handleConfirmDelete}>
+                {t.imageManager.deleteConfirmBtn}
+              </Button>
+              <Button size="slim" disabled={isDeleting} onClick={() => setDeleteConfirm(null)}>
+                {t.common.cancel}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {selectedGalleryItems.size > 0 && (
+          <div className="im-sel-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <Text as="span" variant="bodySm" tone="subdued">
+              {t.imageManager.selectedCount.replace("{count}", String(selectedGalleryItems.size))}
+            </Text>
+            <span className="im-sel-iconbtn">
+            <Button
+              size="slim"
+              icon={DuplicateIcon}
+              accessibilityLabel={activeAction === "copy" ? t.imageManager.copyActive : t.imageManager.copy}
+              variant={activeAction === "copy" ? "primary" : "secondary"}
+              onClick={() => onSetAction(activeAction === "copy" ? null : "copy")}
+            >
+              {activeAction === "copy" ? t.imageManager.copyActive : t.imageManager.copy}
+            </Button>
+            </span>
+            <span className="im-sel-iconbtn">
+            <Button
+              size="slim"
+              icon={ArrowRightIcon}
+              accessibilityLabel={activeAction === "move" ? t.imageManager.moveActive : t.imageManager.move}
+              variant={activeAction === "move" ? "primary" : "secondary"}
+              onClick={() => onSetAction(activeAction === "move" ? null : "move")}
+            >
+              {activeAction === "move" ? t.imageManager.moveActive : t.imageManager.move}
+            </Button>
+            </span>
+            {/* The replacement buttons of the ONE selected medium (foreign language
+                only) sit between "move" and "delete"; nothing renders otherwise. */}
+            {productSingleSelectedGid && selectedGalleryItems.size === 1 && (isModel3dGid(productSingleSelectedGid)
+              ? <LocalizedMediaNotReplaceable reason="model3d" />
+              : <LocalizedMediaReplaceButtons mediaId={productSingleSelectedGid} />)}
+            {/* the variant gallery's replace buttons (one selected tile) render here */}
+            <span ref={setReplaceSlotEl} style={{ display: "contents" }} />
+            {productSelectedUrls.length > 0 && (
+              <DisabledActionTooltip hint={variantsCurrent ? undefined : t.imageManager.variantsNotLoadedAction}>
+              <span className="im-sel-iconbtn">
+              <Button
+                size="slim"
+                tone="critical"
+                variant="secondary"
+                icon={DeleteIcon}
+                accessibilityLabel={t.imageManager.deleteImage}
+                disabled={isDeleting || !variantsCurrent}
+                onClick={() => {
+                  const urlSetForCount = new Set(productSelectedUrls);
+                  const gidSet = new Set(productSelectedUrls.map(url => urlToGid[url]).filter(Boolean));
+                  const affectedVariantCount = variants.filter(v => {
+                    const gids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
+                    const inGallery = gids.some(gid => gidSet.has(gid));
+                    const isMainImage = v.defaultImageUrl ? urlSetForCount.has(v.defaultImageUrl) : false;
+                    return inGallery || isMainImage;
+                  }).length;
+                  setDeleteConfirm({ urls: productSelectedUrls, affectedVariantCount });
+                }}
+              >
+                {t.imageManager.deleteImage}
+              </Button>
+              </span>
+              </DisabledActionTooltip>
+            )}
+            {/* the variant galleries' "Remove (n)" buttons render here */}
+            <span ref={setRemoveSlotEl} style={{ display: "contents" }} />
+            <span className="im-sel-iconbtn">
+            <Button
+              size="slim"
+              variant="plain"
+              icon={XIcon}
+              accessibilityLabel={t.imageManager.clearSelection}
+              onClick={() => { setSelectedGalleryItems(new Map()); onSetAction(null); }}
+            >
+              {t.imageManager.clearSelection}
+            </Button>
+            </span>
+          </div>
+        )}
+
+          <div ref={setAltSlotEl} style={{ display: "contents" }}>
+        {/* The alt text editor of the ONE selected image (this block is the product gallery's;
+            a variant gallery's tile renders the same panel into this bar through its section). */}
+        {productSingleSelected && selectedGalleryItems.size === 1 && (
+          <div className="im-alt-panel" style={{
+            background: !isPrimaryLocale && !productHasTranslation ? "#fff8f0" : "#f6f6f7",
+            borderRadius: 6,
+            border: `1px solid ${!isPrimaryLocale && !productHasTranslation ? "#e6a817" : "#e1e3e5"}`,
+          }}>
+            <div className="im-alt-label" style={{ marginBottom: 6 }}>
+              <Text as="span" variant="bodySm" tone="subdued">
+                {t.imageManager.altTextForSelected}
+              </Text>
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <AutoGrowTextarea
+                value={productCurrentAltText}
+                readOnly={productAltLocked}
+                aria-readonly={productAltLocked || undefined}
+                title={productAltLocked ? altNeedsPrimaryHint : undefined}
+                onValueChange={(next) => { if (!productAltLocked) handleAltTextChange(productSingleSelected, next); }}
+                placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : altFieldView({ own: productCurrentAltText, inherited: productInheritedAlt, primaryAlt: productPrimaryAltText, fallbackPlaceholder: t.imageManager.altTextPlaceholder }).placeholder}
+                style={{
+                  flex: "1 1 200px",
+                  minWidth: 180,
+                  // Height and vertical padding come from AutoGrowTextarea's
+                  // class (button height at rest, 44px on touch); a long alt
+                  // text wraps and grows instead of scrolling sideways.
+                  paddingLeft: 8,
+                  paddingRight: 8,
+                  fontSize: 13,
+                  border: "1px solid var(--app-field-border-color)",
+                  borderRadius: "var(--app-field-border-radius)",
+                  outline: "none",
+                  background: !isPrimaryLocale && !productHasTranslation ? "#fff8f0" : "white",
+                }}
+                onFocus={(e) => { e.target.style.borderColor = "#005bd3"; e.target.style.background = "white"; }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = "var(--app-field-border-color)";
+                  e.target.style.background = !isPrimaryLocale && !productHasTranslation ? "#fff8f0" : "white";
+                  // No save here: the text is a draft until the editor's save bar writes it.
+                }}
+              />
+              <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
+                {isPrimaryLocale && (
+                  <DisabledActionTooltip hint={productAltAiBlocked}>
+                    <Button
+                      size="slim"
+                      disabled={altTextFetcher.state !== "idle" || !!productAltAiBlocked}
+                      loading={altTextFetcher.state !== "idle"}
+                      onClick={() => handleGenerateAltTextForImage(productSingleSelected)}
+                    >
+                      {`✨ ${t.imageManager.aiGenerate}`}
+                    </Button>
+                  </DisabledActionTooltip>
+                )}
+                {isPrimaryLocale && (
+                  <DisabledActionTooltip hint={singleLocaleHint ?? (productAltDirty ? translateAltAllSaveFirstHint : undefined)}>
+                    <Button
+                      size="slim"
+                      disabled={altTextFetcher.state !== "idle" || !!singleLocaleHint || productAltDirty}
+                      loading={altTextFetcher.state !== "idle"}
+                      onClick={() => handleTranslateAltTextToAllLocales(productSingleSelected, productCurrentAltText)}
+                    >
+                      {`🌍 ${t.imageManager.translateAltAll}`}
+                    </Button>
+                  </DisabledActionTooltip>
+                )}
+                {!isPrimaryLocale && (
+                  <DisabledActionTooltip hint={productTranslateAltBlocked}>
+                    <Button
+                      size="slim"
+                      disabled={altTextFetcher.state !== "idle" || !!productTranslateAltBlocked}
+                      loading={altTextFetcher.state !== "idle"}
+                      onClick={() => handleTranslateAltTextForImage(productSingleSelected)}
+                    >
+                      {`🌍 ${t.imageManager.translateAlt}`}
+                    </Button>
+                  </DisabledActionTooltip>
+                )}
+              </div>
+            </div>
+            {altSuggestionFor(productSingleSelected) !== undefined && (
+              <AISuggestionBanner
+                fieldType="altText"
+                suggestionText={altSuggestionFor(productSingleSelected) as string}
+                onAccept={() => handleAcceptAltSuggestion(productSingleSelected, false)}
+                onDecline={() => handleRejectAltSuggestion(productSingleSelected)}
+                onAcceptAndTranslate={isPrimaryLocale ? () => handleAcceptAltSuggestion(productSingleSelected, true) : undefined}
+                acceptLabel={t.products?.accept || "Accept"}
+                declineLabel={t.products?.decline || "Decline"}
+                acceptAndTranslateLabel={t.products?.acceptTranslate || "Accept & Translate"}
+                titleLabel={t.products?.aiSuggestion || "AI suggestion:"}
+                singleLocaleHint={singleLocaleHint}
+                disabled={altTextFetcher.state !== "idle"}
+              />
+            )}
+            {productAltLocked && (
+              <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
+                {altNeedsPrimaryHint}
+              </div>
+            )}
+            {!isPrimaryLocale && productPrimaryAltText && (
+              <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
+                <span style={{ fontWeight: 600 }}>{t.imageManager.primaryRef}: </span>
+                {productPrimaryAltText}
+              </div>
+            )}
+          </div>
+        )}
+          </div>
+        </div>
+      )}
     </Card>
     </div>
     <DragOverlay>

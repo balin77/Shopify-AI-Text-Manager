@@ -9,7 +9,7 @@
  * MOCK-ONLY: the answers of /api/product-variants and the save route are scripted.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup, waitFor, act, fireEvent, screen } from "@testing-library/react";
+import { render, cleanup, waitFor, act, fireEvent, screen, within } from "@testing-library/react";
 import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
 import { I18nProvider } from "~/contexts/I18nContext";
@@ -48,9 +48,22 @@ vi.mock("@dnd-kit/core", async (orig) => {
     },
   };
 });
+// The manager's four fetchers are told apart by call order (0 shared, 1 alt AI, 2 alt save, 3 translations);
+// a test can script the AI fetcher's answer and read what each one submitted.
+let fetcherSeq = 0;
+const fetcherData: Record<number, unknown> = {};
+const fetcherSubmits: Array<ReturnType<typeof vi.fn>> = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
 vi.mock("react-router", async (orig) => {
   const actual: any = await orig();
-  return { ...actual, useFetcher: () => ({ state: "idle", data: undefined, submit: vi.fn(), load: vi.fn(), Form: "form" }) };
+  const React = await import("react");
+  return {
+    ...actual,
+    useFetcher: () => {
+      const idx = React.useRef(-1);
+      if (idx.current < 0) idx.current = fetcherSeq++ % 4;
+      return { state: "idle", data: fetcherData[idx.current], submit: fetcherSubmits[idx.current], load: vi.fn(), Form: "form" };
+    },
+  };
 });
 
 let apiCalls: Array<{ path: string; body: any }>;
@@ -157,6 +170,9 @@ const drag = (container: string, from: string, to: string, ctrl = false) =>
 const lastEmission = () => onPendingChange.mock.calls.at(-1) as any[];
 
 beforeEach(() => {
+  fetcherSeq = 0;
+  for (const k of Object.keys(fetcherData)) delete (fetcherData as any)[Number(k)];
+  fetcherSubmits.forEach((f) => f.mockClear());
   for (const k of Object.keys(grids)) delete grids[k];
   apiCalls = [];
   variantsGate = null;
@@ -1737,5 +1753,134 @@ describe("the product gallery collapses like a variant gallery", () => {
     fireEvent.click(toggle());
     expect(onPendingChange).not.toHaveBeenCalled();
     expect(apiCalls.filter((c) => c.body !== undefined)).toEqual([]);
+  });
+});
+
+describe("the sticky selection bar hosts the existing alt editor and selection actions", () => {
+  const bar = () => document.querySelector("[data-im-selection-bar]") as HTMLElement | null;
+  const altBoxes = () => screen.queryAllByPlaceholderText(/enter alt text/i);
+  const select = (container: string, u: string, on = true) => act(() => grids[container].onSelect(u, on));
+
+  it("renders nothing while nothing is selected", async () => {
+    await mount();
+    expect(bar()).toBeNull();
+    expect(altBoxes()).toHaveLength(0);
+  });
+
+  it("one selected product image: the bar shows the alt box and the actions, and the old place shows no second alt box", async () => {
+    await mount();
+    select("product", url(1));
+    expect(bar()).not.toBeNull();
+    expect(within(bar()!).getByText("1 selected")).toBeTruthy();
+    expect(within(bar()!).getByRole("button", { name: "Copy" })).toBeTruthy();
+    expect(within(bar()!).getByRole("button", { name: "Delete" })).toBeTruthy();
+    expect(altBoxes()).toHaveLength(1);
+    expect(bar()!.contains(altBoxes()[0])).toBe(true);
+  });
+
+  it("one selected variant tile: its alt box and its Remove button are hosted by the bar", async () => {
+    await mount();
+    select(V1, url(2));
+    await waitFor(() => expect(altBoxes()).toHaveLength(1));
+    expect(bar()!.contains(altBoxes()[0])).toBe(true);
+    expect(within(bar()!).getByRole("button", { name: /^Remove \(1\)$/ })).toBeTruthy();
+    // removing from the gallery is the section's own handler, as before
+    fireEvent.click(within(bar()!).getByRole("button", { name: /^Remove \(1\)$/ }));
+    await waitFor(() => expect(grids[V1].imageUrls).not.toContain(url(2)));
+  });
+
+  it("several selected tiles: the actions only, no alt box (even when they sit in different galleries)", async () => {
+    await mount();
+    select("product", url(1));
+    select("product", url(2));
+    expect(within(bar()!).getByText("2 selected")).toBeTruthy();
+    expect(altBoxes()).toHaveLength(0);
+    select(V1, url(3));
+    expect(within(bar()!).getByText("3 selected")).toBeTruthy();
+    expect(altBoxes()).toHaveLength(0);
+    expect(within(bar()!).getByRole("button", { name: /^Remove \(1\)$/ })).toBeTruthy();
+  });
+
+  it("deselecting hides the bar; Clear selection too", async () => {
+    await mount();
+    select("product", url(1));
+    expect(bar()).not.toBeNull();
+    select("product", url(1), false);
+    expect(bar()).toBeNull();
+    select("product", url(1));
+    fireEvent.click(within(bar()!).getByRole("button", { name: "Clear selection" }));
+    expect(bar()).toBeNull();
+  });
+
+  it("one image in the product gallery plus one in a variant gallery is two selected: actions only, no alt box", async () => {
+    await mount();
+    select("product", url(1));
+    select(V1, url(3));
+    expect(within(bar()!).getByText("2 selected")).toBeTruthy();
+    expect(altBoxes()).toHaveLength(0);
+  });
+
+  it("the bar is a full-view thing: closing the view hides it, the selection is kept", async () => {
+    await mount();
+    select("product", url(1));
+    expect(bar()).not.toBeNull();
+    fireEvent.click(screen.getByText("Back to the product"));
+    expect(bar()).toBeNull();
+    fireEvent.click(screen.getByText("Show all"));
+    expect(bar()).not.toBeNull();
+    expect(within(bar()!).getByText("1 selected")).toBeTruthy();
+  });
+
+  it("typing in the bar's alt box is a DRAFT the page's save bar counts (onDirtyChange), nothing is saved", async () => {
+    await mount();
+    select("product", url(1));
+    const box = altBoxes()[0] as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "A red vase" } });
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    // still the same element, inside the bar, with the typed text
+    expect(altBoxes()[0]).toBe(box);
+    expect((altBoxes()[0] as HTMLTextAreaElement).value).toBe("A red vase");
+    expect(fetcherSubmits[2]).not.toHaveBeenCalled();
+    // a variant tile's alt is a draft too
+    select("product", url(1), false);
+    select(V1, url(2));
+    await waitFor(() => expect(altBoxes()).toHaveLength(1));
+    fireEvent.change(altBoxes()[0], { target: { value: "Blue" } });
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    expect(fetcherSubmits[2]).not.toHaveBeenCalled();
+  });
+
+  it("an AI suggestion shows in the bar and Accept saves that one image's alt at once", async () => {
+    const r = await mount();
+    select("product", url(1));
+    fireEvent.click(within(bar()!).getByRole("button", { name: /Generate with AI/ }));
+    expect(fetcherSubmits[1]).toHaveBeenCalledTimes(1);
+    fetcherData[1] = { success: true, actionType: "generateAltText", altText: "A new alt" };
+    r.rerender(ui());
+    await waitFor(() => expect(within(bar()!).getByText("A new alt")).toBeTruthy());
+    expect(fetcherSubmits[2]).not.toHaveBeenCalled(); // a suggestion writes nothing
+    fireEvent.click(within(bar()!).getByRole("button", { name: "Accept" }));
+    await waitFor(() => expect(fetcherSubmits[2]).toHaveBeenCalledTimes(1));
+    const form = fetcherSubmits[2].mock.calls[0][0] as FormData;
+    expect(form.get("action")).toBe("saveImageAltText");
+    expect(form.get("altText")).toBe("A new alt");
+    expect(form.get("mediaId")).toBe(gid(1));
+  });
+
+  it("a product switch with a selection clears the bar", async () => {
+    const { rerender } = await mount();
+    select("product", url(1));
+    expect(bar()).not.toBeNull();
+    rerender(ui({ productId: "gid://shopify/Product/2" }));
+    await waitFor(() => expect(bar()).toBeNull());
+  });
+
+  it("a selection survives collapsing its gallery: the bar and its alt box stay", async () => {
+    await mount();
+    select(V1, url(2));
+    await waitFor(() => expect(altBoxes()).toHaveLength(1));
+    fireEvent.click(screen.getByText("Red"));
+    expect(altBoxes()).toHaveLength(1);
+    expect(bar()).not.toBeNull();
   });
 });

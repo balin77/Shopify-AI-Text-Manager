@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
-import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
+import { createPortal } from "react-dom";
+import { Text, Button, InlineStack, Collapsible, Badge, Tooltip } from "@shopify/polaris";
 import { useDroppable } from "@dnd-kit/core";
 import { altFieldView } from "./alt-market-layer";
 import { useI18n } from "../../contexts/I18nContext";
@@ -85,6 +86,16 @@ interface VariantGallerySectionProps {
   replacements?: Record<string, LocalizedMediaTile>;
   /** GIDs of the product's own media; a tile outside it cannot get a replacement. */
   productMediaIds?: ReadonlySet<string>;
+  /**
+   * The selection bar's slots. Given (by the image manager), the tile's alt editor, replace buttons
+   * and "Remove (n)" button are rendered INTO them -- the section keeps computing and owning all of it,
+   * only the place on screen moves -- and nothing renders in the section while a slot is not there
+   * (yet). Left out (a standalone section), everything renders in place as before.
+   */
+  slots?: { alt: HTMLElement | null; replace: HTMLElement | null; remove: HTMLElement | null };
+  /** False when more than one tile is selected in the whole manager: the alt editor and the
+   *  replace buttons belong to ONE selected image (default true). */
+  soleSelection?: boolean;
 }
 
 export function VariantGallerySection({
@@ -137,6 +148,8 @@ export function VariantGallerySection({
   dropDisabled,
   replacements,
   productMediaIds,
+  slots,
+  soleSelection = true,
 }: VariantGallerySectionProps) {
   const { t } = useI18n();
   // No foreign locale → alt-text translation is greyed out instead of hidden.
@@ -350,6 +363,150 @@ export function VariantGallerySection({
     return undefined;
   }, [hasMainImage]);
 
+  const showSingle = soleSelection;
+  const replaceButtons = showSingle ? (
+    <>
+      {replaceState?.kind === "replace" && <LocalizedMediaReplaceButtons mediaId={replaceState.mediaId} />}
+      {replaceState?.kind === "notProductMedium" && <LocalizedMediaNotReplaceable />}
+      {replaceState?.kind === "model3d" && <LocalizedMediaNotReplaceable reason="model3d" />}
+    </>
+  ) : null;
+  const removeButton = hasLocalSelection ? (
+    <Button
+      size="slim"
+      tone="critical"
+      variant="secondary"
+      onClick={() => onRemoveFromGallery(variant.id, localSelectedUrls)}
+    >
+      {t.imageManager.remove.replace("{count}", String(localSelectedUrls.length))}
+    </Button>
+  ) : null;
+  // Where a piece of the selection UI goes: in the bar's slot when the manager provides slots (nothing
+  // until the slot exists), in place otherwise.
+  const into = (slot: "alt" | "replace" | "remove", node: React.ReactNode): React.ReactNode =>
+    slots === undefined ? node : (slots[slot] ? createPortal(node, slots[slot] as HTMLElement) : null);
+
+  const altNode = (
+    <>
+      {/* Alt text editor — only when exactly 1 image is selected */}
+      {showSingle && singleSelectedUrl && onAltTextChange && !altEditable && (
+        <div className="im-alt-panel" style={{ background: "#f6f6f7", borderRadius: 6, border: "1px solid #e1e3e5" }}>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {t.imageManager.altNotAvailableForLink ?? "Alt texts can only be stored for images and videos in the gallery, not for a YouTube/Vimeo link or a 3D model added to this variant."}
+          </Text>
+        </div>
+      )}
+      {showSingle && singleSelectedUrl && onAltTextChange && altEditable && (
+        <div className="im-alt-panel" style={{
+          background: !isPrimaryLocale && !hasTranslation ? "#fff8f0" : "#f6f6f7",
+          borderRadius: 6,
+          border: `1px solid ${!isPrimaryLocale && !hasTranslation ? "#e6a817" : "#e1e3e5"}`,
+        }}>
+          <div className="im-alt-label" style={{ marginBottom: 6 }}>
+            <Text as="span" variant="bodySm" tone="subdued">
+              {t.imageManager.altTextForSelected}
+            </Text>
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <AutoGrowTextarea
+              value={currentAltText}
+              readOnly={altLocked}
+              aria-readonly={altLocked || undefined}
+              title={altLocked ? altNeedsPrimaryHint : undefined}
+              onValueChange={(next) => { if (!altLocked) onAltTextChange?.(singleSelectedUrl, next); }}
+              placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : altFieldView({ own: currentAltText, inherited: singleSelectedUrl ? inheritedAltTexts?.[singleSelectedUrl] : undefined, primaryAlt: primaryAltText, fallbackPlaceholder: t.imageManager.altTextPlaceholder }).placeholder}
+              style={{
+                flex: "1 1 200px",
+                minWidth: 180,
+                // Height and vertical padding: AutoGrowTextarea's class
+                // (button height at rest, 44px on touch).
+                paddingLeft: 8,
+                paddingRight: 8,
+                fontSize: 13,
+                border: "1px solid var(--app-field-border-color)",
+                borderRadius: 4,
+                outline: "none",
+                background: !isPrimaryLocale && !hasTranslation ? "#fff8f0" : "white",
+              }}
+              onFocus={(e) => { e.target.style.borderColor = "#005bd3"; e.target.style.background = "white"; }}
+              onBlur={(e) => {
+                e.target.style.borderColor = "var(--app-field-border-color)";
+                e.target.style.background = !isPrimaryLocale && !hasTranslation ? "#fff8f0" : "white";
+                // No save here: the text is a draft until the editor's save bar writes it.
+              }}
+            />
+            <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
+              {isPrimaryLocale && onGenerateAltText && (
+                <DisabledActionTooltip hint={aiBlocked}>
+                  <Button
+                    size="slim"
+                    disabled={isAltTextLoading || !!aiBlocked}
+                    loading={isAltTextLoading}
+                    onClick={() => onGenerateAltText(singleSelectedUrl)}
+                  >
+                    {`✨ ${t.imageManager.aiGenerate}`}
+                  </Button>
+                </DisabledActionTooltip>
+              )}
+              {isPrimaryLocale && onTranslateAltToAllLocales && (
+                <>
+                  <DisabledActionTooltip hint={singleLocaleHint ?? (altDirty ? t.imageManager.translateAltAllSaveFirst : undefined)}>
+                    <Button
+                      size="slim"
+                      disabled={isAltTextLoading || !!singleLocaleHint || altDirty}
+                      loading={isAltTextLoading}
+                      onClick={() => onTranslateAltToAllLocales(singleSelectedUrl, currentAltText)}
+                    >
+                      {`🌍 ${t.imageManager.translateAltAll}`}
+                    </Button>
+                  </DisabledActionTooltip>
+                </>
+              )}
+              {!isPrimaryLocale && onTranslateAltText && (
+                <DisabledActionTooltip hint={translateAltBlocked}>
+                  <Button
+                    size="slim"
+                    disabled={isAltTextLoading || !!translateAltBlocked}
+                    loading={isAltTextLoading}
+                    onClick={() => onTranslateAltText(singleSelectedUrl)}
+                  >
+                    {`🌍 ${t.imageManager.translateAlt}`}
+                  </Button>
+                </DisabledActionTooltip>
+              )}
+            </div>
+          </div>
+          {singleSelectedUrl && onAcceptAltSuggestion && onRejectAltSuggestion && altSuggestionFor?.(singleSelectedUrl) !== undefined && (
+            <AISuggestionBanner
+              fieldType="altText"
+              suggestionText={altSuggestionFor!(singleSelectedUrl) as string}
+              onAccept={() => onAcceptAltSuggestion(singleSelectedUrl, false)}
+              onDecline={() => onRejectAltSuggestion(singleSelectedUrl)}
+              onAcceptAndTranslate={isPrimaryLocale ? () => onAcceptAltSuggestion(singleSelectedUrl, true) : undefined}
+              acceptLabel={t.products?.accept || "Accept"}
+              declineLabel={t.products?.decline || "Decline"}
+              acceptAndTranslateLabel={t.products?.acceptTranslate || "Accept & Translate"}
+              titleLabel={t.products?.aiSuggestion || "AI suggestion:"}
+              singleLocaleHint={singleLocaleHint}
+              disabled={isAltTextLoading}
+            />
+          )}
+          {altLocked && (
+            <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
+              {altNeedsPrimaryHint}
+            </div>
+          )}
+          {!isPrimaryLocale && primaryAltText && (
+            <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
+              <span style={{ fontWeight: 600 }}>{t.imageManager.primaryRef}: </span>
+              {primaryAltText}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div ref={setDropRef} style={{ borderBottom: "1px solid #e1e3e5", marginBottom: 4 }}>
       <div
@@ -416,150 +573,27 @@ export function VariantGallerySection({
             replacements={replacements}
           />
 
+          {slots === undefined && (
           <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
             {/* The replacement buttons of the ONE selected medium (foreign
                 language only; nothing renders otherwise), before "remove" like
                 in the product gallery. They write the same entry as there. */}
-            {replaceState?.kind === "replace" && <LocalizedMediaReplaceButtons mediaId={replaceState.mediaId} />}
-            {replaceState?.kind === "notProductMedium" && <LocalizedMediaNotReplaceable />}
-            {replaceState?.kind === "model3d" && <LocalizedMediaNotReplaceable reason="model3d" />}
-            {hasLocalSelection && (
-              <Button
-                size="slim"
-                tone="critical"
-                variant="secondary"
-                onClick={() => onRemoveFromGallery(variant.id, localSelectedUrls)}
-              >
-                {t.imageManager.remove.replace("{count}", String(localSelectedUrls.length))}
-              </Button>
-            )}
-            {/* The standalone "Browse existing files" button and the
-                YouTube/Vimeo URL row used to live here. Both have moved
-                into the central add-media modal — opened by clicking the
-                placeholder tile in the gallery grid above (onOpenPicker on
-                the SortableImageGrid). One entry point, one mental model. */}
+            {replaceButtons}
+            {removeButton}
           </div>
+          )}
 
-          {/* Alt text editor — only when exactly 1 image is selected */}
-          {singleSelectedUrl && onAltTextChange && !altEditable && (
-            <div style={{ marginTop: 10, padding: "10px 12px", background: "#f6f6f7", borderRadius: 6, border: "1px solid #e1e3e5" }}>
-              <Text as="p" variant="bodySm" tone="subdued">
-                {t.imageManager.altNotAvailableForLink ?? "Alt texts can only be stored for images and videos in the gallery, not for a YouTube/Vimeo link or a 3D model added to this variant."}
-              </Text>
-            </div>
-          )}
-          {singleSelectedUrl && onAltTextChange && altEditable && (
-            <div style={{
-              marginTop: 10,
-              padding: "10px 12px",
-              background: !isPrimaryLocale && !hasTranslation ? "#fff8f0" : "#f6f6f7",
-              borderRadius: 6,
-              border: `1px solid ${!isPrimaryLocale && !hasTranslation ? "#e6a817" : "#e1e3e5"}`,
-            }}>
-              <div style={{ marginBottom: 6 }}>
-                <Text as="span" variant="bodySm" tone="subdued">
-                  {t.imageManager.altTextForSelected}
-                </Text>
-              </div>
-              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                <AutoGrowTextarea
-                  value={currentAltText}
-                  readOnly={altLocked}
-                  aria-readonly={altLocked || undefined}
-                  title={altLocked ? altNeedsPrimaryHint : undefined}
-                  onValueChange={(next) => { if (!altLocked) onAltTextChange?.(singleSelectedUrl, next); }}
-                  placeholder={isPrimaryLocale ? t.imageManager.altTextPlaceholder : altFieldView({ own: currentAltText, inherited: singleSelectedUrl ? inheritedAltTexts?.[singleSelectedUrl] : undefined, primaryAlt: primaryAltText, fallbackPlaceholder: t.imageManager.altTextPlaceholder }).placeholder}
-                  style={{
-                    flex: "1 1 200px",
-                    minWidth: 180,
-                    // Height and vertical padding: AutoGrowTextarea's class
-                    // (button height at rest, 44px on touch).
-                    paddingLeft: 8,
-                    paddingRight: 8,
-                    fontSize: 13,
-                    border: "1px solid var(--app-field-border-color)",
-                    borderRadius: 4,
-                    outline: "none",
-                    background: !isPrimaryLocale && !hasTranslation ? "#fff8f0" : "white",
-                  }}
-                  onFocus={(e) => { e.target.style.borderColor = "#005bd3"; e.target.style.background = "white"; }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = "var(--app-field-border-color)";
-                    e.target.style.background = !isPrimaryLocale && !hasTranslation ? "#fff8f0" : "white";
-                    // No save here: the text is a draft until the editor's save bar writes it.
-                  }}
-                />
-                <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
-                  {isPrimaryLocale && onGenerateAltText && (
-                    <DisabledActionTooltip hint={aiBlocked}>
-                      <Button
-                        size="slim"
-                        disabled={isAltTextLoading || !!aiBlocked}
-                        loading={isAltTextLoading}
-                        onClick={() => onGenerateAltText(singleSelectedUrl)}
-                      >
-                        {`✨ ${t.imageManager.aiGenerate}`}
-                      </Button>
-                    </DisabledActionTooltip>
-                  )}
-                  {isPrimaryLocale && onTranslateAltToAllLocales && (
-                    <>
-                      <DisabledActionTooltip hint={singleLocaleHint ?? (altDirty ? t.imageManager.translateAltAllSaveFirst : undefined)}>
-                        <Button
-                          size="slim"
-                          disabled={isAltTextLoading || !!singleLocaleHint || altDirty}
-                          loading={isAltTextLoading}
-                          onClick={() => onTranslateAltToAllLocales(singleSelectedUrl, currentAltText)}
-                        >
-                          {`🌍 ${t.imageManager.translateAltAll}`}
-                        </Button>
-                      </DisabledActionTooltip>
-                    </>
-                  )}
-                  {!isPrimaryLocale && onTranslateAltText && (
-                    <DisabledActionTooltip hint={translateAltBlocked}>
-                      <Button
-                        size="slim"
-                        disabled={isAltTextLoading || !!translateAltBlocked}
-                        loading={isAltTextLoading}
-                        onClick={() => onTranslateAltText(singleSelectedUrl)}
-                      >
-                        {`🌍 ${t.imageManager.translateAlt}`}
-                      </Button>
-                    </DisabledActionTooltip>
-                  )}
-                </div>
-              </div>
-              {singleSelectedUrl && onAcceptAltSuggestion && onRejectAltSuggestion && altSuggestionFor?.(singleSelectedUrl) !== undefined && (
-                <AISuggestionBanner
-                  fieldType="altText"
-                  suggestionText={altSuggestionFor!(singleSelectedUrl) as string}
-                  onAccept={() => onAcceptAltSuggestion(singleSelectedUrl, false)}
-                  onDecline={() => onRejectAltSuggestion(singleSelectedUrl)}
-                  onAcceptAndTranslate={isPrimaryLocale ? () => onAcceptAltSuggestion(singleSelectedUrl, true) : undefined}
-                  acceptLabel={t.products?.accept || "Accept"}
-                  declineLabel={t.products?.decline || "Decline"}
-                  acceptAndTranslateLabel={t.products?.acceptTranslate || "Accept & Translate"}
-                  titleLabel={t.products?.aiSuggestion || "AI suggestion:"}
-                  singleLocaleHint={singleLocaleHint}
-                  disabled={isAltTextLoading}
-                />
-              )}
-              {altLocked && (
-                <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
-                  {altNeedsPrimaryHint}
-                </div>
-              )}
-              {!isPrimaryLocale && primaryAltText && (
-                <div style={{ marginTop: 6, fontSize: 12, color: "#6d7175" }}>
-                  <span style={{ fontWeight: 600 }}>{t.imageManager.primaryRef}: </span>
-                  {primaryAltText}
-                </div>
-              )}
-            </div>
-          )}
+          {slots === undefined && altNode}
         </div>
       </Collapsible>
+      {/* Outside the Collapsible on purpose: folding this gallery must not take the bar's UI of its selection with it. */}
+      {slots !== undefined && (
+        <>
+          {into("replace", replaceButtons)}
+          {into("remove", removeButton ? <Tooltip content={variant.title}>{removeButton}</Tooltip> : null)}
+          {into("alt", altNode)}
+        </>
+      )}
     </div>
   );
 }

@@ -2043,6 +2043,7 @@ export const en: Translation = {
     move: "Move",
     moveActive: "Move active ✕",
     clearSelection: "Clear selection",
+    selectionBar: "Selected images",
     variantGalleries: "Variant galleries",
     copyHint: "Copy: click gallery placeholder",
     moveHint: "Move: click gallery placeholder",
