@@ -4482,8 +4482,8 @@ export function VariantImageManager({
             collapsed product gallery can still be dragged over (auto-expands) and dropped on. */}
         <div ref={setProductDropRef}>
         <div style={fullView ? undefined : { display: "none" }}>
-        <InlineStack align="space-between" blockAlign="center">
-        <InlineStack gap="200" blockAlign="center">
+        <div className="im-head" data-im-head>
+        <div className="im-head-left">
           <button
             type="button"
             data-im-product-toggle
@@ -4501,14 +4501,18 @@ export function VariantImageManager({
             <Text as="span" tone="subdued"><span aria-hidden="true">{productGalleryShown ? "▲" : "▼"}</span></Text>
           </button>
           {!isLoadingVariants && variants.length > 0 ? (
-            <InlineStack gap="0" blockAlign="center">
+            <div className="im-filter" data-im-filter>
               {(["all", "unassigned"] as const).map((mode, i) => {
                 const label = mode === "all" ? t.imageManager.all : t.imageManager.unassigned;
                 const active = mode === "all" ? showAll : !showAll;
                 return (
-                  <span key={mode}>
-                    {i > 0 && <span style={{ color: "#8c9196", padding: "0 4px" }}>·</span>}
+                  <span key={mode} className="im-filter-item">
+                    {i > 0 && <span className="im-filter-sep" aria-hidden="true">·</span>}
                     <button
+                      type="button"
+                      className="im-filter-btn"
+                      aria-pressed={active}
+                      title={label}
                       onClick={() => setShowAll(mode === "all")}
                       style={{
                         background: "none",
@@ -4522,17 +4526,17 @@ export function VariantImageManager({
                         lineHeight: "20px",
                       }}
                     >
-                      {label}
+                      <span className="im-filter-label">{label}</span>
                     </button>
                   </span>
                 );
               })}
-            </InlineStack>
+            </div>
           ) : (
             <Text as="span" variant="headingSm" tone="subdued">{t.imageManager.general}</Text>
           )}
-        </InlineStack>
-        <InlineStack gap="400" blockAlign="center">
+        </div>
+        <div className="im-head-right">
           {(imagesToConvert.length > 0 || isConvertingWebP) && (
             <InlineStack gap="200" blockAlign="center">
               {webpAllowed ? (
@@ -4581,8 +4585,8 @@ export function VariantImageManager({
             style={{ width: 80, cursor: "pointer", accentColor: "#005bd3" }}
             aria-label={t.imageManager.thumbSizeLabel}
           />
-        </InlineStack>
-        </InlineStack>
+        </div>
+        </div>
         </div>
         <Collapsible open={productGalleryShown} id="product-gallery-body" transition={{ duration: "150ms" }}>
         <div style={{ marginTop: 6, display: fullView ? "flex" : "none", alignItems: "center", gap: 6 }}>
@@ -4602,6 +4606,7 @@ export function VariantImageManager({
         <div style={{ position: "relative", marginTop: 8 }}>
           <div
             // Preview: one clipped row that is not operable; a click on it opens the full view.
+            className="im-grid-bleed"
             style={fullView ? { overflowX: "hidden" } : { maxHeight: thumbSize + 24, overflow: "hidden", cursor: "pointer" }}
             onClick={fullView ? undefined : openFullView}
           >

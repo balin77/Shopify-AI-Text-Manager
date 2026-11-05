@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
+import { Text, Button, Collapsible, Badge } from "@shopify/polaris";
 import { useDroppable } from "@dnd-kit/core";
 import { altFieldView } from "./alt-market-layer";
 import { useI18n } from "../../contexts/I18nContext";
@@ -536,7 +536,10 @@ export function VariantGallerySection({
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setOpen(o => !o); }}
         aria-expanded={isOpen}
       >
-        <InlineStack gap="200" align="center" blockAlign="center">
+        {/* ONE left-aligned line: checkbox, title, SKU, count. The SKU gives way first (ellipsis, full
+            text in its title); the title truncates only once the SKU is at its minimum; the count and
+            the chevron never shrink or wrap (CSS .im-vhead-*). */}
+        <div className="im-vhead-left">
           <input
             type="checkbox"
             checked={isAllSelected}
@@ -549,15 +552,17 @@ export function VariantGallerySection({
             style={{ width: 15, height: 15, cursor: "pointer", accentColor: "#005bd3", flexShrink: 0 }}
             aria-label={t.imageManager.selectAllVariantLabel.replace("{title}", variant.title)}
           />
-          <span style={variantTitlePulseStyle}>
+          <span className="im-vhead-title" style={variantTitlePulseStyle} title={variant.title}>
             <Text as="span" variant="headingSm">{variant.title}</Text>
           </span>
           {variant.sku && (
-            <Text as="span" variant="bodySm" tone="subdued">SKU: {variant.sku}</Text>
+            <span className="im-vhead-sku" title={`SKU: ${variant.sku}`}>
+              <Text as="span" variant="bodySm" tone="subdued">SKU: {variant.sku}</Text>
+            </span>
           )}
-          <Badge>{String(displayUrls.length)}</Badge>
-        </InlineStack>
-        <Text as="span" tone="subdued">{isOpen ? "▲" : "▼"}</Text>
+          <span className="im-vhead-count"><Badge>{String(displayUrls.length)}</Badge></span>
+        </div>
+        <span className="im-vhead-chevron"><Text as="span" tone="subdued">{isOpen ? "▲" : "▼"}</Text></span>
       </div>
 
       <Collapsible open={isOpen} id={`variant-gallery-${variant.id}`} transition={{ duration: "150ms" }}>

@@ -1800,14 +1800,137 @@ a:focus:not(:focus-visible) {
 }
 
 
-/* Image manager, phones: the gallery frame (dashed border + padding) sat inside
-   three more padded cards, so fewer than 3 tiles fit per row at the default
-   thumb size. Slimmer frame and gap below 768px; desktop is unchanged. */
+/* Image manager, header of the product gallery: title + count + chevron and the Alle / Nicht
+   zugewiesen filter are ONE no-wrap line (left group); the photo-size slider and the WebP button
+   are the right group. On a phone the right group always takes its own row below, so the header
+   has the same two rows for 0, 3 or 153 photos and for either filter state. */
+.im-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  column-gap: 0;
+}
+.im-head-left {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.im-head-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+.im-filter {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+}
+.im-filter-item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.im-filter-sep {
+  color: #8c9196;
+  padding: 0 4px;
+}
+.im-filter-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Image manager, variant gallery header: ONE left-aligned line (checkbox, title, SKU, count) and
+   the chevron at the right edge. The SKU gives way first (its shrink weight is far above the
+   title's, and it has a floor); the count and the chevron never shrink. */
+.im-vhead-left {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.im-vhead-title {
+  flex: 0 1 auto;
+  min-width: 3ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.im-vhead-sku {
+  flex: 0 100000 auto;
+  min-width: 6ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.im-vhead-count,
+.im-vhead-chevron {
+  flex: 0 0 auto;
+}
+.im-vhead-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--touch-target-min);
+  min-height: var(--touch-target-min);
+  margin-left: 4px;
+}
+@media (min-width: 769px) {
+  .im-vhead-chevron {
+    min-width: 0;
+    min-height: 0;
+  }
+}
+
+/* Image manager, phones: no frame around a gallery. The dashed border + padding sat inside three
+   more padded cards, so fewer than 4 tiles fitted per row at the default thumb size. The frame
+   keeps no layout space (no border, no padding); while something can be dropped on it, an OUTLINE
+   (which takes no space) and the tint show it. The gallery bleeds into the card's 4px padding, and
+   the page gutter is halved while the full view is open. Desktop is unchanged. */
 @media (max-width: 768px) {
   .im-grid-frame {
-    padding: 4px !important;
-    gap: 6px !important;
-    border-width: 1px !important;
+    padding: 0 !important;
+    gap: 4px !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    margin-inline: -4px;
+  }
+  .im-grid-bleed {
+    margin-inline: -4px;
+  }
+  .im-grid-bleed .im-grid-frame {
+    margin-inline: 0;
+  }
+  .im-grid-frame[data-drop-target="true"] {
+    outline: 2px dashed #005bd3;
+    outline-offset: -2px;
+  }
+  .unified-content-editor-layout:has(.unified-editor-container.im-full) {
+    padding-inline: 8px !important;
+  }
+  .im-head-right {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+  .im-filter-btn {
+    font-size: 12px !important;
+    min-width: 0 !important;
+    max-width: 100%;
+  }
+  .im-filter {
+    gap: 10px;
+  }
+  .im-filter-sep {
+    display: none;
   }
 }
 
