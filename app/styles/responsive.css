@@ -1909,6 +1909,8 @@ a:focus:not(:focus-visible) {
    pointer events through to the tiles. Same on phones and desktop. */
 .im-grid-frame {
   position: relative;
+  justify-content: center;
+  justify-content: safe center;
 }
 .im-grid-frame[data-drop-target="true"] {
   background: rgba(0, 91, 211, 0.04);

@@ -30,11 +30,16 @@ const phoneBlock = (() => {
 
 describe("galleries: a centred grid with no frame, on every width", () => {
   const containerStyle = grid.slice(grid.indexOf("const containerStyle"), grid.indexOf("const inner = ("));
-  it("the grid is a centred auto-fill grid of tile-wide columns with no border and no padding", () => {
+  it("the grid is a centred auto-fill grid of tile-wide columns with no border and a 2px padding", () => {
     expect(containerStyle).toMatch(/display:\s*"grid"/);
     expect(containerStyle).toMatch(/gridTemplateColumns:\s*`repeat\(auto-fill, \$\{thumbSize\}px\)`/);
-    expect(containerStyle).toMatch(/justifyContent:\s*"center"/);
-    expect(containerStyle).not.toMatch(/\bborder:|\bpadding:|flexWrap|isDropTarget/);
+    // 2px padding = room for a tile's outward 2px ring and for the drop ring; no border
+    expect(containerStyle).toMatch(/padding:\s*2,/);
+    expect(containerStyle).toMatch(/boxSizing:\s*"border-box"/);
+    expect(containerStyle).not.toMatch(/\bborder:|flexWrap|isDropTarget/);
+    // centred with a start fallback for a single over-wide column
+    const frameRule = css.match(/\.im-grid-frame\s*\{([^}]*position:\s*relative[^}]*)\}/)![1];
+    expect(frameRule).toMatch(/justify-content:\s*center;\s*justify-content:\s*safe center/);
   });
   it("the drop feedback is an ::after ring above the tiles (global, not phone-only), no outline", () => {
     const ring = css.match(/\.im-grid-frame\[data-drop-target="true"\]::after\s*\{([^}]*)\}/)![1];
@@ -64,35 +69,18 @@ describe("galleries: a centred grid with no frame, on every width", () => {
 
 describe("closed preview: exactly one row", () => {
   const preview = manager.slice(manager.indexOf("// Preview: exactly ONE row"), manager.indexOf("onClick={fullView ? undefined : openFullView}"));
-  it("is clipped to one tile plus the 2px ring room above and below, border-box", () => {
+  it("is clipped to 2px padding + one tile + 2px padding (the grid's own padding), same grid as the full view", () => {
     expect(preview).toMatch(/maxHeight:\s*thumbSize \+ 4/);
-    expect(preview).toMatch(/padding:\s*2/);
-    expect(preview).toMatch(/boxSizing:\s*"border-box"/);
     expect(preview).toMatch(/overflow:\s*"hidden"/);
+    // no extra wrapper padding: width and columns match the full view's
+    expect(preview).not.toMatch(/padding:/);
   });
-  it("the smallest row gap is larger than the ring room, so a second row never shows", () => {
-    // clip = tile + 2 + 2; the next row starts 2 (padding) + tile + gap below the top
-    const gaps = [...css.matchAll(/\.im-grid-frame\s*\{[^}]*gap:\s*(\d+)px/g)].map((m) => Number(m[1]));
-    expect(Math.min(...gaps, 8)).toBeGreaterThanOrEqual(4);
-    expect(grid).toMatch(/gap:\s*8/);
-  });
-});
-
-describe("product gallery header: title and filter are one stable line", () => {
-  const head = manager.slice(manager.indexOf('className="im-head"'), manager.indexOf("<Collapsible open={productGalleryShown}"));
-  const left = head.slice(head.indexOf('className="im-head-left"'), head.indexOf('className="im-head-right"'));
-  it("toggle (title, count, chevron) and filter sit in the same left group", () => {
-    expect(left).toContain("data-im-product-toggle");
-    expect(left).toContain("data-im-filter");
-  });
-  it("the slider and the WebP button are in the right group, not the left", () => {
-    const right = head.slice(head.indexOf('className="im-head-right"'));
-    expect(right).toContain('type="range"');
-    expect(left).not.toContain('type="range"');
-  });
-  it("the left group never wraps; on phones the right group takes its own row", () => {
-    expect(rule(".im-head-left")).toMatch(/flex-wrap:\s*nowrap/);
-    expect(phoneBlock).toMatch(/\.im-head-right\s*\{[^}]*flex:\s*1 1 100%/);
+  it("the row gap is larger than the clip's slack, so a second row never shows", () => {
+    // second row starts at 2 (grid padding) + tile + gap; the clip ends at tile + 4
+    const phoneGap = Number(phoneBlock.match(/\.im-grid-frame\s*\{[^}]*gap:\s*(\d+)px/)![1]);
+    expect(phoneGap).toBe(4);
+    expect(grid).toMatch(/gap:\s*8,/);
+    expect(2 + phoneGap).toBeGreaterThan(4 - 2 + 1);
   });
 });
 

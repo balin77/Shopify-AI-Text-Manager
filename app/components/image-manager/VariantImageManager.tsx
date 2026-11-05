@@ -4608,10 +4608,10 @@ export function VariantImageManager({
           <div
             // Preview: one clipped row that is not operable; a click on it opens the full view.
             className="im-grid-bleed"
-            // Preview: exactly ONE row. The grid has no frame and a tile is thumbSize tall; the
-            // border-box clip is that tile plus 2px padding above and below (room for the main
-            // image's 2px ring), and the next row starts a gap (>= 4px) below the tile, i.e. outside.
-            style={fullView ? { overflowX: "hidden" } : { maxHeight: thumbSize + 4, overflow: "hidden", cursor: "pointer", padding: 2, boxSizing: "border-box" }}
+            // Preview: exactly ONE row. The grid has a 2px padding (room for the 2px main-image ring)
+            // and a tile is thumbSize tall, so the clip is 2 + thumbSize + 2; the next row starts a
+            // gap (>= 4px) below the tile, i.e. outside. Same grid, same bleed as the full view.
+            style={fullView ? { overflowX: "hidden" } : { maxHeight: thumbSize + 4, overflow: "hidden", cursor: "pointer" }}
             onClick={fullView ? undefined : openFullView}
           >
           <div style={fullView ? undefined : { pointerEvents: "none" }}>

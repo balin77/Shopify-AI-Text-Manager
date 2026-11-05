@@ -629,14 +629,18 @@ export function SortableImageGrid({
 
   // A CSS grid of fixed tile-wide columns, centred as a block: the leftover space is split evenly
   // left and right, tiles keep reading order and the last row stays under the first column. There
-  // is NO border or padding (a frame took layout space and the leftover sat on the right only);
+  // is NO border and only a 2px padding (a frame took layout space and the leftover sat on the right only);
   // the drop feedback is the ::after ring in responsive.css (data-drop-target).
   const containerStyle: React.CSSProperties = {
     display: "grid",
     gridTemplateColumns: `repeat(auto-fill, ${thumbSize}px)`,
-    justifyContent: "center",
     gap: 8,
     minHeight: 48,
+    // 2px of padding is room for a tile's outward 2px ring (main image / selection) and for the
+    // drop ring (::after, inset 0), so neither is clipped by the gallery's overflow wrapper and
+    // the drop ring never covers a tile. justify-content (safe center) is in responsive.css.
+    padding: 2,
+    boxSizing: "border-box",
     borderRadius: 8,
   };
 
