@@ -1905,9 +1905,11 @@ a:focus:not(:focus-visible) {
 
 /* Image manager, phones: no frame around a gallery. The dashed border + padding sat inside three
    more padded cards, so fewer than 4 tiles fitted per row at the default thumb size. The frame
-   keeps no layout space (no border, no padding); while something can be dropped on it, an OUTLINE
-   (which takes no space) and the tint show it. The gallery bleeds into the card's 4px padding, and
-   the page gutter is halved while the full view is open. Desktop is unchanged. */
+   keeps no layout space (no border, no padding). While something can be dropped on it, a ring is
+   drawn by an ::after overlay ABOVE the tiles (absolute, inset 0, pointer-events none, so drops
+   and drags pass through) plus the inline tint; it is not an outline and not a border, so it
+   takes no space and is not clipped. The gallery bleeds into the card's 4px padding, and the page
+   gutter is halved while the full view is open. Desktop is unchanged. */
 @media (max-width: 768px) {
   .im-grid-frame {
     padding: 0 !important;
@@ -1922,11 +1924,17 @@ a:focus:not(:focus-visible) {
   .im-grid-bleed .im-grid-frame {
     margin-inline: 0;
   }
-  /* An INSET shadow, not an outline (which would be clipped by the product gallery's
-     overflow wrapper); it is painted under the tiles, so it never covers a tile's selection or
-     main-image border. Neither takes layout space. */
-  .im-grid-frame[data-drop-target="true"] {
+  .im-grid-frame {
+    position: relative;
+  }
+  .im-grid-frame[data-drop-target="true"]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
     box-shadow: inset 0 0 0 2px #005bd3;
+    pointer-events: none;
+    z-index: 1;
   }
   .unified-content-editor-layout:has(.unified-editor-container.im-full) {
     padding-inline: 8px !important;

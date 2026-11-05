@@ -4523,11 +4523,11 @@ export function VariantImageManager({
                         fontSize: 13,
                         fontWeight: active ? 700 : 400,
                         color: active ? "#202223" : "#6d7175",
-                        borderBottom: active ? "2px solid #202223" : "2px solid transparent",
                         lineHeight: "20px",
                       }}
                     >
-                      <span className="im-filter-label">{label}</span>
+                      {/* the active underline hugs the text, not the 44px touch box around it */}
+                      <span className="im-filter-label" style={{ borderBottom: active ? "2px solid #202223" : "2px solid transparent" }}>{label}</span>
                     </button>
                   </span>
                 );

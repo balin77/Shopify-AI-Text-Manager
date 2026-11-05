@@ -29,13 +29,19 @@ const phoneBlock = (() => {
 })();
 
 describe("phone: the gallery has no frame that takes layout space", () => {
-  it("frame has no border and no padding, the drop feedback is an inset shadow", () => {
+  it("frame has no border and no padding, the drop feedback is an overlay ring", () => {
     const frame = rule(".im-grid-frame", css.indexOf("@media (max-width: 768px) {", css.indexOf("/* Image manager, phones: no frame")));
     expect(frame).toMatch(/padding:\s*0\s*!important/);
     expect(frame).toMatch(/border:\s*0\s*!important/);
-    // an INSET shadow: an outline is clipped by the product gallery's overflow wrapper and an
-    // outline-offset overlaps edge tiles' selection / main-image borders
-    expect(phoneBlock).toMatch(/\.im-grid-frame\[data-drop-target="true"\]\s*\{[^}]*box-shadow:\s*inset 0 0 0 2px/);
+    // an ::after ring ABOVE the tiles (an inset box-shadow on the frame is hidden under flush tiles,
+    // an outline is clipped by the gallery's overflow wrapper): no pointer events, no layout space
+    const ring = phoneBlock.match(/\.im-grid-frame\[data-drop-target="true"\]::after\s*\{([^}]*)\}/)![1];
+    expect(ring).toMatch(/position:\s*absolute/);
+    expect(ring).toMatch(/inset:\s*0/);
+    expect(ring).toMatch(/pointer-events:\s*none/);
+    expect(ring).toMatch(/box-shadow:\s*inset 0 0 0 2px/);
+    expect(ring).toMatch(/z-index:\s*1;/);
+    expect(phoneBlock).toMatch(/\.im-grid-frame\s*\{\s*position:\s*relative/);
     expect(phoneBlock).not.toMatch(/outline(-offset)?:/);
   });
   it("the grid marks its frame while something can be dropped on it", () => {
@@ -68,9 +74,10 @@ describe("filter buttons keep their touch target and still truncate", () => {
   it("the base rule lets the label truncate (min-width 0) without !important, the phone block adds no min-width", () => {
     const base = rule(".im-filter-btn");
     expect(base).toMatch(/min-width:\s*0;/);
-    expect(base).not.toMatch(/!important/);
+    expect(base).not.toMatch(/min-width:[^;]*!important/);
     const phoneBtn = phoneBlock.match(/\.im-filter-btn\s*\{([^}]*)\}/)![1];
     expect(phoneBtn).not.toMatch(/min-width/);
+    expect(phoneBtn).not.toMatch(/min-width[^;]*!important/);
   });
   it("the touch rule that gives buttons 44px is more specific than .im-filter-btn", () => {
     expect(css).toMatch(/button:not\(\.help-tooltip-trigger\),[^{]*\{[^}]*min-width:\s*var\(--touch-target-min\)/);
@@ -78,6 +85,11 @@ describe("filter buttons keep their touch target and still truncate", () => {
   it("the buttons carry no redundant title (the text is visible)", () => {
     const btn = manager.slice(manager.indexOf('className="im-filter-btn"'), manager.indexOf('className="im-filter-label"'));
     expect(btn).not.toMatch(/\btitle=/);
+  });
+  it("the active underline is drawn on the label, not on the 44px button", () => {
+    const btn = manager.slice(manager.indexOf('className="im-filter-btn"'), manager.indexOf('className="im-filter-label"'));
+    expect(btn).not.toMatch(/borderBottom/);
+    expect(manager).toMatch(/className="im-filter-label" style=\{\{ borderBottom: active/);
   });
   it("the bleed and the card padding are cross-referenced", () => {
     expect(manager).toMatch(/im-grid-bleed[\s\S]{0,80}Card padding|bleeds the galleries into exactly this padding/);
