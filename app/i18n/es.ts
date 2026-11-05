@@ -2024,6 +2024,8 @@ export const es: Translation = {
     moveActive: "Mover activo ✕",
     clearSelection: "Deseleccionar",
     selectionBar: "Imágenes seleccionadas",
+    foldBlockedWhileDeleting: "Responde primero a la pregunta de eliminación.",
+    convertUnfolded: "La galería del producto estaba plegada y ahora está abierta. Revisa las imágenes y luego convierte.",
     variantGalleries: "Galerías de variantes",
     copyHint: "Copiar: haz clic en el marcador de galería",
     moveHint: "Mover: haz clic en el marcador de galería",

@@ -2044,6 +2044,8 @@ export const en: Translation = {
     moveActive: "Move active ✕",
     clearSelection: "Clear selection",
     selectionBar: "Selected images",
+    foldBlockedWhileDeleting: "Answer the delete question first.",
+    convertUnfolded: "The product gallery was folded and is open now. Check the images, then convert.",
     variantGalleries: "Variant galleries",
     copyHint: "Copy: click gallery placeholder",
     moveHint: "Move: click gallery placeholder",

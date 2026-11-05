@@ -31,6 +31,7 @@ import { splitLoadedAltTexts, altFieldView } from "./alt-market-layer";
 import { planAltFlush, planImmediateAltSave, hasImmediateAltSave, restoreAltDrafts, revertAltDraftsWithoutPrimary, altFlushKey, createAltFlushWaiter, settleAltFlushWaiter, releaseAltFlushToken, transferAltFlushWaiter, altFlushSummary, selectAltSends, unsentAltDrafts, settledAltRenames, rekeyAltDrafts, altSaveInView, altDraftUrlsOfDeletedMedia, strandedAltDraftUrls, dropAltDrafts, partitionAltQueue, type AltDraftApi, type AltFlushSummary, type AltFlushWaiter, type SettlingAltSource } from "./alt-draft";
 import { fileTilesByUrl, gidForUrl, tilesByUrl, isModel3dGid, variantHoldsMedium } from "./url-gid";
 import { altSuggestionInView, altSuggestionsOfProduct, planAcceptAltSuggestion, shouldTranslateAfterSave, withAltSuggestion, withoutAltSuggestion, type AltSuggestionMap } from "./alt-suggestion";
+import { SelectedThumb } from "./SelectedThumb";
 import { AISuggestionBanner } from "../AISuggestionBanner";
 import { AutoGrowTextarea } from "../unified/AutoGrowTextarea";
 import {
@@ -4315,13 +4316,16 @@ export function VariantImageManager({
 
   // Single selected URL in product gallery (for inline alt text editor)
   const productGallerySelectedUrls = selectedUrlsByGallery.get("product") ?? new Set<string>();
-  const noneOrAllSelected = productGallerySelectedUrls.size === 0 || productGallerySelectedUrls.size >= displayedProductUrls.length;
+  // WebP conversion writes at once: a selection inside the FOLDED product gallery is not on screen
+  // and does not scope it (and a click while folded only unfolds, see the button).
+  const convertScopeUrls = productGalleryShown ? productGallerySelectedUrls : new Set<string>();
+  const noneOrAllSelected = convertScopeUrls.size === 0 || convertScopeUrls.size >= displayedProductUrls.length;
   // The kind comes from mediaMetaMap via the row's GID — without it a video's
   // poster url reads as a convertible JPG and the button offers to convert
   // media Shopify cannot convert (isWebpConvertible owns that rule).
   const imagesToConvert = effectiveProductImages.filter(i =>
     isWebpConvertible(i.url, i.mediaId ? mediaMetaMap[i.mediaId]?.kind : undefined) &&
-    (noneOrAllSelected ? displayedProductUrls.includes(i.url) : productGallerySelectedUrls.has(i.url))
+    (noneOrAllSelected ? displayedProductUrls.includes(i.url) : convertScopeUrls.has(i.url))
   );
 
   const webpFormatBreakdown = (() => {
@@ -4486,6 +4490,9 @@ export function VariantImageManager({
             className="im-product-toggle"
             aria-expanded={productGalleryShown}
             aria-controls="product-gallery-body"
+            // A pending delete confirmation names images of this gallery: it stays open meanwhile.
+            disabled={!!deleteConfirm}
+            title={deleteConfirm ? String(t.imageManager?.foldBlockedWhileDeleting ?? "Answer the delete question first.") : undefined}
             onClick={() => setProductGalleryUi({ productId, open: !productGalleryOpen })}
             style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: "4px 0", cursor: "pointer", font: "inherit", color: "inherit" }}
           >
@@ -4529,7 +4536,16 @@ export function VariantImageManager({
           {(imagesToConvert.length > 0 || isConvertingWebP) && (
             <InlineStack gap="200" blockAlign="center">
               {webpAllowed ? (
-                <Button size="slim" onClick={() => handleConvertToWebP(imagesToConvert)} disabled={isConvertingWebP}>
+                <Button size="slim" onClick={() => {
+                  // Folded product gallery: the images are not on screen, so the first click only
+                  // unfolds it (nothing is converted unseen); the merchant converts with a second click.
+                  if (fullView && !productGalleryOpen) {
+                    setProductGalleryUi({ productId, open: true });
+                    showInfoBox(String(t.imageManager?.convertUnfolded ?? "The product gallery was folded: it is open now. Check the images, then convert."), "info");
+                    return;
+                  }
+                  handleConvertToWebP(imagesToConvert);
+                }} disabled={isConvertingWebP}>
                   {isConvertingWebP
                     ? t.imageManager.webpConverting
                     : t.imageManager.webpConvertButton.replace("{count}", String(imagesToConvert.length)) + webpFormatBreakdown}
@@ -4657,7 +4673,7 @@ export function VariantImageManager({
             // focus mid-typing. Writes to variant state are refused centrally (`refuseIfVariantsNotCurrent`)
             // and the gallery drop targets are disabled.
             <div data-variants-list aria-busy={!variantsCurrent ? true : undefined}>
-            {variants.map(v => {
+            {variants.map((v, vIndex) => {
               const storedGids = pendingVariantGalleries[v.id] ?? v.galleryFileGids;
               const nativeMainGid = mainGidOfVariant(v);
               // What the gallery SHOWS (displayMain): the main image once, at the place the saved
@@ -4726,7 +4742,7 @@ export function VariantImageManager({
                 skipDndContext
                 forceOpen={autoExpandId === v.id}
                 slots={barSlots}
-                order={variants.indexOf(v)}
+                order={vIndex}
                 onOpenChange={reportVariantOpen}
                 soleSelection={selectedGalleryItems.size === 1}
                 externalVideoUrls={pendingExternalVideos[v.id] ?? v.externalVideoUrls ?? []}
@@ -4896,6 +4912,7 @@ export function VariantImageManager({
               </Text>
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <SelectedThumb url={productSingleSelected} meta={imageMetas[productSingleSelected]} />
               <AutoGrowTextarea
                 aria-label={t.imageManager.altTextForSelected}
                 value={productCurrentAltText}

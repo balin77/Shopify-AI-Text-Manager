@@ -2045,6 +2045,8 @@ export const de = {
     moveActive: "Verschieben aktiv ✕",
     clearSelection: "Auswahl aufheben",
     selectionBar: "Ausgewählte Bilder",
+    foldBlockedWhileDeleting: "Beantworten Sie zuerst die Löschfrage.",
+    convertUnfolded: "Die Produktgalerie war zugeklappt und ist jetzt offen. Prüfen Sie die Bilder und wandeln Sie dann um.",
     variantGalleries: "Varianten-Galerien",
     copyHint: "Kopieren: Galerie-Placeholder klicken",
     moveHint: "Verschieben: Galerie-Placeholder klicken",

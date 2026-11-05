@@ -15,6 +15,7 @@ import { LocalizedMediaReplaceButtons, LocalizedMediaNotReplaceable } from "../l
 import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
 import { altTranslateSourceText, foreignAltLocked } from "../../services/alt-text-feedback.shared";
 import { AutoGrowTextarea } from "../unified/AutoGrowTextarea";
+import { SelectedThumb } from "./SelectedThumb";
 import { AISuggestionBanner } from "../AISuggestionBanner";
 
 interface VariantGallerySectionProps {
@@ -418,6 +419,7 @@ export function VariantGallerySection({
             </Text>
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <SelectedThumb url={singleSelectedUrl} meta={enrichedImageMetas[singleSelectedUrl]} />
             <AutoGrowTextarea
               aria-label={t.imageManager.altTextForSelected}
               value={currentAltText}

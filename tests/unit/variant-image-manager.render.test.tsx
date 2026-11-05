@@ -1997,4 +1997,41 @@ describe("review fixes: folded galleries, drags, product switches", () => {
     rerender(ui({ productId: "gid://shopify/Product/2" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Yes, delete now" })).toBeNull());
   });
+
+  it("final review M1: a selection in the FOLDED product gallery does not scope WebP; a click while folded only unfolds, the next one converts", async () => {
+    await mount();
+    select("product", url(1));
+    expect(screen.getByRole("button", { name: /^1 image\(s\)/ })).toBeTruthy();
+    fireEvent.click(toggle());
+    // folded: the hidden selection does not scope it -> the normal unselected rule (all images)
+    const btn = await screen.findByRole("button", { name: /^4 image\(s\)/ });
+    fireEvent.click(btn);
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    expect(apiCalls.some((c) => c.path === "/api/convert-webp")).toBe(false);
+    // open again: the selection scopes it again, and now the click converts
+    fireEvent.click(await screen.findByRole("button", { name: /^1 image\(s\)/ }));
+    await waitFor(() => expect(apiCalls.some((c) => c.path === "/api/convert-webp")).toBe(true));
+  });
+
+  it("final review L2: while the delete confirmation is open the product gallery cannot be folded", async () => {
+    await mount();
+    select("product", url(1));
+    fireEvent.click(within(bar()!).getByRole("button", { name: "Delete" }));
+    expect(toggle().hasAttribute("disabled")).toBe(true);
+    fireEvent.click(toggle());
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(toggle().hasAttribute("disabled")).toBe(false);
+    fireEvent.click(toggle());
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("final review L3: the bar shows a small picture of the ONE selected image (product and variant tile)", async () => {
+    await mount();
+    select("product", url(2));
+    expect(bar()!.querySelector("[data-im-selected-thumb]")?.getAttribute("src")).toBe(url(2));
+    select("product", url(2), false);
+    select(V1, url(3));
+    await waitFor(() => expect(bar()!.querySelector("[data-im-selected-thumb]")?.getAttribute("src")).toBe(url(3)));
+  });
 });

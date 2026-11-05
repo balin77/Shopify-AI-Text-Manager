@@ -73,6 +73,8 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Wird ein Hauptbild auf Platz 1 einer anderen Variante verschoben und vor dem Speichern wieder zurückgezogen, bleibt bei der Zielvariante eine ungespeicherte Änderung stehen (Speichern bleibt aktiv). Beim Speichern erhält sie einen neuen Reihenfolge-Eintrag; im Shop ist das Ergebnis gleich.
 - Nach einer Verschiebung auf Platz 1 kann das bisherige Hauptbild der Zielvariante erst nach dem Speichern entfernt werden («erst speichern»), obwohl es dann schon als gewöhnliches Galeriebild erscheint.
 - Andere fehlgeschlagene Galerie-Speicherungen ohne eigenen Fehlercode zeigen weiterhin die englische Fehlerliste (vorbestehend).
+- Auswahlleiste (Bildverwaltung): Die Schaltflächen «Aus der Variante entfernen» mehrerer Varianten stehen visuell in Variantenreihenfolge (CSS `order`), im DOM und damit in der Tab-Reihenfolge aber in der Reihenfolge, in der die Galerien ihre Auswahl bekamen. Nur die Tab-Reihenfolge weicht ab; bedienbar bleibt alles.
+- Auswahlleiste (Bildverwaltung): Die Leiste wirkt auch auf ein ausgewähltes Bild in einer ZUGEKLAPPTEN Galerie (Alt-Text, Ersetzen, «Übersetzen» speichert sofort). Ein kleines Vorschaubild des Zielbilds in der Leiste zeigt, welches Bild gemeint ist; die Galerie wird dafür nicht aufgeklappt (anders als beim Löschen und der WebP-Umwandlung, die zuerst aufklappen).
 
 ## Bekannt: 429 und Wiederholung
 
