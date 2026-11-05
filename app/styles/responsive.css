@@ -1307,10 +1307,10 @@ html {
     width: 100% !important;
   }
 
-  /* Force images to scale down. Images inside a media tile keep their own
+  /* Force images to scale down. Tile images (.app-touch-exempt-img) keep their own
      inline size (square thumbSize + object-fit: cover); height:auto !important
      made a non-square picture render at its natural ratio (ragged grid). */
-  img:not(.app-touch-exempt img) {
+  img:not(.app-touch-exempt-img) {
     max-width: 100% !important;
     height: auto !important;
   }
@@ -1647,7 +1647,8 @@ html {
 }
 
 /* The replaced-media badge stays a 20px symbol but gets a 28px invisible hit
-   area (touch-target minimum without swallowing the tile's own selection). */
+   area: an enlargement, NOT the 44px touch minimum (44px would cover most of an
+   80px tile and swallow its own selection). */
 .app-media-badge-hit::after {
   content: "";
   position: absolute;

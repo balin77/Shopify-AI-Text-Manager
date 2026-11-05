@@ -655,6 +655,7 @@ export function FilePickerModal({
           </div>
         ) : (
           <img
+            className="app-touch-exempt-img"
             src={item.previewUrl}
             alt={item.alt ?? ""}
             onError={() => handlePreviewError(item.id)}

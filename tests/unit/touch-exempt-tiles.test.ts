@@ -43,7 +43,16 @@ describe("media tiles are exempt from the touch-target role=button rule", () => 
   it("the phone img max-width/height:auto rule skips images inside a tile (tiles stay square)", () => {
     const rule = css.match(/([^{}]*)\{[^{}]*height:\s*auto\s*!important[^{}]*\}/);
     expect(rule, "img height:auto !important rule not found").not.toBeNull();
-    expect(rule![1]).toContain(":not(.app-touch-exempt img)");
+    expect(rule![1]).toContain(":not(.app-touch-exempt-img)");
+  });
+
+  it.each([
+    ["app/components/image-manager/SortableImageGrid.tsx", 3],
+    ["app/components/image-manager/FilePickerModal.tsx", 1],
+    ["app/components/unified/ImageGalleryField.tsx", 2],
+    ["app/components/localized-images/LocalizedMediaReplaceButton.tsx", 1],
+  ])("%s: its %i tile <img> elements carry app-touch-exempt-img", (file, n) => {
+    expect(read(file).split("app-touch-exempt-img").length - 1).toBe(n);
   });
 
   it("the replaced-media badge keeps an invisible enlarged hit area", () => {

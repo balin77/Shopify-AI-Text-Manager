@@ -226,6 +226,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           //     so the entry is at least identifiable.
           meta?.previewUrl ? (
             <img
+              className="app-touch-exempt-img"
               src={meta.previewUrl}
               alt={currentLocaleAltText || `${t.imageManager.modelLabel ?? "3D model"}: ${filename}`}
               draggable={false}
@@ -269,6 +270,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           // host name. The play overlay sits on top either way.
           meta?.externalHost === "YouTube" || meta?.externalHost === "youtube" ? (
             <img
+              className="app-touch-exempt-img"
               // Keyed by src: the onError below hides the element, and a src
               // that changes (the symbol's toggle) must show again.
               key={replacement?.src ?? "original"}
@@ -314,6 +316,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           )
         ) : (
           <img
+            className="app-touch-exempt-img"
             src={replacement?.src ?? url}
             alt={currentLocaleAltText || t.imageManager.imageThumbLabel}
             draggable={false}
