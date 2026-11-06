@@ -32,6 +32,12 @@ import { getFormString } from "../utils/form-data.utils";
 import { toSafeErrorResponse } from "../utils/error-handler";
 import { encryptApiKey, decryptApiKeyChecked } from "../utils/encryption.server";
 import {
+  apiKeyStatusMap,
+  parseRemoveApiKeys,
+  planApiKeyWrites,
+  type ApiKeyField,
+} from "../utils/api-key-storage.shared";
+import {
   hasCurrentAiProcessingConsent,
   wantsManagedAi,
   hasOwnKeyStored,
@@ -414,16 +420,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // "switching plans is free" notice on the Plan tab.
     const devPlanMode = resolveDevPlanMode(session.shop);
 
-    // Decrypt API keys per-key. A single corrupted key (e.g. encrypted with a
-    // previous ENCRYPTION_KEY) must not wipe the others — instead we surface
-    // exactly which provider keys are broken so the merchant can re-enter them.
-    type ApiKeyField =
-      | "huggingfaceApiKey"
-      | "geminiApiKey"
-      | "claudeApiKey"
-      | "openaiApiKey"
-      | "grokApiKey"
-      | "deepseekApiKey";
+    // The stored AI keys are WRITE-ONLY from here on: the loader sends per
+    // provider only whether a key is stored, its last four characters (so the
+    // merchant can recognise it) and whether it could be decrypted — never the
+    // key itself (api-key-storage.shared.ts). A single corrupted key (e.g.
+    // encrypted with a previous ENCRYPTION_KEY) is reported per provider so
+    // the merchant can re-enter exactly that one.
     const keyFields: { field: ApiKeyField; provider: AIProvider }[] = [
       { field: "huggingfaceApiKey", provider: "huggingface" },
       { field: "geminiApiKey", provider: "gemini" },
@@ -432,14 +434,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       { field: "grokApiKey", provider: "grok" },
       { field: "deepseekApiKey", provider: "deepseek" },
     ];
-    const decryptedKeys: Record<ApiKeyField, string> = {
-      huggingfaceApiKey: "",
-      geminiApiKey: "",
-      claudeApiKey: "",
-      openaiApiKey: "",
-      grokApiKey: "",
-      deepseekApiKey: "",
-    };
     // Provider IDs (not display names) — the UI needs the id to build the
      // InfoBox `dedupeKey` so it can clear a specific provider's warning
      // when the merchant re-enters that key. Display name is derived at
@@ -467,11 +461,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ({ field }) => !!(settings[field] as string | null | undefined),
     ).length;
 
+    // Hints (and with them any decryption) only where the key fields are
+    // rendered: in managed mode nothing is shown, so nothing is decrypted.
+    const apiKeyStatus = apiKeyStatusMap(
+      settings as unknown as Partial<Record<ApiKeyField, string | null>>,
+      decryptApiKeyChecked,
+      !keysWithheld,
+    );
     if (!keysWithheld) {
       for (const { field, provider } of keyFields) {
-        const { value, corrupted } = decryptApiKeyChecked(settings[field] as string | null | undefined);
-        decryptedKeys[field] = value || "";
-        if (corrupted) {
+        if (apiKeyStatus[field].corrupted) {
           corruptedApiKeys.push(provider);
           logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", provider });
         }
@@ -680,7 +679,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // addressed to.
       managedAiTasterActions: managedAiOffered ? managedTasterActions() : 0,
       settings: {
-        ...decryptedKeys,
+        // NEVER the keys themselves — see apiKeyStatusMap above.
+        apiKeyStatus,
         preferredProvider: settings.preferredProvider,
 
         // ── Managed AI (PLAN_MANAGED_AI_KEY §8) ───────────────────────────
@@ -1844,16 +1844,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const storedForKeys = await db.aISettings.findUnique({ where: { shop: session.shop } });
       const keysWithheld =
         formData.get("keysWithheld") === "true" || keyFieldsWithheld(session.shop, storedForKeys);
+      // The keys are WRITE-ONLY (api-key-storage.shared.ts): the form never
+      // holds a stored key, so an empty field means "keep what is stored", a
+      // typed value replaces it, and only an explicit `removeApiKeys` entry
+      // deletes one. Fields absent from `keyWrites` are not touched at all.
       const keyWrites = keysWithheld
         ? {}
-        : {
-            huggingfaceApiKey: encryptApiKey(data.huggingfaceApiKey),
-            geminiApiKey: encryptApiKey(data.geminiApiKey),
-            claudeApiKey: encryptApiKey(data.claudeApiKey),
-            openaiApiKey: encryptApiKey(data.openaiApiKey),
-            grokApiKey: encryptApiKey(data.grokApiKey),
-            deepseekApiKey: encryptApiKey(data.deepseekApiKey),
-          };
+        : planApiKeyWrites(
+            {
+              huggingfaceApiKey: data.huggingfaceApiKey,
+              geminiApiKey: data.geminiApiKey,
+              claudeApiKey: data.claudeApiKey,
+              openaiApiKey: data.openaiApiKey,
+              grokApiKey: data.grokApiKey,
+              deepseekApiKey: data.deepseekApiKey,
+            },
+            parseRemoveApiKeys(formData.get("removeApiKeys")),
+            encryptApiKey,
+          );
       if (keysWithheld) {
         logger.info("[Settings] saveAiKeys without key fields — stored keys left untouched", {
           shop: session.shop,
@@ -1897,12 +1905,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
         create: {
           shop: session.shop,
-          huggingfaceApiKey: encryptApiKey(data.huggingfaceApiKey),
-          geminiApiKey: encryptApiKey(data.geminiApiKey),
-          claudeApiKey: encryptApiKey(data.claudeApiKey),
-          openaiApiKey: encryptApiKey(data.openaiApiKey),
-          grokApiKey: encryptApiKey(data.grokApiKey),
-          deepseekApiKey: encryptApiKey(data.deepseekApiKey),
+          ...keyWrites,
           preferredProvider: data.preferredProvider,
           selectedModel: data.selectedModel || null,
           // Only on CREATE: there is no stored value to overwrite, and Prisma's
@@ -2114,7 +2117,7 @@ export default function SettingsPage() {
     if (corruptedApiKeys.length === 0) return;
     const template =
       t.settings?.corruptedApiKeyWarning ||
-      "The stored API key for {provider} could not be decrypted and was cleared. Please re-enter it and save.";
+      "The stored API key for {provider} could not be decrypted. Please re-enter it and save.";
     for (const provider of corruptedApiKeys) {
       showInfoBox(
         template.replace("{provider}", getProviderDisplayName(provider as AIProvider)),

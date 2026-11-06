@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import type React from "react";
 import { useSortable, SortableContext, rectSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { DndContext, closestCenter, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, useDroppable, type DragEndEvent } from "@dnd-kit/core";
@@ -9,6 +10,34 @@ import { ReplacedMediaBadge } from "../localized-images/ReplacedMediaBadge";
 import type { LocalizedMediaTile } from "../localized-images/useLocalizedMedia";
 // MediaKind is referenced indirectly via ImageMeta.kind — no direct import
 // needed here, but kept as a comment for grep-discoverability of the dispatch.
+
+/** Shared layout of the bottom-left badge stack on a tile (alt / format / 3D).
+ *  Vertical on purpose: the narrowest tile (slider minimum 80px) cannot hold
+ *  two badges side by side. Compact height (14px) keeps a three-badge stack
+ *  clear of the top-left overlays. */
+export const TILE_BADGE_STACK_STYLE: React.CSSProperties = {
+  position: "absolute",
+  left: 4,
+  bottom: 4,
+  maxWidth: "calc(100% - 8px)",
+  display: "flex",
+  flexDirection: "column-reverse",
+  alignItems: "flex-start",
+  gap: 2,
+  pointerEvents: "none",
+};
+export const TILE_BADGE_STYLE: React.CSSProperties = {
+  color: "white",
+  fontSize: 10,
+  fontWeight: 700,
+  padding: "1px 5px",
+  borderRadius: 3,
+  lineHeight: "12px",
+  whiteSpace: "nowrap",
+  maxWidth: "100%",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
 
 function getFormatBadge(url: string, mimeType?: string): { label: string; color: string } | null {
   const lower = url.toLowerCase();
@@ -197,9 +226,11 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
         userSelect: "none",
       }}
       {...attributes}
+      className="app-touch-exempt"
     >
       <div
         {...listeners}
+        className="app-touch-exempt"
         style={{ cursor: "grab" }}
         onClick={(e) => { e.stopPropagation(); onSelect(!isSelected); }}
         // R4-UX5: this is a selectable/deletable/draggable item whose
@@ -224,6 +255,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           //     so the entry is at least identifiable.
           meta?.previewUrl ? (
             <img
+              className="app-touch-exempt-img"
               src={meta.previewUrl}
               alt={currentLocaleAltText || `${t.imageManager.modelLabel ?? "3D model"}: ${filename}`}
               draggable={false}
@@ -267,6 +299,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           // host name. The play overlay sits on top either way.
           meta?.externalHost === "YouTube" || meta?.externalHost === "youtube" ? (
             <img
+              className="app-touch-exempt-img"
               // Keyed by src: the onError below hides the element, and a src
               // that changes (the symbol's toggle) must show again.
               key={replacement?.src ?? "original"}
@@ -312,6 +345,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           )
         ) : (
           <img
+            className="app-touch-exempt-img"
             src={replacement?.src ?? url}
             alt={currentLocaleAltText || t.imageManager.imageThumbLabel}
             draggable={false}
@@ -345,25 +379,6 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
             }}
           >
             <svg width={Math.max(18, Math.round(thumbSize * 0.32))} height={Math.max(18, Math.round(thumbSize * 0.32))} viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z" /></svg>
-          </div>
-        )}
-        {kind === "model" && url && (
-          <div
-            aria-hidden
-            style={{
-              position: "absolute",
-              right: 4,
-              bottom: 4,
-              background: "rgba(0,0,0,0.72)",
-              color: "#fff",
-              font: "700 10px/1 system-ui, sans-serif",
-              letterSpacing: 0.5,
-              padding: "2px 5px",
-              borderRadius: 3,
-              pointerEvents: "none",
-            }}
-          >
-            3D
           </div>
         )}
         {kind === "external_video" && meta?.externalHost && (
@@ -419,25 +434,6 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           </div>
         )}
 
-        {/* Alt text badge */}
-        <div
-          title={hasAlt ? currentLocaleAltText : undefined}
-          style={{
-            position: "absolute",
-            bottom: 4,
-            left: 4,
-            background: hasAlt ? "rgba(0,128,96,0.85)" : "rgba(142,31,11,0.75)",
-            color: "white",
-            fontSize: 10,
-            fontWeight: 700,
-            padding: "2px 6px",
-            borderRadius: 3,
-            lineHeight: "14px",
-            cursor: hasAlt ? "default" : "default",
-          }}>
-          {hasAlt ? t.imageManager.altBadge : t.imageManager.noAltBadge}
-        </div>
-
         {/* Conversion / Shopify-processing spinner overlay */}
         {(isConverting || isProcessing) && (
           <div style={{
@@ -461,24 +457,33 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           </div>
         )}
 
-        {/* Format badge */}
-        {formatBadge && (
-          <div style={{
-            position: "absolute",
-            bottom: 4,
-            right: 4,
-            background: formatBadge.color,
-            color: "white",
-            fontSize: 10,
-            fontWeight: 700,
-            padding: "2px 6px",
-            borderRadius: 3,
-            lineHeight: "14px",
-            pointerEvents: "none",
-          }}>
-            {formatBadge.label}
+        {/* Bottom-left badge stack: ONE container for the 3D / format / alt
+            badges. Side by side they cannot fit an 80px tile ("KEIN ALT" +
+            "WebP" + gaps is wider than the tile), so they stack vertically,
+            alt at the bottom (column-reverse), growing upwards. */}
+        <div data-tile-badge-stack style={TILE_BADGE_STACK_STYLE}>
+          <div
+            data-tile-badge="alt"
+            title={hasAlt ? currentLocaleAltText : undefined}
+            style={{
+              ...TILE_BADGE_STYLE,
+              background: hasAlt ? "rgba(0,128,96,0.85)" : "rgba(142,31,11,0.75)",
+              pointerEvents: "auto",
+              cursor: "default",
+            }}>
+            {hasAlt ? t.imageManager.altBadge : t.imageManager.noAltBadge}
           </div>
-        )}
+          {formatBadge && (
+            <div data-tile-badge="format" style={{ ...TILE_BADGE_STYLE, background: formatBadge.color }}>
+              {formatBadge.label}
+            </div>
+          )}
+          {kind === "model" && url && (
+            <div data-tile-badge="3d" style={{ ...TILE_BADGE_STYLE, background: "rgba(0,0,0,0.72)", letterSpacing: 0.5 }}>
+              3D
+            </div>
+          )}
+        </div>
 
         {/* Pending / unsaved badge — sits on top so the merchant immediately
             sees which tiles still need a Save click. The transparent body
@@ -548,6 +553,9 @@ interface SortableImageGridProps {
   skipDndContext?: boolean;
   // When false, no image gets the "main" gold border (variant has no featured image)
   hasMainImage?: boolean;
+  /** The tile that IS the main image (gold border). Unset = the first tile, as before; a variant
+   *  gallery sets it because the saved order, not the position, decides where the main image sits. */
+  mainUrl?: string | null;
   localAltTexts?: Record<string, string>;
   isPrimaryLocale?: boolean;
   /** Per tile URL: the replacement its medium shows in the language the editor shows (product gallery only). */
@@ -569,6 +577,7 @@ export function SortableImageGrid({
   onOpenPicker,
   skipDndContext = false,
   hasMainImage = true,
+  mainUrl,
   localAltTexts,
   isPrimaryLocale = true,
   replacements,
@@ -618,16 +627,21 @@ export function SortableImageGrid({
     }
   }
 
+  // A CSS grid of fixed tile-wide columns, centred as a block: the leftover space is split evenly
+  // left and right, tiles keep reading order and the last row stays under the first column. There
+  // is NO border and only a 2px padding (a frame took layout space and the leftover sat on the right only);
+  // the drop feedback is the ::after ring in responsive.css (data-drop-target).
   const containerStyle: React.CSSProperties = {
-    display: "flex",
-    flexWrap: "wrap",
+    display: "grid",
+    gridTemplateColumns: `repeat(auto-fill, ${thumbSize}px)`,
     gap: 8,
     minHeight: 48,
-    padding: 8,
+    // 2px of padding is room for the main image's outward 2px ring (a selection is an inner border) and for the
+    // drop ring (::after, inset 0), so neither is clipped by the gallery's overflow wrapper and
+    // the drop ring never covers a tile. justify-content (safe center) is in responsive.css.
+    padding: 2,
+    boxSizing: "border-box",
     borderRadius: 8,
-    border: isDropTarget ? "2px dashed #005bd3" : "2px dashed #e1e3e5",
-    background: isDropTarget ? "rgba(0, 91, 211, 0.04)" : "transparent",
-    transition: "border-color 0.2s, background 0.2s",
   };
 
   const inner = (
@@ -668,7 +682,7 @@ export function SortableImageGrid({
 
       <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
         {imageUrls.length === 0 && !showPlaceholder && (
-          <div style={{ color: "#8c9196", fontSize: 13, padding: "8px 4px" }}>
+          <div style={{ color: "#8c9196", fontSize: 13, padding: "8px 4px", gridColumn: "1 / -1" }}>
             {t.imageManager.noImages}
           </div>
         )}
@@ -682,7 +696,7 @@ export function SortableImageGrid({
             meta={imageMetas[url]}
             onSelect={(sel) => onSelect?.(url, sel)}
             thumbSize={thumbSize}
-            isMain={showPlaceholder && hasMainImage && idx === 0}
+            isMain={showPlaceholder && hasMainImage && (mainUrl !== undefined ? mainUrl !== null && url === mainUrl : idx === 0)}
             localAltTexts={localAltTexts}
             isPrimaryLocale={isPrimaryLocale}
             replacement={replacements?.[url]}
@@ -705,12 +719,12 @@ export function SortableImageGrid({
   );
 
   if (skipDndContext) {
-    return <div style={containerStyle}>{inner}</div>;
+    return <div className="im-grid-frame" data-drop-target={isDropTarget ? "true" : undefined} style={containerStyle}>{inner}</div>;
   }
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <div style={containerStyle}>{inner}</div>
+      <div className="im-grid-frame" data-drop-target={isDropTarget ? "true" : undefined} style={containerStyle}>{inner}</div>
     </DndContext>
   );
 }

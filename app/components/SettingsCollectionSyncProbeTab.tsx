@@ -16,6 +16,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { Card, Text, BlockStack, Button, Banner, InlineStack, Checkbox } from "@shopify/polaris";
+import { appFetch } from "../utils/app-fetch";
 
 interface CallOutcome {
   ok: boolean;
@@ -148,7 +149,7 @@ export function SettingsCollectionSyncProbeTab() {
     try {
       const fd = new FormData();
       if (realSync) fd.set("realSync", "true");
-      const r = await fetch("/api/collection-sync-probe", { method: "POST", body: fd });
+      const r = await appFetch("/api/collection-sync-probe", { method: "POST", body: fd });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = (await r.json()) as { success: boolean; report?: SyncProbeReport; error?: string };
       if (!j.success || !j.report) throw new Error(j.error || "Probe failed");

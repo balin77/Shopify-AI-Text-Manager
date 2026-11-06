@@ -30,9 +30,10 @@ import { runInternalLinkSuggestions, HEARTBEAT_EVERY_SOURCES } from "~/services/
 import type { InternalLinksSummary } from "~/services/seo/internal-links.service";
 import type { PrismaClient, AISettings } from "@prisma/client";
 import type { DataResponse } from "~/types/data-response";
+import { getCachedShopLocales } from "~/utils/shop-locales-cache.server";
 
 export async function handleSeoInternalLinks(ctx: AIActionContext): Promise<DataResponse> {
-  const { session, db, settings } = ctx;
+  const { session, admin, db, settings } = ctx;
 
   // Pro-gate (plan §4.3) — same gate style as distributeKeywords.
   const plan = (settings?.subscriptionPlan || "free") as Plan;
@@ -57,6 +58,25 @@ export async function handleSeoInternalLinks(ctx: AIActionContext): Promise<Data
     );
   }
 
+  // The synonyms must be asked for in the language the content is written in
+  // (see RunInternalLinksDeps.primaryLocale). Resolved here, inside the
+  // request, because the detached runner holds no admin client. A failed
+  // lookup resolves [] and falls back to the provider's default language —
+  // the run still matches on titles and keywords. A thrown `Response` (the
+  // 401 the lookup re-throws to re-authenticate) is NOT a failed lookup and
+  // goes up to /api/ai, which re-throws it; anything else falls back to "".
+  let primaryLocale = "";
+  try {
+    const shopLocales = await getCachedShopLocales(admin, session.shop);
+    primaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
+  } catch (error: unknown) {
+    if (error instanceof Response) throw error;
+    logger.warn("[API-AI] Internal links: shop locale lookup failed, using the provider default language", {
+      context: "AI",
+      error: errorMessage(error),
+    });
+  }
+
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -71,7 +91,7 @@ export async function handleSeoInternalLinks(ctx: AIActionContext): Promise<Data
   });
 
   // Fire-and-forget: survives navigation, same pattern as runSeoCrawlTask.
-  void runSeoInternalLinksTask(task.id, { db, shop: session.shop, settings }).catch((err: unknown) => {
+  void runSeoInternalLinksTask(task.id, { db, shop: session.shop, settings, primaryLocale }).catch((err: unknown) => {
     logger.error("[API-AI] Internal-link suggestions crashed", {
       context: "AI",
       taskId: task.id,
@@ -88,10 +108,11 @@ interface RunArgs {
   db: PrismaClient;
   shop: string;
   settings: AISettings | null;
+  primaryLocale: string;
 }
 
 async function runSeoInternalLinksTask(taskId: string, args: RunArgs): Promise<void> {
-  const { db, shop, settings } = args;
+  const { db, shop, settings, primaryLocale } = args;
 
   try {
     const aiService = createAIService(settings, shop, taskId);
@@ -105,6 +126,7 @@ async function runSeoInternalLinksTask(taskId: string, args: RunArgs): Promise<v
       // already rejected for each target passed along so they aren't proposed
       // again.
       synonymProvider: (terms, locale, avoid) => aiService.generateSynonymsBatch(terms, locale, { avoid }),
+      primaryLocale,
       heartbeatEvery: HEARTBEAT_EVERY_SOURCES,
       onProgress: async (processed, total) => {
         await db.task

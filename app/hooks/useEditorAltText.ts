@@ -347,6 +347,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       values: {},
       altIndices: viewIndices,
       altValues: sentForView,
+      withheld: isPrimary && opts.markChanged === false,
     };
     if (opts.successToast) pendingAltTranslateToastRef.current = opts.successToast;
     savedItemIdRef.current = opts.itemId;

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useCallback, useMemo, useState, type ReactNode } from "react";
 import { useLocation } from "react-router";
+import { appFetch } from "../utils/app-fetch";
 
 export interface CompletedTask {
   id: string;
@@ -48,7 +49,7 @@ export function TaskCountProvider({ children }: { children: ReactNode }) {
     if (tasksInflightRef.current) return;
     tasksInflightRef.current = true;
     try {
-      const response = await fetch(`/api/running-tasks-count?${searchParams}`);
+      const response = await appFetch(`/api/running-tasks-count?${searchParams}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       setRunningTaskCount(data?.count ?? 0);
@@ -72,7 +73,7 @@ export function TaskCountProvider({ children }: { children: ReactNode }) {
     if (completedInflightRef.current) return;
     completedInflightRef.current = true;
     try {
-      const response = await fetch(`/api/recently-completed-tasks?${searchParams}`);
+      const response = await appFetch(`/api/recently-completed-tasks?${searchParams}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       // Bail-out when the polled list is structurally identical to current

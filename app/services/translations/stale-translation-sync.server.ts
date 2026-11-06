@@ -44,6 +44,7 @@
  * which is why it cannot be configured.
  */
 
+import { backgroundAdmin } from "~/utils/offline-admin.server";
 import { randomUUID } from "node:crypto";
 import { logger } from "../../utils/logger.server";
 import {
@@ -3287,9 +3288,19 @@ async function repairStaleTranslations(
       // here".
       const supersededByMerchant = (entryResourceId?: string) =>
         changedSince(lockId) || (!!entryResourceId && changedSince(entryResourceId));
+      // This run outlives the request (and may have QUEUED behind another for
+      // a long time). With expiring offline tokens the request's client is dead
+      // by then, so `backgroundAdmin` decides what the run holds: a client
+      // that refreshes its token per call — or, for a raw self-refreshing
+      // client a webhook/sweep handed in (createAdminClientFromShop), that
+      // client unchanged, keeping its raw error contract and this gateway's
+      // queue. Flag off: the request's gateway, exactly as before.
+      const capturedAdmin = gateway.getAdmin();
+      const runAdmin = backgroundAdmin(shop, capturedAdmin);
+      const runGateway = runAdmin === capturedAdmin ? gateway : new ShopifyApiGateway(runAdmin, shop);
       try {
         const outcome = await retranslateStaleEntries(
-          gateway,
+          runGateway,
           target,
           retranslate,
           supersededByMerchant,
@@ -3309,7 +3320,7 @@ async function repairStaleTranslations(
           outcome.failed.length > 0 &&
           !supersededByMerchant()
         ) {
-          await purgeStaleEntries(gateway, target, mirror, outcome.failed);
+          await purgeStaleEntries(runGateway, target, mirror, outcome.failed);
         }
         if (outcome.registered.length > 0) markTranslationSaved(lockId);
         // A MANAGED refusal is not "could not deliver": nothing was tried.

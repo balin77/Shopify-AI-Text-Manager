@@ -1002,3 +1002,23 @@ describe("featured-image alt column", () => {
     ).toBe(false);
   });
 });
+
+describe("estimateCalls: the live read of the untouched SEO half", () => {
+  const cell = (rowId: string, columnId: string) => ({
+    rowId,
+    rowType: "collection" as const,
+    columnId,
+    value: "x",
+    locale: "",
+    marketId: "",
+  });
+  it("a one-sided SEO row costs its batched read on top of the write; a two-sided row does not", () => {
+    const columns = BULK_COLUMNS_BY_TYPE.collection;
+    const one = estimateCalls([cell("gid://shopify/Collection/1", "field.seoTitle")], columns);
+    const both = estimateCalls(
+      [cell("gid://shopify/Collection/1", "field.seoTitle"), cell("gid://shopify/Collection/1", "field.seoDescription")],
+      columns,
+    );
+    expect(one).toBe(both + 1);
+  });
+});

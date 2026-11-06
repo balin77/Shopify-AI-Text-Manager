@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { taskErrorText } from "~/utils/task-error-text";
+import { isInterruptedTaskError, taskErrorText } from "~/utils/task-error-text";
+import { translateErrorMessage } from "~/utils/editor-error-messages";
 import { de } from "~/i18n/de";
 import { en } from "~/i18n/en";
 import { es } from "~/i18n/es";
@@ -10,6 +11,14 @@ import { es } from "~/i18n/es";
  * stores machine codes. These assert the codes never reach the UI raw.
  */
 describe("taskErrorText", () => {
+  it("renders the server-restart stand-down of a bulk run in every locale, never raw", () => {
+    for (const t of [de, en, es] as any[]) {
+      const text = String(taskErrorText("server_shutting_down", t));
+      expect(text).not.toContain("server_shutting_down");
+      expect(text.length).toBeGreaterThan(20);
+    }
+  });
+
   it("translates the stuck-task reaper's timeout code in every locale", () => {
     for (const t of [de, en, es] as any[]) {
       const text = taskErrorText("task_timed_out", t);
@@ -97,6 +106,7 @@ describe("taskErrorText — the runners' counted codes", () => {
     ["ai_empty_value", []],
     ["item_missing", []],
     ["webp_batch_not_started", []],
+    ["webp_expired_in_queue", []],
     ["slug_empty:pt-BR", ["pt-BR"]],
     // The auto-translation repair wrote on Shopify but not into the mirror —
     // the merchant sees an empty field, so the sentence has to reach them in
@@ -225,5 +235,28 @@ describe("taskErrorText — the runners' counted codes", () => {
         expect(String(t.tasks[key]).trim(), `${name}.${key}`).not.toBe("");
       }
     }
+  });
+});
+
+describe("seoOtherHalfUnreadable: a refused one-sided SEO save is worded, never shown as the raw code", () => {
+  it.each([
+    ["de", de, /nochmals/],
+    ["en", en, /try again/],
+    ["es", es, /inténtalo de nuevo/],
+  ] as const)("%s: the Task panel text and the editor's text say 'try again'", (_l, t, pattern) => {
+    const text = taskErrorText("seoOtherHalfUnreadable", t);
+    expect(text).toMatch(pattern);
+    expect(text).not.toContain("seoOtherHalfUnreadable");
+    expect(translateErrorMessage("seoOtherHalfUnreadable", t as never)).toBe(text);
+  });
+});
+
+describe("isInterruptedTaskError", () => {
+  it("recognises only the orphan recovery code (shown as a warning, not an error)", () => {
+    expect(isInterruptedTaskError("task_interrupted")).toBe(true);
+    expect(isInterruptedTaskError("task_timed_out")).toBe(false);
+    expect(isInterruptedTaskError("rows_failed:3")).toBe(false);
+    expect(isInterruptedTaskError(null)).toBe(false);
+    expect(isInterruptedTaskError(undefined)).toBe(false);
   });
 });

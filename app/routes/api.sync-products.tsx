@@ -155,6 +155,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     }
                   }
                   metafields(first: 50) {
+                    pageInfo {
+                      hasNextPage
+                    }
                     edges {
                       node {
                         id
@@ -322,7 +325,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
           // Upsert metafields (idempotent — safe under concurrent execution)
           const metafields = product.metafields?.edges?.map((edge: any) => edge.node) || [];
-          await upsertProductMetafields(tx, product.id, metafields);
+          // A 50-metafield WINDOW: a product with more is a truncated read, and
+          // its cleared slots go (db.server.ts). A missing pageInfo counts as
+          // truncated, the safe direction.
+          await upsertProductMetafields(tx, product.id, metafields, {
+            complete: product.metafields?.pageInfo?.hasNextPage === false,
+          });
         });
 
         synced++;

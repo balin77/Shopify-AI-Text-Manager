@@ -13,10 +13,16 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render } from "@testing-library/react";
+import { useState } from "react";
 import { createMemoryRouter, RouterProvider, useFetcher, useLoaderData } from "react-router";
 
 vi.mock("~/contexts/TaskCountContext", () => ({ useTaskCount: () => ({ refresh: vi.fn() }) }));
 vi.mock("~/hooks/useBackgroundTaskRefresh", () => ({ useBackgroundTaskRefresh: () => {} }));
+// Short deadline so the "no answer" case can be driven; every other case answers well within it.
+vi.mock("~/services/editor/foreign-step1.shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/services/editor/foreign-step1.shared")>()),
+  FOREIGN_STEP1_DEADLINE_MS: 600,
+}));
 
 import { useUnifiedContentEditor } from "~/hooks/useUnifiedContentEditor";
 import { ownSaveRunBackstop } from "~/hooks/useEditorAutoSave";
@@ -25,6 +31,7 @@ import { clearAllForResource } from "~/hooks/useAIOperationsStore";
 import { setFieldSuggestion, setAltTextSuggestion, __resetSuggestionStore } from "~/hooks/useAISuggestionStore";
 
 const ID = "gid://shopify/Product/1";
+const ID2 = "gid://shopify/Product/2";
 const tick = (ms = 0) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 type Row = { key: string; locale: string; value: string };
 
@@ -57,8 +64,12 @@ function mount() {
     if (url.startsWith("/api/running-field-tasks")) return json({ tasks: [] });
     return realFetch(input, init);
   });
+  const initialId = { current: ID };
+  const bump: { current: () => void } = { current: () => {} };
   function Page() {
     const { items } = useLoaderData() as { items: unknown[] };
+    const [, setTick] = useState(0);
+    bump.current = () => setTick((n) => n + 1);
     const fetcher = useFetcher();
     editor.current = useUnifiedContentEditor({
       config: PRODUCTS_CONFIG, items,
@@ -67,7 +78,7 @@ function mount() {
         { locale: "fr", primary: false, published: true },
         { locale: "es", primary: false, published: true },
       ],
-      primaryLocale: "de", fetcher, showInfoBox, t: {}, initialItemId: ID,
+      primaryLocale: "de", fetcher, showInfoBox, t: {}, initialItemId: initialId.current,
     } as any);
     return null;
   }
@@ -77,7 +88,7 @@ function mount() {
       path: "/",
       element: <Page />,
       loader: async () => ({
-        items: [{
+        items: [{ ...store, id: ID2, title: "Zweites Produkt", handle: "zweites", translations: [], images: [], seo: { title: "S2", description: "M2" } }, {
           ...store,
           translations: store.translations.map((r: Row) => ({ ...r })),
           seo: { ...store.seo },
@@ -87,7 +98,7 @@ function mount() {
       action: async ({ request }) => serve("route")(Object.fromEntries((await request.formData()) as any) as Record<string, string>),
     },
   ]);
-  render(<RouterProvider router={router} />);
+  const rendered = render(<RouterProvider router={router} />);
   const respond = async (action: string, body: any) => {
     const index = pending.findIndex((p) => p.form.action === action);
     if (index < 0) throw new Error(`no pending ${action} (have: ${pending.map((p) => p.form.action).join(",")})`);
@@ -95,7 +106,9 @@ function mount() {
     await act(async () => { entry.resolve(body); });
   };
   const savesPosted = () => posted.filter((p) => p.action === "updateContent");
-  return { editor, posted, pending, respond, showInfoBox, savesPosted };
+  const unmount = () => rendered.unmount();
+  const selectItemFromOutside = async (id: string) => { initialId.current = id; await act(async () => { bump.current(); }); };
+  return { editor, posted, pending, respond, showInfoBox, savesPosted, unmount, selectItemFromOutside };
 }
 
 const switchTo = async (h: ReturnType<typeof mount>, locale: string) => {
@@ -377,5 +390,487 @@ describe("own saves during a translate-all run are refused before anything is st
     const last = h.showInfoBox.mock.calls[h.showInfoBox.mock.calls.length - 1];
     expect(String(last[0])).toContain("translation of this item is still running");
     expect(String(last[0])).toContain("product type was not translated");
+  });
+});
+
+describe("foreign accept-and-translate: the primary base save carries only the translated field", () => {
+  beforeEach(() => {
+    clearAllForResource(ID);
+    __resetSuggestionStore();
+    try { window.localStorage.clear(); } catch { /* none */ }
+    window.history.replaceState({}, "", "/app/products");
+  });
+  afterEach(() => { vi.restoreAllMocks(); window.history.replaceState({}, "", "/"); });
+
+  it("no title (read from a click-time item) rides along, so a stale one cannot be written unannounced", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    const primary = h.savesPosted().find((p) => p.locale === "de");
+    expect(primary).toBeTruthy();
+    expect(primary!.seoTitle).toBe("SEO de");
+    expect("title" in primary!).toBe(false);
+  });
+});
+
+describe("a REFUSED accept-and-translate save takes back everything the flow armed", () => {
+  beforeEach(() => {
+    clearAllForResource(ID);
+    __resetSuggestionStore();
+    try { window.localStorage.clear(); } catch { /* none */ }
+    window.history.replaceState({}, "", "/app/products");
+  });
+  afterEach(() => { vi.restoreAllMocks(); window.history.replaceState({}, "", "/"); });
+
+  it("(M1) primary step 1 refused: the NEXT successful save does not fire step 2 with the old suggestion", async () => {
+    const h = mount();
+    await tick(50);
+    setFieldSuggestion(scope("de"), "title", "KI Titel");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("title"); });
+    await tick(20);
+    expect(h.savesPosted()).toHaveLength(1);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(50);
+
+    // An ordinary Save of another field, answered with success.
+    await act(async () => { h.editor.current.handlers.handleValueChange("seoTitle", "SEO neu"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(100);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+  });
+
+  it("(H2) foreign step 2 refused (other SEO half unreadable): the main-language overlay is given back and the message does not say 'nothing saved'", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    expect(h.savesPosted().some((p) => p.locale === "de" && p.seoTitle === "SEO de")).toBe(true);
+    h.showInfoBox.mockClear();
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "seoOtherHalfUnreadable", errorKey: "seoOtherHalfUnreadable" });
+    await tick(50);
+
+    const critical = h.showInfoBox.mock.calls.filter(([, tone]) => tone === "critical").map(([m]) => String(m));
+    expect(critical).toHaveLength(1);
+    // The specific sentence: this language WAS saved, the main-language translation was not.
+    expect(critical[0]).toContain("The text in this language was saved, but the translation into the main language was not");
+    // The main language shows what is stored, never the refused translation.
+    await switchTo(h, "de");
+    expect(h.editor.current.state.editableValues.seoTitle).toBe("SEO");
+  });
+
+  it("(M1') an EARLIER save answering success before step 2 does not drop step 2's rollback", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    // While the AI works, an ordinary Save-bar save of another field goes out (ahead of step 2).
+    await act(async () => { h.editor.current.handlers.handleValueChange("title", "Titre neuf"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    // The earlier save answers FIRST, successfully.
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(50);
+    // Then step 2 is refused.
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "seoOtherHalfUnreadable", errorKey: "seoOtherHalfUnreadable" });
+    await tick(50);
+    await switchTo(h, "de");
+    expect(h.editor.current.state.editableValues.seoTitle).toBe("SEO");
+  });
+
+  it("(M2) a refused EARLIER save of the same item does not drop the queued accept-and-translate follow-up", async () => {
+    const h = mount();
+    await tick(50);
+    await act(async () => { h.editor.current.handlers.handleValueChange("seoTitle", "SEO neu"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    setFieldSuggestion(scope("de"), "title", "KI Titel");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("title"); });
+    await tick(20);
+    expect(h.savesPosted().length).toBeGreaterThanOrEqual(1);
+    // The Save-bar save is refused; step 1 (queued behind it) then succeeds.
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(50);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(100);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toHaveLength(1);
+  });
+
+  it("(Low) EVERY refusal of foreign step 2 says the foreign text was saved, not only the SEO one", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    h.showInfoBox.mockClear();
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(50);
+    const critical = h.showInfoBox.mock.calls.filter(([, tone]) => tone === "critical").map(([m]) => String(m));
+    expect(critical).toEqual(["The text in this language was saved, but the translation into the main language was not. Shopify refused"]);
+  });
+
+  it("(M1b) an earlier save answering success does not consume the queued primary step 2: step 1 success gives exactly one translate", async () => {
+    const h = mount();
+    await tick(50);
+    await act(async () => { h.editor.current.handlers.handleValueChange("seoTitle", "SEO neu"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    setFieldSuggestion(scope("de"), "title", "KI Titel");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("title"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(60);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(100);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toHaveLength(1);
+  });
+
+  it("(M1c) earlier save success, then step 1 REFUSED: no translation and no skipped message for it", async () => {
+    const h = mount();
+    await tick(50);
+    await act(async () => { h.editor.current.handlers.handleValueChange("seoTitle", "SEO neu"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    setFieldSuggestion(scope("de"), "title", "KI Titel");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("title"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(60);
+    h.showInfoBox.mockClear();
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(100);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+    const texts = h.showInfoBox.mock.calls.map(([m]) => String(m));
+    expect(texts.some((m) => m.includes("was skipped"))).toBe(false);
+    expect(texts).toContain("Shopify refused");
+  });
+
+  it("(M2) foreign step 2 in flight counts as an own save: a language switch is REFUSED until it answers", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    expect(h.savesPosted().some((p) => p.locale === "de")).toBe(true);
+    h.showInfoBox.mockClear();
+    await act(async () => { await h.editor.current.handlers.handleLanguageChange("es"); });
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("Still saving"), "info");
+    expect(h.editor.current.state.currentLanguage).toBe("fr");
+  });
+
+  it("(L4) step 1 REFUSED: the translation into the other languages is never requested and the message says nothing was translated", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    // Nothing is translated while step 1 is out.
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+    h.showInfoBox.mockClear();
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(60);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+    expect(h.savesPosted().filter((p) => p.locale === "de")).toHaveLength(0);
+    const critical = h.showInfoBox.mock.calls.filter(([, tone]) => tone === "critical").map(([m]) => String(m));
+    expect(critical).toHaveLength(1);
+    expect(critical[0]).toContain("Shopify refused");
+    expect(critical[0]).toContain("Nothing was translated");
+  });
+
+  it("(S1) step 1 answers but Shopify did not echo the field: nothing is translated, a warning says so", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    h.showInfoBox.mockClear();
+    await h.respond("updateContent", { success: true, actionType: "updateContent", unconfirmedFields: ["seoTitle"] });
+    await tick(60);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+    expect(h.savesPosted().filter((p) => p.locale === "de")).toHaveLength(0);
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("Nothing was translated"), "warning");
+  });
+
+  it("(S2) step 1 CONFIRMED: only now is the translation requested", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(30);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toHaveLength(1);
+  });
+
+  it("(S4) the editor unmounts while step 1 is out: the deadline never shows a box afterwards", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    h.showInfoBox.mockClear();
+    h.unmount();
+    await new Promise((r) => setTimeout(r, 750));
+    expect(h.showInfoBox.mock.calls.some(([m]) => String(m).includes("Nothing was translated"))).toBe(false);
+  });
+
+  it("(S5) step 1 answered after the merchant's item changed (abandoned save): the waiting translation stands down, no false box at the deadline", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.selectItemFromOutside(ID2);
+    await tick(30);
+    expect(h.editor.current.state.selectedItemId ?? h.editor.current.state.selectedItem?.id).toBe(ID2);
+    // and back on the original item, where a deadline box would otherwise be shown
+    await h.selectItemFromOutside(ID);
+    await tick(30);
+    h.showInfoBox.mockClear();
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(60);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+    await tick(700);
+    expect(h.showInfoBox.mock.calls.some(([m]) => String(m).includes("Nothing was translated"))).toBe(false);
+  });
+
+  it("(S3) step 1 never answers: past the deadline nothing is translated, and a late answer starts nothing", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    h.showInfoBox.mockClear();
+    await tick(700);
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("no answer arrived in time"), "warning");
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(60);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+  });
+
+  it("(L3) a refusal of step 2 that names neither error nor key is worded too", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    h.showInfoBox.mockClear();
+    await h.respond("updateContent", { success: false, actionType: "updateContent" });
+    await tick(50);
+    const critical = h.showInfoBox.mock.calls.filter(([, tone]) => tone === "critical").map(([m]) => String(m));
+    expect(critical).toHaveLength(1);
+    expect(critical[0]).toContain("The text in this language was saved, but the translation into the main language was not.");
+  });
+
+  it("(M1x) two OVERLAPPING foreign flows of different fields keep their own records: the first one's step-2 refusal still rolls back its overlay", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    // Flow A: seoTitle
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    // Flow B: metaDescription starts while A's translation is still out
+    setFieldSuggestion(scope("fr"), "metaDescription", "Meta fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("metaDescription"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    // Both translations answer, then each primary save is posted.
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "Meta de", es: "Meta es" } });
+    await tick(50);
+    // Flow A's step 2 is refused, flow B's one succeeds.
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "seoOtherHalfUnreadable", errorKey: "seoOtherHalfUnreadable" });
+    await tick(50);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(50);
+    await switchTo(h, "de");
+    expect(h.editor.current.state.editableValues.seoTitle).toBe("SEO");
+  });
+
+  it("(M2y) foreign step 1 refused: the translation never starts, so step 2 is never sent", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(60);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+    expect(h.savesPosted().filter((p) => p.locale === "de")).toHaveLength(0);
+  });
+
+  it("(MED) an earlier primary save S refused before step 2 is refused: step 2 gives back nothing it no longer owns, the main language shows the stored text", async () => {
+    const h = mount();
+    await tick(50);
+    // An earlier, CONFIRMED main-language save keeps another field in the overlay (so the item's overlay object survives).
+    await act(async () => { h.editor.current.handlers.handleValueChange("metaDescription", "Meta neu"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(60);
+    // S: an ordinary Save-bar save of the main language, still out.
+    await act(async () => { h.editor.current.handlers.handleValueChange("seoTitle", "X draft"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    // S is refused, step 1 succeeds, only then the translation is requested and answers, step 2 is refused.
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(50);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(50);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused again" });
+    await tick(80);
+    await switchTo(h, "de");
+    expect(h.editor.current.state.editableValues.seoTitle).toBe("SEO");
+  });
+
+  it("(LOW1) a refused foreign step 1 takes the staged foreign text back: it reads as an unsaved draft, not as stored", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(60);
+    expect(h.editor.current.state.editableValues.seoTitle).toBe("SEO fr");
+    expect(h.editor.current.state.hasChanges).toBe(true);
+  });
+
+  it("(MED2) a value an earlier save CONFIRMED goes back when step 2 is refused, not nothing", async () => {
+    const h = mount();
+    await tick(50);
+    await act(async () => { h.editor.current.handlers.handleValueChange("seoTitle", "SEO conf"); });
+    await act(async () => { h.editor.current.handlers.handleSave(); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(60);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(20);
+    await h.respond("translateFieldToAllLocales", { success: true, actionType: "translateFieldToAllLocales", translations: { de: "SEO de", es: "SEO es" } });
+    await tick(50);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(80);
+    await switchTo(h, "de");
+    expect(h.editor.current.state.editableValues.seoTitle).toBe("SEO conf");
+  });
+
+  it("(M1z) a refused step 1 deletes its overlay entry; a value an earlier unstored press had staged does not come back", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "A text");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    // A second press of the same field while the first step 1 is still out stages over "A text".
+    setFieldSuggestion(scope("fr"), "seoTitle", "B text");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(40);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(60);
+    const overlay = h.editor.current.helpers.getValidationOverlays().localTranslations;
+    expect(overlay.meta_title?.fr).toBeUndefined();
+  });
+
+  it("(M2z) a refused step 1 puts back the deleted marks it cleared: a field the merchant had cleared still reads as cleared", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    await act(async () => { h.editor.current.handlers.handleClearField("title"); });
+    await tick(20);
+    const marksBefore = [...h.editor.current.helpers.getValidationOverlays().deletedKeys].sort();
+    expect(marksBefore.length).toBeGreaterThan(0);
+    setFieldSuggestion(scope("fr"), "title", "Titre KI");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("title"); });
+    await tick(20);
+    expect([...h.editor.current.helpers.getValidationOverlays().deletedKeys].sort()).not.toEqual(marksBefore);
+    await h.respond("updateContent", { success: false, actionType: "updateContent", error: "Shopify refused" });
+    await tick(60);
+    expect([...h.editor.current.helpers.getValidationOverlays().deletedKeys].sort()).toEqual(marksBefore);
   });
 });

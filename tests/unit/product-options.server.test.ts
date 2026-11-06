@@ -225,6 +225,16 @@ describe("applyOptionChange", () => {
     expect(upserts).toEqual([]);
   });
 
+  it("hands Shopify's scrubbed userError message to the caller's sink", async () => {
+    const admin = adminWith({
+      data: { productOptionUpdate: { product: null, userErrors: [{ message: "Option name is too long" }] } },
+    });
+    const { db } = dbRecorder();
+    const refusal: { message?: string } = {};
+    await applyOptionChange(admin, db, "s", { productId: PRODUCT, optionId: OPTION, name: "Colour", refusal });
+    expect(refusal.message).toBe("Option name is too long");
+  });
+
   it("treats a schema-level error as a failure, not as an empty answer", async () => {
     // `data: null` plus a top-level `errors` array never reaches `userErrors`.
     // Read as "no options came back" it would look like a product with none.

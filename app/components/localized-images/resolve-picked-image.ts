@@ -14,6 +14,7 @@
  * error logging). It only ever runs from a click handler.
  */
 import type { AddedItem } from "../image-manager/FilePickerModal";
+import { appFetch } from "../../utils/app-fetch";
 
 export type PickedImage = { fileId: string; url: string };
 
@@ -54,7 +55,7 @@ export async function resolvePickedMedia(
     return { fileId: item.gid, url: item.assetUrl };
   }
   try {
-    const res = await fetch("/api/create-shopify-file", {
+    const res = await appFetch("/api/create-shopify-file", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ resourceUrl: item.resourceUrl, contentType: kind === "video" ? "VIDEO" : "IMAGE" }),

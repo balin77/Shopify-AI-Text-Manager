@@ -17,13 +17,35 @@ import {
   getSettings,
   recordCandidates,
   isDirectTranslationsAvailable,
-  MAX_CANDIDATES_PER_REQUEST,
+  collectStringsRateLimiter,
 } from "../services/direct-translation.server";
+import {
+  MAX_CANDIDATES_PER_REQUEST,
+  MAX_COLLECT_STRINGS_BODY_BYTES,
+} from "../services/direct-translation-limits.shared";
 import { isValidLocale } from "../utils/validation";
+import { declaresBodyLargerThan, readBodyCapped } from "../utils/read-body-capped.server";
+
+const NO_STORE = { "Cache-Control": "no-store" };
+
+// Body cap: see MAX_COLLECT_STRINGS_BODY_BYTES in direct-translation-limits.shared.ts
+// (kept out of this file: a route may export only its route values).
 
 export async function action({ request }: ActionFunctionArgs) {
+  // A declared oversize body is refused before anything else runs.
+  if (declaresBodyLargerThan(request, MAX_COLLECT_STRINGS_BODY_BYTES)) {
+    return json({ ok: false, error: "Body too large" }, { status: 413, headers: NO_STORE });
+  }
+
   const { session } = await authenticate.public.appProxy(request);
   if (!session) return json({ ok: false }, { status: 200 });
+
+  // Rate-limit BEFORE any DB work. Over the limit the beacon still gets an
+  // ordinary 200 — the collector only samples, and the storefront must never
+  // be disturbed by a throttled report.
+  if (!collectStringsRateLimiter.allow(session.shop)) {
+    return json({ ok: true, recorded: 0 }, { headers: { "Cache-Control": "no-store" } });
+  }
 
   // Max-plan only.
   if (!(await isDirectTranslationsAvailable(db, session.shop))) return json({ ok: true, recorded: 0 });
@@ -33,17 +55,32 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!settings.collect) return json({ ok: true, recorded: 0 });
 
   let body: { items?: Array<{ text?: string }>; locale?: string };
+  const raw = await readBodyCapped(request, MAX_COLLECT_STRINGS_BODY_BYTES);
+  if (!raw.ok) {
+    return raw.tooLarge
+      ? json(
+          { ok: false, error: "Body too large" },
+          { status: 413, headers: { ...NO_STORE, Connection: "close" } },
+        )
+      : json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+  }
   try {
-    body = await request.json();
+    body = JSON.parse(raw.text);
   } catch {
+    return json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+  }
+  if (!body || typeof body !== "object") {
     return json({ ok: false, error: "Invalid JSON" }, { status: 400 });
   }
 
   const items = Array.isArray(body.items) ? body.items : [];
   const clean = items
     .slice(0, MAX_CANDIDATES_PER_REQUEST)
-    .map((i) => ({ text: String(i?.text ?? "") }))
-    .filter((i) => i.text);
+    .map((i) => ({ text: typeof i?.text === "string" ? i.text : "" }))
+    // Drop oversized strings before any normalisation work: recordCandidates
+    // refuses anything past 1500 characters after collapsing whitespace, so a
+    // raw value four times that long can never become a candidate.
+    .filter((i) => i.text && i.text.length <= 6000);
 
   // Only forward the visitor locale when it's a syntactically valid Shopify
   // locale string (e.g. "de" / "pt-BR"). Without this an attacker could send

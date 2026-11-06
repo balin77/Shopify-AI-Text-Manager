@@ -1,7 +1,7 @@
 import { data as json } from "react-router";
 import { FIELD_TO_TRANSLATION_KEY } from "../../services/translations/translation-keys.shared";
 import type { AIActionContext, TranslatableContentItem, ShopifyGraphQLResponse } from "./shared";
-import { errorMessage, errorStack, createAIService, isAuthError } from "./shared";
+import { errorMessage, errorStack, createAIService, isRunAbortingAIError } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
 import { isThemeMediaValue, themeMediaRefusalBody } from "~/utils/theme-image-reference.shared";
 import { safeJsonParse, isValidLocale } from "~/utils/validation";
@@ -996,7 +996,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
       } catch (batchError: unknown) {
         // An invalid API key will fail the sequential fallback too — don't mask
         // it as a fallback, surface it so the whole request fails loudly.
-        if (isAuthError(batchError)) throw batchError;
+        if (isRunAbortingAIError(batchError)) throw batchError;
         logger.error("[API-AI] Batch translation failed, falling back to sequential", {
           context: "AI",
           error: errorMessage(batchError),
@@ -1037,7 +1037,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
         } catch (batchErr: unknown) {
           // An invalid API key will fail every per-locale fallback too — surface
           // it instead of silently degrading to a doomed sequential pass.
-          if (isAuthError(batchErr)) throw batchErr;
+          if (isRunAbortingAIError(batchErr)) throw batchErr;
           // Whole batch failed (all chunks broke) — fall back to the original
           // per-locale translateContent path below for every locale.
           batchTranslationFailed = true;
@@ -1442,7 +1442,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
           // Invalid API key: abort the whole loop — every remaining locale would
           // 401 too. Re-throw so the outer handler fails loudly (success: false)
           // instead of marking all locales "rejected" and reporting success.
-          if (isAuthError(error)) throw error;
+          if (isRunAbortingAIError(error)) throw error;
           logger.error("[API-AI] Error translating to locale", {
             context: "AI",
             fieldType,

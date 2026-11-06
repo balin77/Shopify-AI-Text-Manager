@@ -11,11 +11,16 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   failOrphanedRuns,
   reconcileOrphanCrawlSnapshots,
   recoverOrphanedRuns,
   HEARTBEAT_TASK_TYPES,
+  BOOT_ORPHAN_TASK_TYPES,
+  BOOT_RECOVERY_TASK_TYPES,
+  BOOT_SILENCE_MS,
   HEARTBEAT_STALL_MS,
   INTERRUPTED_TASK_ERROR,
   INTERRUPTED_SNAPSHOT_ERROR,
@@ -161,5 +166,118 @@ describe("recoverOrphanedRuns", () => {
     // Unscoped on purpose: a snapshot can outlive a task the 45-minute reaper
     // already failed without ever closing the snapshot.
     expect(snapshotFindMany.mock.calls[0][0].where.shop).toBeUndefined();
+  });
+});
+
+describe("boot-only orphan types (bulkEditorTranslate)", () => {
+  it("lists the bulk translate run for boot recovery but NOT as a heartbeat type", () => {
+    expect(BOOT_ORPHAN_TASK_TYPES).toContain("bulkEditorTranslate");
+    // The periodic reaper keeps its 45-minute rule for it: a bulk AI job may be
+    // silent for minutes between two provider calls.
+    expect(HEARTBEAT_TASK_TYPES).not.toContain("bulkEditorTranslate");
+    expect(BOOT_RECOVERY_TASK_TYPES).toEqual(
+      expect.arrayContaining([...HEARTBEAT_TASK_TYPES, ...BOOT_ORPHAN_TASK_TYPES]),
+    );
+  });
+
+  it("boot recovery fails a running bulkEditorTranslate row of any age with the interrupted code", async () => {
+    taskFindMany.mockResolvedValue([{ id: "t9", shop: "a.myshopify.com", type: "bulkEditorTranslate" }]);
+    taskUpdateMany.mockResolvedValue({ count: 1 });
+
+    const g = globalThis as any;
+    const prevDb = g.__db;
+    g.__db = prisma;
+    try {
+      const { TaskRecoveryService } = await import("../../task-recovery.service.js");
+      const svc = new TaskRecoveryService();
+      const res = await svc.recoverOrphanedDetachedRuns();
+      expect(res.tasks).toBe(1);
+    } finally {
+      g.__db = prevDb;
+    }
+
+    const where = taskFindMany.mock.calls[0][0].where;
+    expect(JSON.stringify(where)).toContain("bulkEditorTranslate");
+    // the bulk type is failed only once silent (it heartbeats), never by age at boot
+    expect(where.OR.find((c: any) => c.type.in.includes("bulkEditorTranslate")).updatedAt.lt).toBeInstanceOf(Date);
+    expect(where.status).toBe("running");
+    expect(taskUpdateMany.mock.calls[0][0].data.error).toBe(INTERRUPTED_TASK_ERROR);
+  });
+
+  it("boot recovery only takes rows created BEFORE this process started (a live run of this process is no orphan)", async () => {
+    const g = globalThis as any;
+    const prevDb = g.__db;
+    g.__db = prisma;
+    try {
+      const { TaskRecoveryService } = await import("../../task-recovery.service.js");
+      const before = Date.now();
+      await new TaskRecoveryService().recoverOrphanedDetachedRuns();
+      const where = taskFindMany.mock.calls[0][0].where;
+      expect(where.createdAt.lt).toBeInstanceOf(Date);
+      expect(where.createdAt.lt.getTime()).toBeLessThanOrEqual(before);
+    } finally {
+      g.__db = prevDb;
+    }
+  });
+
+  it("a heartbeating boot type is failed only after it went SILENT (a deploy overlap's live run keeps beating); a crawl is failed regardless", async () => {
+    const t0 = Date.now();
+    await failOrphanedRuns(prisma, {
+      olderThan: null,
+      types: BOOT_RECOVERY_TASK_TYPES,
+      silentTypes: { types: BOOT_ORPHAN_TASK_TYPES, silentMs: BOOT_SILENCE_MS },
+    });
+    const where = taskFindMany.mock.calls[0][0].where;
+    expect(where.type).toBeUndefined();
+    const crawl = where.OR.find((c: any) => c.type.in.includes("seoCrawl"));
+    expect(crawl.updatedAt).toBeUndefined();
+    const bulk = where.OR.find((c: any) => c.type.in.includes("bulkEditorTranslate"));
+    expect(bulk.updatedAt.lt.getTime()).toBeLessThanOrEqual(t0 - BOOT_SILENCE_MS + 1000);
+    expect(bulk.updatedAt.lt.getTime()).toBeGreaterThan(t0 - BOOT_SILENCE_MS - 5000);
+  });
+});
+
+describe("the periodic reaper fails a stalled heartbeat run as INTERRUPTED, not as timed out", () => {
+  it("pass 0 (heartbeat + boot types) writes task_interrupted; the other passes keep task_timed_out", async () => {
+    const g = globalThis as any;
+    const prevDb = g.__db;
+    g.__db = prisma;
+    taskFindMany.mockImplementation(async (args: any) => {
+      const types = args.where?.type?.in ?? [];
+      if (types.includes("bulkEditorTranslate") && types.includes("seoCrawl")) {
+        return taskFindMany.mock.calls.filter((c) => c[0].where?.type?.in?.includes("bulkEditorTranslate")).length === 1
+          ? [{ id: "t1", shop: "a.myshopify.com", type: "bulkEditorTranslate", total: 1 }]
+          : [];
+      }
+      if (types.includes("seoBulkFix")) {
+        return taskFindMany.mock.calls.filter((c) => c[0].where?.type?.in?.includes("seoBulkFix")).length === 1
+          ? [{ id: "t2", shop: "a.myshopify.com", type: "seoBulkFix", total: 1 }]
+          : [];
+      }
+      return [];
+    });
+    taskUpdateMany.mockResolvedValue({ count: 1 });
+    try {
+      const { TaskRecoveryService } = await import("../../task-recovery.service.js");
+      await new TaskRecoveryService().markStuckTasksAsFailed();
+    } finally {
+      g.__db = prevDb;
+    }
+    const byIds = (id: string) => taskUpdateMany.mock.calls.find((c) => c[0].where?.id?.in?.includes(id))?.[0].data;
+    expect(byIds("t1").error).toBe(INTERRUPTED_TASK_ERROR);
+    expect(byIds("t2").error).toBe("task_timed_out");
+  });
+});
+
+describe("server.js stamps the process start before listen()", () => {
+  it("sets globalThis.__processStartedAt after the adapter import and before app.listen", () => {
+    const src = readFileSync(resolve(__dirname, "../../server.js"), "utf8");
+    const adapter = src.indexOf('import { webApiAdapterInitialized } from "@shopify/shopify-api/adapters/web-api"');
+    const stamp = src.indexOf("globalThis.__processStartedAt = new Date()");
+    const listen = src.indexOf("app.listen(");
+    expect(adapter).toBeGreaterThan(-1);
+    expect(stamp).toBeGreaterThan(adapter);
+    expect(listen).toBeGreaterThan(stamp);
+    expect(src.indexOf("sentryNode.init(")).toBeGreaterThan(adapter);
   });
 });

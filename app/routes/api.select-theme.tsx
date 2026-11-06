@@ -55,7 +55,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const own = await db.themeContent.count({ where: { shop: session.shop, domain: "theme", themeId: selected } });
         if (own > 0) return;
         const { BackgroundSyncService } = await import("~/services/background-sync.service");
-        await new BackgroundSyncService(admin, session.shop).syncTheme(selected);
+        // A theme sync outlives this request: with expiring offline tokens the
+        // request's client may die mid-sync, so it gets the refreshing one
+        // (flag off: the request's client, as before — offline-admin.server.ts).
+        const { backgroundAdmin } = await import("~/utils/offline-admin.server");
+        await new BackgroundSyncService(backgroundAdmin(session.shop, admin), session.shop).syncTheme(selected);
       } catch (e) {
         logger.warn("[SELECT-THEME] background theme sync failed (non-fatal; manual sync remains)", {
           context: "SelectTheme",

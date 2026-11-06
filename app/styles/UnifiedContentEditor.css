@@ -476,3 +476,10 @@
   visibility: visible !important;
   opacity: 1 !important;
 }
+
+/* Image manager FULL view: every text element of the editor is hidden but stays MOUNTED (typed text,
+   running saves and refs survive), and the manager takes the whole content area, scrolled by the
+   editor's one scroller. Item list, save bar and language/market controls stay visible. */
+.unified-editor-container.im-full .im-hide-when-full {
+  display: none;
+}

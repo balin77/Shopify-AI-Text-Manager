@@ -47,6 +47,12 @@ export interface ContentActionHandlerContext {
   aiSettings: AISettings | null;
   aiInstructions: AIInstructions | null;
   itemId: string;
+  /**
+   * The request's abort signal, where the door hands it on. Only a handler that
+   * waits (the per-product save lock) looks at it: to skip a write nobody is
+   * waiting for any more. Never used to cancel a write that has started.
+   */
+  signal?: AbortSignal;
   seoTitleMaxChars: number;
   /** Fully-resolved merchant SEO character limits (defaults filled in). */
   seoLimits: SeoLimits;
@@ -852,7 +858,8 @@ export async function handleGenerateAltTextFromSku(
 
   // 1. Alle gecachten Varianten des Produkts laden
   const variants = await ctx.db.productVariant.findMany({
-    where: { productId },
+    // Shop-scoped: productId comes from the form.
+    where: { productId, product: { shop: ctx.session.shop } },
     select: { sku: true, galleryJson: true },
   });
 

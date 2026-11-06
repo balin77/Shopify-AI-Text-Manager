@@ -44,6 +44,10 @@
 import { webApiAdapterInitialized } from "@shopify/shopify-api/adapters/web-api";
 void webApiAdapterInitialized;
 
+// When THIS process started: boot recovery (task-recovery.service.js) only fails runs created before it. Stamped here,
+// the first statement of the module body after the (hoisted) imports, i.e. before listen() and before any request.
+globalThis.__processStartedAt = new Date();
+
 import { createRequestHandler } from "@react-router/express";
 import compression from "compression";
 import express from "express";
@@ -69,14 +73,15 @@ try {
   serverLogger.error("[server.js] Failed to load rate-limit-cjs.cjs: " + e.message);
   // Provide no-op middleware so server can still start
   const noop = (req, res, next) => next();
-  rateLimiters = { apiRateLimit: noop, aiActionRateLimit: noop, contentActionRateLimit: noop, webhookRateLimit: noop, authRateLimit: noop, strictRateLimit: noop, bulkOperationRateLimit: noop };
+  rateLimiters = { apiRateLimit: noop, apiReadRateLimit: noop, aiActionRateLimit: noop, contentActionRateLimit: noop, webhookFailureObserver: noop, authRateLimit: noop, strictRateLimit: noop, bulkOperationRateLimit: noop, createApiRateLimitRouter: () => noop };
 }
 
 const {
   apiRateLimit,
+  apiReadRateLimit,
   aiActionRateLimit,
   contentActionRateLimit,
-  webhookRateLimit,
+  webhookFailureObserver,
   authRateLimit,
   strictRateLimit,
   bulkOperationRateLimit,
@@ -232,8 +237,14 @@ app.use((req, res, next) => {
 });
 
 // Apply granular rate limiting
-// Webhook rate limiting (high limit for Shopify bursts)
-app.use('/webhooks', webhookRateLimit);
+// Webhooks are deliberately NOT throttled (see rate-limit-cjs.cjs): every
+// unverified request is rejected cheaply by authenticate.webhook's HMAC check,
+// while any IP- or header-keyed throttle can be aimed at Shopify's SHARED
+// delivery IPs or at a victim shop, and a 429 would hide our own misconfig
+// (rotated secret, adapter regression) behind "rate limited" in the Partner
+// Dashboard's delivery log. This only counts verification failures per IP and
+// logs a warn line when one IP spikes; it never refuses a request.
+app.use('/webhooks', webhookFailureObserver);
 
 // Auth rate limiting (strict to prevent brute force)
 app.use('/auth', authRateLimit);
@@ -290,22 +301,24 @@ app.use((req, res, next) => {
 app.use('/api/ai', aiActionRateLimit);
 
 // General API rate limiting (catch-all for /api routes)
-// Exclude polling endpoints that have their own built-in backoff mechanisms
-app.use('/api', (req, res, next) => {
+// Exclude polling endpoints that have their own built-in backoff mechanisms.
+// Reads (GET/HEAD) count against apiReadRateLimit (200/min), everything else
+// against apiRateLimit (100/min) - one bucket per request, never both.
+const apiExcludedPaths = [
   // Skip rate limiting for these endpoints - they have exponential backoff in the client
-  const excludedPaths = [
-    '/running-tasks-count',
-    '/recently-completed-tasks',
-    // Limited by contentActionRateLimit above instead (CONTENT_EDITOR_API_PATHS).
-    ...CONTENT_EDITOR_API_PATHS.map((p) => p.slice('/api'.length)),
-  ];
-
-  if (excludedPaths.includes(req.path)) {
-    return next();
-  }
-
-  return apiRateLimit(req, res, next);
-});
+  '/running-tasks-count',
+  '/recently-completed-tasks',
+  // Limited by contentActionRateLimit above instead (CONTENT_EDITOR_API_PATHS).
+  ...CONTENT_EDITOR_API_PATHS.map((p) => p.slice('/api'.length)),
+];
+app.use(
+  '/api',
+  rateLimiters.createApiRateLimitRouter({
+    excludedPaths: apiExcludedPaths,
+    general: apiRateLimit,
+    read: apiReadRateLimit,
+  }),
+);
 
 // handle asset requests
 if (viteDevServer) {
@@ -322,7 +335,12 @@ if (viteDevServer) {
 // more aggressive with this caching.
 app.use(express.static("build/client", { maxAge: "1h" }));
 
-app.use(morgan("tiny"));
+// Morgan's "tiny" line, minus the credentials: the full URL of an embedded-app
+// document request carries `id_token` (a session JWT) and `hmac` in its query
+// string. Only the values of sensitive params are redacted (access-log.cjs).
+const { safeUrlToken, ACCESS_LOG_FORMAT } = require("./app/middleware/access-log.cjs");
+morgan.token("safe-url", safeUrlToken);
+app.use(morgan(ACCESS_LOG_FORMAT));
 
 // Health check endpoint for Railway deployment
 // This endpoint is called by Railway to determine if the app is ready to receive traffic
@@ -441,13 +459,20 @@ const server = app.listen(port, host, async () => {
   // not awaited, so with the old order it could already have claimed that very
   // item. Recovery then reset a LIVE conversion, and a later poll ran the
   // destructive sequence on the same image a second time. The ordering is the
-  // fix: a timestamp filter inside the recovery service would be a second
-  // mechanism answering the same question.
+  // fix for THIS process. A conversion in ANOTHER container (the old one, during
+  // a zero-downtime deploy) is invisible to the ordering, so the recovery also
+  // skips `running` rows with a fresh heartbeat (WEBP_RUNNING_STALE_MS) — the
+  // two answer different questions: "is it mine" and "is anybody alive on it".
   try {
     const { TaskRecoveryService } = await import("./task-recovery.service.js");
     const recoveryService = TaskRecoveryService.getInstance();
     const result = await recoveryService.recoverPendingTasks();
     serverLogger.info(`Task recovery: ${result.recovered} recovered, ${result.failed} marked as failed`);
+
+    // No one-shot second pass for the WebP items the boot pass had to LEAVE (a
+    // fresh heartbeat = the old container's live worker): the stuck monitor
+    // below runs `recoverRunningWebpTasks` on every tick, so an old container
+    // that dies at ANY later moment is still classified before the reaper.
 
     // Start periodic monitoring for stuck tasks
     recoveryService.startStuckTaskMonitoring();
@@ -456,34 +481,32 @@ const server = app.listen(port, host, async () => {
     serverLogger.error("Failed to recover tasks", { error: String(error) });
   }
 
-  // Start WebP conversion task processor — gated while app is under Shopify review.
-  // Remove this guard once the Image Manager feature set is approved.
-  if (process.env.APP_ENV !== "production") {
-    try {
-      const { WebPProcessorService } = await import("./webp-processor.service.js");
-      const webpProcessor = WebPProcessorService.getInstance();
-      webpProcessor.start();
-      serverLogger.info("WebP processor service started");
-    } catch (error) {
-      serverLogger.error("Failed to start WebP processor service", { error: String(error) });
-    }
-  } else {
-    serverLogger.info("WebP processor service skipped (APP_ENV=production, feature gated for review)");
+  // Start the WebP conversion task processor — in EVERY environment. It used to
+  // be skipped under APP_ENV=production while the app was under Shopify review,
+  // but the image manager was never gated, so production merchants could queue
+  // conversions that never ran. Items that waited too long are refused rather
+  // than run (WEBP_QUEUE_MAX_AGE_MS in app/config/webp-tasks.js), so the first
+  // start after that gate cannot swap images nobody is waiting for any more.
+  // Started AFTER the task recovery above, on purpose (see the comment there).
+  try {
+    const { WebPProcessorService } = await import("./webp-processor.service.js");
+    const webpProcessor = WebPProcessorService.getInstance();
+    webpProcessor.start();
+    serverLogger.info("WebP processor service started");
+  } catch (error) {
+    serverLogger.error("Failed to start WebP processor service", { error: String(error) });
   }
 
-  // Start stale image cleanup service — gated while app is under Shopify review.
-  // Remove this guard once the Image Manager feature set is approved.
-  if (process.env.APP_ENV !== "production") {
-    try {
-      const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
-      const staleImageService = StaleImageCleanupService.getInstance();
-      staleImageService.start();
-      serverLogger.info("Stale image cleanup service started");
-    } catch (error) {
-      serverLogger.error("Failed to start stale image cleanup service", { error: String(error) });
-    }
-  } else {
-    serverLogger.info("Stale image cleanup service skipped (APP_ENV=production, feature gated for review)");
+  // Start the stale image cleanup service — in every environment, like the
+  // processor it tidies up after. It deletes only this app's local ProductImage
+  // CACHE rows, never anything on Shopify.
+  try {
+    const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
+    const staleImageService = StaleImageCleanupService.getInstance();
+    staleImageService.start();
+    serverLogger.info("Stale image cleanup service started");
+  } catch (error) {
+    serverLogger.error("Failed to start stale image cleanup service", { error: String(error) });
   }
 });
 
@@ -499,6 +522,55 @@ async function gracefulShutdown(signal) {
   }
   shutdownInProgress = true;
   serverLogger.info(`${signal} received. Starting graceful shutdown...`);
+
+  // Force shutdown after 10 seconds. ARMED FIRST, before the first `await`
+  // below (dynamic imports, drains): the bound is unconditional, so a hanging
+  // import or a stop() that never returns cannot push the exit past it.
+  setTimeout(() => {
+    serverLogger.error("Forced shutdown after timeout");
+    process.exit(1);
+  }, 10000);
+
+  // Stop the workers NOW, on the signal, not inside the server.close callback:
+  // that callback only fires once every open connection has ended, and a
+  // request still in flight past the force-exit bound would mean the WebP
+  // processor keeps claiming rows (and the AI queue keeps dispatching) until
+  // the process is killed. Both drains are STARTED here and awaited together
+  // before the DB is closed, so neither eats the other's share of the 10s
+  // bound. railway.json's drainingSeconds (15) has to stay above that bound, or
+  // SIGKILL arrives before any of this gets its time. Each step has its own
+  // try/catch: a failing stop() of one must not skip the other, and never
+  // skips the wait before $disconnect.
+  let webpDrain = Promise.resolve();
+  let aiDrain = Promise.resolve();
+  try {
+    const { WebPProcessorService } = await import("./webp-processor.service.js");
+    const webpProcessor = WebPProcessorService.getInstance();
+    webpProcessor.stop();
+    // Brief grace for conversions already in flight (a deploy is the usual reason).
+    webpDrain = webpProcessor.drain(4000);
+    serverLogger.info("WebP processor stopped");
+  } catch (error) {
+    serverLogger.error("Error stopping WebP processor", { error: String(error) });
+  }
+  try {
+    // The singleton lives inside the React Router bundle, so it is reached via
+    // the process-wide globalThis bridge (set in AIQueueService.getInstance()),
+    // not a module import. If no AI request ran yet, __aiQueue is undefined and
+    // there is nothing to drain.
+    const aiQueue = globalThis.__aiQueue;
+    if (aiQueue) {
+      aiQueue.stop();
+      aiDrain = Promise.resolve(aiQueue.drain(8000)).catch((error) => {
+        serverLogger.error("Error draining AI queue", { error: String(error) });
+      });
+      serverLogger.info("AI queue stopped, draining");
+    } else {
+      serverLogger.info("AI queue not initialized — nothing to drain");
+    }
+  } catch (error) {
+    serverLogger.error("Error stopping AI queue", { error: String(error) });
+  }
 
   // Stop accepting new connections
   server.close(async () => {
@@ -533,44 +605,25 @@ async function gracefulShutdown(signal) {
       serverLogger.error("Error stopping stuck task monitoring", { error: String(error) });
     }
 
-    if (process.env.APP_ENV !== "production") {
-      try {
-        // Stop stale image cleanup service
-        const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
-        StaleImageCleanupService.getInstance().stop();
-        serverLogger.info("Stale image cleanup service stopped");
-      } catch (error) {
-        serverLogger.error("Error stopping stale image cleanup service", { error: String(error) });
-      }
+    try {
+      // Stop stale image cleanup service (started in every environment)
+      const { StaleImageCleanupService } = await import("./stale-image-cleanup.service.js");
+      StaleImageCleanupService.getInstance().stop();
+      serverLogger.info("Stale image cleanup service stopped");
+    } catch (error) {
+      serverLogger.error("Error stopping stale image cleanup service", { error: String(error) });
     }
 
     try {
-      // Stop the WebP conversion processor (no new polls; in-flight finishes)
-      const { WebPProcessorService } = await import("./webp-processor.service.js");
-      WebPProcessorService.getInstance().stop();
-      serverLogger.info("WebP processor stopped");
+      // The workers were stopped on the SIGNAL (above, outside this callback);
+      // wait for what they still have in flight BEFORE closing the DB, or a
+      // running AI job / conversion keeps writing to a $disconnect()-ed Prisma
+      // client and its task stays "running". allSettled: a drain that failed
+      // must not skip the disconnect, and one that failed must not hide the other.
+      await Promise.allSettled([webpDrain, aiDrain]);
+      serverLogger.info("WebP processor and AI queue drained");
     } catch (error) {
-      serverLogger.error("Error stopping WebP processor", { error: String(error) });
-    }
-
-    try {
-      // Stop AI queue dispatch + cancel retry timers, then drain in-flight
-      // provider calls BEFORE closing the DB. Otherwise running AI jobs keep
-      // writing to a $disconnect()-ed Prisma client and tasks stay "running".
-      // The singleton lives inside the React Router bundle, so it's reached via the
-      // process-wide globalThis bridge (set in AIQueueService.getInstance()),
-      // not a module import. If no AI request ran yet, __aiQueue is undefined
-      // and there is nothing to drain.
-      const aiQueue = globalThis.__aiQueue;
-      if (aiQueue) {
-        aiQueue.stop();
-        await aiQueue.drain(8000);
-        serverLogger.info("AI queue drained");
-      } else {
-        serverLogger.info("AI queue not initialized — nothing to drain");
-      }
-    } catch (error) {
-      serverLogger.error("Error draining AI queue", { error: String(error) });
+      serverLogger.error("Error waiting for the drains", { error: String(error) });
     }
 
     try {
@@ -587,11 +640,6 @@ async function gracefulShutdown(signal) {
     process.exit(0);
   });
 
-  // Force shutdown after 10 seconds
-  setTimeout(() => {
-    serverLogger.error("Forced shutdown after timeout");
-    process.exit(1);
-  }, 10000);
 }
 
 // Handle shutdown signals

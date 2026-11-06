@@ -9,11 +9,16 @@ import { refundImageOperations } from "./image-op-refund.js";
 import {
   WEBP_NON_TERMINAL_STATUS,
   WEBP_PARENT_TASK_TYPE,
+  WEBP_RUNNING_STALE_MS,
   isWebpWorkRow,
   webpWorkRowWhere,
 } from "./app/config/webp-tasks.js";
 import {
   HEARTBEAT_TASK_TYPES,
+  BOOT_RECOVERY_TASK_TYPES,
+  BOOT_ORPHAN_TASK_TYPES,
+  BOOT_SILENCE_MS,
+  INTERRUPTED_TASK_ERROR,
   HEARTBEAT_STALL_MS,
   recoverOrphanedRuns,
   reconcileOrphanCrawlSnapshots,
@@ -21,6 +26,9 @@ import {
 
 // Reuse the global PrismaClient shared with the Remix app (db.server.ts)
 // instead of creating a separate instance with its own connection pool.
+// Rows created after this instant belong to THIS process (boot recovery must not fail them).
+// Stamped by server.js before listen() (the earliest point the web process owns); a standalone caller falls back to now.
+const PROCESS_STARTED_AT = globalThis.__processStartedAt instanceof Date ? globalThis.__processStartedAt : new Date();
 const prisma = globalThis.__db ?? new PrismaClient();
 if (!globalThis.__db) globalThis.__db = prisma;
 
@@ -143,6 +151,18 @@ export class TaskRecoveryService {
 
     this.stuckCheckInterval = setInterval(async () => {
       try {
+        // WebP items first, and on EVERY tick (not only at boot): during a
+        // deploy overlap the boot pass skips a `running` row whose old
+        // container was still stamping it. If that container died later than
+        // one stale window after the boot, nothing stamps the row any more and
+        // only this pass can classify it (retry under 70%, review from 70%)
+        // before the blanket reaper below fails and refunds it. A row a live
+        // worker stamps stays fresh and is skipped, so this is safe to repeat.
+        try {
+          await this.recoverRunningWebpTasks();
+        } catch (error) {
+          console.error('[TaskRecovery] Periodic WebP recovery failed:', error);
+        }
         const stuckCount = await this.markStuckTasksAsFailed();
         if (stuckCount > 0) {
           console.log(`[TaskRecovery] Periodic check: marked ${stuckCount} stuck task(s) as failed`);
@@ -223,7 +243,8 @@ export class TaskRecoveryService {
   }
 
   /**
-   * Boot-time half of the orphan rule: fail heartbeat-type runs regardless of
+   * Boot-time half of the orphan rule: fail heartbeat-type runs (and the boot-only
+   * detached types, e.g. bulkEditorTranslate) regardless of
    * age and close the crawl snapshots behind them.
    *
    * Multi-instance caveat (same class as the R4-C2 note in server.js): with
@@ -236,7 +257,14 @@ export class TaskRecoveryService {
     // Never let this abort the rest of the boot recovery (and with it the
     // monitoring interval that would clean up later): a failure here costs one
     // delayed reap, a thrown one costs the reaper.
-    const result = await recoverOrphanedRuns(prisma, { olderThan: null }).catch((error) => {
+    const result = await recoverOrphanedRuns(prisma, {
+      olderThan: null,
+      types: BOOT_RECOVERY_TASK_TYPES,
+      // Only what existed before THIS process started (a run created after listen() is live) ...
+      createdBefore: PROCESS_STARTED_AT,
+      // ... and, for the heartbeating boot types, only what has gone silent (a deploy overlap's live run keeps beating).
+      silentTypes: { types: BOOT_ORPHAN_TASK_TYPES, silentMs: BOOT_SILENCE_MS },
+    }).catch((error) => {
       console.error('[TaskRecovery] Orphaned-run recovery failed:', error);
       return { tasks: 0, snapshots: 0, shops: [] };
     });
@@ -297,17 +325,43 @@ export class TaskRecoveryService {
    * flagged here, and the processor's first poll settles the parent from them.
    */
   async recoverRunningWebpTasks() {
-    const tasks = await prisma.task.findMany({
-      where: webpWorkRowWhere({ status: 'running' }),
+    // DEPLOY OVERLAP: Railway starts the new container before the old one is
+    // gone, so a `running` row may belong to a worker that is converting it
+    // RIGHT NOW. Resetting it would run the destructive sequence (upload, delete
+    // the original) a second time. A live worker heartbeats `updatedAt` every
+    // WEBP_ITEM_HEARTBEAT_MS, so only rows silent for WEBP_RUNNING_STALE_MS are
+    // dead ones (see app/config/webp-tasks.js for the numbers). A row skipped
+    // here because its owner died only moments ago is caught by the next tick of
+    // the stuck monitor, which runs this method every time.
+    //
+    // Rows THIS process is converting are never touched, however silent they are
+    // (a database outage longer than the stale window makes its heartbeat fail
+    // quietly): the worker exposes the ids it has in flight. A wedged step of
+    // ours that stopped heartbeating (WEBP_HEARTBEAT_MAX_MS) is closed by the
+    // reaper instead (failed + refunded, never reset and run a second time).
+    // Absent hook (the worker not started yet, as at boot): nothing is ours.
+    const staleBefore = new Date(Date.now() - WEBP_RUNNING_STALE_MS);
+    let ownIds = new Set();
+    try {
+      const ids = globalThis.__webpInFlightTaskIds?.();
+      if (ids) ownIds = new Set(ids);
+    } catch {
+      ownIds = new Set();
+    }
+    const candidates = await prisma.task.findMany({
+      where: webpWorkRowWhere({ status: 'running', updatedAt: { lt: staleBefore } }),
       select: { id: true, progress: true, retryCount: true, shop: true },
     });
+    const tasks = candidates.filter((t) => !ownIds.has(t.id));
 
     let retried = 0;
     let failed = 0;
     for (const t of tasks) {
       if ((t.progress ?? 0) < 70 && (t.retryCount ?? 0) < 3) {
-        await prisma.task.update({
-          where: { id: t.id },
+        // Re-checked IN the write: a worker that stamped the row between the
+        // SELECT and here is alive, and `count: 0` means leave it be.
+        const reset = await prisma.task.updateMany({
+          where: { id: t.id, status: 'running', updatedAt: { lt: staleBefore } },
           data: {
             status: 'pending',
             retryCount: { increment: 1 },
@@ -315,16 +369,17 @@ export class TaskRecoveryService {
             progress: 0,
           },
         });
-        retried++;
+        if (reset.count > 0) retried++;
       } else {
-        await prisma.task.update({
-          where: { id: t.id },
+        const flagged = await prisma.task.updateMany({
+          where: { id: t.id, status: 'running', updatedAt: { lt: staleBefore } },
           data: {
             status: 'failed',
             completedAt: new Date(),
-            error: `Server restarted at progress ${t.progress ?? 0} — partial Shopify state, manual review needed`,
+            error: `Worker stopped at progress ${t.progress ?? 0} (server restart or a lost worker) — partial Shopify state, manual review needed`,
           },
         });
+        if (flagged.count === 0) continue;
         failed++;
         // R3-C4: this task consumed an image op at batch creation but
         // produced no result. Refund it (the status:'running' query filter
@@ -393,7 +448,7 @@ export class TaskRecoveryService {
 
     // Reap one selector in bounded batches so a single statement can never
     // flip an unbounded number of rows (R4-H2 batch cap).
-    const reapBatched = async (where) => {
+    const reapBatched = async (where, errorCode = 'task_timed_out') => {
       for (;;) {
         const rows = await prisma.task.findMany({
           where,
@@ -406,7 +461,7 @@ export class TaskRecoveryService {
           // Machine code, not prose: this runs outside any request, so there
           // is no merchant locale here. The UI translates it via
           // app/utils/task-error-text.ts (`taskTimedOut`).
-          error: 'task_timed_out',
+          error: errorCode,
           completedAt: new Date(),
         };
 
@@ -453,22 +508,25 @@ export class TaskRecoveryService {
     // process is gone rather than of a long-running job. Reaped here rather
     // than in pass 1 because a 45-minute wait IS the hang for a task whose
     // single-flight blocks the merchant from starting a new one.
+    // A stalled HEARTBEAT is evidence of a dead process, not of a slow job: the row is failed as INTERRUPTED
+    // ("the app was restarted, start it again"), the same code boot recovery writes, never as "timed out" (which
+    // sends the merchant looking for a fault of their own). That holds for the crawl too.
     await reapBatched({
-      type: { in: HEARTBEAT_TASK_TYPES },
+      type: { in: [...HEARTBEAT_TASK_TYPES, ...BOOT_ORPHAN_TASK_TYPES] },
       status: { in: NON_TERMINAL },
       updatedAt: { lt: heartbeatCutoff },
-    });
+    }, INTERRUPTED_TASK_ERROR);
 
     // Pass 1: legitimately-long types — only stuck after the LONG cutoff.
     await reapBatched({
-      type: { in: LONG_RUNNING_TASK_TYPES, notIn: HEARTBEAT_TASK_TYPES },
+      type: { in: LONG_RUNNING_TASK_TYPES, notIn: [...HEARTBEAT_TASK_TYPES, ...BOOT_ORPHAN_TASK_TYPES] },
       status: { in: NON_TERMINAL },
       updatedAt: { lt: longCutoff },
     });
 
     // Pass 2: everything else (incl. imageWebpConversion) — default cutoff.
     await reapBatched({
-      type: { notIn: [...LONG_RUNNING_TASK_TYPES, ...HEARTBEAT_TASK_TYPES] },
+      type: { notIn: [...LONG_RUNNING_TASK_TYPES, ...HEARTBEAT_TASK_TYPES, ...BOOT_ORPHAN_TASK_TYPES] },
       status: { in: NON_TERMINAL },
       updatedAt: { lt: defaultCutoff },
     });

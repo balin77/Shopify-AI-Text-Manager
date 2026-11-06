@@ -1,0 +1,748 @@
+/**
+ * The main image of a variant, and why the merchant never has to know it is
+ * stored apart from the gallery.
+ *
+ * Shopify keeps ONE native image per variant (`mediaId`); the rest of the
+ * variant's gallery is the list metafield `custom.variant_gallery`. The two must
+ * never overlap: a main image that is also in the metafield is shown twice by
+ * the storefront (embed default path, app block). And a variant that loses its
+ * main image (the medium deleted, the image moved away) must not be left
+ * without one while its gallery still holds images: Shopify needs a main image,
+ * so the next image of the gallery moves up into `mediaId` and leaves the
+ * metafield, in the same write.
+ *
+ * A main image changes only on an EXPLICIT intent of the merchant, never because
+ * of how a list happens to look: dragging an image to the first slot of the
+ * variant's OWN gallery (`mainGid` + the main image the editor showed as
+ * `expectedMainGid`), removing the main image (`removedMainGid`, the GID that was
+ * removed) or, for a variant with no native image at all, a real edit
+ * (`promoteIfEmpty`). Each one is compared with a FRESH read on the server, so a
+ * replay, a retry or a stale tab can never move a main image the merchant did
+ * not touch. A product-gallery reorder, an add, a copy or a bulk upload never
+ * changes a main image.
+ *
+ * Pure and import-free: the browser (what the gallery shows, what a save
+ * sends) and the route (what is written) apply the SAME rules from here.
+ *
+ * INVARIANT: the variant's main image GID is never in the gallery metafield.
+ */
+
+export const MEDIA_IMAGE_GID_PREFIX = "gid://shopify/MediaImage/";
+
+/** Only a MediaImage can be a variant's native image (videos, 3D models,
+ *  generic files and external URLs cannot). */
+export function isImageGid(ref: string | null | undefined): ref is string {
+  return typeof ref === "string" && ref.startsWith(MEDIA_IMAGE_GID_PREFIX);
+}
+
+/** What `variant_gallery` (list.file_reference) can hold: an image, a video or a generic file. A 3D model or an
+ *  external video is never a file entry of a variant gallery (they live in their own link / model lists). */
+export function isFileKindGid(ref: string | null | undefined): boolean {
+  return typeof ref === "string" && /^gid:\/\/shopify\/(MediaImage|Video|GenericFile)\//.test(ref);
+}
+
+export interface GalleryOrderEntry {
+  kind: "file" | "url" | "model";
+  value: string;
+}
+
+export function parseGalleryOrder(json: string | null | undefined): GalleryOrderEntry[] | null {
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter(
+      (e): e is GalleryOrderEntry =>
+        !!e && typeof e === "object" && typeof (e as GalleryOrderEntry).value === "string" &&
+        ["file", "url", "model"].includes((e as GalleryOrderEntry).kind),
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** `list` without duplicates and without any of `exclude`, order kept. */
+export function galleryWithout(list: readonly string[], ...exclude: Array<string | null | undefined>): string[] {
+  const skip = new Set(exclude.filter((g): g is string => !!g));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const gid of list) {
+    if (skip.has(gid) || seen.has(gid)) continue;
+    seen.add(gid);
+    out.push(gid);
+  }
+  return out;
+}
+
+/**
+ * The file references of a gallery in the order the merchant SEES them: the
+ * saved order (`variant_gallery_order`) first, restricted to files the gallery
+ * holds, then whatever the order does not cover.
+ */
+export function visibleFileOrder(files: readonly string[], orderJson?: string | null): string[] {
+  const held = new Set(files);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of parseGalleryOrder(orderJson) ?? []) {
+    if (entry.kind !== "file" || !held.has(entry.value) || seen.has(entry.value)) continue;
+    seen.add(entry.value);
+    out.push(entry.value);
+  }
+  for (const gid of files) {
+    if (!seen.has(gid)) {
+      seen.add(gid);
+      out.push(gid);
+    }
+  }
+  return out;
+}
+
+/**
+ * The image that moves up when a variant loses its main image: the first FILE in
+ * the visible order that can be a native variant image (a MediaImage, and
+ * `isCandidate` when the caller knows which media the product holds). Videos,
+ * external URLs and 3D models are skipped; `null` when nothing qualifies.
+ */
+export function pickPromotedMain(input: {
+  files: readonly string[];
+  orderJson?: string | null;
+  removedMain?: string | null;
+  isCandidate?: (gid: string) => boolean;
+  /** References that are no GID yet but ARE images (an upload / clone this save creates): only the display
+   *  of a variant with no native image uses it (the server promotes the created medium by its GID). */
+  isStagedImage?: (ref: string) => boolean;
+}): string | null {
+  const files = galleryWithout(input.files, input.removedMain);
+  for (const gid of visibleFileOrder(files, input.orderJson)) {
+    if (!isImageGid(gid) && !input.isStagedImage?.(gid)) continue;
+    if (input.isCandidate && !input.isCandidate(gid)) continue;
+    return gid;
+  }
+  return null;
+}
+
+/**
+ * The saved order after the main image changed: the removed one is gone, the
+ * promoted one is first. `null` = there is no order to keep consistent.
+ */
+export function orderAfterMainChange(
+  orderJson: string | null | undefined,
+  removedMain: string | null | undefined,
+  promoted: string | null | undefined,
+): string | null {
+  const entries = parseGalleryOrder(orderJson);
+  if (!entries) return null;
+  const rest = entries.filter(
+    (e) => !(e.kind === "file" && (e.value === removedMain || e.value === promoted)),
+  );
+  return JSON.stringify(promoted ? [{ kind: "file", value: promoted }, ...rest] : rest);
+}
+
+export interface DisplayMain {
+  /** The image the gallery shows with the gold border; null = none. */
+  mainGid: string | null;
+  /** The variant's file GIDs as displayed. The main image is among them exactly once. */
+  gids: string[];
+}
+
+/**
+ * What a variant's gallery SHOWS. The explicit intent of the merchant decides
+ * the main image and nothing is inferred from the list:
+ *  - `pendingMain` (set only by dragging an image to the first slot of the
+ *    variant's own gallery): that image is the main image;
+ *  - `removed` (the main image was deleted or moved away): the image that moves up
+ *    on save is shown as the main right away;
+ *  - otherwise the native main image. It keeps the position the stored list gives
+ *    it; when the list does not hold it (the normal case, the metafield never
+ *    holds it) it is put first.
+ * A variant with no main image and none removed shows its gallery as stored.
+ */
+export function displayMain(input: {
+  nativeMainGid: string | null | undefined;
+  removed: boolean;
+  pendingMain?: string | null;
+  stored: readonly string[];
+  orderJson?: string | null;
+  isCandidate?: (gid: string) => boolean;
+  isStagedImage?: (ref: string) => boolean;
+}): DisplayMain {
+  const native = input.nativeMainGid || null;
+  const own = galleryWithout(input.stored);
+  if (input.pendingMain) {
+    const main = input.pendingMain;
+    const withOld = native && !input.removed && !own.includes(native) ? [...own, native] : own;
+    return { mainGid: main, gids: withOld.includes(main) ? withOld : [main, ...withOld] };
+  }
+  if (native && !input.removed) {
+    return { mainGid: native, gids: own.includes(native) ? own : [native, ...own] };
+  }
+  if (input.removed) {
+    const promoted = pickPromotedMain({
+      files: input.stored,
+      orderJson: input.orderJson,
+      removedMain: native,
+      isCandidate: input.isCandidate,
+      isStagedImage: input.isStagedImage,
+    });
+    const rest = galleryWithout(input.stored, native, promoted);
+    return promoted ? { mainGid: promoted, gids: [promoted, ...rest] } : { mainGid: null, gids: rest };
+  }
+  return { mainGid: null, gids: own };
+}
+
+/**
+ * The saved order as the gallery SHOWS it: when an order exists but does not
+ * list the main image, the main image is put first (the storefront emits a
+ * variant's own image first whatever the order says, and a tile the order does
+ * not cover would otherwise be appended at the very end).
+ */
+export function orderShowingMain(orderJson: string | null | undefined, mainGid: string | null | undefined): string | null {
+  const entries = parseGalleryOrder(orderJson);
+  if (!entries || entries.length === 0 || !mainGid) return orderJson ?? null;
+  if (entries.some((e) => e.kind === "file" && e.value === mainGid)) return orderJson ?? null;
+  return JSON.stringify([{ kind: "file", value: mainGid }, ...entries]);
+}
+
+/**
+ * A pending order after files were deleted: the deleted file entries are gone, and the order must
+ * still START with a file (the route refuses an order that does not): the first remaining file entry
+ * moves to the front. `null` = no file entry is left, the order is dropped.
+ */
+export function orderWithoutFiles(orderJson: string | null | undefined, removed: ReadonlySet<string>): string | null {
+  const entries = parseGalleryOrder(orderJson);
+  if (!entries) return orderJson ?? null;
+  return normalizeOrderHead(entries.filter((e) => !(e.kind === "file" && removed.has(e.value))));
+}
+
+/**
+ * The ONE head rule for a gallery order, used by the editor and the route: it must start with a file
+ * entry when there is one, and the first IMAGE file leads (a video / generic file cannot be a main
+ * image); with files but no image the first file leads; with only links / models the order is kept as it
+ * is; an EMPTY order is `null`: the caller writes no order (and clears a stored one).
+ */
+export function normalizeOrderHead(entries: GalleryOrderEntry[]): string | null {
+  const kept = [...entries];
+  let first = kept.findIndex((e) => e.kind === "file" && isImageGid(e.value));
+  if (first === -1) first = kept.findIndex((e) => e.kind === "file");
+  // No file entry at all: an order of links / models only is valid for the embed (it renders them straight
+  // from the order, without a main image in front); only an EMPTY order means "no order".
+  if (first === -1) return kept.length > 0 ? JSON.stringify(kept) : null;
+  if (first > 0) kept.unshift(...kept.splice(first, 1));
+  return JSON.stringify(kept);
+}
+
+/**
+ * The order restricted to the links and models the variant really has (`null` = no restriction for
+ * that kind). A link or model entry the variant no longer holds is never written: the embed renders
+ * those entries straight from the order.
+ */
+export function orderRestrictedToLinks(
+  orderJson: string | null | undefined,
+  allowedUrls: ReadonlySet<string> | null,
+  allowedModels: ReadonlySet<string> | null,
+): string | null {
+  const entries = parseGalleryOrder(orderJson);
+  if (!entries) return orderJson ?? null;
+  return normalizeOrderHead(
+    entries.filter((e) => (e.kind === "url" ? !allowedUrls || allowedUrls.has(e.value) : e.kind === "model" ? !allowedModels || allowedModels.has(e.value) : true)),
+  );
+}
+
+export interface VariantGalleryEmission {
+  variantId: string;
+  /** The variant's file references as the editor holds them (may hold the main image). */
+  fileGids: string[];
+  /** true = nothing here changes the variant's main image. */
+  galleryOnly?: boolean;
+  /** The variant has no native image at all: a real edit promotes its first own image. */
+  promoteIfEmpty?: boolean;
+  /** The merchant removed this main image (deleted the medium / moved it away). */
+  removedMainGid?: string;
+  /** Explicit intent: this image becomes the main image ... */
+  mainGid?: string;
+  /** ... provided the variant's main image still is this one (null = none). */
+  expectedMainGid?: string | null;
+}
+
+/** The merchant dragged `gid` to the first slot of the variant's own gallery while the main image was `expected`. */
+export interface PendingMain {
+  gid: string;
+  expected: string | null;
+}
+
+export interface RemovedMainEmission {
+  variantId: string;
+  removedMainGid: string;
+}
+
+/**
+ * What the editor hands to the save for the variants with a pending change.
+ * Every statement is an explicit intent with the OLD value it is based on, so a
+ * replay or a stale tab can never move a main image the merchant did not touch:
+ *  - `removed[variantId]` (the main image's GID the merchant removed): a
+ *    removal; with a pending list it travels with it, without one on its own;
+ *  - `pendingMain[variantId]` (dragged to the first slot of the variant's own
+ *    gallery): `mainGid` + `expectedMainGid` (the main image the editor showed);
+ *  - any other variant with a main image it can name: `galleryOnly`;
+ *  - a variant with no native image: `promoteIfEmpty`;
+ *  - a variant whose native image URL does not resolve to a GID: `galleryOnly`
+ *    (its `mediaId` is never touched because the editor could not name it).
+ */
+export function buildVariantEmission(input: {
+  pending: Record<string, readonly string[]>;
+  removed: Readonly<Record<string, string>>;
+  pendingMain?: Readonly<Record<string, PendingMain>>;
+  variants: ReadonlyArray<{ id: string; mainGid?: string | null; hasNativeImage?: boolean; galleryFileGids: readonly string[] }>;
+}): { galleries: VariantGalleryEmission[]; removedMainImages: RemovedMainEmission[] } {
+  const byId = new Map(input.variants.map((v) => [v.id, v]));
+  const pendingMain = input.pendingMain ?? {};
+  const galleries: VariantGalleryEmission[] = [];
+  const removedMainImages: RemovedMainEmission[] = [];
+  for (const [variantId, fileGids] of Object.entries(input.pending)) {
+    const variant = byId.get(variantId);
+    const main = variant?.mainGid || null;
+    const removedGid = input.removed[variantId];
+    const chosen = pendingMain[variantId]?.gid;
+    if (removedGid) {
+      galleries.push({
+        variantId,
+        fileGids: galleryWithout(fileGids, removedGid),
+        removedMainGid: removedGid,
+        // The main image the editor SHOWED (what the removal promoted) is the basis of the choice.
+        ...(chosen ? { mainGid: chosen, expectedMainGid: pendingMain[variantId].expected } : {}),
+      });
+    } else if (chosen && chosen !== main) {
+      galleries.push({ variantId, fileGids: [...fileGids], mainGid: chosen, expectedMainGid: pendingMain[variantId].expected });
+    } else if (main) {
+      galleries.push({ variantId, fileGids: galleryWithout(fileGids, main), galleryOnly: true, expectedMainGid: main });
+    } else if (variant && variant.hasNativeImage === false) {
+      galleries.push({ variantId, fileGids: [...fileGids], promoteIfEmpty: true });
+    } else {
+      galleries.push({ variantId, fileGids: [...fileGids], galleryOnly: true });
+    }
+  }
+  for (const [variantId, removedGid] of Object.entries(input.removed)) {
+    if (input.pending[variantId] !== undefined) continue;
+    removedMainImages.push({ variantId, removedMainGid: removedGid });
+  }
+  return { galleries, removedMainImages };
+}
+
+/** What the server knows about a variant right now (a fresh read, not the client's belief). */
+export interface VariantLookup {
+  /** The variant's native image GID, null = none. */
+  main: string | null;
+  /** The stored `variant_gallery` list. */
+  gallery: string[];
+  /** The stored `variant_gallery_order` JSON, null = none. */
+  order: string | null;
+  /** The stored link / model lists (`variant_external_videos`, `variant_3d_models`), when the read had them. */
+  links?: string[];
+  models?: string[];
+}
+
+export type MainRefusal =
+  | "mainChangedElsewhere"
+  | "lookupFailed"
+  | "attachFailed"
+  | "attachNotConfirmed"
+  | "notAnImage"
+  | "variantNotFound"
+  | "mainFileGone"
+  /** The other variant of a main-image MOVE was refused, so this one is left alone too. */
+  | "moveCounterpartRefused";
+
+export interface VariantWritePlan {
+  /** `write` = send it; `skip` = nothing to do for this variant (an idempotent replay); `refuse` = do not touch the variant. */
+  action: "write" | "skip" | "refuse";
+  refusal?: MainRefusal;
+  /** `undefined` = leave the variant's image alone; a GID = set it; `null` = unset it (nothing left to move up). */
+  mediaId: string | null | undefined;
+  /** What goes into `custom.variant_gallery`: never the main image, never a duplicate. */
+  gallery: string[];
+  /** The rewritten order JSON when the main image changed or the stored order needs it. */
+  order?: string;
+  /** The stored `variant_gallery_order` must be deleted (a main-only entry that no longer applies). */
+  clearOrder?: boolean;
+  /** The image that becomes the main image in this write (promotion or explicit choice). */
+  promoted?: string | null;
+  /** A MediaImage the product does not hold: it must be attached (fileUpdate) before `mediaId` can be set. */
+  attach?: string;
+}
+
+const refuse = (refusal: MainRefusal): VariantWritePlan => ({ action: "refuse", refusal, mediaId: undefined, gallery: [] });
+
+/** The single-entry order the embed needs so that a variant with a main image and an empty gallery shows ONLY that image. */
+export function mainOnlyOrder(mainGid: string): string {
+  return JSON.stringify([{ kind: "file", value: mainGid }]);
+}
+
+/**
+ * The ONE decision about a variant's main image and gallery on a write. Every
+ * change of the main image is an explicit intent and is compared with the FRESH
+ * read (`lookup`); nothing is inferred from the list the editor sent.
+ *  - `removedMainGid`: the merchant removed that main image. Acts only while the
+ *    fresh main image still is that one (or is empty); a replay / a stale tab
+ *    finds another main image and does nothing (a bare removal) or is refused
+ *    (when it carries a list that is not what the removal would have produced).
+ *  - `mainGid` + `expectedMainGid`: an explicit choice. Equal to the fresh main
+ *    image = no change; the fresh main image is the expected one = set it; any
+ *    other = refused.
+ *  - `promoteIfEmpty`: the variant had no native image; only an empty one gets
+ *    its first own image promoted.
+ *  - otherwise (galleryOnly) the main image is not touched and never stored in
+ *    the gallery.
+ * A main image is only ever set from a lookup that succeeded (fail closed).
+ * `productMedia` = the product's media (GID -> media type) from the same lookup.
+ */
+export interface PlanVariantWriteInput {
+  fileGids: readonly string[] | null;
+  galleryOnly?: boolean;
+  promoteIfEmpty?: boolean;
+  removedMainGid?: string | null;
+  mainGid?: string | null;
+  expectedMainGid?: string | null;
+  lookup?: VariantLookup | null;
+  clientOrderJson?: string | null;
+  productMedia?: ReadonlyMap<string, string> | null;
+  /** Files that can still be promoted (a reference to a file that no longer exists is not one). */
+  isCandidate?: (gid: string) => boolean;
+  /** GIDs created in THIS request: a removal does not promote them (the editor shows no promoted image for an
+   *  unsaved upload); a variant with no native image DOES get its first own image, created ones included. */
+  createdGids?: ReadonlySet<string>;
+  /** How many variants the product has right now (fresh read); null / absent = unknown. The main-only
+   *  order entry is written only for MORE than one, and never kept for exactly one. */
+  variantCount?: number | null;
+}
+
+export function planVariantWrite(input: PlanVariantWriteInput): VariantWritePlan {
+  return applyMainOnlyRule(planVariantWriteCore(input), input);
+}
+
+/**
+ * A variant that has a main image and NO other gallery image shows ONLY that image on the storefront when
+ * its `variant_gallery_order` is exactly `[{file: main}]` (the embed puts `variant.featured_image` first
+ * and never reaches the product-media fallback). Without the entry it falls back to ALL product media.
+ * Owner decision (2026-11): wanted when the product has MORE THAN ONE variant (a single variant, Shopify's
+ * default variant included, keeps the fallback: the entry would hide every other product image) and the
+ * write EMPTIES the list, i.e. promotes an image into `mediaId` or removes the last non-main image from a
+ * stored list. A stored `[main]` that becomes `[]` loses nothing and gets no entry (R3).
+ *  - more than one variant: written when something was lost, and an entry already in effect is kept
+ *    (re-written, so an empty client order cannot delete it);
+ *  - exactly one variant: an entry in effect is DELETED (the conditions no longer hold);
+ *  - count unknown (no fresh count): nothing is created, nothing in effect is touched;
+ *  - gallery images left, a link or model in the order, no main image: not this rule's business (a stored
+ *    main-only entry with gallery images is expanded by the plan itself, a client order wins).
+ * Whether the gallery is "activated" is deliberately NOT asked: there is no setting for it (only the theme
+ * embed, whose state the save never depends on): the entry has no effect while the embed is off and gives
+ * the right result when it is switched on later.
+ */
+export function applyMainOnlyRule(plan: VariantWritePlan, input: PlanVariantWriteInput): VariantWritePlan {
+  const lk = input.lookup ?? null;
+  if (plan.action !== "write" || !lk) return plan;
+  const finalMain = plan.mediaId !== undefined ? plan.mediaId : lk.main;
+  if (!finalMain || plan.gallery.length > 0) return plan;
+  const effective = plan.order ?? input.clientOrderJson ?? lk.order;
+  const entries = parseGalleryOrder(effective) ?? [];
+  if (entries.some(e => e.kind !== "file")) return plan;
+  // (a client order that was cleared or is empty is no statement: the STORED entry counts as in effect)
+  const storedEntries = parseGalleryOrder(lk.order) ?? [];
+  const storedMainOnly = storedEntries.length === 1 && storedEntries[0].kind === "file" && storedEntries[0].value === finalMain;
+  const effMainOnly = (entries.length === 1 && entries[0].value === finalMain) || storedMainOnly;
+  const count = input.variantCount ?? null;
+  const lost = !!plan.promoted || galleryWithout(lk.gallery, lk.main).length > 0;
+  if (count !== null && count > 1) {
+    if (!lost && !effMainOnly) return plan;
+    const { clearOrder: _clear, ...rest } = plan;
+    return { ...rest, order: mainOnlyOrder(finalMain) };
+  }
+  if (count === null && storedMainOnly && !plan.order) {
+    // unknown count: an entry in effect is untouched, even when the editor sent an empty order
+    return { ...plan, order: lk.order! };
+  }
+  // exactly one variant: with no gallery image left, ANY order of files only is stale (a stored [M, X] with X
+  // removed would still show only M), so it is deleted
+  if (count === 1 && (effMainOnly || entries.length > 0)) {
+    const { order: _order, ...rest } = plan;
+    return lk.order || input.clientOrderJson ? { ...rest, clearOrder: true } : rest;
+  }
+  return plan;
+}
+
+function planVariantWriteCore(input: PlanVariantWriteInput): VariantWritePlan {
+  const lk = input.lookup ?? null;
+  const touchesMain = !!input.removedMainGid || !!input.mainGid || !!input.promoteIfEmpty;
+  if (touchesMain && !lk) return refuse("lookupFailed");
+  const needsAttach = (gid: string) => !!input.productMedia && !input.productMedia.has(gid);
+  const withOrder = (
+    base: VariantWritePlan,
+    orderJson: string | null,
+    finalMain: string | null,
+    removedMain: string | null,
+  ): VariantWritePlan => {
+    // The order the embed needs when the promoted main image is all a variant has.
+    let order: string | null = null;
+    if (base.promoted) {
+      order = orderJson ? orderAfterMainChange(orderJson, removedMain, base.promoted) : null;
+    } else if (!input.clientOrderJson && lk?.order && finalMain && base.gallery.length > 0) {
+      // A stale single-entry "main only" order must not hide a gallery image added later.
+      const entries = parseGalleryOrder(lk.order);
+      if (entries && entries.length === 1 && entries[0].kind === "file" && entries[0].value === finalMain) {
+        order = JSON.stringify([{ kind: "file", value: finalMain }, ...base.gallery.map((g) => ({ kind: "file", value: g }))]);
+      }
+    }
+    return order ? { ...base, order } : base;
+  };
+
+  // 1. The merchant removed the main image.
+  if (input.removedMainGid) {
+    const removed = input.removedMainGid;
+    const cur = lk!.main;
+    const files = input.fileGids ?? lk!.gallery;
+    const orderJson = input.clientOrderJson ?? lk!.order;
+    if (input.mainGid && !isImageGid(input.mainGid)) return refuse("notAnImage");
+    const chosen = input.mainGid ?? pickPromotedMain({
+      files,
+      orderJson,
+      removedMain: removed,
+      isCandidate: (g) => (input.isCandidate ? input.isCandidate(g) : true) && !input.createdGids?.has(g),
+    });
+    // The merchant chose another main image right after the removal, based on the image the editor
+    // showed as the promoted main (`expectedMainGid`). When the fresh read holds exactly that image
+    // (our own earlier write), the explicit choice replaces it instead of being refused.
+    if (cur && cur !== removed && input.mainGid && cur !== input.mainGid && cur === input.expectedMainGid) {
+      const base: VariantWritePlan = {
+        action: "write",
+        mediaId: input.mainGid,
+        gallery: galleryWithout(files, removed, input.mainGid),
+        promoted: input.mainGid,
+        ...(needsAttach(input.mainGid) ? { attach: input.mainGid } : {}),
+      };
+      return withOrder(base, orderJson, input.mainGid, removed);
+    }
+    if (cur && cur !== removed) {
+      if (input.fileGids === null) return { action: "skip", mediaId: undefined, gallery: [] };
+      // Our own earlier write may have landed already: the fresh main image is what this removal promotes.
+      if (cur !== chosen) return refuse("mainChangedElsewhere");
+      const tolerated = withOrder(
+        { action: "write", mediaId: undefined, gallery: galleryWithout(files, removed, cur) },
+        orderJson,
+        cur,
+        removed,
+      );
+      // A client order that still lists the removed main image is not written back as it is.
+      if (!tolerated.order && input.clientOrderJson) {
+        const cleaned = orderAfterMainChange(input.clientOrderJson, removed, cur);
+        if (cleaned) tolerated.order = cleaned;
+      }
+      return tolerated;
+    }
+    const base: VariantWritePlan = {
+      action: "write",
+      mediaId: chosen ?? (cur === removed ? null : undefined),
+      gallery: galleryWithout(files, removed, chosen),
+      promoted: chosen,
+      ...(chosen && needsAttach(chosen) ? { attach: chosen } : {}),
+    };
+    const out = withOrder(base, orderJson, chosen, removed);
+    // Nothing moved up: the removed main image's file entry still leaves the stored order.
+    if (!chosen && orderJson && !out.order) {
+      const cleaned = orderAfterMainChange(orderJson, removed, null);
+      if (cleaned && cleaned !== "[]") out.order = normalizeOrderHead(parseGalleryOrder(cleaned) ?? []) ?? cleaned;
+    }
+    return out;
+  }
+
+  const files = input.fileGids ?? [];
+
+  // 2. An explicit choice of the main image.
+  if (input.mainGid) {
+    const target = input.mainGid;
+    if (!isImageGid(target)) return refuse("notAnImage");
+    const cur = lk!.main;
+    if (cur === target) {
+      return withOrder({ action: "write", mediaId: undefined, gallery: galleryWithout(files, target) }, null, target, null);
+    }
+    if ((cur ?? null) !== (input.expectedMainGid ?? null)) return refuse("mainChangedElsewhere");
+    return {
+      action: "write",
+      mediaId: target,
+      // The previous main image stays in the list where the merchant put it.
+      gallery: galleryWithout(files, target),
+      promoted: target,
+      ...(needsAttach(target) ? { attach: target } : {}),
+    };
+  }
+
+  // 3. A variant with no native image gets the first own image of a real edit.
+  if (input.promoteIfEmpty && lk && !lk.main) {
+    const orderJson = input.clientOrderJson ?? lk.order;
+    const promoted = pickPromotedMain({ files, orderJson, isCandidate: input.isCandidate });
+    if (promoted) {
+      return withOrder(
+        {
+          action: "write",
+          mediaId: promoted,
+          gallery: galleryWithout(files, promoted),
+          promoted,
+          ...(needsAttach(promoted) ? { attach: promoted } : {}),
+        },
+        orderJson,
+        promoted,
+        null,
+      );
+    }
+  }
+
+  // 4. Plain write: the main image is not touched and never stored in the gallery. A write that
+  // states which main image the editor showed (galleryOnly + expectedMainGid) is refused when the
+  // fresh read says another one: a stale tab would otherwise strip the NEW main from its list and
+  // write the old gallery over it.
+  if (input.galleryOnly && input.expectedMainGid && lk && lk.main !== input.expectedMainGid) {
+    return refuse("mainChangedElsewhere");
+  }
+  return withOrder(
+    { action: "write", mediaId: undefined, gallery: galleryWithout(files, lk?.main) },
+    null,
+    lk?.main ?? null,
+    null,
+  );
+}
+
+export interface DragEntry {
+  id: string;
+  /** A MediaImage: the only kind that can be a variant's main image. */
+  isImage: boolean;
+}
+
+export type DragMainPlan =
+  | { kind: "reorder"; order: string[]; /** The image that leads now and did not before; null = the first slot did not change. */ newMain: string | null }
+  | { kind: "refused"; reason: "nonImageFirst" | "onlyImage" };
+
+/**
+ * A drag inside a variant's own gallery. The first slot is the main image:
+ *  - the first slot does not change: a plain reorder, the main image is untouched;
+ *  - an image comes to the first slot: it becomes the main image (`newMain`);
+ *  - a video / link / 3D model dragged to the first slot: refused;
+ *  - the main image dragged away so that a non-image would lead: the first image of
+ *    the result moves to the front instead (`[M, V, A]` with M to the end gives
+ *    `[A, V, M]`); when the dragged image is the only image the drag is refused.
+ */
+export function planVariantDrag(entries: readonly DragEntry[], fromId: string, toId: string): DragMainPlan | null {
+  const from = entries.findIndex((e) => e.id === fromId);
+  const to = entries.findIndex((e) => e.id === toId);
+  if (from === -1 || to === -1 || from === to) return null;
+  const moved = [...entries];
+  const [item] = moved.splice(from, 1);
+  moved.splice(to, 0, item);
+  const oldHead = entries[0];
+  const head = moved[0];
+  if (head.id === oldHead.id) return { kind: "reorder", order: moved.map((e) => e.id), newMain: null };
+  if (head.isImage) return { kind: "reorder", order: moved.map((e) => e.id), newMain: head.id };
+  if (head.id === item.id) return { kind: "refused", reason: "nonImageFirst" };
+  const first = moved.find((e) => e.isImage && e.id !== item.id);
+  if (!first) return { kind: "refused", reason: "onlyImage" };
+  return {
+    kind: "reorder",
+    order: [first.id, ...moved.filter((e) => e.id !== first.id).map((e) => e.id)],
+    newMain: first.id,
+  };
+}
+
+/**
+ * MOVING a variant's main image to another variant (owner decision 2026-11: a plain drag of the main image
+ * onto another variant's gallery moves it, Ctrl/Cmd copies). One explicit intent that names BOTH sides:
+ *  - the source variant loses `gid` as its main image (its first own gallery image moves up, rule R2);
+ *  - the target variant gets `gid` at the position it was dropped on (`targetPosition`, 0 = the first slot,
+ *    which makes it the target's main image and moves the target's old main into the gallery).
+ * The per-variant statements (`removedMainGid` on the source, the target's list / `mainGid`) travel in the
+ * ordinary `variantGalleries` / `removedMainImages`; this object only ties them together so the server
+ * writes BOTH or NEITHER (see `planMainMove`).
+ */
+export interface MainMove {
+  /** The moved image (a MediaImage). */
+  gid: string;
+  sourceVariantId: string;
+  /** The source's main image the editor showed: must be `gid`. */
+  sourceExpectedMainGid: string;
+  targetVariantId: string;
+  /** The target's main image the editor showed (null = none). */
+  targetExpectedMainGid: string | null;
+  /** Where `gid` was dropped in the target's visible order, 0-based. */
+  targetPosition: number;
+}
+
+/** What the validation needs to know about a variant's statement in the same request. */
+export interface MoveIntentView {
+  fileGids: readonly string[] | null;
+  removedMainGid: string | null;
+  mainGid: string | null;
+}
+
+/**
+ * Errors of a malformed move (empty = fine): a move must have a removal on the source and the image in
+ * the target's list or as its chosen main, each variant may be in one move only, and the position must
+ * agree with what the target states. Pure: the route refuses the whole request before anything is written.
+ */
+export function validateMainMoves(moves: readonly MainMove[], intents: ReadonlyMap<string, MoveIntentView>): string[] {
+  const errors: string[] = [];
+  const seen = new Set<string>();
+  for (const [i, m] of moves.entries()) {
+    const tag = `mainMoves[${i}]`;
+    if (!m || typeof m.gid !== "string" || typeof m.sourceVariantId !== "string" || typeof m.targetVariantId !== "string") {
+      errors.push(`${tag}: malformed`);
+      continue;
+    }
+    if (!isImageGid(m.gid)) errors.push(`${tag}: only an image can be moved as a main image`);
+    if (m.sourceVariantId === m.targetVariantId) errors.push(`${tag}: source and target are the same variant`);
+    if (m.sourceExpectedMainGid !== m.gid) errors.push(`${tag}: the source's expected main image is not the moved image`);
+    for (const id of [m.sourceVariantId, m.targetVariantId]) {
+      if (seen.has(id)) errors.push(`${tag}: variant ${id} is part of more than one move`);
+      seen.add(id);
+    }
+    const src = intents.get(m.sourceVariantId);
+    const tgt = intents.get(m.targetVariantId);
+    if (!src || src.removedMainGid !== m.gid || src.mainGid) errors.push(`${tag}: the source does not state the removal of the moved image`);
+    if (!tgt) {
+      errors.push(`${tag}: the target variant has no statement`);
+      continue;
+    }
+    if (tgt.removedMainGid) errors.push(`${tag}: the target must not remove its main image in the same move`);
+    const inList = !!tgt.fileGids && tgt.fileGids.includes(m.gid);
+    if (tgt.mainGid !== m.gid && !inList) errors.push(`${tag}: the target does not hold the moved image`);
+    if (tgt.mainGid && tgt.mainGid !== m.gid) errors.push(`${tag}: the target chooses another main image`);
+    if (m.targetPosition === 0 && m.targetExpectedMainGid !== null && tgt.mainGid !== m.gid) {
+      errors.push(`${tag}: dropped on the first slot but the target does not make it the main image`);
+    }
+  }
+  return errors;
+}
+
+export type MainMoveDecision =
+  | { kind: "proceed" }
+  /** The fresh read already shows the move: nothing is written for either variant. */
+  | { kind: "done" }
+  | { kind: "refuse"; side: "source" | "target"; code: MainRefusal };
+
+/**
+ * Decides a move against the FRESH read of both variants, before anything is planned or written:
+ *  - the source's main image still is the moved image: proceed, provided the target's main image still is
+ *    the one the editor showed (or already the moved image);
+ *  - the source's main image is not the moved image any more: when the target already holds the image
+ *    (gallery or main) our own earlier write landed (a retry, a double click) = done, nothing to write;
+ *    otherwise the main image was changed elsewhere = refused.
+ * "Done" cannot tell our own earlier write from someone else's identical copy; it then changes nothing,
+ * which is the safe side (nothing is lost, nothing is overwritten).
+ */
+export function planMainMove(move: MainMove, source: VariantLookup | null, target: VariantLookup | null): MainMoveDecision {
+  if (!source) return { kind: "refuse", side: "source", code: "variantNotFound" };
+  if (!target) return { kind: "refuse", side: "target", code: "variantNotFound" };
+  const targetHolds = target.main === move.gid || target.gallery.includes(move.gid);
+  if (source.main !== move.gid) {
+    return targetHolds ? { kind: "done" } : { kind: "refuse", side: "source", code: "mainChangedElsewhere" };
+  }
+  if (target.main !== move.targetExpectedMainGid && target.main !== move.gid) {
+    return { kind: "refuse", side: "target", code: "mainChangedElsewhere" };
+  }
+  return { kind: "proceed" };
+}

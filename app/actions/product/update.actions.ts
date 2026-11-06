@@ -57,6 +57,7 @@ import { isValidLocale, safeJsonParse } from "~/utils/validation";
 import type { PrismaClient } from "@prisma/client";
 import type { DataResponse } from "~/types/data-response";
 import { readDataPayload, readDataStatus } from "~/utils/data-response";
+import { seoOtherHalfRefusalBody } from "~/services/editor/seo-half-refusal.shared";
 import type { RepairBudget } from "~/services/translations/repair-budget.server";
 
 /**
@@ -76,6 +77,8 @@ interface UpdateProductParams {
   seoTitle?: string;
   metaDescription?: string;
   productType?: string;
+  /** The other SEO half, read from Shopify BEFORE any write of the save (handleUpdateProduct); internal. */
+  preReadSeo?: { title?: string; description?: string };
   // ── PLAN_CONTENT_CREATION §Phase 3 merchandising attributes ──────────────
   // Not translatable (Shopify stores one value per product), so these only
   // ever arrive on a PRIMARY-locale save — the editor renders them read-only
@@ -213,6 +216,37 @@ export async function handleUpdateProduct(
 
   try {
     const gateway = new ShopifyApiGateway(context.admin, context.session.shop);
+
+    // The two attribute refusals (unknown status, malformed category) also come BEFORE any write: they used
+    // to be answered by updatePrimaryProduct, after the alt texts had already been written. Same bodies.
+    if (params.locale === params.primaryLocale) {
+      if (params.title !== undefined && !params.title.trim()) {
+        return json(
+          { success: false, error: "Title cannot be empty for the primary language. Please enter a title." },
+          { status: 400 },
+        );
+      }
+      if (params.status !== undefined && changedAttributeFields.includes("status") && !isValidProductStatus(params.status.trim().toUpperCase())) {
+        return json({ success: false, error: `Unknown product status "${params.status}".` }, { status: 400 });
+      }
+      if (params.category !== undefined && changedAttributeFields.includes("category") && !parseCategoryId(params.category).valid) {
+        return json({ success: false, error: `"${params.category}" is not a product category.` }, { status: 400 });
+      }
+    }
+
+    // A ONE-SIDED primary SEO save needs the other half from Shopify, and a failed read refuses the whole
+    // save. That read comes FIRST: nothing below (alt texts included) may be written for a refused save.
+    if (params.locale === params.primaryLocale && (params.seoTitle !== undefined) !== (params.metaDescription !== undefined)) {
+      try {
+        params.preReadSeo = await readOtherSeoHalf(gateway, productId);
+      } catch (seoError: unknown) {
+        loggers.product("warn", "Other SEO half unreadable, save refused before any write", {
+          productId,
+          error: seoError instanceof Error ? seoError.message : String(seoError),
+        });
+        return json(seoOtherHalfRefusalBody(), { status: 200 });
+      }
+    }
 
     // Update alt-texts first (works for both primary and translated locales)
     let failedAltTextIndices: number[] = [];
@@ -910,6 +944,29 @@ async function updateTranslatedProduct(
  * Updates a primary locale product
  * Also deletes translations for changed fields in all foreign languages
  */
+/**
+ * The other SEO half of a ONE-SIDED primary SEO save, read fresh from Shopify. Throws when it cannot be
+ * read (callers answer the refusal). A `null` half comes back as undefined: omitted, never sent as "".
+ */
+async function readOtherSeoHalf(
+  gateway: ShopifyApiGateway,
+  productId: string,
+): Promise<{ title?: string; description?: string }> {
+  const response = await gateway.graphql(
+    `#graphql
+      query getProductSeo($id: ID!) {
+        product(id: $id) {
+          seo { title description }
+        }
+      }`,
+    { variables: { id: productId } },
+  );
+  const data = (await response.json()) as any;
+  const seo = data.data?.product?.seo;
+  if (!seo) throw new Error("no SEO in the answer");
+  return { title: seo.title || undefined, description: seo.description || undefined };
+}
+
 async function updatePrimaryProduct(
   gateway: ShopifyApiGateway,
   db: PrismaClient,
@@ -979,29 +1036,18 @@ async function updatePrimaryProduct(
     // Only one side sent → preserve the other side from Shopify's current value.
     if (hasSeoTitle !== hasSeoDescription) {
       try {
-        const currentSeoResponse = await gateway.graphql(
-          `#graphql
-            query getProductSeo($id: ID!) {
-              product(id: $id) {
-                seo { title description }
-              }
-            }`,
-          { variables: { id: productId } }
-        );
-        const currentSeoData = await currentSeoResponse.json() as any;
-        const currentSeo = currentSeoData.data?.product?.seo || {};
-        if (!hasSeoTitle) seoInput.title = currentSeo.title ?? undefined;
-        if (!hasSeoDescription) seoInput.description = currentSeo.description ?? undefined;
+        const currentSeo = params.preReadSeo ?? (await readOtherSeoHalf(gateway, productId));
+        if (!hasSeoTitle) seoInput.title = currentSeo.title;
+        if (!hasSeoDescription) seoInput.description = currentSeo.description;
       } catch (seoError: unknown) {
-        // If the lookup fails, fall back to omitting the missing side entirely
-        // (JSON.stringify drops undefined) rather than sending an empty string
-        // that would clear it. Worst case Shopify leaves it unchanged.
-        loggers.product("warn", "Failed to fetch current SEO for preservation", {
+        // The other half cannot be read: NOTHING is saved. The editor's value of that half may be older
+        // than Shopify's, and one half alone may clear the other, so neither fallback is acceptable.
+        // The answer is a structured refusal the page words as "please try again" (the text stays a draft).
+        loggers.product("warn", "Other SEO half unreadable, save refused", {
           productId,
           error: seoError instanceof Error ? seoError.message : String(seoError),
         });
-        if (!hasSeoTitle) seoInput.title = undefined;
-        if (!hasSeoDescription) seoInput.description = undefined;
+        return json(seoOtherHalfRefusalBody(), { status: 200 });
       }
     }
 

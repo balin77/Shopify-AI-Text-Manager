@@ -196,6 +196,13 @@ export interface SentSaveScope {
    *  when the answer lands on ANOTHER view than the one the save was made
    *  from: what was saved is what was sent, not what the screen shows now. */
   sentFields?: Record<string, string>;
+  /** The request's own form: the identity under which it cached its primary
+   *  values (see `primaryOwnerRef` in the editor). */
+  token?: unknown;
+  /** The event counter at the request's press (see primary-overlay-ownership). */
+  pressSeq?: number;
+  /** `fetcher.data` when the request went out: an answer identical to it is an OLD one. */
+  staleData?: unknown;
 }
 
 /** A form's string entries, for `SentSaveScope.sentFields`. */

@@ -32,6 +32,17 @@ vi.mock("react-router", () => ({
 }));
 
 import { useProductSubResources } from "~/hooks/useProductSubResources";
+import { installSaves } from "../helpers/sub-resource-save-harness";
+
+let saves: ReturnType<typeof installSaves>;
+
+// appFetch adds the session token and reads auth headers off the answer; the
+// plain-object fetch mocks below carry no headers, so pass straight through to
+// the stubbed global fetch with exactly the caller's arguments.
+vi.mock("../../app/utils/app-fetch", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../app/utils/app-fetch")>()),
+  appFetch: (input: string, init?: RequestInit) => (init === undefined ? fetch(input) : fetch(input, init)),
+}));
 
 const OPTION = "gid://shopify/ProductOption/1";
 const SECOND = "gid://shopify/ProductOption/2";
@@ -77,11 +88,11 @@ const showInfoBox = vi.fn();
 
 /** The fields of the last submitted FormData. */
 function submitted() {
-  const form = submit.mock.calls.at(-1)?.[0] as FormData;
-  return Object.fromEntries(form.entries()) as Record<string, string>;
+  return saves.fields();
 }
 
 beforeEach(() => {
+  saves = installSaves();
   submit.mockClear();
   showInfoBox.mockClear();
   fetcher.state = "idle";
@@ -89,7 +100,7 @@ beforeEach(() => {
 });
 
 describe("saveSubResources — the structural half", () => {
-  it("carries EVERY added value, not only the first", () => {
+  it("carries EVERY added value, not only the first", async () => {
     // The first edit flips `hasChanges`, which rebuilds the memoised save on
     // its own. From the second one on, nothing in a dependency list that omits
     // these lists changes — so a stale callback sends ["Blue"] and reports
@@ -99,18 +110,20 @@ describe("saveSubResources — the structural half", () => {
     act(() => result.current.handlers.handleAddOptionValue(OPTION, "Blue"));
     act(() => result.current.handlers.handleAddOptionValue(OPTION, "Green"));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     const fields = submitted();
     expect(JSON.parse(fields.optionsChanges)[OPTION].valuesToAdd).toEqual(["Blue", "Green"]);
   });
 
-  it("carries a removed value, a new option and a delete", () => {
+  it("carries a removed value, a new option and a delete", async () => {
     const { result } = setup();
 
     act(() => result.current.handlers.handleRemoveOptionValue(OPTION, "gid://shopify/ProductOptionValue/1"));
     act(() => result.current.handlers.handleCreateOption("Material", ["Cotton"]));
     act(() => result.current.handlers.handleDeleteOption(SECOND));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     const fields = submitted();
     expect(JSON.parse(fields.optionsChanges)[OPTION].valuesToDelete).toEqual([
@@ -120,28 +133,30 @@ describe("saveSubResources — the structural half", () => {
     expect(JSON.parse(fields.optionsToDelete)).toEqual([SECOND]);
   });
 
-  it("drops an option from the order when the same save deletes it", () => {
+  it("drops an option from the order when the same save deletes it", async () => {
     // Naming a gone option would fail the reorder for all of them.
     const { result } = setup();
 
     act(() => result.current.handlers.handleReorderOptions([SECOND, THIRD, OPTION]));
     act(() => result.current.handlers.handleDeleteOption(SECOND));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     expect(JSON.parse(submitted().optionOrder)).toEqual([THIRD, OPTION]);
   });
 
-  it("sends no order at all when nothing was dragged", () => {
+  it("sends no order at all when nothing was dragged", async () => {
     // An empty order list would ask Shopify to reorder nothing on every save.
     const { result } = setup();
 
     act(() => result.current.handlers.handleAddOptionValue(OPTION, "Blue"));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     expect(submitted().optionOrder).toBeUndefined();
   });
 
-  it("sends no order when the drag ended where it started", () => {
+  it("sends no order when the drag ended where it started", async () => {
     // Dragging an option away and back leaves the pending order non-null. A
     // reorder that reorders nothing is a Shopify call with a chance of going
     // wrong and no chance of achieving anything.
@@ -150,44 +165,49 @@ describe("saveSubResources — the structural half", () => {
     act(() => result.current.handlers.handleReorderOptions([SECOND, OPTION, THIRD]));
     act(() => result.current.handlers.handleReorderOptions([OPTION, SECOND, THIRD]));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
-    expect(submit).not.toHaveBeenCalled();
+    expect(saves.sent).toHaveLength(0);
   });
 
-  it("sends no order when a delete leaves the survivors in their saved order", () => {
+  it("sends no order when a delete leaves the survivors in their saved order", async () => {
     // The order that matters is the one over the options that REMAIN.
     const { result } = setup();
 
     act(() => result.current.handlers.handleReorderOptions([OPTION, SECOND, THIRD]));
     act(() => result.current.handlers.handleDeleteOption(SECOND));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     expect(submitted().optionOrder).toBeUndefined();
     expect(JSON.parse(submitted().optionsToDelete)).toEqual([SECOND]);
   });
 
-  it("drops a not-yet-saved option again without touching anything else", () => {
+  it("drops a not-yet-saved option again without touching anything else", async () => {
     const { result } = setup();
 
     act(() => result.current.handlers.handleCreateOption("Material", ["Cotton"]));
     act(() => result.current.handlers.handleCreateOption("Finish", ["Matte"]));
     act(() => result.current.handlers.handleCancelCreateOption(0));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     expect(JSON.parse(submitted().optionsToCreate)).toEqual([{ name: "Finish", values: ["Matte"] }]);
   });
 
-  it("stays silent when there is nothing to save", () => {
+  it("stays silent when there is nothing to save", async () => {
     const { result } = setup();
 
     act(() => result.current.handlers.saveSubResources());
 
-    expect(submit).not.toHaveBeenCalled();
+    await saves.flush();
+
+    expect(saves.sent).toHaveLength(0);
   });
 });
 
 describe("the pending lists belong to ONE product", () => {
-  it("does not carry a queued option onto the next product", () => {
+  it("does not carry a queued option onto the next product", async () => {
     // `optionsToCreate` carries no id, so nothing downstream could notice it
     // belongs to another product: it would be created on the one now open,
     // with `variantStrategy: CREATE` multiplying THAT product's matrix.
@@ -199,6 +219,7 @@ describe("the pending lists belong to ONE product", () => {
     rerender({ current: other });
     act(() => result.current.handlers.handleAddOptionValue(OPTION, "Blue"));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     const fields = submitted();
     expect(fields.productId).toBe("gid://shopify/Product/2");
@@ -208,16 +229,17 @@ describe("the pending lists belong to ONE product", () => {
 });
 
 describe("a value renamed and deleted in the same save", () => {
-  it("is sent as a delete only, never as both", () => {
+  it("is sent as a delete only, never as both", async () => {
     // Shopify rejects the contradiction, and because failures are per option
     // that would take the merchant's other renames on the same option with it.
     const { result } = setup();
 
-    act(() => result.current.handlers.handlePrimaryOptionValuesChange(OPTION, ["Crimson", "Blue"]));
+    act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, "gid://shopify/ProductOptionValue/1", "Crimson"));
     act(() =>
       result.current.handlers.handleRemoveOptionValue(OPTION, "gid://shopify/ProductOptionValue/1"),
     );
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     const change = JSON.parse(submitted().optionsChanges)[OPTION];
     expect(change.valuesToDelete).toEqual(["gid://shopify/ProductOptionValue/1"]);
@@ -227,21 +249,22 @@ describe("a value renamed and deleted in the same save", () => {
 
 describe("what the client calls a success", () => {
   /** Queues a structural edit, then plays a server response back. */
-  function saveAndAnswer(answer: Record<string, unknown>) {
+  async function saveAndAnswer(answer: Record<string, unknown>) {
     const { result, rerender } = setup();
     act(() => result.current.handlers.handleCreateOption("Material", ["Cotton"]));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
-    fetcher.data = { success: true, actionType: "savePrimarySubResources", ...answer };
+    await saves.settle({ success: true, actionType: "savePrimarySubResources", ...answer });
     rerender({ current: selectedItem });
     return result;
   }
 
-  it("treats a create/delete/reorder failure as a FAILURE", () => {
+  it("treats a create/delete/reorder failure as a FAILURE", async () => {
     // These carry no option id, so counting only `failedOptions` made every
     // one of them read as a success: green toast, pending lists cleared, the
     // merchant's edit destroyed and reported as saved.
-    const result = saveAndAnswer({
+    const result = await saveAndAnswer({
       failedOptions: [],
       failedMetafields: [],
       structuralFailures: 1,
@@ -253,28 +276,29 @@ describe("what the client calls a success", () => {
     expect(result.current.state.optionsToCreate).toEqual([]);
   });
 
-  it("names the reason it was given, in the merchant's language", () => {
+  it("names the reason it was given, in the merchant's language", async () => {
     setup();
     showInfoBox.mockClear();
     const { result, rerender } = setup();
     act(() => result.current.handlers.handleCreateOption("Material", ["Cotton"]));
     act(() => result.current.handlers.saveSubResources());
-    fetcher.data = {
+    await saves.flush();
+    await saves.settle({
       success: true,
       actionType: "savePrimarySubResources",
       failedOptions: [],
       failedMetafields: [],
       structuralFailures: 1,
       optionWarnings: ["optionLastOne"],
-    };
+    });
     rerender({ current: selectedItem });
 
     // The generic count alone leaves the merchant guessing what went wrong.
     expect(String(showInfoBox.mock.calls.at(-1)?.[0])).toContain("The last one cannot be removed.");
   });
 
-  it("still calls a clean answer a success", () => {
-    const result = saveAndAnswer({
+  it("still calls a clean answer a success", async () => {
+    const result = await saveAndAnswer({
       failedOptions: [],
       failedMetafields: [],
       structuralFailures: 0,
@@ -287,7 +311,7 @@ describe("what the client calls a success", () => {
 });
 
 describe("reordering VALUES", () => {
-  it("sends the moved order, and the option list to hang it on", () => {
+  it("sends the moved order, and the option list to hang it on", async () => {
     // The reorder mutation nests values under an option, so a pure value drag
     // still needs the current option order named.
     const { result } = setup();
@@ -299,6 +323,7 @@ describe("reordering VALUES", () => {
       ]),
     );
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     expect(JSON.parse(submitted().optionValueOrder)).toEqual({
       [OPTION]: ["gid://shopify/ProductOptionValue/1b", "gid://shopify/ProductOptionValue/1"],
@@ -306,7 +331,7 @@ describe("reordering VALUES", () => {
     expect(JSON.parse(submitted().optionOrder)).toEqual([OPTION, SECOND, THIRD]);
   });
 
-  it("sends nothing when the values ended where they started", () => {
+  it("sends nothing when the values ended where they started", async () => {
     const { result } = setup();
 
     act(() =>
@@ -316,13 +341,14 @@ describe("reordering VALUES", () => {
       ]),
     );
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
-    expect(submit).not.toHaveBeenCalled();
+    expect(saves.sent).toHaveLength(0);
   });
 });
 
 describe("a drag that was abandoned or undone", () => {
-  it("does not reorder an option that the same save deletes", () => {
+  it("does not reorder an option that the same save deletes", async () => {
     // Its order has nothing left to change, and keeping it would force a
     // reorder call whose entire content is restating unmoved positions.
     const { result } = setup();
@@ -335,6 +361,7 @@ describe("a drag that was abandoned or undone", () => {
     );
     act(() => result.current.handlers.handleDeleteOption(OPTION));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     expect(submitted().optionValueOrder).toBeUndefined();
     expect(submitted().optionOrder).toBeUndefined();
@@ -342,7 +369,7 @@ describe("a drag that was abandoned or undone", () => {
 });
 
 describe("adding members to a metaobject-linked option", () => {
-  it("sends the metaobject GIDs, not the names", () => {
+  it("sends the metaobject GIDs, not the names", async () => {
     const { result } = setup();
 
     act(() =>
@@ -352,13 +379,14 @@ describe("adding members to a metaobject-linked option", () => {
       }),
     );
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     expect(JSON.parse(submitted().optionsChanges)[OPTION].valuesToAddLinked).toEqual([
       "gid://shopify/Metaobject/77",
     ]);
   });
 
-  it("refuses to queue the same entry twice", () => {
+  it("refuses to queue the same entry twice", async () => {
     // Shopify rejects a duplicate value, and the refusal would take the
     // merchant's other edits on that option with it.
     const { result } = setup();
@@ -367,13 +395,14 @@ describe("adding members to a metaobject-linked option", () => {
     act(() => result.current.handlers.handleAddLinkedOptionValue(OPTION, entry));
     act(() => result.current.handlers.handleAddLinkedOptionValue(OPTION, entry));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     expect(JSON.parse(submitted().optionsChanges)[OPTION].valuesToAddLinked).toEqual([
       "gid://shopify/Metaobject/77",
     ]);
   });
 
-  it("lets a queued entry be dropped again before the save", () => {
+  it("lets a queued entry be dropped again before the save", async () => {
     const { result } = setup();
 
     act(() =>
@@ -384,6 +413,7 @@ describe("adding members to a metaobject-linked option", () => {
     );
     act(() => result.current.handlers.handleRemoveLinkedOptionValue(OPTION, "gid://shopify/Metaobject/77"));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     expect(JSON.parse(submitted().optionsChanges)[OPTION].valuesToAddLinked).toEqual([
       "gid://shopify/Metaobject/78",
@@ -392,7 +422,7 @@ describe("adding members to a metaobject-linked option", () => {
 });
 
 describe("an option deleted in the same save", () => {
-  it("does not carry its queued edits along", () => {
+  it("does not carry its queued edits along", async () => {
     // They address a GID that no longer exists: Shopify rejects them, the save
     // reports "changes have been reverted", and the merchant is told the
     // opposite of what happened — the delete succeeded and is irreversible.
@@ -411,6 +441,7 @@ describe("an option deleted in the same save", () => {
     act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbton"));
     act(() => result.current.handlers.handleDeleteOption(OPTION));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     expect(JSON.parse(submitted().optionsChanges)[OPTION]).toBeUndefined();
     expect(JSON.parse(submitted().optionsToDelete)).toEqual([OPTION]);
@@ -447,17 +478,17 @@ describe("translating an option never sends the text the merchant replaced", () 
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("translates an untouched option", () => {
+  it("translates an untouched option", async () => {
     const { result } = setupWithReload();
     expect(result.current.state.optionTranslationBlockedIds.size).toBe(0);
     act(() => result.current.handlers.translateOption(OPTION));
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses while a rename is unsaved — name or value", () => {
+  it("refuses while a rename is unsaved — name or value", async () => {
     const { result } = setupWithReload();
     act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
-    act(() => result.current.handlers.handlePrimaryOptionValuesChange(SECOND, ["M"]));
+    act(() => result.current.handlers.handlePrimaryOptionValueChange(SECOND, "gid://shopify/ProductOptionValue/2", "M"));
 
     expect([...result.current.state.optionTranslationBlockedIds].sort()).toEqual([OPTION, SECOND].sort());
     act(() => result.current.handlers.translateOption(OPTION));
@@ -470,27 +501,28 @@ describe("translating an option never sends the text the merchant replaced", () 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("does not count a rename typed back to the saved text", () => {
+  it("does not count a rename typed back to the saved text", async () => {
     const { result } = setupWithReload();
     act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
     act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Colour"));
     expect(result.current.state.optionTranslationBlockedIds.has(OPTION)).toBe(false);
   });
 
-  it("refuses while a value is added or removed and not saved", () => {
+  it("refuses while a value is added or removed and not saved", async () => {
     const { result } = setupWithReload();
     act(() => result.current.handlers.handleAddOptionValue(OPTION, "Green"));
     act(() => result.current.handlers.handleRemoveOptionValue(SECOND, "gid://shopify/ProductOptionValue/2"));
     expect([...result.current.state.optionTranslationBlockedIds].sort()).toEqual([OPTION, SECOND].sort());
   });
 
-  it("stays refused after the save until the reload has landed", () => {
+  it("stays refused after the save until the reload has landed", async () => {
     const { result, rerender } = setupWithReload();
     act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
     act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
 
     // The save lands: the edits are cleared, but the item still says "Colour".
-    fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] };
+    await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] });
     rerender({ current: selectedItem, reload: "idle" });
     expect(revalidator.revalidate).toHaveBeenCalled();
     expect(result.current.state.optionTranslationBlockedIds.has(OPTION)).toBe(true);
@@ -504,13 +536,14 @@ describe("translating an option never sends the text the merchant replaced", () 
     expect(result.current.state.optionTranslationBlockedIds.size).toBe(0);
   });
 
-  it("releases the lock when the reloaded item arrives, even unseen loading", () => {
+  it("releases the lock when the reloaded item arrives, even unseen loading", async () => {
     // React may commit "loading" and "idle" together; the new item object is
     // the second witness that the reload has landed.
     const { result, rerender } = setupWithReload();
     act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
     act(() => result.current.handlers.saveSubResources());
-    fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] };
+    await saves.flush();
+    await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] });
     rerender({ current: selectedItem, reload: "idle" });
     expect(result.current.state.optionTranslationBlockedIds.has(OPTION)).toBe(true);
 
@@ -518,15 +551,18 @@ describe("translating an option never sends the text the merchant replaced", () 
     expect(result.current.state.optionTranslationBlockedIds.size).toBe(0);
   });
 
-  it("does not lock anything after a FOREIGN save", () => {
+  it("does not lock anything after a FOREIGN save", async () => {
     const { result, rerender } = setupWithReload();
     rerender({ current: selectedItem, reload: "idle", language: "en" });
-    fetcher.data = { success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] };
+    act(() => result.current.handlers.handleOptionNameChange(OPTION, "Couleur"));
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    await saves.settle({ success: true, actionType: "saveSubResourceTranslations", failedResources: [], savedResources: [OPTION] });
     rerender({ current: selectedItem, reload: "idle", language: "en" });
     expect(result.current.state.optionTranslationBlockedIds.size).toBe(0);
   });
 
-  it("drops an unsaved rename when the language changes, so no lock outlives its save bar", () => {
+  it("drops an unsaved rename when the language changes, so no lock outlives its save bar", async () => {
     const { result, rerender } = setupWithReload();
     act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
     expect(result.current.state.optionTranslationBlockedIds.has(OPTION)).toBe(true);
@@ -538,7 +574,7 @@ describe("translating an option never sends the text the merchant replaced", () 
     expect(result.current.state.optionTranslationBlockedIds.size).toBe(0);
   });
 
-  it("copies an option's name and values into every foreign locale, verbatim", () => {
+  it("copies an option's name and values into every foreign locale, verbatim", async () => {
     const { result } = setupWithReload();
     act(() => result.current.handlers.copyOptionToAllLocales(OPTION));
 
@@ -555,7 +591,7 @@ describe("translating an option never sends the text the merchant replaced", () 
     expect(JSON.parse(String(body.get("resourceTypes")))[OPTION]).toBe("ProductOption");
   });
 
-  it("copies only the name of a linked option, and nothing while it is locked", () => {
+  it("copies only the name of a linked option, and nothing while it is locked", async () => {
     const linked = {
       ...(selectedItem as { options: Array<Record<string, unknown>> }),
       options: [{ ...(selectedItem as { options: Array<Record<string, unknown>> }).options[0], isLinked: true }],
@@ -585,5 +621,713 @@ describe("translating an option never sends the text the merchant replaced", () 
     const sent = (fetchSpy.mock.calls[0] as unknown as [string, { body: FormData }])[1].body;
     expect(String(sent.get("_page"))).toMatch(/^\/app\/products/);
     expect(showInfoBox).not.toHaveBeenCalledWith(expect.anything(), "critical");
+  });
+});
+
+describe("saveSubResources — primary metafields (cleared fields and lists)", () => {
+  const MF = "gid://shopify/Metafield/7";
+  const LIST = "gid://shopify/Metafield/8";
+  const SLOT = "gid://shopify/Metafield/9";
+  const item = {
+    ...(selectedItem as object),
+    metafields: [
+      { id: MF, namespace: "custom", key: "material", value: "Wolle", type: "single_line_text_field" },
+      { id: LIST, namespace: "custom", key: "colors", value: '["Rot","Blau"]', type: "list.single_line_text_field" },
+    ],
+    clearedMetafields: [{ id: SLOT, namespace: "custom", key: "care", value: "", type: "single_line_text_field" }],
+  };
+
+  it("an emptied field is SENT as a clear (it used to be refused)", async () => {
+    const { result } = setup(item);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, ""));
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    expect(JSON.parse(submitted().metafieldChanges)).toEqual({ [MF]: "" });
+  });
+
+  it("spaces only are refused and nothing is sent", async () => {
+    const { result } = setup(item);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "   "));
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    expect(saves.sent).toHaveLength(0);
+    expect(showInfoBox).toHaveBeenCalledWith(expect.any(String), "critical");
+  });
+
+  it("a cleared field takes a new value (re-created on the server)", async () => {
+    const { result } = setup(item);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(SLOT, "Handwäsche"));
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    expect(JSON.parse(submitted().metafieldChanges)).toEqual({ [SLOT]: "Handwäsche" });
+  });
+
+  it("a list is edited one entry per line and sent as JSON", async () => {
+    const { result } = setup(item);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(LIST, "Rot\n\n Grün \nBlau"));
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    expect(JSON.parse(submitted().metafieldChanges)).toEqual({ [LIST]: '["Rot","Grün","Blau"]' });
+  });
+
+  it("the same entries retyped are no change", async () => {
+    const { result } = setup(item);
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(LIST, "Rot\nBlau\n"));
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Leinen"));
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    expect(JSON.parse(submitted().metafieldChanges)).toEqual({ [MF]: "Leinen" });
+  });
+});
+
+describe("translating a metafield never sends the text from before the save", () => {
+  // After a landed primary save the edits are cleared, but the item still
+  // carries the metafield value from BEFORE it until the reload lands — a 🌍
+  // in that window would write translations of the vanished text everywhere.
+  const MF = "gid://shopify/Metafield/77";
+  const itemWithMf = {
+    ...(selectedItem as object),
+    metafields: [{ id: MF, namespace: "custom", key: "material", value: "Baumwolle", type: "single_line_text_field" }],
+  };
+  const revalidator = { state: "idle", revalidate: vi.fn() };
+  const fetchSpy = vi.fn(() => new Promise(() => {}));
+
+  function setupMf(item: unknown = itemWithMf) {
+    return renderHook(
+      ({ current, reload, language = "de" }: { current: unknown; reload: string; language?: string }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: language,
+          primaryLocale: "de",
+          showInfoBox,
+          revalidator: { ...revalidator, state: reload },
+          enabledLanguages: ["de", "en"],
+          strings: { saveFirstSource: "Erst speichern", sourceReloading: "Einen Moment" },
+        } as never),
+      { initialProps: { current: item, reload: "idle" } as { current: unknown; reload: string; language?: string } },
+    );
+  }
+
+  beforeEach(() => {
+    fetchSpy.mockClear();
+    revalidator.revalidate.mockClear();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  async function saveLanded(rerender: (p: { current: unknown; reload: string }) => void, result: { current: ReturnType<typeof useProductSubResources> }) {
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Leinen"));
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] });
+    rerender({ current: itemWithMf, reload: "idle" });
+  }
+
+  it("refuses right after the save, before the reload, and sends nothing", async () => {
+    const { result, rerender } = setupMf();
+    await saveLanded(rerender, result);
+    expect(result.current.state.primaryMetafieldEdits).toEqual({});
+    expect(result.current.state.metafieldTranslationBlocked).toBe(true);
+
+    act(() => result.current.handlers.translateMetafield(MF));
+    act(() => result.current.handlers.translateAllSubResourcesToAllLocales());
+    expect(fetchSpy).not.toHaveBeenCalled();
+    // A completed save is not an unsaved change: it says "one moment".
+    expect(showInfoBox).toHaveBeenCalledWith("Einen Moment", "info");
+    expect(showInfoBox).not.toHaveBeenCalledWith("Erst speichern", expect.anything());
+  });
+
+  it("still sets the lock when the language changed while the save was out", async () => {
+    const { result, rerender } = setupMf();
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Leinen"));
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    // The merchant switches to English before the answer lands.
+    fetcher.state = "submitting";
+    rerender({ current: itemWithMf, reload: "idle", language: "en" });
+    fetcher.state = "idle";
+    await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] });
+    rerender({ current: itemWithMf, reload: "idle", language: "en" });
+    expect(result.current.state.metafieldTranslationBlocked).toBe(true);
+  });
+
+  it("allows it again once the reload has landed, with the SAVED text", async () => {
+    const { result, rerender } = setupMf();
+    await saveLanded(rerender, result);
+    rerender({ current: itemWithMf, reload: "loading" });
+    const reloaded = {
+      ...itemWithMf,
+      metafields: [{ id: MF, namespace: "custom", key: "material", value: "Leinen", type: "single_line_text_field" }],
+    };
+    rerender({ current: reloaded, reload: "idle" });
+    expect(result.current.state.metafieldTranslationBlocked).toBe(false);
+
+    act(() => result.current.handlers.translateMetafield(MF));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const form = (fetchSpy.mock.calls[0] as unknown as [string, { body: FormData }])[1].body;
+    expect(JSON.parse(String(form.get("sourceData")))[0]).toMatchObject({ resourceId: MF, value: "Leinen" });
+  });
+
+  it("never sends a metafield that is not single-line text", async () => {
+    const multi = {
+      ...(selectedItem as object),
+      options: [],
+      metafields: [{ id: MF, namespace: "custom", key: "care", value: "a\nb", type: "multi_line_text_field" }],
+    };
+    const { result } = setupMf(multi);
+    act(() => result.current.handlers.translateMetafield(MF));
+    act(() => result.current.handlers.translateAllSubResourcesToAllLocales());
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps a refill Shopify could not be asked about as a DRAFT, with its reason", async () => {
+    const { result, rerender } = renderHook(
+      ({ current }: { current: unknown }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          strings: { optionWarning_metafieldSlotUnverified: "Could not check — nothing saved." },
+        } as never),
+      { initialProps: { current: itemWithMf as unknown } },
+    );
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Leinen"));
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    await saves.settle({
+      success: true,
+      actionType: "savePrimarySubResources",
+      failedOptions: [],
+      failedMetafields: [MF],
+      unverifiedMetafields: [MF],
+      optionWarnings: ["metafieldSlotUnverified"],
+    });
+    rerender({ current: itemWithMf });
+
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MF]: "Leinen" });
+    expect(result.current.state.hasChanges).toBe(true);
+    const message = String(showInfoBox.mock.calls.at(-1)?.[0]);
+    expect(message).toContain("Could not check — nothing saved.");
+    // Not the generic "reverted to original values" — nothing was reverted.
+    expect(message).not.toMatch(/reverted/);
+    // Only kept drafts: a warning, not a failure.
+    expect(showInfoBox.mock.calls.at(-1)?.[1]).toBe("warning");
+  });
+
+  it("in a mix, the reverted lead counts only the reverted items and stays critical", async () => {
+    const MF2 = "gid://shopify/Metafield/78";
+    const twoMf = {
+      ...itemWithMf,
+      metafields: [
+        ...itemWithMf.metafields,
+        { id: MF2, namespace: "custom", key: "care", value: "Waschen", type: "single_line_text_field" },
+      ],
+    };
+    const { result, rerender } = renderHook(
+      ({ current }: { current: unknown }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          strings: {
+            saveFailedItems: "Failed {count}, reverted.",
+            optionWarning_metafieldSlotUnverified: "Could not check — nothing saved.",
+            optionWarning_metafieldValueBlank: "Blank.",
+          },
+        } as never),
+      { initialProps: { current: twoMf as unknown } },
+    );
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Leinen"));
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF2, "Trocknen"));
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    await saves.settle({
+      success: true,
+      actionType: "savePrimarySubResources",
+      failedOptions: [],
+      failedMetafields: [MF, MF2],
+      unverifiedMetafields: [MF],
+      optionWarnings: ["metafieldSlotUnverified", "metafieldValueBlank"],
+    });
+    rerender({ current: twoMf });
+
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MF]: "Leinen" });
+    const [message, tone] = showInfoBox.mock.calls.at(-1) ?? [];
+    expect(String(message)).toContain("Failed 1, reverted.");
+    expect(String(message)).toContain("Could not check — nothing saved.");
+    expect(tone).toBe("critical");
+  });
+  it("after a PARTIAL save only the unsaved edits stay: saved ones are dropped, so a second Save cannot re-send them", async () => {
+    const MF2 = "gid://shopify/Metafield/78";
+    const MF3 = "gid://shopify/Metafield/79";
+    const threeMf = {
+      ...itemWithMf,
+      metafields: [
+        ...itemWithMf.metafields,
+        { id: MF2, namespace: "custom", key: "care", value: "Waschen", type: "single_line_text_field" },
+        { id: MF3, namespace: "custom", key: "origin", value: "EU", type: "single_line_text_field" },
+      ],
+    };
+    const { result, rerender } = renderHook(
+      ({ current }: { current: unknown }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          strings: {},
+        } as never),
+      { initialProps: { current: threeMf as unknown } },
+    );
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Leinen")); // saved
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF2, "Trocknen")); // failed, reverted
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF3, "Asien")); // unverified draft
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    await saves.settle({
+      success: true,
+      actionType: "savePrimarySubResources",
+      failedOptions: [],
+      failedMetafields: [MF2, MF3],
+      unverifiedMetafields: [MF3],
+      optionWarnings: ["metafieldSlotUnverified"],
+    });
+    rerender({ current: threeMf });
+
+    // Before the fix MF stayed here although Shopify already had it.
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MF3]: "Asien" });
+  });
+  it("a field RETYPED while the save was in flight keeps its newer text; one still holding the sent text is dropped", async () => {
+    const MF2 = "gid://shopify/Metafield/78";
+    const MF3 = "gid://shopify/Metafield/79";
+    const threeMf = {
+      ...itemWithMf,
+      metafields: [
+        ...itemWithMf.metafields,
+        { id: MF2, namespace: "custom", key: "care", value: "Waschen", type: "single_line_text_field" },
+        { id: MF3, namespace: "custom", key: "origin", value: "EU", type: "single_line_text_field" },
+      ],
+    };
+    const { result, rerender } = renderHook(
+      ({ current }: { current: unknown }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          strings: {},
+        } as never),
+      { initialProps: { current: threeMf as unknown } },
+    );
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Leinen")); // retyped below
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF2, "Trocknen")); // saved, untouched
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF3, "Asien")); // fails
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    // Typed while the request is out:
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "Hanf"));
+    await saves.settle({
+      success: true,
+      actionType: "savePrimarySubResources",
+      failedOptions: [],
+      failedMetafields: [MF3],
+      optionWarnings: [],
+    });
+    rerender({ current: threeMf });
+
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MF]: "Hanf" });
+  });
+  describe("what a save leaves in the edit maps (MAJ-1, O3)", () => {
+    const MFA = "gid://shopify/Metafield/55";
+    const item = {
+      ...(selectedItem as object),
+      metafields: [{ id: MFA, namespace: "custom", key: "material", value: "Baumwolle", type: "single_line_text_field" }],
+    };
+    const render = () =>
+      renderHook(
+        ({ current }: { current: unknown }) =>
+          useProductSubResources({
+            selectedItem: current,
+            currentLanguage: "de",
+            primaryLocale: "de",
+            showInfoBox,
+            strings: {},
+          } as never),
+        { initialProps: { current: item as unknown } },
+      );
+
+    it("a CLEAN save keeps a field retyped while it was in flight, and the save bar with it", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Hanf")); // typed while the request is out
+      await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] });
+      rerender({ current: item });
+
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Hanf" });
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("a clean save with nothing retyped clears the map and the save bar", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] });
+      rerender({ current: item });
+      expect(result.current.state.primaryMetafieldEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(false);
+    });
+
+    it("a PARTIAL save with a retype keeps the save bar up (a kept edit always has a Save to click)", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe")); // fails
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Hanf"));
+      await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [OPTION], failedMetafields: [] });
+      rerender({ current: item });
+
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Hanf" });
+      expect(result.current.state.primaryOptionEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("a partial save with NOTHING left unsaved turns the save bar off", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe")); // fails
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen")); // saved
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [OPTION], failedMetafields: [] });
+      rerender({ current: item });
+      expect(result.current.state.primaryMetafieldEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(false);
+    });
+
+    it("O3: a SAVED option edit is dropped after a partial save, a retyped one stays, a failed one is reverted", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe")); // saved, then retyped
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(SECOND, "Groesse")); // saved, untouched
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(THIRD, "Stoff")); // fails
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbton"));
+      await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [THIRD], failedMetafields: [] });
+      rerender({ current: item });
+
+      expect(Object.keys(result.current.state.primaryOptionEdits)).toEqual([OPTION]);
+      expect(result.current.state.primaryOptionEdits[OPTION].name).toBe("Farbton");
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("O3: a clean save keeps a retyped option name and clears the others", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe"));
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(SECOND, "Groesse"));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbton"));
+      await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] });
+      rerender({ current: item });
+      expect(Object.keys(result.current.state.primaryOptionEdits)).toEqual([OPTION]);
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+  });
+  it("a value Shopify REFUSED is shown with Shopify's reason and no 'save again', the draft is kept", async () => {
+    const { result, rerender } = renderHook(
+      ({ current }: { current: unknown }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          strings: { metafieldValueRefused: "Refused: {message}" },
+        } as never),
+      { initialProps: { current: itemWithMf as unknown } },
+    );
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "abc"));
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    await saves.settle({
+      success: true,
+      actionType: "savePrimarySubResources",
+      failedOptions: [],
+      failedMetafields: [MF],
+      unverifiedMetafields: [MF],
+      metafieldRefusals: { [MF]: "Value must be an integer." },
+    });
+    rerender({ current: itemWithMf });
+
+    const message = String(showInfoBox.mock.calls.at(-1)?.[0]);
+    expect(message).toContain("Refused: Value must be an integer.");
+    expect(message).not.toMatch(/save again|reverted/i);
+    expect(result.current.state.primaryMetafieldEdits).toEqual({ [MF]: "abc" });
+    expect(result.current.state.hasChanges).toBe(true);
+  });
+  // The answer effect usually sees the RELOADED item: React Router commits the
+  // fetcher's `idle` and the new loader data in the same update. The edits are
+  // therefore settled against a snapshot of what was sent, never against the
+  // item - and these tests rerender with the post-save item in the SAME step as
+  // the answer (and keep a pre-save variant, since the timing is not guaranteed).
+  describe.each([
+    ["post-save item (same step as the answer)", true],
+    ["pre-save item", false],
+  ])("settling edits - %s", (_label, postSave) => {
+    const MFA = "gid://shopify/Metafield/55";
+    const RED = "gid://shopify/ProductOptionValue/1";
+    const BLUE = "gid://shopify/ProductOptionValue/1b";
+    const base = {
+      ...(selectedItem as object),
+      metafields: [{ id: MFA, namespace: "custom", key: "material", value: "Baumwolle", type: "single_line_text_field" }],
+    } as any;
+    const after = (over: { metafield?: string; colourValues?: Array<{ id: string; name: string }> }) => ({
+      ...base,
+      metafields: [{ ...base.metafields[0], value: over.metafield ?? base.metafields[0].value }],
+      options: base.options.map((o: any) => (o.id === OPTION && over.colourValues ? { ...o, values: over.colourValues } : o)),
+    });
+    const render = () =>
+      renderHook(
+        ({ current }: { current: unknown }) =>
+          useProductSubResources({ selectedItem: current, currentLanguage: "de", primaryLocale: "de", showInfoBox, strings: {} } as never),
+        { initialProps: { current: base as unknown } },
+      );
+    const answer = async (result: any, rerender: any, next: unknown, extra: Record<string, unknown> = {}) => {
+      await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [], ...extra });
+      rerender({ current: postSave ? next : base });
+    };
+
+    it("a metafield saved cleanly is settled (the post-save item no longer reads as 'unchanged' and sticks)", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      await answer(result, rerender, after({ metafield: "Leinen" }));
+      expect(result.current.state.primaryMetafieldEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(false);
+    });
+
+    it("a retype during the save survives, and so does the save bar", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Hanf"));
+      await answer(result, rerender, after({ metafield: "Leinen" }));
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Hanf" });
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("typed BACK to the old value during the save: kept, and the save bar agrees", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Baumwolle"));
+      await answer(result, rerender, after({ metafield: "Leinen" }));
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Baumwolle" });
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("a retype of a field whose sent value FAILED is kept, not reverted over the new text", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "zu lang"));
+      act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbe")); // keeps the answer partial
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "kurz"));
+      await answer(result, rerender, base, { failedMetafields: [MFA] });
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "kurz" });
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("rename + REORDER: the answer settles the option edit and the card never pairs a name with the wrong value", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, RED, "Rouge"));
+      act(() => result.current.handlers.handleReorderOptionValues(OPTION, [BLUE, RED]));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      await answer(result, rerender, after({ colourValues: [{ id: BLUE, name: "Blue" }, { id: RED, name: "Rouge" }] }));
+      expect(result.current.state.primaryOptionEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(false);
+    });
+
+    it("rename + reorder with a retype of the renamed value during the save: only that retype is kept, on its own value", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, RED, "Rouge"));
+      act(() => result.current.handlers.handleReorderOptionValues(OPTION, [BLUE, RED]));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, RED, "Rot"));
+      await answer(result, rerender, after({ colourValues: [{ id: BLUE, name: "Blue" }, { id: RED, name: "Rouge" }] }));
+      expect(result.current.state.primaryOptionEdits).toEqual({ [OPTION]: { values: { [RED]: "Rot" } } });
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+
+    it("rename + ADD with a retype of another value during the save survives, keyed by its id", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, RED, "Rouge"));
+      act(() => result.current.handlers.handleAddOptionValue(OPTION, "Green"));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, BLUE, "Bleu"));
+      await answer(result, rerender, after({ colourValues: [{ id: RED, name: "Rouge" }, { id: BLUE, name: "Blue" }, { id: "gid://shopify/ProductOptionValue/new", name: "Green" }] }));
+      expect(result.current.state.primaryOptionEdits).toEqual({ [OPTION]: { values: { [BLUE]: "Bleu" } } });
+    });
+
+    it("rename + DELETE: an edit of the deleted value is gone, a retype of a surviving value stays", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, BLUE, "Bleu"));
+      act(() => result.current.handlers.handleRemoveOptionValue(OPTION, RED));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, BLUE, "Bleue"));
+      await answer(result, rerender, after({ colourValues: [{ id: BLUE, name: "Bleu" }] }));
+      expect(result.current.state.primaryOptionEdits).toEqual({ [OPTION]: { values: { [BLUE]: "Bleue" } } });
+    });
+  });
+  it("Shopify's text is inserted literally: `$&` and `$1` in a refusal message are not replacement patterns", async () => {
+    const { result, rerender } = renderHook(
+      ({ current }: { current: unknown }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          strings: { metafieldValueRefused: "Refused: {message}" },
+        } as never),
+      { initialProps: { current: itemWithMf as unknown } },
+    );
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "abc"));
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    await saves.settle({
+      success: true,
+      actionType: "savePrimarySubResources",
+      failedOptions: [],
+      failedMetafields: [MF],
+      unverifiedMetafields: [MF],
+      metafieldRefusals: { [MF]: "must match $& and $1 and $$" },
+    });
+    rerender({ current: itemWithMf });
+    expect(String(showInfoBox.mock.calls.at(-1)?.[0])).toContain("Refused: must match $& and $1 and $$");
+  });
+  describe("an answer for ANOTHER product (F1) and drafts across a switch (F2)", () => {
+    const MFA = "gid://shopify/Metafield/55";
+    const MFB = "gid://shopify/Metafield/56";
+    const productA = {
+      ...(selectedItem as object),
+      id: "gid://shopify/Product/1",
+      metafields: [{ id: MFA, namespace: "custom", key: "material", value: "Baumwolle", type: "single_line_text_field" }],
+    } as any;
+    const productB = {
+      ...(selectedItem as object),
+      id: "gid://shopify/Product/2",
+      metafields: [{ id: MFB, namespace: "custom", key: "material", value: "Wolle", type: "single_line_text_field" }],
+    } as any;
+    const render = (strings: Record<string, string> = {}) =>
+      renderHook(
+        ({ current }: { current: unknown }) =>
+          useProductSubResources({ selectedItem: current, currentLanguage: "de", primaryLocale: "de", showInfoBox, strings } as never),
+        { initialProps: { current: productA as unknown } },
+      );
+
+    it("A's answer lands while B is shown: B's edits, lists and save bar survive, and there is no green 'saved' toast for B", async () => {
+      const { result, rerender } = render({ savedOtherProduct: "Previous product saved." });
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+
+      rerender({ current: productB }); // the merchant switched while A's save was out
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFB, "Seide"));
+      act(() => result.current.handlers.handleAddOptionValue(OPTION, "Green"));
+      showInfoBox.mockClear();
+
+      await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] });
+      rerender({ current: productB });
+
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFB]: "Seide" });
+      expect(result.current.state.optionValuesToAdd).toEqual({ [OPTION]: ["Green"] });
+      expect(result.current.state.hasChanges).toBe(true);
+      // The fact that A's save landed is said, neutrally - not the generic success of B's card.
+      expect(showInfoBox).toHaveBeenCalledTimes(1);
+      expect(showInfoBox.mock.calls[0]).toEqual(["Previous product saved.", "success"]);
+      expect(revalidator.revalidate).not.toHaveBeenCalled();
+    });
+
+    it("a PARTIAL failure of A's save is reported as such, still without touching B", async () => {
+      const { result, rerender } = render({ savePartialOtherProduct: "Previous product: not everything saved." });
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      rerender({ current: productB });
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFB, "Seide"));
+      showInfoBox.mockClear();
+      await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [MFA] });
+      rerender({ current: productB });
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFB]: "Seide" });
+      expect(result.current.state.hasChanges).toBe(true);
+      expect(showInfoBox.mock.calls[0]).toEqual(["Previous product: not everything saved.", "warning"]);
+    });
+
+    it("an answer for the SAME product is still processed normally", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      act(() => result.current.handlers.saveSubResources());
+      await saves.flush();
+      await saves.settle({ success: true, actionType: "savePrimarySubResources", failedOptions: [], failedMetafields: [] });
+      rerender({ current: productA });
+      expect(result.current.state.primaryMetafieldEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(false);
+    });
+
+    it("F2: a forgotten metafield draft does not follow the merchant to another product (no save bar, yet a later save would write it)", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      rerender({ current: productB });
+      expect(result.current.state.primaryMetafieldEdits).toEqual({});
+      expect(result.current.state.hasChanges).toBe(false);
+    });
+
+    it("F2: a draft is NOT touched by a reload of the same item/locale/market", async () => {
+      const { result, rerender } = render();
+      act(() => result.current.handlers.handlePrimaryMetafieldChange(MFA, "Leinen"));
+      rerender({ current: { ...productA } }); // a new object, same key
+      expect(result.current.state.primaryMetafieldEdits).toEqual({ [MFA]: "Leinen" });
+      expect(result.current.state.hasChanges).toBe(true);
+    });
+  });
+  it("a PERMISSION refusal gets its own wording, not 'please adjust your value'", async () => {
+    const { result, rerender } = renderHook(
+      ({ current }: { current: unknown }) =>
+        useProductSubResources({
+          selectedItem: current,
+          currentLanguage: "de",
+          primaryLocale: "de",
+          showInfoBox,
+          strings: { metafieldValueRefused: "Adjust: {message}", metafieldPermissionRefused: "Not allowed: {message}" },
+        } as never),
+      { initialProps: { current: itemWithMf as unknown } },
+    );
+    act(() => result.current.handlers.handlePrimaryMetafieldChange(MF, "abc"));
+    act(() => result.current.handlers.saveSubResources());
+    await saves.flush();
+    await saves.settle({
+      success: true,
+      actionType: "savePrimarySubResources",
+      failedOptions: [],
+      failedMetafields: [MF],
+      unverifiedMetafields: [MF],
+      metafieldRefusals: { [MF]: "Owned by another app." },
+      permissionRefusedMetafields: [MF],
+    });
+    rerender({ current: itemWithMf });
+    const message = String(showInfoBox.mock.calls.at(-1)?.[0]);
+    expect(message).toContain("Not allowed: Owned by another app.");
+    expect(message).not.toContain("Adjust:");
   });
 });

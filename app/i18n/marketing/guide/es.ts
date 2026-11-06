@@ -64,6 +64,7 @@ export const guideEs: GuideCopy = {
       ],
       tips: [
         "Cuántos productos, idiomas y tipos de contenido puedes editar depende de tu plan. El uso actual aparece en Ajustes → Plan.",
+        "Si la app avisa de que está ocupada un momento, continúa sola. Si te indica que algo no se pudo completar, espera un minuto, revisa tu último cambio y repite el paso.",
       ],
     },
 
@@ -75,6 +76,7 @@ export const guideEs: GuideCopy = {
           heading: "Tu propia clave",
           paragraphs: [
             "ContentPilot AI escribe con el proveedor de IA que conectes: Anthropic (Claude), OpenAI, Google Gemini, DeepSeek, Grok o HuggingFace. Introduces tu propia clave API, así que el coste y la elección del modelo siguen siendo tuyos.",
+            "Por seguridad, una clave guardada no se vuelve a mostrar: el campo queda vacío y solo indica \"Guardada\" con los cuatro últimos caracteres, para que reconozcas la clave. Deja el campo vacío para conservarla; escribe una nueva para reemplazarla. Para borrarla, pulsa \"Eliminar clave\" y guarda.",
           ],
           steps: [
             "Crea una cuenta en un proveedor y genera una clave API.",
@@ -251,11 +253,13 @@ export const guideEs: GuideCopy = {
           heading: "Aceptar una sugerencia",
           paragraphs: [
             "El resultado aparece primero como sugerencia encima del campo. «Aceptar» lo pone en el campo y guarda al instante exactamente ese campo — los demás campos con cambios sin guardar no se tocan. «Rechazar» lo deja todo como estaba. «Aceptar y traducir» guarda el texto aceptado y lo lleva directamente a todos los idiomas.",
+            "En un idioma extranjero, la traducción a los demás idiomas empieza solo cuando Shopify ha confirmado que se guardó el texto aceptado. Si el guardado se rechaza o no se confirma, no se traduce nada y un mensaje lo indica.",
           ],
         },
       ],
       tips: [
         "El título SEO y la meta descripción tienen sus propios límites de longitud. La IA los respeta, y el contador bajo el campo muestra dónde cortaría Google el texto.",
+        "Si cambias solo el título SEO o solo la meta descripción y la app no puede leer en ese momento la otra desde Shopify, no se guarda nada: el texto se queda en el campo y la app te pide que lo intentes de nuevo. En el editor masivo y en la corrección masiva con IA, solo ese elemento o esa celda no se guarda.",
       ],
     },
 
@@ -554,6 +558,13 @@ export const guideEs: GuideCopy = {
             "Traduce las entradas, una a una o con IA, y guarda.",
           ],
         },
+        {
+          heading: "Capturar textos con un clic",
+          paragraphs: [
+            "En lugar de escribir los textos, puedes hacer clic en ellos en el editor de temas. En Contenido → Traducciones directas, haz clic en «Abrir modo captura». Se abre el editor de temas, y al hacer clic en un texto de la vista previa se añade a la lista — si quieres, traducido a todos los idiomas al momento.",
+            "El modo captura es válido 2 horas y termina al cerrar el editor de temas; después, vuelve a abrirlo desde la app. Si el panel de captura del editor de temas pide un código, cópialo en la app con «Mostrar código de captura» y pégalo allí; esto funciona siempre, aunque el modo captura no se active solo al abrir el editor. No compartas ese código. Los visitantes de tu tienda no ven nada del modo captura.",
+          ],
+        },
       ],
       tips: [
         "A diferencia del resto, aquí también se ofrece el idioma principal como destino: el texto de otra app puede estar en cualquier idioma.",
@@ -681,6 +692,7 @@ export const guideEs: GuideCopy = {
           heading: "Qué ocurre",
           paragraphs: [
             "Solo se rellenan las traducciones vacías; una traducción existente nunca se sobrescribe. La app vuelve a comprobar justo antes de escribir qué falta realmente. Los handles traducidos son opcionales y se normalizan a una forma de URL válida.",
+            "Si la app se reinicia durante la ejecución (por ejemplo, por una actualización), la ejecución se marca como interrumpida pasado un rato; la pestaña Tareas muestra entonces una advertencia, y la página también mientras la tengas abierta. Lo que aún no estaba guardado no se escribió; vuelve a iniciar «Completar las traducciones que faltan» y solo se rellenará lo que siga faltando.",
           ],
         },
       ],
@@ -699,7 +711,18 @@ export const guideEs: GuideCopy = {
         {
           heading: "Crear galerías",
           paragraphs: [
-            "Arriba está la galería del producto y debajo una galería por variante. Arrastra imágenes desde la galería del producto o desde tu biblioteca de archivos de Shopify a una variante, ordénalas arrastrando y cópialas o muévelas entre variantes. También se admiten vídeos, enlaces de YouTube/Vimeo y modelos 3D.",
+            "En la página del producto ves primero solo una vista previa de las imágenes del producto. Al hacer clic en «Mostrar todas» (o en las imágenes) se abre el gestor completo: ocupa toda la zona de edición, los demás campos se ocultan y la página se desplaza con normalidad. «Volver al producto» te lleva de vuelta al punto en el que estabas; el texto escrito, los cambios de imagen sin guardar y los guardados en curso se conservan: cerrar no es descartar. La lista de productos, la selección de idioma y mercado y la barra de guardado siguen visibles, y al cambiar a otro producto el gestor de imágenes sigue abierto. En el gestor, la galería del producto está arriba y debajo hay una galería por variante. Un clic en el título de la galería del producto la pliega —igual que las galerías de variantes— para llegar a las variantes sin desplazarte mucho; sigue plegada tras guardar, vuelve a estar abierta en el siguiente producto y la selección que hayas hecho en ella se conserva; con la galería plegada, «Eliminar» la despliega antes para que veas qué se elimina, y la selección no cuenta para las acciones masivas de texto alternativo ni para la conversión a WebP (el primer clic en ese botón solo despliega la galería). Arrastra imágenes desde la galería del producto o desde tu biblioteca de archivos de Shopify a una variante, ordénalas arrastrando y cópialas o muévelas entre variantes. También se admiten vídeos, enlaces de YouTube/Vimeo y modelos 3D. En cuanto seleccionas una imagen —en la galería del producto o en cualquier galería de variante—, una barra se queda fija en la parte inferior de la pantalla mientras te desplazas: muestra el texto alternativo de la imagen seleccionada (con los botones de IA) y las acciones de la selección (copiar, mover, eliminar, quitar de la variante, deseleccionar), así no tienes que bajar hasta el final de una galería larga. Con varias imágenes seleccionadas solo muestra las acciones; en el móvil las acciones aparecen como iconos pequeños.",
+            "Si pasas muy rápido por varios productos, puede que las variantes de un producto no se carguen por un momento. La app lo intenta de nuevo varias veces por sí sola y un aviso ofrece «Reintentar»; no hace falta salir del producto. Mientras faltan las variantes, la app no guarda ni elimina nada para ellas: guardar con imágenes masivas asignadas a variantes y eliminar imágenes del producto se rechazan con un mensaje en lugar de escribir algo incorrecto. Lo mismo ocurre mientras las variantes se vuelven a leer tras guardar: las galerías de variantes no se pueden modificar un momento y arrastrar, soltar o añadir en ellas se rechaza con un aviso.",
+            "Tras guardar, las galerías de variantes que tenía abiertas siguen abiertas, y la vista («Todas» o «Sin asignar») y su selección se mantienen; las imágenes se recargan en segundo plano. Solo al cambiar a otro producto la vista empieza de nuevo.",
+            "Si la variante de destino ya tiene una imagen (en su galería o como imagen principal), la app rechaza el movimiento o la copia, indica la variante en el cuadro de información y no cambia nada: la imagen se queda donde estaba. Esto también vale para el mismo archivo guardado con dos nombres, siempre que la app pueda reconocerlo como el mismo archivo. Con los archivos elegidos de la biblioteca para una variante ocurre lo mismo: una imagen que la variante ya tiene no se añade y se nombra en el aviso; todo lo demás que has elegido sí se añade.",
+          ],
+        },
+        {
+          heading: "La imagen principal",
+          paragraphs: [
+            "La primera imagen de cada variante es su imagen principal, marcada con un borde dorado. Para que otra imagen sea la principal, arrástrala al primer lugar de la galería propia de esa variante; la imagen principal anterior pasa al segundo lugar y sigue en la galería. Si arrastras la imagen principal fuera del primer lugar, la siguiente imagen toma el relevo. Reordenar la galería del producto, añadir imágenes o copiarlas nunca cambia la imagen principal de una variante.",
+            "Solo una imagen puede ser la imagen principal: arrastrar al primer lugar un vídeo, un enlace de YouTube/Vimeo, un modelo 3D o una imagen que aún no está guardada se rechaza con un aviso, y la única imagen de una variante no se puede arrastrar fuera del primer lugar. Si eliminas la imagen principal o la mueves a la galería del producto, la siguiente imagen de la galería propia de esa variante ocupa su lugar automáticamente; una variante solo se queda sin imagen principal si no tiene ninguna otra imagen propia. En cuanto cambias la galería de una variante sin ninguna imagen, su primera imagen propia se muestra como imagen principal y pasa a serlo al guardar. Una imagen de tu biblioteca de archivos se añade al producto cuando pasa a ser la imagen principal. Si a una variante con imagen principal no le queda ninguna otra imagen en la galería (por ejemplo porque quitaste la última, o eliminaste la imagen principal y solo sube una imagen), tu tienda muestra para esa variante solo su imagen principal en lugar de todas las imágenes del producto. Esto solo se aplica a productos con más de una variante y cuando la Galería de variantes (App Embed) está activada en tu tema; en un producto con una sola variante, la tienda sigue mostrando todas las imágenes del producto.",
+            "Para sacar una imagen de una variante y ponerla en la galería del producto, mantén pulsado Ctrl (Mac: Cmd) y suéltala sobre una miniatura de la galería del producto; sin Ctrl no se mueve nada. Si arrastras la imagen principal de una variante a otra variante, se mueve: aparece en el lugar donde la sueltas y la primera imagen propia de la primera variante pasa a ser su imagen principal (si no tiene otra imagen, se queda sin imagen principal). Si la sueltas en el primer lugar de la otra variante, pasa a ser su imagen principal y la imagen principal anterior pasa a su galería. Ambas variantes se guardan juntas o no se guarda ninguna: si una de ellas cambió mientras tanto en otro lugar, la imagen queda sin cambios en las dos. Mantén pulsado Ctrl (Mac: Cmd) para copiar la imagen principal en su lugar; entonces sigue siendo la imagen principal de la primera variante. Si la variante de destino tiene aún un cambio sin guardar de su propia imagen principal, o una de las dos ya forma parte de otro movimiento pendiente, guarda primero. Mientras un movimiento no esté guardado, la imagen principal de estas dos variantes y la imagen movida no se pueden cambiar ni quitar de otra forma: guarda primero. Si arrastras la imagen movida de vuelta a la primera variante antes de guardar, el movimiento se deshace.",
           ],
         },
         {
@@ -784,6 +807,7 @@ export const guideEs: GuideCopy = {
           heading: "Cómo funciona",
           paragraphs: [
             "En el Image Variant Manager seleccionas imágenes e inicias la conversión. Se ejecuta en segundo plano; la imagen convertida sustituye a la original allí donde se use, conservando su asignación a variantes y su texto alternativo.",
+            "La conversión suele tardar unos segundos por imagen, y mientras tanto puedes seguir trabajando. Si una conversión sigue esperando a empezar después de 24 horas, se cancela, la original no cambia y la imagen se te devuelve a tu cupo.",
           ],
         },
       ],
@@ -945,7 +969,7 @@ export const guideEs: GuideCopy = {
         {
           heading: "Cómo funciona",
           paragraphs: [
-            "La app busca en artículos del blog, páginas y descripciones de producto menciones de tus productos y colecciones que todavía no son un enlace. Cada hallazgo aparece como sugerencia con el fragmento de texto.",
+            "La app busca en artículos del blog, páginas y descripciones de producto menciones de tus productos y colecciones que todavía no son un enlace. Cada hallazgo aparece como sugerencia con el fragmento de texto. Después de cada análisis, la página indica cuántas sugerencias nuevas se encontraron o, si no se encontró ninguna o el análisis falló, por qué.",
           ],
         },
         {
@@ -1090,6 +1114,15 @@ export const guideEs: GuideCopy = {
           heading: "Traducir opciones",
           paragraphs: [
             "Debajo de cada opción en la sección de variantes — también cuando está plegada — «Traducir» traduce el nombre de la opción y sus valores a todos los idiomas, y «Copiar a todos los idiomas» los copia sin cambios. En una opción abierta, los dos botones están entre «Eliminar» y «Hecho». Una opción con fondo azul aún no tiene traducción en al menos un idioma. Si has cambiado una opción, guarda primero: los botones permanecen bloqueados hasta que el cambio se guarda, para que nunca se traduzca el texto anterior.",
+            "Si una entrada de las opciones o metacampos no es válida (nombre o valor de opción vacío, fila en blanco, metacampo no válido), aparece un mensaje rojo y al guardar no se guarda nada, tampoco imágenes, textos alternativos ni textos. Corrige o descarta primero la entrada marcada y guarda de nuevo.",
+            "Si no se confirmó el resultado de un guardado y una opción ya no existe tras recargar, una advertencia nombra los valores nuevos que habías escrito para ella y que no se pudieron conservar. Vuelve a introducirlos entonces.",
+          ],
+        },
+        {
+          heading: "Metacampos",
+          paragraphs: [
+            "En la sección «Metacampos» editas, en el idioma principal, los valores de los metacampos que activaste en Configuración → Metafields. Un campo de lista muestra una entrada por línea; las líneas vacías se ignoran. Si una entrada no coincide con el tipo de la lista, la app marca esa línea en el campo y no se guarda nada hasta que la corrijas.",
+            "Si vacías un metacampo y guardas, Shopify elimina el valor junto con sus traducciones. Aun así, el campo sigue en el editor hasta la próxima sincronización completa de tus productos: si antes introduces un valor nuevo y guardas, el metacampo se vuelve a crear. Si entretanto otra persona ha puesto un valor ahí —por ejemplo en el admin de Shopify o mediante otra app—, la app no lo sobrescribe: se te avisa y el campo muestra después el valor actual. 🌍 junto a un metacampo traduce su valor guardado a todos los idiomas; mientras hayas cambiado el campo sin guardar —y brevemente después de guardar, hasta que la página haya vuelto a cargar el valor guardado—, el botón está bloqueado. Los campos de varias líneas, las listas y el texto enriquecido no se traducen automáticamente, porque se perderían los saltos de línea o la lista; introduce su traducción a mano. Si al volver a crear un metacampo vaciado la app no puede comprobar si Shopify ya tiene un valor, no guarda nada y deja tu valor en el campo: simplemente vuelve a guardar. Si Shopify rechaza un valor (por ejemplo, porque no encaja con el tipo del campo o es demasiado largo), tu texto se queda en el campo, la app muestra el motivo de Shopify y no se guarda nada para ese campo: ajusta el valor y guarda de nuevo, o descarta el cambio. Como Shopify recibe los metacampos juntos, otros metacampos que guardaste a la vez pueden haberse restablecido, y otras partes del guardado pueden haberse realizado igualmente; compruébalo después. Si Shopify no permite que la app escriba ese metacampo, el valor también se queda en el campo; descarta el cambio en ese caso. Cuando hayas guardado las opciones o los metacampos de un producto, puedes pasar enseguida a otro producto y seguir trabajando allí: el guardado continúa en segundo plano, incluso si pasas a otra página de la app. No cierres ni actualices la pestaña del navegador antes de que aparezca el mensaje (el navegador te avisa) y espera antes de salir de la app por el menú de Shopify hasta saber que el guardado terminó. Cuando el guardado termina, la app te dice, con el nombre del producto, si se guardó. Si algo no se guardó, tienes que volver a introducir el texto; no se conserva cuando has salido del producto. Un campo que solo contiene espacios no se guarda; vacíalo por completo para eliminar el valor.",
           ],
         },
         {

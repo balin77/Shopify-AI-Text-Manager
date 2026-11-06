@@ -119,3 +119,48 @@ export function variantTileAltEditable(args: {
   if (gidForUrl(args.urlToGid, url)) return true;
   return url.startsWith("blob:") || url.startsWith("data:");
 }
+
+const baseOfUrl = (u: string) => u.split("?")[0];
+
+/** Every address one medium is known under: its own url, and each url the product's url->gid map
+ *  or the variant file map holds for it (query stripped, so `?v=` versions agree). */
+function mediumAddresses(
+  ref: string,
+  tileUrl: string | undefined,
+  fileUrlMap: Readonly<Record<string, string>>,
+  urlToGid: Readonly<Record<string, string>>,
+): Set<string> {
+  const out = new Set<string>();
+  if (tileUrl) out.add(baseOfUrl(tileUrl));
+  const own = fileUrlMap[ref];
+  if (own) out.add(baseOfUrl(own));
+  for (const [u, g] of Object.entries(urlToGid)) if (g === ref) out.add(baseOfUrl(u));
+  return out;
+}
+
+/**
+ * Does a variant that shows `shownGids` (its main image included) already hold the medium `ref`?
+ *
+ * Identity is the GID first; beyond that the SAME FILE under another GID (a product medium and a
+ * library file for one picture) is recognised by its address (path without the `?v=` query),
+ * through the product's url->gid map and the variant file map. LIMIT: where two uploads of the
+ * same picture carry different addresses, no identity can be proven in the browser and they
+ * count as different media; and one address shared by two GIDs (Shopify deduplicates files)
+ * counts as the same medium, on purpose -- the variant then already SHOWS that picture.
+ */
+export function variantHoldsMedium(args: {
+  shownGids: readonly string[];
+  ref: string;
+  tileUrl?: string;
+  fileUrlMap: Readonly<Record<string, string>>;
+  urlToGid: Readonly<Record<string, string>>;
+}): boolean {
+  const { shownGids, ref, tileUrl, fileUrlMap, urlToGid } = args;
+  if (shownGids.includes(ref)) return true;
+  const wanted = mediumAddresses(ref, tileUrl, fileUrlMap, urlToGid);
+  if (wanted.size === 0) return false;
+  for (const g of shownGids) {
+    for (const a of mediumAddresses(g, undefined, fileUrlMap, urlToGid)) if (wanted.has(a)) return true;
+  }
+  return false;
+}

@@ -13,6 +13,7 @@
 import { Card, BlockStack, Box, Text, InlineStack, Badge, Button, ProgressBar, TextField } from "@shopify/polaris";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useFetcher } from "react-router";
+import { useSeoKeywordLoad } from "../hooks/useSeoKeywordLoad";
 import { useI18n } from "../contexts/I18nContext";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { SidebarTabBar } from "./SidebarTabBar";
@@ -224,7 +225,9 @@ export function ItemSidebar({
    */
   const [keywordsLoaded, setKeywordsLoaded] = useState(false);
   const [keywordInput, setKeywordInput] = useState("");
-  const keywordLoadFetcher = useFetcher<{ keywords: SidebarKeywordEntry[] }>();
+  // The load failed (rate limit, network, proxy): shown locally with a retry. The
+  // list is then UNKNOWN - not empty - so adding is disabled until it loads.
+  const [keywordsLoadFailed, setKeywordsLoadFailed] = useState(false);
   const keywordOpFetcher = useFetcher<{
     ok: boolean;
     keywords?: SidebarKeywordEntry[];
@@ -259,6 +262,7 @@ export function ItemSidebar({
     setKeywordOpError(null);
     pendingAddRef.current = null;
     setKeywordsLoaded(false);
+    setKeywordsLoadFailed(false);
     if (!resourceId || !resourceType) {
       setKeywords([]);
       setKeywordInput("");
@@ -269,21 +273,22 @@ export function ItemSidebar({
     // would file them under the wrong locale.
     setKeywords([]);
     setKeywordInput("");
-    keywordLoadFetcher.load(
-      `/api/seo-keyword?resourceId=${encodeURIComponent(resourceId)}&locale=${encodeURIComponent(keywordLocale)}`,
-    );
-    // keywordLoadFetcher is intentionally omitted — Remix fetchers are stable,
-    // but including it would re-trigger the effect on every fetcher state change.
+    // The load itself is `useSeoKeywordLoad` below (plain fetch, late answers ignored).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resourceId, resourceType, keywordLocale]);
 
-  useEffect(() => {
-    if (keywordLoadFetcher.state === "idle" && keywordLoadFetcher.data) {
-      setKeywords(keywordLoadFetcher.data.keywords ?? []);
+  const { retry: retryKeywordLoad } = useSeoKeywordLoad<SidebarKeywordEntry>({
+    resourceId,
+    resourceType,
+    locale: keywordLocale,
+    onLoaded: (loaded) => {
+      setKeywords(loaded);
       setKeywordsLoaded(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keywordLoadFetcher.state, keywordLoadFetcher.data]);
+      setKeywordsLoadFailed(false);
+    },
+    onFailed: () => setKeywordsLoadFailed(true),
+  });
+  const keywordsLoading = !keywordsLoaded;
 
   // Every mutation answers with the fresh list — no follow-up load needed.
   // Guarded against late responses for a previously selected item (the
@@ -947,7 +952,7 @@ export function ItemSidebar({
                         placeholder={t.seo?.targetKeywordPlaceholder || "e.g. blue running shoes"}
                         value={keywordInput}
                         onChange={setKeywordInput}
-                        disabled={keywordLoadFetcher.state !== "idle"}
+                        disabled={keywordsLoading}
                       />
                     </div>
                     <Button
@@ -1009,6 +1014,24 @@ export function ItemSidebar({
                   )
                 )}
 
+                {keywordsLoadFailed && (
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="p" variant="bodySm" tone="critical">
+                      {t.seo?.keywordLoadFailed || "Keywords could not be loaded."}
+                    </Text>
+                    <Button
+                      size="slim"
+                      variant="plain"
+                      onClick={() => {
+                        setKeywordsLoadFailed(false);
+                        retryKeywordLoad();
+                      }}
+                    >
+                      {t.seo?.keywordLoadRetry || "Retry"}
+                    </Button>
+                  </InlineStack>
+                )}
+
                 {aggregateStuffing && (
                   <Text as="p" variant="bodySm" tone="critical">
                     {t.seo?.keywordAggregateStuffing ||
@@ -1054,7 +1077,7 @@ export function ItemSidebar({
                       fullWidth
                       onClick={onInsertKeywords}
                       loading={insertKeywordsLoading}
-                      disabled={keywordLoadFetcher.state !== "idle"}
+                      disabled={keywordsLoading}
                     >
                       {t.seo?.insertKeywords || "Keywords einarbeiten"}
                     </Button>

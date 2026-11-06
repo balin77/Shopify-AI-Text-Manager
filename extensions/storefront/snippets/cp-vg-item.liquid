@@ -30,8 +30,9 @@
 
   ESCAPE RULE. The object is collected in `cp_i_out` and printed ONCE with `<`
   and `>` replaced by their JSON escapes. That replaces the per-value replace on
-  the alt text (R3-H1: `| json` does not neutralise `<`, so an alt text with
-  `</script>` would close the island's <script> element) and has two
+  the alt text (R3-H1: whether Shopify's `| json` neutralises `<` is not
+  measured, so it is assumed not to -- an alt text with `</script>` would then
+  close the island's <script> element) and has two
   consequences, both wanted:
     1. The output contains NO `<` and NO `>` at all. JSON structure never uses
        them; they can only sit inside string values, where the escape is valid

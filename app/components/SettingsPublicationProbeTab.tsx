@@ -19,6 +19,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { Badge, BlockStack, Banner, Button, Card, InlineStack, Text, TextField } from "@shopify/polaris";
 import type { ProbeCatalogBlock, PublicationProbeResult } from "../routes/api.publication-probe";
+import { appFetch } from "../utils/app-fetch";
 
 /** The label chain the real channel list uses, so both show the same name. */
 function displayName(row: ProbeCatalogBlock["rows"][number]): string {
@@ -161,7 +162,7 @@ export function SettingsPublicationProbeTab() {
     setError(null);
     try {
       const query = productGid ? `?productId=${encodeURIComponent(productGid)}` : "";
-      const res = await fetch(`/api/publication-probe${query}`);
+      const res = await appFetch(`/api/publication-probe${query}`);
       const data = await res.json();
       if (!data?.success) {
         setError(typeof data?.error === "string" ? data.error : "The probe returned no report.");

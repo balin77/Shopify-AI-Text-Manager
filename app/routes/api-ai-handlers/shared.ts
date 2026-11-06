@@ -3,10 +3,12 @@
  */
 
 import { data as json } from "react-router";
-import { AIService, toValidProvider, isAuthError } from "../../../src/services/ai.service";
+import { AIService, toValidProvider, isProviderKeyRejection, isManagedRefusal } from "../../../src/services/ai.service";
 import type { AIProvider } from "../../../src/services/ai.service";
+import { isAIQueueShuttingDown } from "../../../src/services/ai-queue.service";
 import { getProviderDisplayName } from "../../utils/api-key-validation";
 import { getTranslation, type Locale } from "../../i18n";
+import { scrubProviderErrorText } from "../../utils/provider-error-scrub";
 import { tryDecryptApiKey } from "../../utils/encryption.server";
 import {
   PRODUCTS_CONFIG, COLLECTIONS_CONFIG, BLOGS_CONFIG, PAGES_CONFIG, POLICIES_CONFIG,
@@ -124,10 +126,37 @@ export function errorStack(err: unknown): string | undefined {
 }
 
 /**
- * Re-export so api.ai handlers can detect provider auth failures (invalid key)
- * without each importing from the deep src/ path.
+ * Re-export so api.ai handlers can detect a REJECTED provider key without each
+ * importing from the deep src/ path. Deliberately the precise marker
+ * (`InvalidAIKeyError`, which `askAI` normalises every provider auth failure
+ * into) and NOT the `isAuthError` message heuristic: the handlers' loops wrap
+ * Shopify writes, DB calls and CDN fetches too, and a non-AI failure whose
+ * message merely contains "401" or "unauthorized" must fail its own item or
+ * locale, not abort the whole run as if the merchant's AI key were invalid.
  */
-export { isAuthError };
+export { isProviderKeyRejection };
+
+/**
+ * A managed-AI refusal (`ManagedAiRefusedError`: budget spent, pool closed,
+ * consent withdrawn mid-run). Every handler loop that aborts on
+ * `isProviderKeyRejection` aborts on this too and lets it PROPAGATE, so the
+ * /api/ai catch answers it with the coded refusal response — recorded per
+ * locale or item instead, it read as "this one failed" and the loop spent the
+ * next call on the same refusal (CLAUDE.md, managed-AI rules: a refusal is an
+ * abort, never a failure that may lead to a purge).
+ */
+export { isManagedRefusal };
+
+/**
+ * Any of the errors that must stop a whole run rather than one item: a rejected
+ * key, a managed refusal, and the queue being stopped for shutdown (every later
+ * item would be rejected the same way, and recording each as a per-locale
+ * failure would read as "this one failed" - it is not a verdict on the text).
+ * The handlers rethrow it; /api/ai answers it with a 503.
+ */
+export function isRunAbortingAIError(error: unknown): boolean {
+  return isProviderKeyRejection(error) || isManagedRefusal(error) || isAIQueueShuttingDown(error);
+}
 
 /**
  * Standard 401 response when the merchant's API key was rejected by the
@@ -135,7 +164,11 @@ export { isAuthError };
  * {@link noAiKeyResponse} but for the invalid- rather than missing-key case, so
  * the client toast can point the merchant to Settings → AI API Access Codes.
  */
-export function aiAuthErrorResponse(error: unknown): DataResponse {
+export function aiAuthErrorResponse(_error: unknown): DataResponse {
+  // No `detail`: the provider's own error text goes to the browser otherwise,
+  // and it can quote the key (OpenAI answers "Incorrect API key provided:
+  // sk-…abcd"). The text stays server-side, see `providerErrorForLog`, which
+  // the caller logs.
   return json(
     {
       success: false,
@@ -143,10 +176,19 @@ export function aiAuthErrorResponse(error: unknown): DataResponse {
       error:
         "Your AI API key was rejected by the provider (invalid or expired). " +
         "Please check your API key in Settings → AI API Access Codes.",
-      detail: errorMessage(error),
     },
     { status: 401 }
   );
+}
+
+/**
+ * A provider error's text for the SERVER log only: known credential shapes are
+ * scrubbed by the shared Sentry scrubber, and any long opaque token (an API key
+ * or a fragment the provider echoed back) is masked on top of that. Bounded, so
+ * a provider that returns a page of HTML cannot flood the log.
+ */
+export function providerErrorForLog(error: unknown): string {
+  return scrubProviderErrorText(errorMessage(error));
 }
 
 /** Check if an unknown error is a Prisma error with a specific code. */

@@ -115,7 +115,8 @@ export async function scanProductMetafields(
 
   // 2. Actual metafields present on products (distinct namespace.key + sample).
   const rows = await db.productMetafield.findMany({
-    where: { product: { shop } },
+    // A cleared slot's id is a deleted metafield — useless as a probe sample.
+    where: { product: { shop }, value: { not: "" } },
     distinct: ["namespace", "key"],
     select: { id: true, namespace: true, key: true, type: true },
   });

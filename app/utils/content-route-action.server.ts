@@ -80,6 +80,7 @@ export function makeContentRouteAction({ config, planContentType, allowedActions
       db,
       aiSettings,
       aiInstructions,
+      signal: args.request.signal,
     });
   };
 }

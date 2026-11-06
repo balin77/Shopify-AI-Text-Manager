@@ -18,13 +18,16 @@
   editor can register/position the app block.
 {%- endcomment -%}
 {%- comment -%}
-  R3-H1: `| json` escapes JSON syntax but NOT `<`, so an attacker-influenced
+  R3-H1: `| json` escapes JSON syntax; whether Shopify's `json` also escapes
+  `<` is NOT measured, so this block assumes it does not: an attacker-influenced
   variant.title containing `</script><script>…` would break out of this
   JSON island and inject script regardless of the JS-side _esc(). Every
   free-text value interpolated below MUST additionally neutralise `<`/`>`
   by replacing them with their \uXXXX JSON escapes (JSON.parse restores
   them, so data is unchanged). Image URLs are Shopify CDN and
-  IDs/dimensions are numeric, so only variant.title needs this.
+  dimensions are numeric, but every `| json` in the island carries at least
+  the `<` escape anyway (tests/unit/storefront-json-island-escape.test.ts),
+  so nothing has to be argued safe value by value.
 {%- endcomment -%}
 <script type="application/json" id="cp-gallery-data-{{ block.id }}">
   {
@@ -36,12 +39,12 @@
           {%- if variant.featured_image != blank -%}
             {%- assign vfi = variant.featured_image -%}
             {
-              "src_400":  {{ vfi | image_url: width: 400  | json }},
-              "src_800":  {{ vfi | image_url: width: 800  | json }},
-              "src_1200": {{ vfi | image_url: width: 1200 | json }},
-              "thumb":    {{ vfi | image_url: width: 160  | json }},
-              "w":        {{ vfi.width  | json }},
-              "h":        {{ vfi.height | json }},
+              "src_400":  {{ vfi | image_url: width: 400  | json | replace: '<', '\u003c' }},
+              "src_800":  {{ vfi | image_url: width: 800  | json | replace: '<', '\u003c' }},
+              "src_1200": {{ vfi | image_url: width: 1200 | json | replace: '<', '\u003c' }},
+              "thumb":    {{ vfi | image_url: width: 160  | json | replace: '<', '\u003c' }},
+              "w":        {{ vfi.width  | json | replace: '<', '\u003c' }},
+              "h":        {{ vfi.height | json | replace: '<', '\u003c' }},
               "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
             }
             {%- assign cp_has_any = true -%}
@@ -54,12 +57,12 @@
                 {%- assign cp_w = img.preview_image.width  | default: img.width -%}
                 {%- assign cp_h = img.preview_image.height | default: img.height -%}
                 {
-                  "src_400":  {{ img | image_url: width: 400  | json }},
-                  "src_800":  {{ cp_src | json }},
-                  "src_1200": {{ img | image_url: width: 1200 | json }},
-                  "thumb":    {{ img | image_url: width: 160  | json }},
-                  "w":        {{ cp_w | json }},
-                  "h":        {{ cp_h | json }},
+                  "src_400":  {{ img | image_url: width: 400  | json | replace: '<', '\u003c' }},
+                  "src_800":  {{ cp_src | json | replace: '<', '\u003c' }},
+                  "src_1200": {{ img | image_url: width: 1200 | json | replace: '<', '\u003c' }},
+                  "thumb":    {{ img | image_url: width: 160  | json | replace: '<', '\u003c' }},
+                  "w":        {{ cp_w | json | replace: '<', '\u003c' }},
+                  "h":        {{ cp_h | json | replace: '<', '\u003c' }},
                   "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
                 }
                 {%- assign cp_has_any = true -%}
@@ -75,7 +78,7 @@
 <cp-variant-gallery
   {{ block.shopify_attributes }}
   class="cp-variant-gallery"
-  style="--cp-thumb-size: {{ block.settings.thumbnail_size }}px;"
+  style="--cp-thumb-size: {{ block.settings.thumbnail_size | default: 80 | plus: 0 }}px;"
   data-block-id="{{ block.id }}"
   data-current-variant="{{ current_variant.id }}"
   data-debug="{% if block.settings.debug_logs %}1{% endif %}"

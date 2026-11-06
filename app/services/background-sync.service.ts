@@ -2719,17 +2719,21 @@ export class BackgroundSyncService {
       readCookieBannerTranslations,
     } = await import("../utils/cookie-banner-availability.server");
 
-    // Resolve the access token via the encrypted session storage — the
-    // BackgroundSyncService constructor only receives `admin` (stable gateway),
-    // not the session, but the unstable endpoint needs the raw token.
-    const { sessionStorage } = await import("../shopify.server");
-    const sessions = await sessionStorage.findSessionsByShop(this.shop);
-    const session = sessions.find((s) => !!s.accessToken);
-    if (!session?.accessToken) {
-      logger.debug(`[BackgroundSync] No session token for ${this.shop} — skipping cookie_banner sync`);
+    // The unstable endpoint needs the raw token, and only the OFFLINE one: a
+    // background sync must not borrow a merchant's online (user) token, and
+    // with expiring offline tokens a token read from storage without the
+    // refresh step can already be dead. offline-admin.server.ts refreshes it.
+    const { getOfflineAccessToken } = await import("../utils/offline-admin.server");
+    let accessToken: string;
+    try {
+      accessToken = await getOfflineAccessToken(this.shop);
+    } catch (error) {
+      logger.debug(`[BackgroundSync] No offline session token for ${this.shop} — skipping cookie_banner sync`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return 0;
     }
-    const cbSession = { shop: this.shop, accessToken: session.accessToken };
+    const cbSession = { shop: this.shop, accessToken };
 
     if (onProgress) onProgress(5, 100, "Probing cookie-banner availability…");
     const availability = await getCookieBannerAvailability(cbSession);

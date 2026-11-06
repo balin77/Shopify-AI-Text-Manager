@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useFetcher } from "react-router";
+import { useBackgroundJson } from "./useBackgroundJson";
 import type { ContentImage, AltTextTranslation, ContentEditorConfig, TranslatableContentItem } from "../types/content-editor.types";
 
 interface UseEditorImageManagementProps {
@@ -28,7 +28,7 @@ export function useEditorImageManagement({
 }: UseEditorImageManagementProps): UseEditorImageManagementReturn {
   const [onDemandImages, setOnDemandImages] = useState<ContentImage[]>([]);
   const [isLoadingImages, setIsLoadingImages] = useState(false);
-  const imageFetcher = useFetcher<{ success: boolean; images: Array<{ url: string; altText?: string }>; error?: string }>();
+  const imageFetcher = useBackgroundJson<{ success: boolean; images: Array<{ url: string; altText?: string }>; error?: string }>();
   const loadedImagesForProductRef = useRef<string | null>(null);
   const prevSelectedItemIdRef = useRef<string | null>(null);
 
@@ -75,11 +75,18 @@ export function useEditorImageManagement({
       prevSelectedItemIdRef.current = selectedItemId;
     }
 
-    if (!selectedItemId || !baseSelectedItem) return;
+    if (!selectedItemId || !baseSelectedItem) {
+      setIsLoadingImages(false);
+      return;
+    }
 
-    // Skip if DB already has images
+    // Skip if DB already has images. A read still out for the PREVIOUS product
+    // is ignored when it lands (url guard below), so its spinner ends here.
     const hasDbImages = baseSelectedItem.images && baseSelectedItem.images.length > 0;
-    if (hasDbImages) return;
+    if (hasDbImages) {
+      setIsLoadingImages(false);
+      return;
+    }
 
     // Skip if already loaded for this product
     if (loadedImagesForProductRef.current === selectedItemId) return;
@@ -90,12 +97,23 @@ export function useEditorImageManagement({
 
   // Handle on-demand image fetcher response
   useEffect(() => {
-    if (imageFetcher.state === "idle" && imageFetcher.data && selectedItemId) {
+    // A failed read (rate limit, network) is settled like an error answer: no
+    // spinner, no retry storm, and never an error page.
+    if (imageFetcher.state === "idle" && (imageFetcher.data || imageFetcher.failed) && selectedItemId) {
+      // The snapshot must be the answer for THIS product. In the commit of a
+      // product switch this effect still sees the previous product's idle
+      // snapshot; taking it would show A's images (or A's failure) on B and
+      // switch B's spinner off.
+      if (imageFetcher.url !== `/api/product-images?productId=${encodeURIComponent(selectedItemId)}`) return;
       setIsLoadingImages(false);
 
       if (prevSelectedItemIdRef.current !== selectedItemId) return;
 
-      if (imageFetcher.data.success && imageFetcher.data.images) {
+      if (imageFetcher.failed || !imageFetcher.data) {
+        // Nothing to show for this product: never the previous one's images.
+        setOnDemandImages([]);
+        loadedImagesForProductRef.current = selectedItemId;
+      } else if (imageFetcher.data.success && imageFetcher.data.images) {
         const images: ContentImage[] = imageFetcher.data.images.map((img) => ({
           url: img.url,
           altText: img.altText,
@@ -107,7 +125,7 @@ export function useEditorImageManagement({
         loadedImagesForProductRef.current = selectedItemId;
       }
     }
-  }, [imageFetcher.state, imageFetcher.data, selectedItemId]);
+  }, [imageFetcher.state, imageFetcher.data, imageFetcher.failed, imageFetcher.url, selectedItemId]);
 
   return { selectedItem, onDemandImages, isLoadingImages, prevSelectedItemIdRef };
 }

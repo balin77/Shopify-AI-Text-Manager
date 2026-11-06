@@ -136,3 +136,75 @@ export function webpBatchStatus(converted, failed) {
   if (failed <= 0) return "completed";
   return converted > 0 ? "completed_with_errors" : "failed";
 }
+
+/**
+ * How long a work item may WAIT in the queue before the processor refuses to
+ * start it. A conversion deletes the merchant's original on Shopify and swaps
+ * in a new file, so it is only acceptable shortly after the merchant asked for
+ * it: an item that has been waiting for a day (the processor was not running —
+ * until 2026-10 it was not started in production at all — or the shop's queue
+ * was blocked) is no longer a request anybody is watching, and running it would
+ * change their images out of the blue.
+ *
+ * Measured against `createdAt`, never `updatedAt`: the processor heartbeats
+ * every waiting row on each poll, so `updatedAt` says nothing about age. A row
+ * the boot recovery reset after a crash keeps its `createdAt` too, which is the
+ * intent — the merchant's request is just as old.
+ */
+export const WEBP_QUEUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** The machine code an expired item is failed with (`taskErrorText` renders it). */
+export const WEBP_EXPIRED_IN_QUEUE_ERROR = "webp_expired_in_queue";
+
+/**
+ * Has this waiting work item been in the queue too long to be started? An
+ * unreadable `createdAt` is NOT expired — refusing on a value we cannot read
+ * would fail a fresh request; the stuck-task reaper still bounds that row.
+ */
+export function isWebpItemExpiredInQueue(createdAt, now = Date.now()) {
+  if (createdAt == null) return false;
+  const created = createdAt instanceof Date ? createdAt.getTime() : new Date(createdAt).getTime();
+  if (!Number.isFinite(created)) return false;
+  return now - created > WEBP_QUEUE_MAX_AGE_MS;
+}
+
+/**
+ * How often the processor stamps a work item it is converting (`updatedAt`),
+ * from the moment it picks the item up until its steps have really ended —
+ * independent of the progress boundaries, which can be a long way apart (a
+ * download alone is up to 4 attempts x 30s plus back-off, and a progress write
+ * is a step boundary, not a heartbeat).
+ */
+export const WEBP_ITEM_HEARTBEAT_MS = 15 * 1000;
+
+/**
+ * A `running` work item whose `updatedAt` is younger than this is being worked
+ * on by SOME process and the boot recovery must leave it alone.
+ *
+ * Why it exists: Railway deploys with zero downtime, so the NEW container boots
+ * (and runs `recoverRunningWebpTasks`) while the OLD one may still be converting
+ * an image. Resetting that row to `pending` makes the new worker convert,
+ * upload and delete the original a second time — duplicate or orphaned media on
+ * the merchant's product. The row says who is alive: a live worker stamps it
+ * every WEBP_ITEM_HEARTBEAT_MS.
+ *
+ * 90s = six heartbeats. Clearly above the interval so a slow database round
+ * trip or two missed beats never make a live conversion look dead, and still far
+ * below the 10-minute stuck-task reaper, so a really dead worker is recovered
+ * (with the <70 retry) rather than failed. Rows that are fresh only because the
+ * old container died a moment ago are picked up by the stuck-task monitor's periodic recovery (every tick).
+ * Rows THIS process still has in flight are never recovered, however silent.
+ */
+export const WEBP_RUNNING_STALE_MS = 90 * 1000;
+
+/**
+ * The heartbeat of ONE work item stops after this long, whatever its steps are
+ * doing. The longest honest conversion is about 59 minutes (step 8 makes one
+ * 30s-bounded Shopify call per affected variant, at most 100 of them = 50 min,
+ * about 6 min of download, convert and upload before it and about 2.5 min of
+ * Shopify calls after), so 75 minutes leaves a margin and still ends: a step
+ * that is WEDGED (a promise that never settles) must eventually look silent, or
+ * the stuck-task reaper could never close the row and it would hold one of the
+ * shop's concurrency slots until the process restarts.
+ */
+export const WEBP_HEARTBEAT_MAX_MS = 75 * 60 * 1000;

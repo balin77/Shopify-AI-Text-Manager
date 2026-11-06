@@ -7,6 +7,7 @@ import { AIQueueService, MAX_RATE_LIMIT_RETRIES, rateLimitBucket } from './ai-qu
 // (the breaker, the ceiling) stays behind a dynamic import like db.server.
 import { classifyFailover, statusOf } from '../../app/services/ai/managed-failover.shared';
 import { sanitizePromptInput, isValidFieldType } from '../../app/utils/prompt-sanitizer';
+import { scrubProviderErrorText } from '../../app/utils/provider-error-scrub';
 import type { GlossaryRule } from './glossary.service';
 import { loggers } from '../../app/utils/logger.server';
 import { notifyOps } from '../../app/services/ops-alert.server';
@@ -294,9 +295,32 @@ export class MissingAIKeyError extends Error {
 export class InvalidAIKeyError extends Error {
   readonly code = 'INVALID_AI_KEY' as const;
   constructor(message: string) {
-    super(message);
+    // Scrubbed HERE: the provider's text can quote the key, and this error is
+    // logged and written to Task.error by several handlers, not only /api/ai.
+    super(scrubProviderErrorText(message));
     this.name = 'InvalidAIKeyError';
   }
+}
+
+/**
+ * True only for the error THIS service throws after a provider rejected the
+ * key ({@link InvalidAIKeyError}) — the marker, not the heuristic. Every
+ * provider call goes through `askAI`, which normalises a provider auth failure
+ * into that class, so a caller that must not mislabel an unrelated failure (a
+ * Shopify "401 Unauthorized", any message containing "unauthorized") as a bad
+ * AI key asks this instead of {@link isAuthError}. Recognised by `code` as well
+ * as `instanceof`, because the class crosses dynamic-import boundaries.
+ */
+export function isProviderKeyRejection(error: unknown): error is InvalidAIKeyError {
+  if (error instanceof InvalidAIKeyError) return true;
+  return (error as { code?: string } | null)?.code === 'INVALID_AI_KEY';
+}
+
+/** {@link MissingAIKeyError} by class or by its `code` (same reason as above). */
+export function isMissingAIKey(error: unknown): error is MissingAIKeyError {
+  if (error instanceof MissingAIKeyError) return true;
+  const e = error as { code?: string; provider?: unknown } | null;
+  return e?.code === 'NO_AI_KEY' && typeof e.provider === 'string';
 }
 
 /**
@@ -1598,9 +1622,14 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
 
     // Every chunk failed → throw, so the caller's own fallback runs instead of
     // being handed a map of empty strings that looks like "the AI translated
-    // nothing on purpose". An auth error is the first one, which is what makes a
-    // rejected API key abort the run rather than emptying it.
-    if (succeeded === 0 && errors.length > 0) throw errors[0];
+    // nothing on purpose". A rejected API key is thrown in preference to
+    // whichever chunk happened to fail first (the workers run concurrently, so
+    // "first" is not an order anybody chose): callers abort their loops on
+    // `isProviderKeyRejection`, and a parse failure thrown ahead of it would
+    // send them into a fallback that 401s for every remaining locale.
+    if (succeeded === 0 && errors.length > 0) {
+      throw errors.find((e) => isProviderKeyRejection(e)) ?? errors[0];
+    }
 
     return result;
   }
@@ -1679,7 +1708,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           // failure: swallowed here, its locale would come back as "not
           // translated", which the repair path answers with a deletion
           // (§6a rule 1) — over a budget that ran out, not a bad answer.
-          if (isAuthError(localeError) || isManagedRefusal(localeError)) throw localeError;
+          if (isProviderKeyRejection(localeError) || isManagedRefusal(localeError)) throw localeError;
           loggers.ai('error', '[AI-SERVICE] Per-locale value retry failed', { locale });
         }
       }
@@ -2511,9 +2540,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     const refusal = errors.find((e) => isManagedRefusal(e));
     if (refusal) throw refusal;
 
-    // Every chunk failed → throw so the caller can fall back to sequential.
+    // Every chunk failed → throw so the caller can fall back to sequential —
+    // a rejected API key in preference to any other chunk error, so the caller
+    // aborts instead (same rule as `translateBatchValuesToLocales`).
     if (succeeded === 0 && errors.length > 0) {
-      throw errors[0];
+      throw errors.find((e) => isProviderKeyRejection(e)) ?? errors[0];
     }
 
     return merged;
@@ -2603,7 +2634,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     } catch (error) {
       // Normalise provider auth failures (invalid/expired key) into a single
       // typed error and trip the breaker. Callers that loop over locales must
-      // re-throw this rather than swallowing it (see isAuthError usages), so an
+      // re-throw this rather than swallowing it (see isProviderKeyRejection usages), so an
       // invalid key always surfaces instead of silently producing no output.
       // A bare 403 on the OPERATOR's key counts too. `isAuthError` leaves a
       // bare 403 out on purpose — providers also use it for quota and policy

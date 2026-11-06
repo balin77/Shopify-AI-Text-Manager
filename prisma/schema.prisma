@@ -2443,3 +2443,43 @@ model MediaLibrarySyncState {
   truncated    Boolean  @default(false)
   updatedAt    DateTime @updatedAt
 }
+
+// Durable bookkeeping of the migration of a shop's NON-expiring offline token to
+// an expiring one (offline-admin.server.ts, maybeMigrateToExpiringToken).
+//
+// Shopify revokes the old token the moment the exchange succeeds. Since
+// 2026-09-29 a repeat of the SAME exchange with the SAME old token returns the
+// SAME pair for 7 days — but only if we still HAVE that old token. A failed
+// store, a crash after the exchange, or the library overwriting the stored
+// session with `accessToken: undefined` after a 401 on the revoked token all
+// destroy it. So the old token is written here, ENCRYPTED (AES-256-GCM, the
+// session-token helper), BEFORE the exchange, and erased as soon as the pair
+// is stored. `encryptedOldToken` is therefore a credential while it is set:
+// removed on app/uninstalled and in redactShopData.
+//
+// status: pending | needs_reauth | failed   (a finished migration DELETES the row)
+//   pending      exchange not (successfully) finished yet
+//   failed       the prompt retries ran out; retried with a persisted
+//                exponential backoff, terminal at attempts >= 40
+//   needs_reauth Shopify refused the stored token permanently
+//                (invalid_subject_token): no automatic retry, the merchant must
+//                open the app (token exchange) or reinstall.
+//                invalid_requested_token_type is NOT recorded per shop: it is a
+//                request/config problem and pauses all migrations in-process.
+//
+// tokenFingerprint: first 16 hex chars of SHA-256 of the old token (never the
+// token). It survives the erase of encryptedOldToken (needs_reauth) so a row can
+// tell that the shop now holds a DIFFERENT token (re-issued while the switches
+// were off) and is stale — see runMigration / the sweep.
+model OfflineTokenMigration {
+  id                String    @id @default(cuid())
+  shop              String    @unique
+  encryptedOldToken String?
+  tokenFingerprint  String?
+  status            String    @default("pending")
+  attempts          Int       @default(0)
+  lastError         String? // never a token; a status line / Shopify error code
+  startedAt         DateTime  @default(now())
+  completedAt       DateTime?
+  updatedAt         DateTime  @updatedAt
+}

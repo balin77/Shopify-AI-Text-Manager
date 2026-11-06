@@ -41,6 +41,7 @@ import { findInvalidLocaleOrMarket } from "~/services/bulk-editor/translations.s
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { DataResponse } from "~/types/data-response";
+import { backgroundAdmin } from "~/utils/offline-admin.server";
 
 export async function handleSeoBulkMeta(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, formData, settings } = ctx;
@@ -147,7 +148,7 @@ export async function handleSeoBulkMeta(ctx: AIActionContext): Promise<DataRespo
   // Fire-and-forget: survives navigation, same pattern as runSeoBulkFix /
   // runBulkAltTextGeneration. Progress/results persist to Task after every
   // row (heartbeat), so a crash only loses the in-flight row.
-  void runSeoBulkMeta(task.id, { db, shop: session.shop, admin, diff, columnsByType }).catch((err: unknown) => {
+  void runSeoBulkMeta(task.id, { db, shop: session.shop, admin: backgroundAdmin(session.shop, admin), diff, columnsByType }).catch((err: unknown) => {
     logger.error("[API-AI] Bulk-editor save crashed", {
       context: "AI",
       taskId: task.id,

@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   buildLocaleDeletedKey,
+  buildStageMark,
+  dropStageMarksOfLayer,
+  layerMarkOfStage,
   dropLocaleMarks,
   dropMarksAfterSave,
   isMarkedDeleted,
@@ -29,6 +32,54 @@ describe("deleted marks", () => {
     const marks = new Set(["title##it", "body_html##it", "title##fr"]);
     dropLocaleMarks(marks, "it", "", new Set(["body_html##it"]));
     expect([...marks].sort()).toEqual(["body_html##it", "title##fr"]);
+  });
+});
+
+describe("stage marks (a translated locale exempted from a layer mark)", () => {
+  it("exempt ONLY their locale from the layer mark; a locale mark of it still applies", () => {
+    const marks = new Set(["title", buildStageMark("title", "", "fr")]);
+    expect(isMarkedDeleted(marks, "title", "", "fr")).toBe(false);
+    expect(isMarkedDeleted(marks, "title", "", "es")).toBe(true);
+    marks.add(buildLocaleDeletedKey("title", "", "fr"));
+    expect(isMarkedDeleted(marks, "title", "", "fr")).toBe(true);
+  });
+
+  it("are per market and per key", () => {
+    const marks = new Set(["title@@m1", buildStageMark("title", "m1", "fr")]);
+    expect(isMarkedDeleted(marks, "title", "m1", "fr")).toBe(false);
+    expect(isMarkedDeleted(marks, "title", "m1", "es")).toBe(true);
+    expect(isMarkedDeleted(new Set(["body_html", buildStageMark("title", "", "fr")]), "body_html", "", "fr")).toBe(true);
+  });
+
+  it("go with the layer marks on any save, and survive a locale/market/discard drop", () => {
+    const stage = buildStageMark("title", "", "fr");
+    const marks = new Set(["title", stage]);
+    dropLocaleMarks(marks, "fr", "", null);
+    expect(marks.has(stage)).toBe(true);
+    dropMarksAfterSave(marks, { locale: "fr", marketId: "" });
+    expect([...marks]).toEqual([]);
+    const again = new Set(["title", stage]);
+    dropMarksAfterSave(again, null);
+    expect([...again]).toEqual([]);
+  });
+});
+
+describe("stage marks follow their layer mark", () => {
+  it("layerMarkOfStage reads the layer back (with and without a market)", () => {
+    expect(layerMarkOfStage(buildStageMark("title", "", "fr"))).toBe("title");
+    expect(layerMarkOfStage(buildStageMark("title", "gid://shopify/Market/1", "fr"))).toBe("title@@gid://shopify/Market/1");
+  });
+
+  it("dropStageMarksOfLayer removes only the stage marks of that key and market", () => {
+    const marks = new Set([
+      buildStageMark("title", "", "fr"),
+      buildStageMark("title", "", "es"),
+      buildStageMark("title", "m1", "fr"),
+      buildStageMark("body_html", "", "fr"),
+      "title",
+    ]);
+    dropStageMarksOfLayer(marks, "title", "");
+    expect([...marks].sort()).toEqual([buildStageMark("body_html", "", "fr"), buildStageMark("title", "m1", "fr"), "title"].sort());
   });
 });
 

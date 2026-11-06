@@ -64,6 +64,7 @@ export const guideDe: GuideCopy = {
       ],
       tips: [
         "Wie viele Produkte, Sprachen und Inhaltstypen Sie bearbeiten können, hängt von Ihrem Plan ab. Die aktuelle Nutzung sehen Sie unter Einstellungen → Plan.",
+        "Meldet die App, dass sie kurz ausgelastet ist, macht sie von selbst weiter. Teilt sie mit, dass etwas nicht ausgeführt werden konnte, warten Sie eine Minute, prüfen Sie Ihre letzte Änderung und wiederholen Sie den Schritt.",
       ],
     },
 
@@ -76,6 +77,7 @@ export const guideDe: GuideCopy = {
           heading: "Ihr eigener Schlüssel",
           paragraphs: [
             "ContentPilot AI schreibt mit dem KI-Anbieter, den Sie verbinden: Anthropic (Claude), OpenAI, Google Gemini, DeepSeek, Grok oder HuggingFace. Sie hinterlegen dafür Ihren eigenen API-Schlüssel — die Kosten und die Wahl des Modells bleiben damit bei Ihnen.",
+            "Ein gespeicherter Schlüssel wird aus Sicherheitsgründen nie wieder angezeigt: Das Feld bleibt leer und zeigt nur „Gespeichert“ mit den letzten vier Zeichen, damit Sie den Schlüssel wiedererkennen. Lassen Sie das Feld leer, bleibt der Schlüssel erhalten; tippen Sie einen neuen ein, ersetzt er den alten. Zum Löschen klicken Sie „Schlüssel entfernen“ und speichern.",
           ],
           steps: [
             "Bei einem Anbieter ein Konto anlegen und einen API-Schlüssel erzeugen.",
@@ -254,11 +256,13 @@ export const guideDe: GuideCopy = {
           heading: "Vorschlag annehmen",
           paragraphs: [
             "Das Ergebnis erscheint zuerst als Vorschlag über dem Feld. „Übernehmen“ setzt ihn ins Feld und speichert genau dieses eine Feld sofort — andere Felder, in denen Sie noch ungespeicherte Änderungen haben, bleiben davon unberührt. „Ablehnen“ lässt alles, wie es war. Mit „Übernehmen & übersetzen“ wird der akzeptierte Text gespeichert und gleich in alle Sprachen übertragen.",
+            "In einer Fremdsprache startet die Übersetzung in die anderen Sprachen erst, wenn Shopify das Speichern des angenommenen Textes bestätigt hat. Wird das Speichern abgelehnt oder nicht bestätigt, wird nichts übersetzt, und eine Meldung sagt es.",
           ],
         },
       ],
       tips: [
         "SEO-Titel und Meta-Beschreibung haben eigene Längenvorgaben. Die KI hält sich daran, und der Zeichenzähler unter dem Feld zeigt, wie Google den Text abschneiden würde.",
+        "Ändern Sie nur den SEO-Titel oder nur die Meta-Beschreibung und kann die App die jeweils andere in diesem Moment nicht aus Shopify lesen, wird nichts gespeichert: Der Text bleibt im Feld stehen, und die App bittet Sie, es erneut zu versuchen. Im Bulk-Editor und bei der KI-Korrektur für mehrere Einträge wird dann nur dieser eine Eintrag bzw. diese eine Zelle nicht gespeichert.",
       ],
     },
 
@@ -559,6 +563,13 @@ export const guideDe: GuideCopy = {
             "Texte übersetzen, einzeln oder per KI, und speichern.",
           ],
         },
+        {
+          heading: "Texte per Klick erfassen",
+          paragraphs: [
+            "Statt Texte abzutippen, können Sie sie im Theme-Editor anklicken. Klicken Sie dazu unter Inhalte → Direktübersetzungen auf „Erfassungsmodus öffnen“. Der Theme-Editor öffnet sich, und ein Klick auf einen Text in der Vorschau übernimmt ihn in die Liste — auf Wunsch gleich in alle Sprachen übersetzt.",
+            "Der Erfassungsmodus gilt 2 Stunden und endet, wenn Sie den Theme-Editor schließen; danach öffnen Sie ihn in der App erneut. Fragt das Erfassungsfenster im Theme-Editor nach einem Code, kopieren Sie ihn in der App mit „Erfassungscode anzeigen“ und fügen Sie ihn dort ein — das funktioniert immer, auch wenn sich der Erfassungsmodus beim Öffnen nicht von selbst einschaltet. Geben Sie diesen Code nicht weiter. Besucher Ihres Shops sehen vom Erfassungsmodus nichts.",
+          ],
+        },
       ],
       tips: [
         "Anders als sonst werden hier auch Texte in der Hauptsprache angeboten: Ein Text einer anderen App kann in einer beliebigen Sprache vorliegen.",
@@ -688,6 +699,7 @@ export const guideDe: GuideCopy = {
           heading: "Was dabei passiert",
           paragraphs: [
             "Es werden ausschliesslich leere Übersetzungen gefüllt; eine bestehende Übersetzung wird nie überschrieben. Die App prüft vor dem Schreiben erneut, was wirklich fehlt. Übersetzte Handles sind optional und werden in eine gültige URL-Form gebracht.",
+            "Wird die App während des Laufs neu gestartet (zum Beispiel bei einem Update), wird der Lauf nach kurzer Zeit als unterbrochen markiert; im Reiter „Aufgaben“ steht dann eine Warnung, und solange Sie die Seite offen haben, sehen Sie sie auch dort. Was dabei noch nicht gespeichert war, wurde nicht geschrieben; starten Sie „Fehlende Übersetzungen ergänzen“ einfach erneut, es werden nur noch fehlende Übersetzungen gefüllt.",
           ],
         },
       ],
@@ -707,7 +719,18 @@ export const guideDe: GuideCopy = {
         {
           heading: "Galerien zusammenstellen",
           paragraphs: [
-            "Oben liegt die Produktgalerie, darunter eine Galerie pro Variante. Bilder ziehen Sie aus der Produktgalerie oder Ihrer Shopify-Dateibibliothek in eine Variante, sortieren sie per Ziehen und kopieren oder verschieben sie zwischen Varianten. Auch Videos, YouTube-/Vimeo-Links und 3D-Modelle sind möglich.",
+            "Auf der Produktseite sehen Sie zunächst nur eine Vorschau Ihrer Produktbilder. Ein Klick auf „Alle anzeigen“ (oder auf die Bilder) öffnet den gesamten Image Variant Manager: Er nimmt den ganzen Bearbeitungsbereich ein, alle anderen Felder sind dabei ausgeblendet, und Sie scrollen die Seite ganz normal. Mit „Zurück zum Produkt“ kehren Sie an die Stelle zurück, an der Sie waren; Ihre getippten Texte, ungespeicherte Bildänderungen und laufende Speichervorgänge bleiben dabei erhalten — Schließen ist kein Verwerfen. Die Produktliste, die Sprach- und Marktauswahl und die Speichern-Leiste bleiben sichtbar, und beim Wechsel zu einem anderen Produkt bleibt die Bildverwaltung geöffnet. Im Manager liegt die Produktgalerie oben, darunter eine Galerie pro Variante. Ein Klick auf die Überschrift der Produktgalerie klappt sie zu — wie bei den Variantengalerien —, damit Sie die Varianten ohne langes Scrollen erreichen; sie bleibt nach dem Speichern zugeklappt, ist beim nächsten Produkt wieder offen, und eine darin getroffene Auswahl bleibt erhalten — solange die Galerie zugeklappt ist, klappt „Löschen“ sie aber zuerst auf, damit Sie sehen, was gelöscht wird, und die Auswahl zählt nicht für die Massen-Alt-Text-Aktionen und die WebP-Umwandlung (der erste Klick auf diese Schaltfläche klappt die Galerie nur auf). Bilder ziehen Sie aus der Produktgalerie oder Ihrer Shopify-Dateibibliothek in eine Variante, sortieren sie per Ziehen und kopieren oder verschieben sie zwischen Varianten. Auch Videos, YouTube-/Vimeo-Links und 3D-Modelle sind möglich. Sobald Sie ein Bild auswählen — in der Produktgalerie oder in einer Variantengalerie —, bleibt beim Scrollen eine Leiste am unteren Bildschirmrand stehen: Sie zeigt den Alt-Text des ausgewählten Bildes (mit den KI-Schaltflächen) und die Aktionen für die Auswahl (Kopieren, Verschieben, Löschen, Aus der Variante entfernen, Auswahl aufheben), sodass Sie nie bis ans Ende einer langen Galerie scrollen müssen. Bei mehreren ausgewählten Bildern zeigt sie nur die Aktionen; auf dem Handy erscheinen die Aktionen als kleine Symbole.",
+            "Klickt man sehr schnell durch mehrere Produkte, kann es sein, dass die Varianten eines Produkts kurz nicht geladen werden. Die App versucht es dann von selbst noch einige Male, und ein Hinweis bietet „Erneut versuchen“ an; Sie müssen das Produkt nicht verlassen. Solange die Varianten fehlen, speichert oder löscht die App nichts für sie: Ein Speichern mit zugewiesenen Bulk-Bildern und das Löschen von Produktbildern werden mit einer Meldung abgelehnt, statt etwas Falsches zu schreiben. Dasselbe gilt, solange die Varianten nach dem Speichern neu gelesen werden: Die Variantengalerien lassen sich dann kurz nicht ändern, und Ziehen, Ablegen oder Hinzufügen in sie wird mit einer Meldung abgelehnt.",
+            "Nach dem Speichern bleiben geöffnete Variantengalerien geöffnet, und die Ansicht („Alle“ oder „Nicht zugewiesen“) sowie Ihre Auswahl bleiben, wie sie waren; die Bilder werden im Hintergrund neu geladen. Erst beim Wechsel zu einem anderen Produkt beginnt die Ansicht neu.",
+            "Hat die Ziel-Variante ein Bild schon (in ihrer Galerie oder als Hauptbild), lehnt die App das Verschieben oder Kopieren ab, nennt in der Info-Box die Variante und ändert nichts — das Bild bleibt, wo es war. Das gilt auch für dieselbe Datei, die unter zwei Namen vorliegt, sofern die App sie als gleiche Datei erkennen kann. Bei der Auswahl aus der Bibliothek für eine Variante gilt dasselbe: Ein Bild, das die Variante schon hat, wird nicht hinzugefügt und im Hinweis genannt, alles andere, das Sie ausgewählt haben, wird hinzugefügt.",
+          ],
+        },
+        {
+          heading: "Das Hauptbild",
+          paragraphs: [
+            "Das erste Bild jeder Variante ist ihr Hauptbild, mit goldenem Rand markiert. Um ein anderes Bild zum Hauptbild zu machen, ziehen Sie es an die erste Stelle der eigenen Galerie dieser Variante; das bisherige Hauptbild rückt an die zweite Stelle und bleibt in der Galerie. Ziehen Sie das Hauptbild von der ersten Stelle weg, übernimmt das nächste Bild. Die Produktgalerie umzusortieren, Bilder hinzuzufügen oder zu kopieren ändert das Hauptbild einer Variante nie.",
+            "Nur ein Bild kann Hauptbild sein: Ein Video, ein YouTube/Vimeo-Link, ein 3D-Modell oder ein noch nicht gespeichertes Bild an die erste Stelle zu ziehen, wird mit einer Meldung abgelehnt, und das einzige Bild einer Variante lässt sich nicht von der ersten Stelle wegziehen. Löschen Sie das Hauptbild oder schieben Sie es in die Produktgalerie, rückt das nächste Bild der eigenen Galerie dieser Variante automatisch an seine Stelle; nur eine Variante ohne weiteres eigenes Bild bleibt ohne Hauptbild. Sobald Sie die Galerie einer Variante ganz ohne Bild ändern, wird ihr erstes eigenes Bild als Hauptbild gezeigt, und beim Speichern wird es zum Hauptbild. Ein Bild aus Ihrer Dateibibliothek wird dem Produkt hinzugefügt, wenn es zum Hauptbild wird. Bleibt bei einer Variante mit Hauptbild kein weiteres Galeriebild übrig (etwa weil Sie das letzte entfernt oder das Hauptbild gelöscht haben und nur ein Bild nachrückt), zeigt Ihr Shop bei dieser Variante nur noch ihr Hauptbild und nicht mehr alle Produktbilder. Das gilt nur für Produkte mit mehr als einer Variante und sobald Variant-Galerie (App-Embed) in Ihrem Theme aktiviert ist; bei einem Produkt mit nur einer Variante zeigt der Shop weiterhin alle Produktbilder.",
+            "Um ein Bild aus einer Variante in die Produktgalerie zu verschieben, halten Sie Strg (Mac: Cmd) gedrückt und legen es auf einer Bildkachel der Produktgalerie ab; ohne Strg passiert nichts. Ziehen Sie das Hauptbild einer Variante auf eine andere Variante, wird es verschoben: Es erscheint an der Stelle, auf die Sie es ablegen, und bei der ersten Variante wird ihr erstes eigenes Bild zum Hauptbild (hat sie kein weiteres Bild, bleibt sie ohne Hauptbild). Legen Sie es auf die erste Stelle der anderen Variante, wird es dort zum Hauptbild und das bisherige Hauptbild rückt in deren Galerie. Beide Varianten werden dabei gemeinsam gespeichert oder gar nicht: Hat sich eine der beiden inzwischen anderswo geändert, bleibt das Bild bei beiden unverändert. Halten Sie Strg (Mac: Cmd) gedrückt, wird das Hauptbild stattdessen kopiert und bleibt auch bei der ersten Variante Hauptbild. Hat die Ziel-Variante selbst noch eine ungespeicherte Hauptbild-Änderung, oder ist eine der beiden schon an einer anderen anstehenden Verschiebung beteiligt, speichern Sie zuerst. Solange eine Verschiebung noch nicht gespeichert ist, lassen sich das Hauptbild dieser beiden Varianten und das verschobene Bild nicht anderweitig ändern oder entfernen: Speichern Sie zuerst. Ziehen Sie das verschobene Bild vor dem Speichern zurück auf die erste Variante, nehmen Sie die Verschiebung damit zurück.",
           ],
         },
         {
@@ -794,6 +817,7 @@ export const guideDe: GuideCopy = {
           heading: "So geht's",
           paragraphs: [
             "Im Image Variant Manager wählen Sie Bilder aus und starten die Umwandlung. Sie läuft im Hintergrund; das umgewandelte Bild ersetzt das Original an allen Stellen, an denen es verwendet wird, inklusive Varianten-Zuordnung und Alt-Text.",
+            "Pro Bild dauert die Umwandlung meist einige Sekunden; Sie können währenddessen weiterarbeiten. Wartet eine Umwandlung nach 24 Stunden noch immer auf ihren Start, wird sie abgebrochen, das Original bleibt unverändert und das Bild wird Ihrem Kontingent wieder gutgeschrieben.",
           ],
         },
       ],
@@ -958,7 +982,7 @@ export const guideDe: GuideCopy = {
         {
           heading: "Wie es funktioniert",
           paragraphs: [
-            "Die App durchsucht Blog-Artikel, Seiten und Produktbeschreibungen nach Erwähnungen Ihrer Produkte und Kollektionen, die noch kein Link sind. Jeder Fund erscheint als Vorschlag mit dem Textausschnitt.",
+            "Die App durchsucht Blog-Artikel, Seiten und Produktbeschreibungen nach Erwähnungen Ihrer Produkte und Kollektionen, die noch kein Link sind. Jeder Fund erscheint als Vorschlag mit dem Textausschnitt. Nach jedem Scan steht oben, wie viele Vorschläge neu dazugekommen sind — oder, wenn keiner gefunden wurde oder der Scan fehlgeschlagen ist, warum.",
           ],
         },
         {
@@ -1103,6 +1127,15 @@ export const guideDe: GuideCopy = {
           heading: "Optionen übersetzen",
           paragraphs: [
             "Unter jeder Option im Varianten-Bereich — auch im zugeklappten Zustand — übersetzt „Übersetzen“ den Optionsnamen und seine Werte in alle Sprachen; „In alle Sprachen übertragen“ übernimmt sie unverändert. Bei einer geöffneten Option stehen die beiden Buttons zwischen „Löschen“ und „Fertig“. Ist eine Option blau unterlegt, fehlt ihr in mindestens einer Sprache noch eine Übersetzung. Haben Sie eine Option geändert, speichern Sie zuerst: Bis die Änderung gespeichert ist, bleiben die Buttons gesperrt, damit nicht der alte Text übersetzt wird.",
+            "Ist eine Eingabe bei den Optionen oder Metafeldern ungültig (leerer Optionsname oder -wert, leere Zeile, ungültiges Metafeld), erscheint eine rote Meldung und beim Speichern wird nichts gespeichert, auch nicht Bilder, Alt-Texte oder Texte. Korrigieren oder verwerfen Sie zuerst die markierte Eingabe und speichern Sie dann erneut.",
+            "Wurde das Ergebnis einer Speicherung nicht bestätigt und eine Option ist nach dem Neuladen nicht mehr da, nennt eine Warnung die neuen Werte, die dazu eingegeben waren und nicht behalten werden konnten. Geben Sie sie dann erneut ein.",
+          ],
+        },
+        {
+          heading: "Metafelder",
+          paragraphs: [
+            "Im Bereich „Metafelder“ bearbeiten Sie in der Hauptsprache die Werte der Metafelder, die Sie unter Einstellungen → Metafields aktiviert haben. Ein Listenfeld zeigt einen Eintrag pro Zeile; leere Zeilen werden ignoriert. Passt ein Eintrag nicht zum Typ der Liste, markiert die App die Zeile am Feld, und es wird nichts gespeichert, bis Sie sie korrigieren.",
+            "Leeren Sie ein Metafeld und speichern, entfernt Shopify den Wert samt seinen Übersetzungen. Das Feld bleibt trotzdem im Editor stehen, bis Sie Ihre Produkte das nächste Mal vollständig synchronisieren: Geben Sie bis dahin einen neuen Wert ein und speichern, wird das Metafeld wieder angelegt. Hat inzwischen jemand anderes — etwa im Shopify-Admin oder eine andere App — dort einen Wert gesetzt, überschreibt die App ihn nicht: Sie werden informiert, und das Feld zeigt danach den aktuellen Wert. Mit 🌍 neben einem Metafeld übersetzen Sie seinen gespeicherten Wert in alle Sprachen; solange Sie das Feld geändert und noch nicht gespeichert haben — und kurz nach dem Speichern, bis die Seite den gespeicherten Wert neu geladen hat —, ist der Knopf gesperrt. Mehrzeilige Felder, Listen und Rich-Text übersetzt die App nicht automatisch, weil Zeilenumbrüche oder die Liste verloren gingen; dort geben Sie die Übersetzung von Hand ein. Kann die App beim Wiederanlegen eines geleerten Metafelds nicht prüfen, ob Shopify schon einen Wert hat, speichert sie nichts und lässt Ihren Wert im Feld — speichern Sie dann einfach noch einmal. Lehnt Shopify einen Wert ab — etwa weil er nicht zum Feldtyp passt oder zu lang ist —, bleibt Ihr Text im Feld stehen, die App nennt Shopifys Begründung, und für dieses Feld wird nichts gespeichert: Passen Sie den Wert an und speichern Sie erneut, oder verwerfen Sie die Änderung. Weil Shopify Metafelder gemeinsam entgegennimmt, können andere Metafelder, die Sie im selben Zug gespeichert haben, zurückgesetzt worden sein, und andere Teile des Speicherns können trotzdem durchgegangen sein — prüfen Sie das nach. Erlaubt Shopify der App das Schreiben dieses Metafelds nicht, bleibt der Wert ebenfalls im Feld; verwerfen Sie dann die Änderung. Haben Sie die Optionen oder Metafelder eines Produkts gespeichert, können Sie sofort zu einem anderen Produkt wechseln und dort weiterarbeiten: Das Speichern läuft im Hintergrund weiter, auch wenn Sie in der App zu einer anderen Seite wechseln. Schließen oder aktualisieren Sie den Browser-Tab erst, wenn die Meldung erschienen ist — der Browser warnt Sie davor —, und warten Sie auch mit dem Verlassen der App über das Shopify-Menü, bis Sie wissen, dass das Speichern abgeschlossen ist. Sobald das Speichern fertig ist, meldet die App mit dem Namen des Produkts, ob es gespeichert wurde. Wurde etwas nicht gespeichert, müssen Sie den eingegebenen Text erneut eingeben; er wird nicht für Sie aufbewahrt, sobald Sie das Produkt verlassen haben. Ein Feld nur aus Leerzeichen wird nicht gespeichert — leeren Sie es ganz, um den Wert zu entfernen.",
           ],
         },
         {

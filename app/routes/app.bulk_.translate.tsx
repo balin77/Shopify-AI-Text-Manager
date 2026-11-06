@@ -39,7 +39,7 @@ import { PlanAccessGate } from "../components/PlanAccessGate";
 import { meetsPlan } from "../utils/planUtils";
 import { type Plan } from "../config/plans";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
-import { taskErrorText } from "../utils/task-error-text";
+import { isInterruptedTaskError, taskErrorText } from "../utils/task-error-text";
 import { bulkColumnHeading } from "../services/bulk-editor/labels.shared";
 import {
   BULK_FILTER_IDS,
@@ -76,6 +76,7 @@ import {
 } from "../services/bulk-editor/missing-translations.server";
 import { LocaleToggleBar } from "../components/bulk-editor/LocaleToggleBar";
 import { MissingTranslationList } from "../components/bulk-editor/MissingTranslationList";
+import { appFetch } from "../utils/app-fetch";
 
 interface TranslateLoaderData {
   gated: boolean;
@@ -262,7 +263,7 @@ type ResultBanner =
   | { kind: "running" }
   | { kind: "done"; saved: number; failed: number; skippedHandles: number; overCap: number }
   | { kind: "none" }
-  | { kind: "failed"; message?: string };
+  | { kind: "failed"; message?: string; interrupted?: boolean };
 
 export default function BulkTranslateMissingPage() {
   const data = useLoaderData<typeof loader>() as TranslateLoaderData;
@@ -392,7 +393,7 @@ export default function BulkTranslateMissingPage() {
     let cancelled = false;
     const timer = setInterval(async () => {
       try {
-        const res = await fetch(`/api/task-result?taskId=${encodeURIComponent(taskId)}`, {
+        const res = await appFetch(`/api/task-result?taskId=${encodeURIComponent(taskId)}`, {
           headers: { Accept: "application/json" },
         });
         if (!res.ok || cancelled) return;
@@ -408,7 +409,13 @@ export default function BulkTranslateMissingPage() {
           // writes (task-error-text.ts) — rendering it raw is how a merchant
           // reads `rows_failed:3`. A genuine provider message still passes
           // through verbatim.
-          setBanner({ kind: "failed", message: taskErrorText(task.error, t) ?? undefined });
+          setBanner({
+            kind: "failed",
+            message: taskErrorText(task.error, t) ?? undefined,
+            // An app restart under the run is a warning, not an error of the
+            // merchant's: the run can simply be started again.
+            interrupted: isInterruptedTaskError(task.error),
+          });
           return;
         }
         let parsed: TranslateTaskResult | null = null;
@@ -470,7 +477,7 @@ export default function BulkTranslateMissingPage() {
             {banner?.kind === "running" && <Banner tone="info">{tm.running}</Banner>}
             {banner?.kind === "none" && <Banner tone="info">{tm.noneMissing}</Banner>}
             {banner?.kind === "failed" && (
-              <Banner tone="critical">{banner.message || tm.failed}</Banner>
+              <Banner tone={banner.interrupted ? "warning" : "critical"}>{banner.message || tm.failed}</Banner>
             )}
             {banner?.kind === "done" && (
               <Banner tone={banner.failed > 0 ? "warning" : "success"}>

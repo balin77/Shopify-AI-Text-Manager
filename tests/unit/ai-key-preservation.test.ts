@@ -115,6 +115,19 @@ describe('the managed mode cannot be granted by a form', () => {
   });
 });
 
+describe('the key plaintext never travels to the browser', () => {
+  it('the loader payload carries a status map, never decrypted key values', () => {
+    expect(settingsRoute).not.toMatch(/\.\.\.decryptedKeys/);
+    expect(settingsRoute).not.toMatch(/decryptedKeys\[/);
+    const payload = settingsRoute.slice(settingsRoute.indexOf('      settings: {\n'));
+    const settingsBlock = payload.slice(0, payload.indexOf('selectedModel:'));
+    expect(settingsBlock).toContain('apiKeyStatus');
+    for (const column of KEY_COLUMNS) {
+      expect(settingsBlock, `loader payload names ${column}`).not.toContain(`${column}`);
+    }
+  });
+});
+
 describe('the key plaintext stops travelling under a plan with AI', () => {
   it('the loader withholds the keys exactly when a VERIFIED AI plan is served', () => {
     // It used to decrypt unconditionally and ship six credentials to the
@@ -124,7 +137,11 @@ describe('the key plaintext stops travelling under a plan with AI', () => {
     expect(settingsRoute).toMatch(
       /const keysWithheld = keyFieldsWithheld\(session\.shop, settings\);/,
     );
-    expect(settingsRoute).toMatch(/if \(!keysWithheld\) \{[\s\S]{0,400}decryptApiKeyChecked/);
+    // Decryption (for the last-4 hint only) happens solely when the fields
+    // are rendered; the key itself never travels at all (see below).
+    expect(settingsRoute).toMatch(
+      /apiKeyStatusMap\([\s\S]{0,200}decryptApiKeyChecked,\s*!keysWithheld,?\s*\)/,
+    );
   });
 
   it('saveAiKeys writes no key column under a plan with AI, whatever the form says', () => {
@@ -136,6 +153,19 @@ describe('the key plaintext stops travelling under a plan with AI', () => {
     expect(body).toContain('formData.get("keysWithheld") === "true"');
     expect(body).toMatch(/keyFieldsWithheld\(session\.shop, storedForKeys\)/);
     expect(body).toMatch(/const keyWrites = keysWithheld\s*\?\s*\{\}/);
+  });
+
+  it('saveAiKeys writes keys only through the write-only planner, on update AND create', () => {
+    const body = branch('saveAiKeys');
+    expect(body).toMatch(/planApiKeyWrites\(/);
+    expect(body).toContain('parseRemoveApiKeys(formData.get("removeApiKeys"))');
+    // No direct `<column>: encryptApiKey(data.<column>)` left — that shape
+    // turned an empty (never-shown) field into a deletion.
+    for (const column of KEY_COLUMNS) {
+      expect(body, `direct write of ${column}`).not.toMatch(
+        new RegExp(`${column}:\\s*encryptApiKey`),
+      );
+    }
   });
 
   it('and the merchant is still told how many are stored', () => {

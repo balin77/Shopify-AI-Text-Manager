@@ -28,6 +28,42 @@ function normalizedIpKey(req) {
   return typeof raw === 'string' && raw.startsWith('::ffff:') ? raw.slice(7) : String(raw);
 }
 
+/** Response header that marks a refusal by OUR limiter (see standardHandler). */
+const RATE_LIMIT_MARKER_HEADER = 'X-CP-Rate-Limited';
+
+const RATE_LIMITED_TEXT = {
+  en: 'Many requests are being processed right now. This page reloads by itself shortly. If the app stays busy, please wait a few minutes.',
+  de: 'Gerade sind viele Anfragen unterwegs. Diese Seite lädt in Kürze von selbst neu. Bleibt die App ausgelastet, warten Sie bitte einige Minuten.',
+  es: 'Hay muchas solicitudes en este momento. Esta página se volverá a cargar sola en breve. Si la app sigue ocupada, espera unos minutos.',
+};
+
+/** A browser document load: a GET that accepts HTML and is not a router data request. */
+function isDocumentRequest(req) {
+  try {
+    if (req.method !== 'GET') return false;
+    const path = String(req.path || req.originalUrl || '').split('?')[0];
+    if (path.endsWith('.data')) return false;
+    return /text\/html/i.test(String((req.headers && req.headers.accept) || ''));
+  } catch {
+    return false;
+  }
+}
+
+/** Fixed text in de / en / es, picked from Accept-Language; no request data is put into the page. */
+function rateLimitedPage(req, retryAfter) {
+  const first = String((req.headers && req.headers['accept-language']) || '').slice(0, 2).toLowerCase();
+  const lang = first === 'de' || first === 'es' ? first : 'en';
+  const wait = Math.min(Math.max(Number(retryAfter) || 0, 3), 60) + 1;
+  return (
+    '<!doctype html><html lang="' + lang + '"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<meta http-equiv="refresh" content="' + wait + '">' +
+    '<title>ContentPilot</title></head>' +
+    '<body style="font-family:system-ui,sans-serif;color:#303030;display:flex;align-items:center;justify-content:center;min-height:60vh;margin:0">' +
+    '<p style="max-width:28rem;padding:1rem;text-align:center">' + RATE_LIMITED_TEXT[lang] + '</p></body></html>'
+  );
+}
+
 /**
  * Standard 429 handler — returns JSON with a correct `retryAfter` value.
  *
@@ -38,11 +74,52 @@ function normalizedIpKey(req) {
  * @param {import('express').Request} req
  * @param {import('express').Response} res
  */
-const standardHandler = (req, res) => {
+const standardHandler = (req, res, _next, options, bucket) => {
   const resetTime = req.rateLimit?.resetTime;
   const retryAfter = resetTime
     ? Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
     : 60; // safe fallback: 60 seconds
+
+  // One warn line per refusal so the owner can see whether a limit is high
+  // enough: method, path WITHOUT its query string, and the limit. No IP, query,
+  // token or shop data. Logging must never affect the response.
+  try {
+    // Bounded: a hostile path must not turn one refusal into a 15 KB log line.
+    const path = String(req.originalUrl || req.url || '').split('?')[0].slice(0, 200);
+    const limit = req.rateLimit?.limit;
+    // The window the limiter really uses (auth: 15 minutes), not an assumed minute.
+    const windowSeconds = Number(options?.windowMs ?? req.rateLimit?.windowMs) / 1000;
+    const windowText = Number.isFinite(windowSeconds) && windowSeconds > 0 ? `${windowSeconds}s` : 'window unknown';
+    defaultWebhookWarn(`[rate-limit] 429 ${req.method} ${path} limit ${limit ?? 'unknown'} per ${windowText}`);
+  } catch {
+    // ignore
+  }
+
+  // The marker the client's retry layer (app/utils/rate-limit-retry.ts) keys
+  // on: it says "OUR limiter refused this, before any handler ran", which is
+  // what makes a resend safe. Its value is the limiter's bucket, so the client
+  // can stop sending into a window it knows is closed. A 429 WITHOUT it (Shopify
+  // throttling, an app-level plan limit) is never resent. Headers are set
+  // before anything can throw: they are the contract.
+  try {
+    res.setHeader('Retry-After', String(retryAfter));
+    res.setHeader(RATE_LIMIT_MARKER_HEADER, bucket || 'default');
+  } catch {
+    // ignore
+  }
+
+  // A DOCUMENT load (the app being opened or reloaded, the browser's own GET)
+  // used to show the raw JSON. It gets a page that says so in the merchant's
+  // language and loads again by itself. Nothing is reflected into it.
+  if (isDocumentRequest(req) && typeof res.send === 'function') {
+    try {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.status(429).send(rateLimitedPage(req, retryAfter));
+      return;
+    } catch {
+      // fall through to JSON
+    }
+  }
 
   res.status(429).json({
     error: 'Too many requests, please try again later',
@@ -51,28 +128,60 @@ const standardHandler = (req, res) => {
 };
 
 /**
- * Returns true for Shopify webhook requests that carry a valid HMAC header.
- * The actual HMAC verification is done by the webhook handler; here we only
- * gate on header presence so legitimate Shopify bursts are not throttled.
- *
- * @param {import('express').Request} req
- * @returns {boolean}
+ * One handler per limiter, named after its bucket (the marker header's value).
+ * @param {string} bucket
  */
-const skipVerifiedWebhook = (req) => !!req.headers['x-shopify-hmac-sha256'];
+function bucketHandler(bucket) {
+  return (req, res, next, options) => standardHandler(req, res, next, options, bucket);
+}
 
 /**
- * General API Rate Limit — 100 requests per minute per IP.
- * Applied as a catch-all to /api/* (excluding explicitly excluded paths in server.js).
+ * General API Rate Limit — 100 requests per minute per IP, for everything that
+ * is NOT a read (POST and the like). Reads (GET / HEAD) use `apiReadRateLimit`.
+ * Applied to /api/* (excluding explicitly excluded paths in server.js) through
+ * `createApiRateLimitRouter`.
  */
 const apiRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: standardHandler,
+  handler: bucketHandler('api'),
   message: 'Too many API requests, please try again later',
   keyGenerator: normalizedIpKey,
 });
+
+/**
+ * API READ Rate Limit — 200 requests per minute per IP, its own bucket.
+ * One product view fires 10-12 background GETs under /api, so a merchant moving
+ * quickly between products used up the shared 100/min and got a 429. GET and
+ * HEAD use this limiter INSTEAD of `apiRateLimit` (never both: a request is
+ * counted once), so writes keep the tighter 100.
+ */
+const apiReadRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: bucketHandler('api-read'),
+  message: 'Too many API requests, please try again later',
+  keyGenerator: normalizedIpKey,
+});
+
+/**
+ * The /api catch-all: skip the excluded paths, send reads to the read limiter
+ * and everything else to the general one. A factory so the routing can be
+ * tested with fake limiters.
+ *
+ * @param {{ excludedPaths: string[], general: Function, read: Function }} options
+ */
+function createApiRateLimitRouter({ excludedPaths, general, read }) {
+  return (req, res, next) => {
+    if (excludedPaths.includes(req.path)) return next();
+    const isRead = req.method === 'GET' || req.method === 'HEAD';
+    return (isRead ? read : general)(req, res, next);
+  };
+}
 
 /**
  * AI Action Rate Limit — 30 requests per minute per IP.
@@ -83,7 +192,7 @@ const aiActionRateLimit = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: standardHandler,
+  handler: bucketHandler('ai'),
   message: 'Too many AI requests, please try again later',
   keyGenerator: normalizedIpKey,
 });
@@ -99,31 +208,145 @@ const contentActionRateLimit = rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: standardHandler,
+  handler: bucketHandler('content'),
   message: 'Too many requests, please try again later',
   keyGenerator: normalizedIpKey,
 });
 
 /**
- * Webhook Rate Limit — 1 000 requests per minute per shop domain.
- * Requests from Shopify that carry an HMAC header are skipped entirely;
- * the webhook handler verifies the HMAC, making double-counting unnecessary.
+ * Webhook failure OBSERVER — counts requests that FAIL verification, per IP,
+ * and only ever LOGS. It never refuses, delays or 429s anything.
+ *
+ * /webhooks deliberately has NO throttle at all, and every earlier shape of
+ * one was an attack surface:
+ *  - a skip for requests carrying `x-shopify-hmac-sha256` (unverified, so a
+ *    junk value bypassed it);
+ *  - a bucket keyed on `x-shopify-shop-domain` (unverified, so junk requests
+ *    naming `victim.myshopify.com` got that shop's REAL deliveries 429'd —
+ *    app/uninstalled and the GDPR topics included);
+ *  - a per-IP block after N failed verifications. Shopify delivers every app's
+ *    webhooks from SHARED egress IPs, so an attacker with their own Partner app
+ *    can subscribe a webhook to our URL, signed with THEIR secret: every one of
+ *    those deliveries fails our HMAC check, arrives from Shopify's IPs, and the
+ *    block then refuses Shopify's genuine deliveries for every merchant.
+ *
+ * Any IP- or header-keyed throttle can be aimed at Shopify's shared delivery
+ * IPs or at a victim shop, and none is needed: every unverified request is
+ * rejected cheaply by the route's `authenticate.webhook` HMAC check (one HMAC
+ * over the body, no DB work). The same goes for an edge/CDN layer in front of
+ * this app: it must not rate-limit /webhooks by IP either (the deployment
+ * assumes Railway's edge passes /webhooks straight through, `trust proxy` 1,
+ * so `req.ip` is the address that edge saw). And a misconfiguration on OUR
+ * side — a rotated API secret, the platform-adapter regression described in
+ * CLAUDE.md ("Deploy-critical gotchas", every delivery answered 400) — must
+ * keep surfacing as 401/400 in the Partner Dashboard's delivery log; a 429
+ * would hide the real cause behind "rate limited".
+ *
+ * What this middleware does: on the response's `finish` (or `close` when the
+ * connection dropped before `finish`, counted once), a 400/401/405 increments
+ * a per-IP counter in a bounded in-memory map, and the FIRST time an IP crosses
+ * `threshold` within a window one warn line is written — so a spike is visible
+ * in the logs without being acted on. 404 and 5xx are not counted.
  */
-const webhookRateLimit = rateLimit({
-  windowMs: 60 * 1000,
-  max: 1000,
-  standardHeaders: true,
-  legacyHeaders: false,
-  handler: standardHandler,
-  message: 'Too many webhook requests',
-  skip: skipVerifiedWebhook,
-  keyGenerator: (req) => {
-    // Prefer shop-domain key; fall back to normalised IP so the limiter
-    // still applies when the header is absent (e.g. during load testing).
-    const shop = req.headers['x-shopify-shop-domain'];
-    return shop ? `shop:${shop}` : normalizedIpKey(req);
-  },
-});
+const WEBHOOK_FAILURE_WINDOW_MS = 60 * 1000;
+const WEBHOOK_FAILURE_WARN_THRESHOLD = 60;
+const WEBHOOK_FAILURE_STATUSES = new Set([400, 401, 405]);
+const WEBHOOK_FAILURE_MAX_KEYS = 50000;
+
+function defaultWebhookWarn(message) {
+  try {
+    // Lazily, so a broken logger can never take the middleware down.
+    const { serverLogger } = require('./server-logger.cjs');
+    serverLogger.warn(message);
+  } catch {
+    console.warn(message);
+  }
+}
+
+function createWebhookFailureObserver(options = {}) {
+  const windowMs = options.windowMs ?? WEBHOOK_FAILURE_WINDOW_MS;
+  const threshold = options.threshold ?? WEBHOOK_FAILURE_WARN_THRESHOLD;
+  const now = options.now ?? (() => Date.now());
+  const warn = options.warn ?? defaultWebhookWarn;
+  const maxKeys = options.maxKeys ?? WEBHOOK_FAILURE_MAX_KEYS;
+  /** @type {Map<string, { count: number, resetAt: number, warned: boolean }>} */
+  const failures = new Map();
+
+  // A full sweep costs O(map size). It runs at most ONCE PER WINDOW: with the
+  // map full, every failure from a new IP would otherwise scan all entries
+  // (50k) per request — a cheap way to burn CPU. Between sweeps the oldest key
+  // (Map insertion order) is evicted instead, which is O(1).
+  let lastPruneAt = -Infinity;
+  let pruneRuns = 0;
+
+  function prune(t) {
+    lastPruneAt = t;
+    pruneRuns += 1;
+    for (const [key, entry] of failures) {
+      if (entry.resetAt <= t) failures.delete(key);
+    }
+  }
+
+  function current(key, t) {
+    const entry = failures.get(key);
+    if (!entry) return null;
+    if (entry.resetAt <= t) {
+      failures.delete(key);
+      return null;
+    }
+    return entry;
+  }
+
+  function recordFailure(key, status) {
+    const t = now();
+    let entry = current(key, t);
+    if (!entry) {
+      if (failures.size >= maxKeys && t - lastPruneAt >= windowMs) prune(t);
+      // Still full (or a sweep ran within this window): drop the oldest key
+      // rather than grow without bound.
+      if (failures.size >= maxKeys) {
+        const oldest = failures.keys().next().value;
+        if (oldest !== undefined) failures.delete(oldest);
+      }
+      entry = { count: 0, resetAt: t + windowMs, warned: false };
+      failures.set(key, entry);
+    }
+    entry.count += 1;
+    if (!entry.warned && entry.count >= threshold) {
+      entry.warned = true;
+      try {
+        warn(
+          `[webhooks] ${entry.count} failed webhook verifications (last status ${status}) from ${key} ` +
+            `within ${Math.round(windowMs / 1000)}s — observed only, nothing is throttled`,
+        );
+      } catch {
+        // Logging must never affect the request.
+      }
+    }
+  }
+
+  function middleware(req, res, next) {
+    const key = normalizedIpKey(req);
+    let counted = false;
+    const observe = () => {
+      if (counted) return;
+      counted = true;
+      if (WEBHOOK_FAILURE_STATUSES.has(res.statusCode)) recordFailure(key, res.statusCode);
+    };
+    res.on('finish', observe);
+    res.on('close', observe);
+    next();
+  }
+
+  middleware.recordFailure = recordFailure;
+  middleware.failureCount = (key) => current(key, now())?.count ?? 0;
+  /** Test seam: how many full sweeps have run, and how many keys are tracked. */
+  middleware.pruneRuns = () => pruneRuns;
+  middleware.trackedKeys = () => failures.size;
+  return middleware;
+}
+
+const webhookFailureObserver = createWebhookFailureObserver();
 
 /**
  * Auth Rate Limit — 5 requests per 15 minutes per IP.
@@ -134,7 +357,7 @@ const authRateLimit = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: standardHandler,
+  handler: bucketHandler('auth'),
   message: 'Too many authentication attempts, please try again later',
   keyGenerator: normalizedIpKey,
   skipSuccessfulRequests: true, // only count failed/redirect attempts
@@ -149,7 +372,7 @@ const strictRateLimit = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: standardHandler,
+  handler: bucketHandler('strict'),
   message: 'Too many requests to this endpoint, please slow down',
   keyGenerator: normalizedIpKey,
 });
@@ -163,16 +386,22 @@ const bulkOperationRateLimit = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  handler: standardHandler,
+  handler: bucketHandler('bulk'),
   message: 'Too many bulk operations, please wait before trying again',
   keyGenerator: normalizedIpKey,
 });
 
 module.exports = {
   apiRateLimit,
+  apiReadRateLimit,
+  createApiRateLimitRouter,
+  standardHandler,
+  bucketHandler,
+  RATE_LIMIT_MARKER_HEADER,
   aiActionRateLimit,
   contentActionRateLimit,
-  webhookRateLimit,
+  webhookFailureObserver,
+  createWebhookFailureObserver,
   authRateLimit,
   strictRateLimit,
   bulkOperationRateLimit,

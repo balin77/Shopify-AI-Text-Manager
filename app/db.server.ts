@@ -26,16 +26,49 @@ export async function upsertProductMetafields(
   tx: Pick<PrismaClient, "productMetafield" | "$executeRaw">,
   productId: string,
   metafields: Array<{ id: string; namespace: string; key: string; value: string; type: string }>,
+  read: {
+    /**
+     * The read returned EVERY metafield of the product (no further page). A
+     * windowed read (`metafields(first: N)` with `hasNextPage`) cannot say
+     * whether a slot's namespace/key holds a real metafield beyond the window,
+     * so on such a read every slot of the product is dropped: a slot that
+     * survives next to a real metafield invites the card to re-create it.
+     */
+    complete: boolean;
+  },
 ): Promise<void> {
   const metafieldIds = metafields.map((mf) => mf.id);
 
-  // Delete metafields no longer returned by Shopify
+  // Delete metafields no longer returned by Shopify — except a CLEARED SLOT
+  // (`value: ""`, product-metafields.shared.ts): Shopify never returns a
+  // metafield this app deleted, so dropping the slot here would make the field
+  // vanish from the editor's card on the next sync, which is exactly what the
+  // slot exists to prevent. Shopify never stores a blank value, so a returned
+  // metafield can never be mistaken for a slot.
   await tx.productMetafield.deleteMany({
     where: {
       productId,
+      value: { not: "" },
       ...(metafieldIds.length > 0 ? { id: { notIn: metafieldIds } } : {}),
     },
   });
+  // A TRUNCATED read proves nothing about the keys beyond its window: drop
+  // every slot of the product rather than keep one that may shadow a real
+  // metafield (product-metafields.shared.ts).
+  if (!read.complete) {
+    await tx.productMetafield.deleteMany({ where: { productId, value: "" } });
+  } else if (metafields.length > 0) {
+    // …but a slot whose namespace/key Shopify reports a real metafield for
+    // again (set in the Shopify admin, by another app, an import) is
+    // superseded.
+    await tx.productMetafield.deleteMany({
+      where: {
+        productId,
+        value: "",
+        OR: metafields.map((mf) => ({ namespace: mf.namespace, key: mf.key })),
+      },
+    });
+  }
 
   // Bulk upsert via INSERT ... ON CONFLICT DO UPDATE (single atomic query)
   if (metafields.length > 0) {

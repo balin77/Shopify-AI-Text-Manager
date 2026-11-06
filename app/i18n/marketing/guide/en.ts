@@ -64,6 +64,7 @@ export const guideEn: GuideCopy = {
       ],
       tips: [
         "How many products, languages and content types you can edit depends on your plan. Current usage is shown under Settings → Plan.",
+        "If the app says it is busy for a moment, it carries on by itself. If it tells you something could not be completed, wait a minute, check your last change and repeat the step.",
       ],
     },
 
@@ -75,6 +76,7 @@ export const guideEn: GuideCopy = {
           heading: "Your own key",
           paragraphs: [
             "ContentPilot AI writes with the AI provider you connect: Anthropic (Claude), OpenAI, Google Gemini, DeepSeek, Grok or HuggingFace. You enter your own API key — so the cost and the choice of model stay with you.",
+            "For security, a stored key is never shown again: the field stays empty and only shows \"Stored\" with the last four characters, so you can recognise the key. Leave the field empty to keep the key; type a new one to replace it. To delete it, click \"Remove key\" and save.",
           ],
           steps: [
             "Create an account with a provider and generate an API key.",
@@ -251,11 +253,13 @@ export const guideEn: GuideCopy = {
           heading: "Accepting a suggestion",
           paragraphs: [
             "The result first appears as a suggestion above the field. “Accept” puts it into the field and saves exactly that one field straight away — other fields where you still have unsaved changes are left alone. “Decline” leaves everything as it was. “Accept & translate” saves the accepted text and carries it straight into every language.",
+            "In a foreign language, the translation into the other languages starts only once Shopify has confirmed that the accepted text was saved. If saving is refused or not confirmed, nothing is translated and a message says so.",
           ],
         },
       ],
       tips: [
         "SEO title and meta description have their own length limits. The AI keeps to them, and the counter under the field shows where Google would cut the text off.",
+        "If you change only the SEO title or only the meta description and the app cannot read the other one from Shopify at that moment, nothing is saved: the text stays in the field and the app asks you to try again. In the bulk editor and the AI bulk fix, only that one item or cell is not saved.",
       ],
     },
 
@@ -554,6 +558,13 @@ export const guideEn: GuideCopy = {
             "Translate the entries, one by one or with AI, and save.",
           ],
         },
+        {
+          heading: "Capture texts by clicking",
+          paragraphs: [
+            "Instead of typing texts in, you can click them in the theme editor. Under Content → Direct translations, click “Open capture mode”. The theme editor opens, and clicking a text in the preview adds it to the list — translated into every language right away if you like.",
+            "Capture mode is valid for 2 hours and ends when you close the theme editor; after that, open it again from the app. If the capture panel in the theme editor asks for a code, copy it in the app with “Show capture code” and paste it there — this always works, even if capture mode does not switch on by itself when the editor opens. Do not share that code. Visitors to your shop see nothing of capture mode.",
+          ],
+        },
       ],
       tips: [
         "Unlike everywhere else, the primary language is offered as a target here too: another app's text can be in any language.",
@@ -681,6 +692,7 @@ export const guideEn: GuideCopy = {
           heading: "What happens",
           paragraphs: [
             "Only empty translations are filled; an existing translation is never overwritten. The app re-checks what is really missing right before writing. Translated handles are optional and are normalised into a valid URL form.",
+            "If the app is restarted while the run is going (for example by an update), the run is marked as interrupted after a short while; the Tasks tab then shows a warning, and so does the page while you keep it open. Anything not yet saved at that point was not written; simply start “Add missing translations” again — only what is still missing is filled.",
           ],
         },
       ],
@@ -699,7 +711,18 @@ export const guideEn: GuideCopy = {
         {
           heading: "Building galleries",
           paragraphs: [
-            "The product gallery sits at the top, with one gallery per variant below. Drag images from the product gallery or your Shopify file library into a variant, sort them by dragging, and copy or move them between variants. Videos, YouTube/Vimeo links and 3D models are supported too.",
+            "On the product page you first see only a preview of your product images. Clicking “Show all” (or the images) opens the whole Image Variant Manager: it takes over the entire editing area, all other fields are hidden, and you scroll the page as usual. “Back to the product” returns you to where you were; your typed text, unsaved image changes and running saves are kept — closing is not discarding. The product list, the language and market selection and the save bar stay visible, and switching to another product keeps the image manager open. In the manager the product gallery sits at the top, with one gallery per variant below. Click the heading of the product gallery to fold it away — like the variant galleries — so you reach the variants without long scrolling; it stays folded after saving, opens again for the next product, and a selection you made in it is kept — but while the gallery is folded, “Delete” unfolds it first so you see what is deleted, and the selection does not count for the bulk alt text actions or the WebP conversion (the first click on that button just unfolds the gallery). Drag images from the product gallery or your Shopify file library into a variant, sort them by dragging, and copy or move them between variants. Videos, YouTube/Vimeo links and 3D models are supported too. As soon as you select an image — in the product gallery or in any variant gallery — a bar stays at the bottom of the screen while you scroll: it shows the alt text of the selected image (with the AI buttons) and the actions for the selection (copy, move, delete, remove from the variant, clear selection), so you never have to scroll down to the end of a long gallery. With several images selected it shows the actions only; on a phone the actions appear as small icons.",
+            "If you click quickly through several products, the variants of a product may briefly fail to load. The app then tries a few more times on its own, and a notice offers “Try again”; you do not have to leave the product. While the variants are missing, the app saves or deletes nothing for them: saving with bulk images assigned to variants and deleting product images are refused with a message instead of writing something wrong. The same applies while the variants are being re-read after a save: the variant galleries briefly cannot be changed, and dragging, dropping or adding into them is refused with a message.",
+            "After saving, variant galleries you had opened stay open, and the view (“All” or “Unassigned”) and your selection stay as they were; the images are reloaded in the background. Only switching to another product starts the view afresh.",
+            "If the target variant already has an image (in its gallery or as its main image), the app refuses the move or copy, names the variant in the info box and changes nothing — the image stays where it was. This also applies to the same file stored under two names, as long as the app can recognise it as the same file. Picking files from your library for a variant works the same way: an image the variant already has is not added and is named in the info box, everything else you picked is added.",
+          ],
+        },
+        {
+          heading: "The main image",
+          paragraphs: [
+            "The first image of each variant is its main image, marked with a gold border. To make another image the main image, drag it to the first place of that variant's own gallery; the previous main image moves to the second place and stays in the gallery. If you drag the main image away from the first place, the next image takes over. Reordering the product gallery, adding images or copying them never changes a variant's main image.",
+            "Only an image can be the main image: dragging a video, a YouTube/Vimeo link, a 3D model or an image that is not saved yet to the first place is refused with a message, and the only image of a variant cannot be dragged away from the first place. If you delete the main image or move it to the product gallery, the next image of that variant's own gallery takes its place automatically; a variant is only left without a main image when it has no other image of its own. As soon as you change the gallery of a variant that has no image at all, its first own image is shown as its main image, and it becomes the main image when you save. An image from your file library is added to the product when it becomes a main image. If a variant with a main image has no other gallery image left (for example because you removed the last one, or you deleted the main image and only one image moves up), your store shows only its main image for that variant instead of all product images. This only applies to products with more than one variant, and once the Variant Gallery (App Embed) is activated in your theme; for a product with only one variant, the store keeps showing all product images.",
+            "To take an image out of a variant and put it into the product gallery, hold Ctrl (Mac: Cmd) and drop it onto an image tile of the product gallery; without Ctrl nothing moves. Dragging a variant's main image onto another variant moves it: it appears at the place where you drop it, and the first variant's first own image becomes its main image (if it has no other image, it is left without a main image). If you drop it on the first place of the other variant, it becomes that variant's main image and the previous main image moves into its gallery. Both variants are saved together or not at all: if one of them was changed elsewhere in the meantime, the image stays unchanged on both. Hold Ctrl (Mac: Cmd) to copy the main image instead; it then stays the main image of the first variant. If the target variant still has an unsaved main image change of its own, or one of the two is already part of another pending move, save first. As long as a move is not saved, the main image of these two variants and the moved image cannot be changed or removed otherwise: save first. If you drag the moved image back onto the first variant before saving, the move is undone.",
           ],
         },
         {
@@ -784,6 +807,7 @@ export const guideEn: GuideCopy = {
           heading: "How it works",
           paragraphs: [
             "In the Image Variant Manager you select images and start the conversion. It runs in the background; the converted image replaces the original wherever it is used, keeping its variant assignment and alt text.",
+            "A conversion usually takes a few seconds per image, and you can keep working in the meantime. If a conversion is still waiting to start after 24 hours, it is cancelled, the original stays unchanged and the image is credited back to your allowance.",
           ],
         },
       ],
@@ -945,7 +969,7 @@ export const guideEn: GuideCopy = {
         {
           heading: "How it works",
           paragraphs: [
-            "The app searches blog articles, pages and product descriptions for mentions of your products and collections that are not a link yet. Each find appears as a suggestion with the text excerpt.",
+            "The app searches blog articles, pages and product descriptions for mentions of your products and collections that are not a link yet. Each find appears as a suggestion with the text excerpt. After each scan the page tells you how many new suggestions were found — or, if none were found or the scan failed, why.",
           ],
         },
         {
@@ -1090,6 +1114,15 @@ export const guideEn: GuideCopy = {
           heading: "Translating options",
           paragraphs: [
             "Below every option in the variants section — even when it is collapsed — “Translate” translates the option name and its values into every language, and “Copy to all languages” copies them unchanged. On an open option, the two buttons sit between “Delete” and “Done”. An option with a blue background is still missing a translation in at least one language. If you changed an option, save first: the buttons stay locked until the change is saved, so the old text is never translated.",
+            "If an entry in the options or metafields is invalid (empty option name or value, blank row, invalid metafield), a red message appears and Save stores nothing at all — no images, alt texts or texts either. Correct or discard the marked entry first, then save again.",
+            "If the result of a save was not confirmed and an option is gone after reloading, a warning names the new values you had typed for it that could not be kept. Enter them again then.",
+          ],
+        },
+        {
+          heading: "Metafields",
+          paragraphs: [
+            "In the “Metafields” section you edit, in the primary language, the values of the metafields you enabled under Settings → Metafields. A list field shows one entry per line; empty lines are ignored. If an entry does not match the list's type, the app marks that line on the field, and nothing is saved until you correct it.",
+            "If you empty a metafield and save, Shopify removes the value together with its translations. The field still stays in the editor until your products are next fully synced: enter a new value before then and save, and the metafield is created again. If someone else has set a value there in the meantime — in the Shopify admin or through another app, for example — the app does not overwrite it: you are told, and the field then shows the current value. 🌍 next to a metafield translates its saved value into every language; while you have changed the field and not saved yet — and briefly after saving, until the page has reloaded the saved value — the button is locked. Multi-line fields, lists and rich text are not translated automatically, because line breaks or the list would be lost; enter their translation by hand. If, when re-creating an emptied metafield, the app cannot check whether Shopify already holds a value, it saves nothing and keeps your value in the field — simply save again. If Shopify rejects a value — for example because it does not fit the field type or is too long — your text stays in the field, the app shows Shopify's reason, and nothing is saved for that field: adjust the value and save again, or discard the change. Because Shopify takes metafields together, other metafields you saved in the same go may have been reset, and other parts of the save may still have gone through — check afterwards. If Shopify does not allow the app to write that metafield, the value stays in the field as well; discard the change in that case. Once you have saved a product's options or metafields, you can switch to another product straight away and keep working there: saving carries on in the background, even if you move to another page of the app. Do not close or refresh the browser tab before the message has appeared — the browser warns you — and wait before leaving the app through the Shopify menu until you know saving has finished. When saving has finished, the app tells you, with the product's name, whether it was saved. If something was not saved, you have to enter the text again; it is not kept for you once you have left the product. A field containing only spaces is not saved — empty it completely to remove the value.",
           ],
         },
         {

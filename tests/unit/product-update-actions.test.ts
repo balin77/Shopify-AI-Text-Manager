@@ -104,6 +104,8 @@ interface WorldConfig {
   /** Throw from translationsRemove. */
   removeThrows?: boolean;
   locales?: Array<{ locale: string; primary: boolean; published: boolean }>;
+  /** Answer to the one-sided SEO read (getProductSeo); may throw. */
+  seoRead?: () => any;
 }
 
 function installAdmin(config: WorldConfig = {}) {
@@ -126,6 +128,10 @@ function installAdmin(config: WorldConfig = {}) {
     const variables = options?.variables;
     const answer = (body: unknown) => ({ ok: true, json: async () => body });
 
+    if (query.includes("getProductSeo")) {
+      calls.push({ kind: "seoRead", variables });
+      return answer(config.seoRead ? config.seoRead() : { data: { product: { seo: { title: "T-live", description: "D-live" } } } });
+    }
     if (query.includes("translationsRegister")) {
       calls.push({ kind: "register", variables });
       return answer(
@@ -846,5 +852,116 @@ describe("response shapes the client reads", () => {
     db.product.findUnique.mockResolvedValue({ shop: "other.myshopify.com", images: [] });
     const r: any = await saveForeign(w.admin, { title: "x" });
     expect(r.init?.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("one-sided SEO save (the other half is a passenger the server did not write)", () => {
+  const sentSeo = (w: ReturnType<typeof installAdmin>) => w.of("productUpdate")[0].variables.input.seo;
+  // A stale editor value of the unchanged half: it must NEVER reach Shopify any more.
+  const staleEditorHalf = JSON.stringify({ title: "T-client" });
+
+  it("normal path: the other half comes from the fresh read", async () => {
+    const w = installAdmin();
+    makeDb();
+    await savePrimary(w.admin, { metaDescription: "D-new", changedFields: JSON.stringify(["metaDescription"]) });
+    expect(sentSeo(w)).toEqual({ title: "T-live", description: "D-new" });
+  });
+
+  it("the read throws: NOTHING is saved and the answer is the structured refusal (no editor-value fallback)", async () => {
+    const w = installAdmin({ seoRead: () => { throw new Error("throttled"); } });
+    makeDb();
+    const result = body(await savePrimary(w.admin, { metaDescription: "D-new", seoFallback: staleEditorHalf, changedFields: JSON.stringify(["metaDescription"]) }));
+    expect(w.of("productUpdate")).toHaveLength(0);
+    expect(result).toMatchObject({ success: false, errorKey: "seoOtherHalfUnreadable", error: "seoOtherHalfUnreadable" });
+  });
+
+  it("the read answers null data: nothing is saved, refusal", async () => {
+    const w = installAdmin({ seoRead: () => ({ data: null }) });
+    makeDb();
+    const result = body(await savePrimary(w.admin, { metaDescription: "D-new", changedFields: JSON.stringify(["metaDescription"]) }));
+    expect(w.of("productUpdate")).toHaveLength(0);
+    expect(result.errorKey).toBe("seoOtherHalfUnreadable");
+  });
+
+  it("a refused one-sided save also refuses the other half's direction (title only)", async () => {
+    const w = installAdmin({ seoRead: () => ({ data: { product: null } }) });
+    makeDb();
+    const result = body(await savePrimary(w.admin, { seoTitle: "T-new", changedFields: JSON.stringify(["seoTitle"]) }));
+    expect(w.of("productUpdate")).toHaveLength(0);
+    expect(result.success).toBe(false);
+  });
+
+  it("an EMPTY other half in Shopify is not sent as an empty string either", async () => {
+    const w = installAdmin({ seoRead: () => ({ data: { product: { seo: { title: null, description: null } } } }) });
+    makeDb();
+    await savePrimary(w.admin, { metaDescription: "D-new", changedFields: JSON.stringify(["metaDescription"]) });
+    expect(JSON.stringify(sentSeo(w))).not.toContain('""');
+  });
+
+  it("alt texts + ONE SEO half + failing read: refused BEFORE any write (no productUpdateMedia, no productUpdate, no mirror)", async () => {
+    const w = installAdmin({ seoRead: () => { throw new Error("throttled"); } });
+    const db = makeDb([{ id: "img-1", mediaId: MEDIA }]);
+    const result = body(await savePrimary(w.admin, {
+      metaDescription: "D-new",
+      imageAltTexts: JSON.stringify({ 0: "Neuer Alt" }),
+      changedFields: JSON.stringify(["metaDescription"]),
+      changedAltTextIndices: JSON.stringify([0]),
+    }));
+    expect(result).toMatchObject({ success: false, errorKey: "seoOtherHalfUnreadable" });
+    expect(w.of("updateMedia")).toHaveLength(0);
+    expect(w.of("productUpdate")).toHaveLength(0);
+    expect(db.productImage.update).not.toHaveBeenCalled();
+  });
+
+  it("alt texts + ONE SEO half + readable: the half is read once (the pre-check), alts and SEO are written", async () => {
+    const w = installAdmin();
+    makeDb([{ id: "img-1", mediaId: MEDIA }]);
+    await savePrimary(w.admin, {
+      metaDescription: "D-new",
+      imageAltTexts: JSON.stringify({ 0: "Neuer Alt" }),
+      changedFields: JSON.stringify(["metaDescription"]),
+    });
+    expect(w.of("seoRead")).toHaveLength(1);
+    expect(w.of("updateMedia")).toHaveLength(1);
+    expect(sentSeo(w)).toEqual({ title: "T-live", description: "D-new" });
+  });
+
+  it.each([
+    ["status", { status: "BOGUS", changedAttributeFields: JSON.stringify(["status"]) }, /Unknown product status/],
+    ["category", { category: "gid://shopify/Product/9", changedAttributeFields: JSON.stringify(["category"]) }, /not a product category/],
+  ] as const)("an invalid %s is refused BEFORE the alt texts are written", async (_n, fields, pattern) => {
+    const w = installAdmin();
+    const db = makeDb([{ id: "img-1", mediaId: MEDIA }]);
+    const result = body(await savePrimary(w.admin, { ...fields, imageAltTexts: JSON.stringify({ 0: "Neuer Alt" }) }));
+    expect(result.success).toBe(false);
+    expect(String(result.error)).toMatch(pattern);
+    expect(w.of("updateMedia")).toHaveLength(0);
+    expect(db.productImage.update).not.toHaveBeenCalled();
+  });
+
+  it("an EMPTY title for the primary language is refused BEFORE the alt texts are written", async () => {
+    const w = installAdmin();
+    const db = makeDb([{ id: "img-1", mediaId: MEDIA }]);
+    const result = body(await savePrimary(w.admin, { title: "  ", imageAltTexts: JSON.stringify({ 0: "Neuer Alt" }) }));
+    expect(result.success).toBe(false);
+    expect(String(result.error)).toMatch(/Title cannot be empty/);
+    expect(w.of("updateMedia")).toHaveLength(0);
+    expect(db.productImage.update).not.toHaveBeenCalled();
+  });
+
+  it("an EMPTY STRING half in Shopify is omitted too (product writer), not only null", async () => {
+    const w = installAdmin({ seoRead: () => ({ data: { product: { seo: { title: "", description: "" } } } }) });
+    makeDb();
+    await savePrimary(w.admin, { metaDescription: "D-new", changedFields: JSON.stringify(["metaDescription"]) });
+    expect(JSON.stringify(sentSeo(w))).toBe('{"description":"D-new"}');
+  });
+
+  it("a full save (both halves) does not read at all and cannot be refused", async () => {
+    const w = installAdmin({ seoRead: () => { throw new Error("must not be asked"); } });
+    makeDb();
+    const result = body(await savePrimary(w.admin, { seoTitle: "T", metaDescription: "D", changedFields: JSON.stringify(["seoTitle", "metaDescription"]) }));
+    expect(result.success).toBe(true);
+    expect(sentSeo(w)).toEqual({ title: "T", description: "D" });
   });
 });

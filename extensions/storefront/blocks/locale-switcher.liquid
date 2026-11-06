@@ -36,7 +36,7 @@
   assign country_display = block.settings.country_display | default: 'flag_and_name'
   assign currency_format = block.settings.currency_format | default: 'both'
   assign selectors_layout = block.settings.selectors_layout | default: 'horizontal'
-  assign flag_size = block.settings.flag_size | default: 18
+  assign flag_size = block.settings.flag_size | default: 18 | plus: 0
   assign inherit_theme = block.settings.inherit_theme_styles
   assign compact_on_narrow = block.settings.compact_on_narrow
   assign merge_on_supernarrow = block.settings.merge_on_supernarrow
@@ -73,7 +73,7 @@
 {{ 'locale-switcher.css' | asset_url | stylesheet_tag }}
 <cp-locale-switcher
   id="cp-locale-switcher-{{ block.id }}"
-  class="cp-locale-switcher cp-locale-switcher--{{ style }} cp-locale-switcher--layout-{{ selectors_layout }}{% if inherit_theme %} cp-locale-switcher--inherit{% endif %}{% if compact_on_narrow %} cp-locale-switcher--auto-compact{% endif %}{% if merge_on_supernarrow %} cp-locale-switcher--mergeable{% endif %}"
+  class="cp-locale-switcher cp-locale-switcher--{{ style | escape }} cp-locale-switcher--layout-{{ selectors_layout | escape }}{% if inherit_theme %} cp-locale-switcher--inherit{% endif %}{% if compact_on_narrow %} cp-locale-switcher--auto-compact{% endif %}{% if merge_on_supernarrow %} cp-locale-switcher--mergeable{% endif %}"
   data-merge-on-supernarrow="{% if merge_on_supernarrow %}1{% else %}0{% endif %}"
   data-block-id="{{ block.id }}"
   data-country-display="{{ country_display | escape }}"
@@ -205,13 +205,13 @@
                 assign iso_upper = lang.iso_code | upcase
               -%}
               <option
-                value="{{ lang.iso_code }}"
+                value="{{ lang.iso_code | escape }}"
                 data-flag-country="{{ flag_country | escape }}"
                 data-flag-image="{{ override_img | escape }}"
                 data-endonym="{{ endonym | escape }}"
                 data-iso="{{ iso_upper | escape }}"
                 {% if lang.iso_code == localization.language.iso_code %}selected{% endif %}
-              >{{ endonym }}</option>
+              >{{ endonym | escape }}</option>
             {%- endfor -%}
           </select>
         </label>
@@ -279,7 +279,7 @@
                 endif
               -%}
               <option
-                value="{{ c.iso_code }}"
+                value="{{ c.iso_code | escape }}"
                 data-flag-country="{{ c_iso | escape }}"
                 data-flag-image=""
                 data-endonym="{{ c_label_full | escape }}"
@@ -288,7 +288,7 @@
                 data-currency-code="{{ c_currency | escape }}"
                 data-currency-symbol="{{ c_symbol | escape }}"
                 {% if c.iso_code == localization.country.iso_code %}selected{% endif %}
-              >{{ c_label_full }}</option>
+              >{{ c_label_full | escape }}</option>
             {%- endfor -%}
           </select>
         </label>

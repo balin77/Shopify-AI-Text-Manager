@@ -13,6 +13,7 @@ import {
   shopifyApp,
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
+import { LogSeverity, shopifyApi, type Session } from "@shopify/shopify-api";
 import prisma from "./db.server";
 import { logger } from "./utils/logger.server";
 import { EncryptedPrismaSessionStorage } from "./utils/encrypted-session-storage.server";
@@ -23,6 +24,13 @@ import {
   resolveApiVersionString,
   type ShopifyApiVersionString,
 } from "./utils/api-version";
+import { expiringOfflineTokensEnabled, migrateToExpiringTokensEnabled } from "./utils/offline-token-flags.server";
+import {
+  configureOfflineAdmin,
+  forgetOfflineTokenMigration,
+  invalidateOfflineAdmin,
+  registerShopAccessTokenHook,
+} from "./utils/offline-admin.server";
 
 /**
  * Map the pinned version STRING onto the SDK's ApiVersion enum.
@@ -97,6 +105,17 @@ logger.info(`[SHOPIFY.SERVER] Parsed scopes (${scopes.length}): ${scopes.join(",
 // 2026-04 inventory rework cost every stock write before anyone could see it.
 logger.info(`[SHOPIFY.SERVER] Using API version: ${selectedApiVersion}`);
 
+// Expiring offline access tokens (see offline-admin.server.ts). Logged at INFO
+// for the same reason as the API version: whether this process asks Shopify for
+// ~1h tokens is a dashboard env var, and a 401 an hour after deploy is always a
+// question about it.
+const useExpiringOfflineTokens = expiringOfflineTokensEnabled();
+logger.info(
+  `[SHOPIFY.SERVER] Expiring offline tokens: ${useExpiringOfflineTokens ? "ON" : "OFF"} ` +
+    `(SHOPIFY_EXPIRING_OFFLINE_TOKENS), migration of existing tokens: ${migrateToExpiringTokensEnabled() ? "ON" : "OFF"} ` +
+    `(SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS, only honoured while the first is ON)`,
+);
+
 const shopify = shopifyApp({
   apiKey,
   apiSecretKey,
@@ -106,6 +125,11 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new EncryptedPrismaSessionStorage(new PrismaSessionStorage(prisma)),
   distribution: AppDistribution.AppStore,
+  // Default OFF. With it ON, token exchange issues EXPIRING offline tokens and
+  // the library refreshes them when a context is created — which is why every
+  // background caller goes through offline-admin.server.ts instead of keeping a
+  // client or a token past one request.
+  future: { expiringOfflineAccessTokens: useExpiringOfflineTokens },
   // `future.unstable_newEmbeddedAuthStrategy: true` used to live here. In
   // @shopify/shopify-app-react-router v2 the flag is gone because the strategy
   // it opted into IS the only strategy — the auth-code-flow implementation was
@@ -126,6 +150,15 @@ const shopify = shopifyApp({
       logger.debug(`[SHOPIFY.SERVER]  - Session ID: ${session.id}`);
       logger.debug(`[SHOPIFY.SERVER]  - Has Access Token: ${session.accessToken ? true : false}`);
       logger.debug(`[SHOPIFY.SERVER]  - Scopes: ${session.scope}`);
+
+      // A (re)install or token exchange stored a new offline session: drop
+      // the background token cache so nothing keeps serving the previous one.
+      invalidateOfflineAdmin(session.shop);
+      // A token exchange ends Shopify's 7-day recovery of a pending migration
+      // and makes a `needs_reauth` shop healthy again: drop the durable record
+      // (it holds an encrypted old token) and the in-process refusal. Own
+      // try/catch inside; a no-op with the expiring-token switch off.
+      await forgetOfflineTokenMigration(session.shop);
 
       // Stop any stale SyncScheduler that was bound to the previous OAuth token.
       // Without this, a reinstalled shop keeps running background sync with the old
@@ -183,9 +216,41 @@ const shopify = shopifyApp({
 
 logger.info(`[SHOPIFY.SERVER] Shopify App initialized`);
 
+// The migration call lives on @shopify/shopify-api's `auth`, which the
+// react-router wrapper does not expose. A second, minimal api instance is built
+// LAZILY — only the first time a migration actually runs (both env switches on).
+let migrationApi: ReturnType<typeof shopifyApi> | null = null;
+function getMigrationApi(): ReturnType<typeof shopifyApi> {
+  if (!migrationApi) {
+    const url = new URL(appUrl);
+    migrationApi = shopifyApi({
+      apiKey,
+      apiSecretKey,
+      apiVersion: selectedApiVersion,
+      scopes,
+      hostName: url.host,
+      hostScheme: url.protocol.replace(":", "") as "http" | "https",
+      isEmbeddedApp: true,
+      isCustomStoreApp: false,
+      logger: { level: LogSeverity.Error },
+    });
+  }
+  return migrationApi;
+}
+
+configureOfflineAdmin({
+  unauthenticatedAdmin: (shop) => shopify.unauthenticated.admin(shop),
+  loadOfflineSession: (shop) => shopify.sessionStorage!.loadSession(`offline_${shop}`),
+  storeSession: (session: Session) => shopify.sessionStorage!.storeSession(session),
+  migrateToExpiringToken: (params) => getMigrationApi().auth.migrateToExpiringToken(params),
+});
+// Root-JS workers (webp-processor, stale-image-cleanup) get their token here.
+registerShopAccessTokenHook();
+
 // Import activity tracking and sync scheduler
 import { trackActivity } from "./middleware/activity-tracker.middleware";
 import { syncScheduler } from "./services/sync-scheduler.service";
+import { OfflineTokenSweepService } from "./services/offline-token-sweep.service";
 import { ShopReaperService } from "../src/services/shop-reaper.service";
 import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
 import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
@@ -200,6 +265,13 @@ import { TranslationDriftAutoRunService } from "./services/translations/translat
  * lot of identical log lines.
  */
 let managedSmokeTestFired = false;
+
+// The sweep that migrates / keeps alive the offline tokens of shops that never
+// open the app. Started at BOOT, not only from authenticate.admin below: a
+// dormant shop is exactly one nobody authenticates for. start() is a no-op unless
+// SHOPIFY_EXPIRING_OFFLINE_TOKENS is on (default: no timer at all; the migration
+// part of a tick additionally needs the migrate switch) and idempotent.
+OfflineTokenSweepService.getInstance().start();
 
 import { hostParamRejection } from "./utils/shopify-host-param.server";
 import { apiAuthBounceRejection } from "./utils/api-auth-bounce.server";
@@ -224,6 +296,12 @@ const enhancedAuthenticate = {
       throw hostParamRejection(error, request) ?? apiAuthBounceRejection(error, request) ?? error;
     }
     const { admin, session } = authenticated;
+
+    // The lazy token migration is deliberately NOT fired from here: this
+    // request's captured admin/session still holds the old token, and a 401 on
+    // it makes the library store that old session with no token over the
+    // migrated pair. It runs from the sync scheduler's background cycle and
+    // from the offline-token sweep only (see maybeMigrateToExpiringToken).
 
     // Track activity for this shop (fire-and-forget — must not block the response)
     trackActivity(session.shop).catch(err => {
@@ -251,6 +329,10 @@ const enhancedAuthenticate = {
     // reasoning). This is the only path that keeps llms.txt fresh for a shop
     // nobody opens — the in-session refresh needs someone working in the app.
     LlmsAutoRefreshService.getInstance().start();
+
+    // Migration / keep-alive sweep for offline tokens (already started at boot;
+    // idempotent, and a no-op unless the expiring-token switch is on).
+    OfflineTokenSweepService.getInstance().start();
 
     // Bootstrap the IndexNow auto-submit sweep (same idempotent-start
     // reasoning). Without it the webhook-fed URL queue only ever drained when

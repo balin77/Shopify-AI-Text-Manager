@@ -18,6 +18,10 @@ vi.mock("~/utils/ai-refusal-response.server", () => ({
   aiRefusalFor: refusalFor,
   managedRefusalResponseFromError: () => null,
 }));
+const captureServerError = vi.fn();
+vi.mock("~/utils/sentry.server", () => ({ captureServerError }));
+vi.mock("../../app/utils/sentry.server", () => ({ captureServerError }));
+
 const translateField = vi.fn(async () => ({ handled: true }));
 vi.mock("../../app/routes/api-ai-handlers/text-translation.handler", () => ({
   handleTranslateField: translateField,
@@ -30,6 +34,9 @@ vi.mock("../../app/routes/api-ai-handlers/keyword-distribution.handler", () => (
 }));
 
 const { action } = await import("../../app/routes/api.ai");
+const { InvalidAIKeyError, ManagedAiRefusedError, MissingAIKeyError } = await import(
+  "../../src/services/ai.service"
+);
 
 function post(fields: Record<string, string>) {
   const body = new FormData();
@@ -48,6 +55,7 @@ async function run(fields: Record<string, string>) {
 beforeEach(() => {
   translateField.mockClear();
   refusalFor.mockClear();
+  captureServerError.mockClear();
   authenticate.admin.mockResolvedValue({ admin: {}, session: { shop: "t.myshopify.com" } });
 });
 
@@ -67,6 +75,38 @@ describe("api.ai content-type plan gate", () => {
     expect(status).toBe(200);
     expect(translateField).toHaveBeenCalled();
     expect(refusalFor).toHaveBeenCalledWith(expect.anything(), "t.myshopify.com", { actionType: "translateField", fieldType: "title" });
+  });
+
+  it("re-throws a Response a handler threw instead of answering a generic 500", async () => {
+    aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "pro" });
+    const reauth = new Response(null, { status: 401, headers: { "X-Shopify-Retry-Invalid-Session-Request": "1" } });
+    translateField.mockRejectedValueOnce(reauth);
+    await expect(run({ action: "translateField", contentType: "templates", fieldType: "title" })).rejects.toBe(reauth);
+    expect(captureServerError).not.toHaveBeenCalled();
+  });
+
+  it("isRunAbortingAIError includes the shutdown error, so multi-locale loops abort instead of recording per-locale failures", async () => {
+    const { isRunAbortingAIError } = await import("~/routes/api-ai-handlers/shared");
+    const { AIQueueShuttingDownError } = await import("../../src/services/ai-queue.service");
+    expect(isRunAbortingAIError(new AIQueueShuttingDownError())).toBe(true);
+    expect(isRunAbortingAIError(Object.assign(new Error("x"), { code: "AI_QUEUE_SHUTTING_DOWN" }))).toBe(true);
+    expect(isRunAbortingAIError(new Error("boom"))).toBe(false);
+  });
+
+  it("answers 503 (not a reported crash) when the queue was stopped for shutdown", async () => {
+    aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "pro" });
+    translateField.mockRejectedValueOnce(Object.assign(new Error("Server shutting down — request not processed"), { code: "AI_QUEUE_SHUTTING_DOWN" }));
+    const { status, body } = await run({ action: "translateField", contentType: "templates", fieldType: "title" });
+    expect(status).toBe(503);
+    expect(body).toMatchObject({ success: false, code: "AI_QUEUE_SHUTTING_DOWN" });
+    expect(captureServerError).not.toHaveBeenCalled();
+  });
+
+  it("still answers a generic 500 for a non-Response failure", async () => {
+    aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "pro" });
+    translateField.mockRejectedValueOnce(new Error("boom"));
+    const { status } = await run({ action: "translateField", contentType: "templates", fieldType: "title" });
+    expect(status).toBe(500);
   });
 
   it("does not gate a shop-level action", async () => {
@@ -110,5 +150,76 @@ describe("api.ai gates by the real target, not the posted placeholder", () => {
     aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "pro" });
     const { status } = await run({ action: "distributeKeywords", contentType: "products", targetType: "Article" });
     expect(status).toBe(200);
+  });
+});
+
+describe("api.ai catch: what a handler failure is answered with", () => {
+  const fields = { action: "translateField", contentType: "templates", fieldType: "title" };
+  beforeEach(() => {
+    aISettings.findUnique.mockResolvedValue({ subscriptionPlan: "pro", appLanguage: "en" });
+  });
+
+  it("answers a provider key rejection with 401 INVALID_AI_KEY and does not report it", async () => {
+    translateField.mockRejectedValueOnce(new InvalidAIKeyError("401 Incorrect API key provided"));
+    const { status, body } = await run(fields);
+    expect(status).toBe(401);
+    expect(body).toMatchObject({ success: false, code: "INVALID_AI_KEY" });
+    // The provider's raw text (it can quote the key) never reaches the browser.
+    expect(body).not.toHaveProperty("detail");
+    expect(JSON.stringify(body)).not.toContain("Incorrect API key");
+    expect(captureServerError).not.toHaveBeenCalled();
+  });
+
+  it("InvalidAIKeyError scrubs the key out of its own message at the source (handlers log it and store it in Task.error)", () => {
+    const err = new InvalidAIKeyError("401 Incorrect API key provided: sk-proj-abcdefghijklmnop1234567890. Retry.");
+    expect(err.message).toContain("Incorrect API key provided");
+    expect(err.message).not.toContain("sk-proj");
+    expect(err.message).not.toContain("abcdefghijklmnop");
+    expect(err.code).toBe("INVALID_AI_KEY");
+  });
+
+  it("scrubs key-like tokens from the provider text before it is logged", async () => {
+    const { providerErrorForLog } = await import("~/routes/api-ai-handlers/shared");
+    const text = providerErrorForLog(new Error("401 Incorrect API key provided: sk-proj-abcdefghijklmnop1234567890. Retry."));
+    expect(text).toContain("Incorrect API key provided");
+    expect(text).not.toContain("sk-proj");
+    expect(text).not.toContain("abcdefghijklmnop");
+  });
+
+  it("does NOT read an unrelated '401 Unauthorized' (e.g. Shopify) as a bad AI key", async () => {
+    translateField.mockRejectedValueOnce(new Error("GraphQL error: 401 Unauthorized"));
+    const { status, body } = await run(fields);
+    expect(status).toBe(500);
+    expect(body).not.toMatchObject({ code: "INVALID_AI_KEY" });
+    expect(captureServerError).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers a mid-call managed refusal with its coded status", async () => {
+    translateField.mockRejectedValueOnce(new ManagedAiRefusedError("consentMissing"));
+    const { status, body } = await run(fields);
+    expect(status).not.toBe(500);
+    expect(body).toMatchObject({ success: false, code: "AI_CONSENT_REQUIRED" });
+    expect(captureServerError).not.toHaveBeenCalled();
+  });
+
+  it("answers a MissingAIKeyError thrown mid-handler like the up-front no-key gate", async () => {
+    translateField.mockRejectedValueOnce(new MissingAIKeyError("claude"));
+    const { status, body } = await run(fields);
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ success: false, code: "NO_AI_KEY" });
+    expect(captureServerError).not.toHaveBeenCalled();
+  });
+
+  it("answers a generic crash with a JSON 500 and reports it to Sentry", async () => {
+    const boom = new Error("boom");
+    translateField.mockRejectedValueOnce(boom);
+    const { status, body } = await run(fields);
+    expect(status).toBe(500);
+    expect(body).toMatchObject({ success: false });
+    expect(captureServerError).toHaveBeenCalledWith(boom, {
+      route: "/api/ai",
+      actionType: "translateField",
+      shop: "t.myshopify.com",
+    });
   });
 });

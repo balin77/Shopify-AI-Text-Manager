@@ -13,7 +13,7 @@ je Service unter Settings → Config-as-Code hinterlegt.
 
 | Service | Config-Datei | Inhalt |
 |---|---|---|
-| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` |
+| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health`, `drainingSeconds` 15 |
 | Db Space Checker (Cron, nur production) | [railway.dbalert.json](railway.dbalert.json) | Dockerfile-Builder, `node scripts/db-alert.mjs`, alle 15 Min, kein Restart |
 | Db Backup (Cron, production **und** development) | [railway.dbbackup.json](railway.dbbackup.json) | Dockerfile-Builder, `node scripts/db-backup.mjs`, täglich 02:00 UTC, kein Restart |
 
@@ -67,6 +67,16 @@ kommt der Breaker als fünfter dazu — siehe unten):
 | Deduplizierung der detached Re-Translation-Läufe (`retranslationsInFlight`) | [app/services/translations/stale-translation-sync.server.ts](app/services/translations/stale-translation-sync.server.ts) | derselbe Lauf startet zweimal: jede Sprache wird doppelt übersetzt und doppelt registriert — auf dem KI-Key des Merchants auch doppelt bezahlt |
 | Fünf `setInterval`-Sweeps (Audit, Crawl, Translation-Drift, llms.txt, IndexNow) | gestartet in [app/shopify.server.ts](app/shopify.server.ts) | sie laufen pro Prozess. Der DB-Stempel (`lastAutoRunAt` & Co.) fängt das meiste ab, aber nicht alles: zwischen „Shop als fällig lesen" und „Stempel schreiben" liegt ein Fenster, in dem beide Instanzen denselben Shop greifen |
 
+Dazu kommt eine **Seriensperre pro Produkt**
+([app/utils/keyed-serial-lock.server.ts](app/utils/keyed-serial-lock.server.ts)):
+`savePrimarySubResources` (Optionen und Metafelder eines Produkts) läuft pro
+Shop+Produkt nacheinander, weil der Browser einen Request aufgeben kann
+(Zeitlimit, Verbindungsabbruch), den der Server noch abarbeitet, und ein älteres
+`metafieldsSet` sonst nach dem neueren landen könnte. Die Sperre ist
+prozesslokal und ihre Wartezeit auf 5 Minuten begrenzt: mit einer zweiten Instanz
+(oder im kurzen Deploy-Overlap) fällt sie auf das alte Verhalten zurück, sie
+blockiert nie dauerhaft.
+
 Ehrlichkeitshalber die Gegenliste — **nicht** betroffen ist alles, was seinen
 Zustand in Postgres hält: die Single-Flight-Logik des Crawls samt
 Orphan-Recovery, der atomare Verbrauch von `ImageOperationCounter`, und die
@@ -75,6 +85,74 @@ Orphan-Recovery, der atomare Verbrauch von `ImageOperationCounter`, und die
 **Regel:** Soll horizontal skaliert werden, ziehen diese vier Zustände
 **vorher** nach Postgres oder Redis um, nicht danach. Alle Symptome sind still,
 also würde die Ursache erst Wochen später gesucht.
+
+### Zwei Hintergrund-Jobs sind Prozess-Singletons — und der Deploy-Overlap
+
+Zusätzlich zu den Zuständen oben laufen im Web-Prozess zwei Jobs, die **genau
+einmal** laufen dürfen (gestartet in [server.js](server.js)):
+
+- **WebP-Prozessor** ([webp-processor.service.js](webp-processor.service.js)):
+  holt wartende `imageWebpConversionItem`-Zeilen aus der `Task`-Tabelle und
+  ersetzt das Original des Merchants auf Shopify (neues Medium anlegen, Original
+  löschen). Zwei Prozessoren auf derselben Zeile = doppelt konvertiert, doppelt
+  hochgeladen, doppelt gelöscht, verwaiste oder doppelte Medien am Produkt.
+- **Stale-Image-Cleanup** ([stale-image-cleanup.service.js](stale-image-cleanup.service.js)):
+  periodischer Lauf über die lokalen `ProductImage`-Cache-Zeilen. Er löscht nur
+  den App-eigenen Cache, nie etwas auf Shopify; zwei Läufe gleichzeitig erzeugen
+  doppelte Shopify-Abfragen und Löschversuche, keinen Datenverlust.
+
+Beide haben **keine** Leader-Wahl (siehe den Kommentarblock in `server.js`):
+ein zweiter Replica würde beide doppelt starten. Das ist dieselbe Zusage wie
+„eine Instanz“ oben.
+
+**Auch mit einer Instanz gibt es zwei Prozesse — beim Deploy.** Railway
+deployt ohne Downtime: der neue Container bootet und startet seine Jobs, während
+der alte noch bis zum Drain weiterläuft. Für den WebP-Prozessor ist das genau
+die Lage von oben, nur kurz. Behandelt wird sie so:
+
+1. **Atomarer Claim.** Der Prozessor setzt eine Zeile per
+   `updateMany … where { id, status in (pending, queued) }` auf `running`; bei
+   `count: 0` gehört sie schon jemand anderem und wird übersprungen.
+2. **Heartbeat.** Solange die Schritte eines Items laufen (auch nachdem der
+   Prozessor aufgehört hat, auf sie zu *warten*), stempelt er alle 15 s
+   `updatedAt` (`WEBP_ITEM_HEARTBEAT_MS` in [app/config/webp-tasks.js](app/config/webp-tasks.js)).
+3. **Boot-Recovery fasst nur stille Zeilen an.** `recoverRunningWebpTasks`
+   setzt eine `running`-Zeile nur zurück, wenn `updatedAt` älter als 90 s ist
+   (`WEBP_RUNNING_STALE_MS`, sechs Heartbeats); das Zurücksetzen prüft das noch
+   einmal im selben Statement. Eine frische Zeile gehört einem lebenden Worker
+   des alten Containers.
+4. **Laufende Nachprüfung.** Ist der alte Container irgendwann nach dem Boot
+   gestorben, war seine Zeile beim ersten Durchlauf noch „frisch“. Der
+   5-Minuten-Monitor für hängende Tasks ruft `recoverRunningWebpTasks` deshalb
+   bei **jedem** Tick vor dem Reaper auf; dann wird die Zeile regulär
+   eingeordnet (unter 70 % neu starten, ab 70 % zur manuellen Prüfung) statt vom
+   10-Minuten-Reaper mit Rückerstattung als Fehler markiert. Lebende Zeilen
+   bleiben frisch und werden übersprungen, die Wiederholung ist also sicher.
+5. **Shutdown wartet kurz** (bis 4 s, `drain`, parallel zum Drain der
+   AI-Queue von bis zu 8 s) auf laufende Konvertierungen. `gracefulShutdown`
+   beendet den Prozess nach 10 s hart. Damit dieses Fenster überhaupt existiert,
+   steht in [railway.json](railway.json) `deploy.drainingSeconds: 15` (das
+   Feld ist im Railway-Schema definiert als Zeit zwischen SIGTERM und SIGKILL
+   des alten Deploys; dass der Standard 0 ist, steht in Railways Doku, nicht im
+   Schema. Im Manifest stand `null`, d. h. SIGKILL folgte sofort und
+   weder dieser Drain noch der der AI-Queue bekam Zeit). Der Wert muss über der
+   10-s-Grenze in `server.js` bleiben.
+6. **Der Heartbeat ist gedeckelt** (`WEBP_HEARTBEAT_MAX_MS`, 75 min, über der
+   Worst-Case-Dauer von rund 59 min: 100 Varianten × 30 s = 50 min, dazu etwa
+   6 min Download/Konvertierung/Upload davor und etwa 2,5 min danach): ein
+   Schritt, der nie zurückkehrt, wird irgendwann still. Danach schließt der
+   10-Minuten-Reaper die Zeile (fehlgeschlagen + Rückerstattung). Die Recovery
+   fasst Zeilen, die dieser Prozess noch in Arbeit hat, nie an (sie fragt den
+   Worker nach seinen laufenden IDs); die Aufgabe wird also nie auf „pending“
+   zurückgesetzt und nie ein zweites Mal konvertiert. Dasselbe gilt für einen
+   Postgres-Ausfall von mehr als 90 s mitten in einer Konvertierung: die Zeile
+   bleibt unangetastet.
+
+Restrisiko: Der Claim schützt vor *gleichzeitigem Annehmen*, nicht vor einem
+Worker, der mitten in der Konvertierung hart beendet wird — das fängt weiterhin
+die Fortschrittsgrenze (70 %) der Recovery ab. Und: der Heartbeat läuft im
+Prozess; hängt dessen Event-Loop länger als 90 s, sähe ein Nachbar die Zeile als
+tot. Bei einer Instanz ist das kein realer Fall.
 
 Für das Managed-AI-Key-Modell
 ([docs/plans/PLAN_MANAGED_AI_KEY.md](docs/plans/PLAN_MANAGED_AI_KEY.md)) kommen
@@ -109,6 +187,247 @@ wird er grundsätzlich nicht ausgeliefert — AUSSER mit dem Test-Schalter unten
 |---|---|
 | `ALERT_WEBHOOK_URL` (Web-Dienst) | Derselbe Discord-/Slack-Webhook wie beim DB-Alarm. Die enthaltene KI meldet dorthin: ein Modell oder Schlüssel, der beim Start oder bei der täglichen Prüfung nicht antwortet (und wann es wieder geht), den Wechsel auf den Ausweichanbieter, einen gesperrten Anbieter, das Ausfall-Budget bei 50 / 90 / 100 % und ein Gesamtbudget ab 50 %. Höchstens eine Meldung pro Ursache und Stunde; die Umgebung steht in jeder Meldung. Fehlt er, wird nur geloggt. |
 | `MANAGED_AI_ALLOW_DEV_BUILD` | Nur `"true"` und nur im Dev-Build (Dev-Client-ID, `APP_ENV` ≠ `production`): Managed AI darf dort zum **Testen** laufen. Hebt zwei Regeln auf, die genau diesen Build betreffen: die Sperre des Operator-Keys im Dev-Build und die Regel „zahlt nichts ⇒ nur Schnupperkontingent" (Entwicklungsshops, Test-Abos, Dev-Plan-Override, Trial) — sonst wäre ein „+ KI"-Plan dort nie testbar. Da der Dev-Build keine Billing-API hat, gilt die „+ KI"-Wahl im Planwechsel als Kauf (`AISettings.devForcedManagedAi`), mit einem einmal gesetzten Abrechnungsende, das wie eine echte Verlängerung alle 30 Tage weiterläuft. `validate-env` verweigert den Start, wenn dabei `MANAGED_AI_POOL_MICROS`, `MANAGED_AI_TASTER_POOL_MICROS` oder `MANAGED_AI_FAILOVER_POOL_MICROS` fehlt (und zur Laufzeit bleibt der Schalter ohne alle drei wirkungslos, auch unter `npm run dev`) — jeder Cent hier ist Ausgabe ohne Umsatz. In jedem anderen Build ist die Variable wirkungslos (und `validate-env` warnt). |
+
+### Env-Variablen für ablaufende Offline-Tokens (Shopify „expiring offline access tokens")
+
+Shopify stellt Apps auf **ablaufende Offline-Tokens** um (~1 h gültig, dazu ein
+rotierender Refresh-Token). Die App ist dafür vorbereitet
+([app/utils/offline-admin.server.ts](app/utils/offline-admin.server.ts)): jeder
+Hintergrund-Aufruf (Webhooks, Scheduler, Sweeps, detached Tasks, WebP-Worker)
+holt sich sein Token pro Aufruf, die Library erneuert es kurz vor Ablauf, und
+ein 401 wird einmal mit frisch geladener Session wiederholt. Beides ist per
+Env-Variable geschaltet und **standardmäßig AUS** — ohne die Variablen verhält
+sich die App exakt wie vorher.
+
+| Variable | Bedeutung |
+|---|---|
+| `SHOPIFY_EXPIRING_OFFLINE_TOKENS` | Nur `"true"` schaltet an. Setzt `future.expiringOfflineAccessTokens`: neue Token-Exchanges (Installation, Re-Auth, abgelaufene Session) bekommen ablaufende Offline-Tokens, und alle Langläufer nutzen den sich selbst erneuernden Client statt des Clients ihres Requests. Bestehende, NICHT ablaufende Tokens bleiben unverändert und funktionieren weiter. |
+| `SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS` | Nur `"true"`, und **nur wirksam, solange die erste Variable an ist**. Tauscht das bestehende, nicht ablaufende Offline-Token eines Shops gegen ein ablaufendes — pro Shop, **nur im Hintergrund**, nie im Request selbst (ein laufender Request hält das alte Token noch, und ein 401 darauf würde das migrierte Paar überschreiben). Zwei Auslöser: (1) der Sync-Zyklus eines Shops, dessen Merchant die App geöffnet hat — frühestens eine Minute nach Scheduler-Start und nur in einer ruhigen Phase (seit mindestens 20 s kein authentifizierter Request); (2) der **Offline-Token-Sweep** für Shops, die die App nie öffnen (siehe unten). Wichtig: Die App zu öffnen migriert einen Shop **nicht** von selbst — ein nicht ablaufendes Token gilt der Library immer als „aktiv", es findet kein Token-Exchange statt. Ohne den Sweep würde ein Shop, der die App nie öffnet, **am 2027-01-01 ausfallen** (ab dann lehnt Shopify nicht ablaufende Offline-Tokens für die Admin API mit HTTP 403 ab: „Non-expiring access tokens are no longer accepted for the Admin API."). Single-flight pro Shop, wirft nie in den Request. Shopify widerruft das alte Token mit der Migration sofort (Doku; keine Übergangsfrist). Restrisiko: ein Request, der genau während der Migration noch läuft, schlägt für den Merchant fehl (401 ohne Retry-Header, kein automatischer Neuversuch); der nächste Request legt die Session per Token-Exchange neu an, bis dahin scheitern Hintergrund-Aufrufe (`no_token`). |
+
+Beim Start loggt die App `[SHOPIFY.SERVER] Expiring offline tokens: ON|OFF … migration …: ON|OFF`.
+
+**Reihenfolge beim Rollout — nicht abkürzen:**
+
+1. Deploy des Codes (beide Variablen ungesetzt). Nichts ändert sich; prüfen, dass
+   die Startzeile `Expiring offline tokens: OFF` zeigt.
+2. `SHOPIFY_EXPIRING_OFFLINE_TOKENS=true` setzen (erst Development, dann
+   Production). Nur Shops, deren Session neu ausgestellt wird, bekommen
+   ablaufende Tokens.
+3. **Beobachten** — mindestens einige Stunden, besser einen Tag: keine 401 in
+   Webhooks / Sweeps / Tasks, im Log `[OfflineAdmin]`-Zeilen nur als seltene
+   Refreshs, keine `Offline token unavailable`-Fehler. Ein Fehlerbild hier heißt:
+   Variable wieder entfernen — bereits ausgestellte ablaufende Tokens werden
+   dann allerdings NICHT mehr erneuert, betroffene Shops müssen die App einmal
+   öffnen (Token-Exchange stellt ein neues aus).
+4. Erst dann `SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS=true` setzen. Danach im Log auf
+   `Migrated offline token to an expiring one`, `Token migration failed` und
+   `NEEDS_REAUTH` achten (Details im Abschnitt unten). Die Migration ist
+   einseitig — einen migrierten Shop zurück auf ein nicht ablaufendes Token
+   bringt nur ein Re-Install. **Spätestens vor dem 2027-01-01 muss dieser Schritt
+   durch sein**, sonst fallen alle noch nicht migrierten Shops aus.
+5. Nach dem Deploy der Tabelle `OfflineTokenMigration` (Prisma-Migration
+   `20261030000000_offline_token_migration`, läuft über `prisma migrate deploy` in
+   `scripts/run-all-migrations.js`/`start:production`) gibt es nichts weiter zu tun.
+
+Grenze, ehrlich benannt: das Single-Flight um den Refresh gilt pro **Prozess**
+(passt zur EINEN Web-Instanz oben). Shopify entwertet einen Refresh-Token nicht
+in dem Moment, in dem er benutzt wird (jeder Refresh liefert ein NEUES Access- +
+Refresh-Paar; der vorgelegte Refresh-Token bleibt benutzbar, bis die App den
+neueren nutzt, ein neuer Token erworben wird, 30 Tage nach erster Nutzung oder
+bis zu seinem 90-Tage-Ablauf). Der echte Konflikt ist, einen Token zu **erwerben**
+(Token-Exchange) und gleichzeitig zu **erneuern**: jedes macht das Ergebnis des
+anderen unbrauchbar. Bei mehreren Instanzen könnte das passieren; die App liest
+nach einem gescheiterten Refresh einmal die gespeicherte Session neu, was den
+Fall meist auffängt, aber nicht garantiert. Ein Refresh, der endgültig scheitert
+(Shopify antwortet 401 `invalid_request` = Re-Auth nötig; die Library macht daraus
+ein nacktes HTTP 500), wird pro Shop 60 s lang gemerkt: Aufrufer scheitern in der
+Zeit sofort, statt bei Shopify erneut anzufragen. Ein neuer Token-Exchange
+(afterAuth) hebt das sofort auf.
+
+#### Hintergrund-Sweep, Wiederherstellung und `needs_reauth`
+
+**Offline-Token-Sweep** ([app/services/offline-token-sweep.service.ts](app/services/offline-token-sweep.service.ts)):
+läuft nur, wenn `SHOPIFY_EXPIRING_OFFLINE_TOKENS` an ist (sonst startet kein Timer;
+der Migrationsteil braucht zusätzlich `SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS`, das
+Keep-alive nicht), prozesslokal (die EINE Web-Instanz), beim Boot gestartet und alle
+10 min. Pro Lauf höchstens 5 Shops je Art, nacheinander, mit 5 s Pause dazwischen
+(`OFFLINE_TOKEN_SWEEP_BATCH_SIZE` ≥ 1, `OFFLINE_TOKEN_SWEEP_PAUSE_MS` ≥ 0,
+`OFFLINE_TOKEN_SWEEP_INTERVAL_MS` ≥ 60000; ungültige Werte fallen auf den Standard
+zurück; komplett abschaltbar mit `OFFLINE_TOKEN_SWEEP_DISABLED=true`).
+
+- **Migration** (beide Variablen): installierte Shops, deren Offline-Session ein Token,
+  aber kein `expires` hat, ohne authentifizierten Request seit mindestens 30 min
+  (oder unbekannt — ein fehlgeschlagener Aktivitäts-Lookup zählt NICHT als ruhig)
+  und ohne laufenden Scheduler. Läuft durch dasselbe Single-Flight
+  `maybeMigrateToExpiringToken` wie der Scheduler-Auslöser (der bleibt bestehen).
+  Shops mit Status `needs_reauth` sowie `failed`-Shops innerhalb ihres Backoffs oder
+  nach dem Aufgeben werden schon in der Abfrage ausgeschlossen.
+- **Keep-alive** (nur `SHOPIFY_EXPIRING_OFFLINE_TOKENS`): Shops mit ablaufender Session, deren `refreshTokenExpires` in
+  weniger als 14 Tagen liegt (und die ruhig sind), werden über `getOfflineAdmin`
+  angesprochen, wodurch die Library den Token erneuert — sonst stirbt der
+  Refresh-Token eines schlafenden Shops nach 90 Tagen. **Annahme, nicht belegt:**
+  dass ein Refresh die 90 Tage neu startet (Shopify-Doku: „90 days when issued;
+  using it to refresh can shorten it"). Jeder Keep-alive loggt
+  `refreshTokenExpiresBefore/After` — der erste echte Lauf zeigt, ob sich der
+  Ablauf verschiebt. Ein Shop wird höchstens alle 6 h angefasst.
+
+**Wiederherstellung einer halb gelaufenen Migration.** Shopify widerruft das alte
+Token sofort; seit 2026-09-29 liefert eine Wiederholung desselben Exchanges mit
+demselben alten Token **7 Tage lang dasselbe Paar** (endet nach 7 Tagen, nachdem
+die App dieses Paar erneuert hat, oder nach einem neuen Token-Erwerb für den Shop).
+Dafür muss die App das alte Token noch haben. Deshalb wird es **vor** dem Exchange
+verschlüsselt (AES-256-GCM, derselbe Helfer wie für Session-Tokens) in der Tabelle
+`OfflineTokenMigration` abgelegt (Status `pending|needs_reauth|failed`,
+`attempts`, `lastError` ohne Geheimnisse) und die **ganze Zeile wird gelöscht, sobald
+das neue Paar gespeichert ist** (es gibt keine „migrated"-Zeilen). Vor jedem
+Schreiben liest die Migration die gespeicherte Session neu: hat inzwischen ein
+Token-Exchange eine Session mit `expires` gespeichert (Merchant öffnet die App
+während eines Wiederherstellungs-Laufs), ist der Shop deinstalliert oder hat ein
+anderes Token, bricht der Lauf ab und überschreibt/erzeugt nichts. Damit gilt:
+
+- Transiente Fehler (Netzwerk, 5xx/429, Antwort ohne ablaufendes Token,
+  `storeSession` liefert `false`/wirft) werden **sofort** wiederholt (nach 2 s,
+  5 s, 15 s), nicht erst nach einer Stunde. Reicht das nicht, bleibt das Token
+  gespeichert (Status `failed`) und der Shop wird nach einem **exponentiellen,
+  in der Zeile (`attempts`, `updatedAt`) persistierten** Backoff erneut versucht:
+  10 min, 20 min, 40 min … bis höchstens 24 h, auch nach einem Neustart. Nach 40
+  Versuchen (ca. 3 Tage) gibt die App auf: einmal Logzeile `MIGRATION_GAVE_UP`,
+  danach kein automatischer Neuversuch mehr (Status bleibt `failed`; der
+  verschlüsselte alte Token wird dabei **gelöscht**, der Fingerabdruck bleibt;
+  Rücksetzen siehe unten). Ausnahme, einmalig: Meldet Shopify später für genau
+  dieses Token den Stichtags-403 (ein 403, kein 401 — das Token ist also nicht
+  widerrufen und noch migrierbar), erlaubt die App **einen** weiteren
+  Migrationslauf pro Token und Prozess (Logzeile „ONE more migration run"), statt
+  das letzte Token sofort zu leeren. Schlägt auch dieser Lauf fehl (Shop wieder
+  aufgegeben), wird das tote gespeicherte Token **doch geleert**: die Library zählt eine
+  Session mit Token immer als aktiv und würde nie einen Token-Exchange machen, auch
+  nicht beim Öffnen der App. Jeder weitere 403 leert erneut, ohne neuen Lauf.
+  Zeilen jenseits der 7-Tage-Frist, deren Session kein Token mehr hat, verlieren
+  ihren Ciphertext im Sweep (nichts mehr wiederherzustellen). Ein Lauf, der mit einer
+  Exception endet (z. B. Datenbankfehler), zählt als fehlgeschlagener Lauf.
+- Hat die gespeicherte Session ihr Token verloren (die Library speichert nach einem
+  401 auf das widerrufene Token eine Session mit `accessToken: undefined`), wiederholt
+  die App den Exchange mit dem gespeicherten alten Token — nur innerhalb von 7 Tagen
+  ab dem ersten Versuch.
+- Eine Zeile pro Shop liegt nur, solange etwas offen ist; sie wird bei
+  `app/uninstalled` (**immer**, auch bei ausgeschalteten Variablen — nach einem
+  Rollback kann noch ein verschlüsseltes Token liegen), im GDPR-`shop/redact`
+  (`redactShopData`, immer) und bei jedem neuen Token-Exchange (afterAuth, nur wenn
+  `SHOPIFY_EXPIRING_OFFLINE_TOKENS` an ist) gelöscht. Bei ausgeschalteten Variablen
+  macht die Migration selbst keinen DB-Zugriff; die beiden Löschungen oben sind die
+  Ausnahme.
+
+**`needs_reauth`.** Antwortet Shopify auf die Migration mit 400 `invalid_subject_token`,
+ist das endgültig: das Token lässt sich nicht mehr tauschen (z. B. schon migriert und
+die 7 Tage sind um). Der Shop bekommt Status `needs_reauth`, es gibt **keinen**
+automatischen Neuversuch (Sweep und Scheduler überspringen ihn) und genau eine
+Fehlerzeile im Log: `[OfflineAdmin] NEEDS_REAUTH — Shopify refused the token migration
+permanently …`. Zusätzlich wird das tote, gespeicherte Token in der Session geleert
+(wie `invalidateAccessToken` der Library), sodass der nächste `authenticate.admin` des
+Shops direkt einen Token-Exchange macht, statt einen Request mit 401 scheitern zu
+lassen. Der Merchant muss die App also einmal öffnen (oder neu installieren); danach
+räumt afterAuth den Datensatz auf und der Shop gilt als migriert. Bis dahin scheitern
+Hintergrund-Aufrufe dieses Shops mit `no_token`.
+
+**`invalid_requested_token_type` und `invalid_client` (400/401) sind etwas anderes:**
+sie sagen, dass *unsere Anfrage* nicht stimmt (Client-ID/-Secret, Token-Typ, API-Version), nicht dass ein Shop verloren
+ist — es würde alle Shops treffen. Annahme: `invalid_client` betrifft die ganze App
+(Client-ID/-Secret sind für alle Shops gleich). Könnte ein einzelner Shop es aus
+shop-spezifischem Grund auslösen, hielte er alle Shops 6 h an — die Logzeile nennt den
+auslösenden Shop. Eine „erst bei zwei Shops"-Regel wurde bewusst verworfen: bei nur
+einem installierten Shop würde falsche Konfiguration nie halten und der Shop seine 40
+Versuche für einen fremden Fehler verbrennen. Deshalb wird **kein** Shop als `needs_reauth`
+markiert und kein Token gelöscht; stattdessen eine laute Logzeile `CONFIG ERROR` und
+**6 h Pause für alle Migrationen** (prozesslokal; Konfiguration korrigieren und neu
+starten, dann geht es sofort weiter). Betroffene Shops finden:
+
+```sql
+SELECT shop, "lastError", attempts, "updatedAt"
+FROM "OfflineTokenMigration"
+WHERE status = 'needs_reauth'
+ORDER BY "updatedAt";
+```
+
+bzw. im Log nach `NEEDS_REAUTH` suchen. Hängende Fälle (`pending`/`failed`) zeigt
+dieselbe Abfrage mit `status IN ('pending','failed')`; aufgegebene (`MIGRATION_GAVE_UP`)
+sind `status = 'failed' AND attempts >= 40`.
+
+**Veraltete Zeilen.** Jede Zeile trägt einen Fingerabdruck (SHA-256, 16 Hex-Zeichen,
+nie das Token) des Tokens, für den sie geschrieben wurde. Hält der Shop inzwischen ein
+ANDERES Token (z. B. Rollback der Variablen, Merchant öffnet die App, Token-Exchange
+stellt ein neues nicht ablaufendes Token aus, afterAuth löscht wegen der ausgeschalteten
+Variable nicht), gilt die Zeile als veraltet: `runMigration` und der Sweep verwerfen
+sie und behandeln den Shop als neu — Status, Backoff und `needs_reauth` einer Zeile
+sperren nur das Token, für das sie galten.
+
+**Aufgegebene Zeilen** (40 Versuche) verlieren beim Aufgeben ihren verschlüsselten
+alten Token (der Fingerabdruck bleibt). Ein Reset funktioniert dort nur, solange die
+Session des Shops noch genau dieses Token hält — der Lauf nimmt dann das Token der
+Session; ist die Session inzwischen ohne Token, gibt es nichts mehr zu retten und der
+Shop braucht einen Token-Exchange (Merchant öffnet die App).
+
+**Operator-Reset** (nach Behebung der Ursache; der Sweep nimmt die Shops dann beim
+nächsten Lauf wieder auf, auch ohne Neustart: ein In-Process-Backoff, den die
+Datenbank nicht mehr stützt, wird für jeden Sweep-Kandidaten verworfen. Nur die
+globale 6-h-Konfigurationspause hebt allein ein Neustart auf). Ein `needs_reauth`-Shop, der die App nie öffnet, hat keinen
+brauchbaren Token mehr — die Zeile nur löschen, wenn er ein neues Token bekommen hat
+(sonst landet er sofort wieder in `needs_reauth`):
+
+```sql
+-- aufgegebene / hängende Migration erneut versuchen
+UPDATE "OfflineTokenMigration" SET status = 'pending', attempts = 0
+WHERE status = 'failed';
+
+-- needs_reauth-Zeile eines Shops verwerfen (z. B. nachdem er die App neu installiert hat)
+DELETE FROM "OfflineTokenMigration" WHERE shop = 'example.myshopify.com' AND status = 'needs_reauth';
+```
+
+**Nach dem Stichtag (2027-01-01).** Eine Admin-API-Antwort 403 mit „Non-expiring
+access tokens are no longer accepted" erkennt die App an der Meldung (ein 403 wegen
+fehlendem Scope wird nicht so behandelt): `createRefreshingAdmin` loggt eine
+spezifische Warnung, stößt — bei beiden Variablen an — die Migration an und wirft
+den ursprünglichen Fehler weiter (kein blindes Wiederholen mit demselben Token). Der
+nächste Aufruf sieht das neue Paar. Kann für den Shop **keine** Migration mehr laufen
+(`needs_reauth`), leert die App selbst das abgelehnte gespeicherte Token (nur wenn es noch
+genau das abgelehnte ist, Fingerabdruck passt) — die Library würde es nach einem 403
+nie tun —, damit der nächste Request des Merchants einen Token-Exchange auf ein
+ablaufendes Paar macht. Bei einem **aufgegebenen** Shop wird zuerst NICHT geleert (der
+403 beweist, dass das Token nicht widerrufen ist): es wird einmalig ein weiterer
+Migrationslauf erlaubt und erst geleert, wenn der fehlschlägt (siehe oben). Nie geleert wird bei der 6-h-Konfigurationspause,
+bei einem Shop ohne Zeile und solange der Lauf selbst noch entscheiden kann (`failed`,
+Session hält das Token noch). Der Schritt ist pro Shop auf einmal je Minute begrenzt. Ausnahme von „Variablen aus = unverändert": der Roh-Client
+liest bei jedem 403 den Body (ein Klon), um die Stichtags-Meldung zu erkennen.
+
+Bekannte Restgrenze: der In-Process-Verdikt-Check (`needs_reauth`, Backoff) in
+`maybeMigrateToExpiringToken` läuft vor dem Fingerabdruck-Vergleich; der Sweep räumt
+veraltete Zeilen dennoch über die Datenbank ab (siehe oben).
+
+Der Roh-Client (`admin-client.server.ts`) erkennt den 403 ebenso. Dieser Auslöser wartet
+bewusst **nicht** auf die ruhige Phase: das alte Token ist ab dem Stichtag für die Admin
+API ohnehin unbrauchbar, ein laufender Request damit kann nicht schlimmer scheitern.
+
+Veraltete Deinstallationsmarke: Sagt nur `ShopInstallState.uninstalledAt` „deinstalliert",
+obwohl eine Session existiert und in diesem Prozess nichts neu ausgestellt wurde (z. B.
+weil afterAuths Upsert nach einer Neuinstallation fehlschlug), pausiert die Migration
+(Backoff 10 min, Warnung „uninstall marker looks stale") und löscht den
+Wiederherstellungs-Datensatz NICHT.
+
+Das pausiert die Migration dieses Shops dauerhaft und still, denn beim Öffnen der App
+läuft afterAuth nicht, solange die Session ein nicht ablaufendes Token hat. Die App
+loggt es deshalb einmal je Shop und Prozess auf ERROR (`STALE_UNINSTALL_MARKER`) und
+räumt die Marke **nicht** selbst auf (ein später 401 kann nach einer echten
+Deinstallation eine leere Session-Zeile neu anlegen; „Aktivität nach der Marke" wäre also
+kein sicherer Beleg). Reset durch den Operator, wenn der Shop installiert ist:
+
+```sql
+UPDATE "ShopInstallState" SET "uninstalledAt" = NULL WHERE shop = 'example.myshopify.com';
+```
+
+Rennen mit dem Merchant: Pro Shop zählt die App mit, wie oft eine neue Session
+ausgestellt wurde bzw. der Shop deinstalliert wurde (afterAuth / `app/uninstalled`), und
+prüft vor jedem Schreiben zusätzlich die Deinstallationsmarke. Ein Lauf, der das
+verpasst hat, schreibt nichts — eine leere Session danach stammt dann womöglich von
+einem späten 401 auf einer NEUEN Session, nicht vom eigenen Exchange.
 
 ### Env-Variablen des Cron-Service `Db Space Checker`
 

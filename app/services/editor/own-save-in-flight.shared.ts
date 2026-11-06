@@ -117,6 +117,19 @@ export function backstopOwnSaves(
   return kept.length === entries.length ? entries : kept;
 }
 
+/**
+ * The idle backstop for a pending PRIMARY accept-and-translate step 2: it waits for the answer of step 1's own
+ * save (`step1Partial`). When the fetcher is idle with nothing queued and that request is not the one submitted in
+ * this very effect flush, no answer is coming any more, so the pending step must be dropped, or the flow flag
+ * (which withholds `changedFields`) would stay armed for every later save.
+ */
+export function isStaleAcceptStep(
+  pending: { step1Partial?: unknown } | null | undefined,
+  justSubmittedToken: unknown,
+): boolean {
+  return !!pending && pending.step1Partial != null && pending.step1Partial !== justSubmittedToken;
+}
+
 /** A ref-shaped slot (React's MutableRefObject, without importing React). */
 interface Slot<T> {
   current: T;

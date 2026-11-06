@@ -35,6 +35,7 @@ import {
   rememberThemeImagePick,
   isSafeThemeImageFilename,
 } from "../../utils/theme-image-reference.shared";
+import { appFetch } from "../../utils/app-fetch";
 
 // One lookup per filename per page session: a theme group can carry dozens of
 // image settings, and each re-render must not refetch.
@@ -43,7 +44,7 @@ const urlCache = new Map<string, Promise<string | null>>();
 function lookupImageUrl(filename: string): Promise<string | null> {
   let hit = urlCache.get(filename);
   if (!hit) {
-    hit = fetch(`/api/files?filename=${encodeURIComponent(filename)}`)
+    hit = appFetch(`/api/files?filename=${encodeURIComponent(filename)}`)
       .then((r) => (r.ok ? r.json() : { files: [] }))
       .then((j: { files?: Array<{ assetUrl?: string }> }) => j.files?.[0]?.assetUrl || null)
       .catch(() => null);

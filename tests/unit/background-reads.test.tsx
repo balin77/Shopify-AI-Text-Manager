@@ -1,0 +1,296 @@
+/**
+ * Background reads over plain fetch: a failed read (the rate limiter's 429, a
+ * dropped connection) stays local - it never throws into a route error boundary -
+ * and a late answer for a scope the merchant has left is ignored.
+ */
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { act, renderHook } from "@testing-library/react";
+
+const appFetchJson = vi.fn();
+vi.mock("~/utils/app-fetch", () => ({ appFetchJson: (...args: unknown[]) => appFetchJson(...args) }));
+
+import { useSeoKeywordLoad } from "~/hooks/useSeoKeywordLoad";
+import { useBackgroundJson } from "~/hooks/useBackgroundJson";
+
+type Deferred = { resolve: (v: unknown) => void; reject: (e: unknown) => void; url: string; signal?: AbortSignal };
+let pending: Deferred[] = [];
+
+beforeEach(() => {
+  pending = [];
+  appFetchJson.mockReset();
+  appFetchJson.mockImplementation(
+    (url: string, init?: RequestInit) =>
+      new Promise((resolve, reject) => {
+        pending.push({ resolve, reject, url, signal: init?.signal ?? undefined });
+      }),
+  );
+});
+
+const answer = (ok: boolean, data: unknown, status = ok ? 200 : 429) => ({ response: { ok, status }, data });
+// A macrotask: every promise reaction (including a late rejection) has run.
+const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+
+describe("useSeoKeywordLoad", () => {
+  const setup = (resourceId = "gid://shopify/Product/1", locale = "de") => {
+    const onLoaded = vi.fn();
+    const onFailed = vi.fn();
+    const hook = renderHook(
+      (p: { resourceId: string; locale: string }) =>
+        useSeoKeywordLoad<{ id: string }>({ resourceId: p.resourceId, resourceType: "product", locale: p.locale, onLoaded, onFailed }),
+      { initialProps: { resourceId, locale } },
+    );
+    return { ...hook, onLoaded, onFailed };
+  };
+
+  it("loads over the plain fetch path", async () => {
+    const { onLoaded, onFailed } = setup();
+    expect(pending[0].url).toBe("/api/seo-keyword?resourceId=gid%3A%2F%2Fshopify%2FProduct%2F1&locale=de");
+    pending[0].resolve(answer(true, { keywords: [{ id: "k" }] }));
+    await flush();
+    expect(onLoaded).toHaveBeenCalledWith([{ id: "k" }]);
+    expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it("a 429 stays local: reported as failed, never as an empty list, nothing thrown", async () => {
+    const { onLoaded, onFailed } = setup();
+    pending[0].resolve(answer(false, { error: "Too many requests, please try again later", retryAfter: 30 }));
+    await flush();
+    expect(onFailed).toHaveBeenCalledTimes(1);
+    expect(onLoaded).not.toHaveBeenCalled();
+  });
+
+  it("a rejected request (network, session) is a local failure too", async () => {
+    const { onLoaded, onFailed } = setup();
+    pending[0].reject(new Error("network"));
+    await flush();
+    expect(onFailed).toHaveBeenCalledTimes(1);
+    expect(onLoaded).not.toHaveBeenCalled();
+  });
+
+  it("a 200 without a keywords array is a failure, not 'no keywords'", async () => {
+    const { onLoaded, onFailed } = setup();
+    pending[0].resolve(answer(true, {}));
+    await flush();
+    expect(onFailed).toHaveBeenCalledTimes(1);
+    expect(onLoaded).not.toHaveBeenCalled();
+  });
+
+  it("a late answer for the previous item or locale is ignored, and its request is aborted", async () => {
+    const { rerender, onLoaded, onFailed } = setup("gid://shopify/Product/1", "de");
+    rerender({ resourceId: "gid://shopify/Product/2", locale: "de" });
+    expect(pending[0].signal?.aborted).toBe(true);
+    pending[1].resolve(answer(true, { keywords: [{ id: "second" }] }));
+    pending[0].resolve(answer(true, { keywords: [{ id: "first" }] })); // late
+    await flush();
+    expect(onLoaded).toHaveBeenCalledTimes(1);
+    expect(onLoaded).toHaveBeenCalledWith([{ id: "second" }]);
+
+    rerender({ resourceId: "gid://shopify/Product/2", locale: "en" });
+    pending[1].reject(new Error("late failure")); // the aborted request of product 2 / de
+    await flush();
+    expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it("a request that fails AFTER the merchant left its item is not reported as a failure of the current one", async () => {
+    const { rerender, onLoaded, onFailed } = setup("gid://shopify/Product/1", "de");
+    rerender({ resourceId: "gid://shopify/Product/2", locale: "de" });
+    expect(pending[0].signal?.aborted).toBe(true);
+    pending[0].reject(new Error("aborted")); // the old request's rejection arrives late
+    await flush();
+    expect(onFailed).not.toHaveBeenCalled();
+    pending[1].resolve(answer(true, { keywords: [{ id: "second" }] }));
+    await flush();
+    expect(onLoaded).toHaveBeenCalledWith([{ id: "second" }]);
+    expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it("a locale switch alone asks again, for that locale", async () => {
+    const { rerender, onLoaded } = setup("gid://shopify/Product/1", "de");
+    pending[0].resolve(answer(true, { keywords: [{ id: "de" }] }));
+    await flush();
+    rerender({ resourceId: "gid://shopify/Product/1", locale: "en" });
+    expect(pending).toHaveLength(2);
+    expect(pending[1].url).toBe("/api/seo-keyword?resourceId=gid%3A%2F%2Fshopify%2FProduct%2F1&locale=en");
+    pending[1].resolve(answer(true, { keywords: [{ id: "en" }] }));
+    await flush();
+    expect(onLoaded).toHaveBeenLastCalledWith([{ id: "en" }]);
+  });
+
+  it("retry asks again", async () => {
+    const { result } = setup();
+    pending[0].resolve(answer(false, {}));
+    await flush();
+    act(() => result.current.retry());
+    expect(pending).toHaveLength(2);
+  });
+});
+
+describe("useBackgroundJson", () => {
+  it("a failure sets `failed` and leaves the data empty; nothing is thrown", async () => {
+    const { result } = renderHook(() => useBackgroundJson<{ x: number }>());
+    act(() => result.current.load("/api/a"));
+    expect(result.current.state).toBe("loading");
+    pending[0].resolve(answer(false, { error: "Too many requests" }));
+    await flush();
+    expect(result.current.state).toBe("idle");
+    expect(result.current.failed).toBe(true);
+  });
+
+  it("a transport rejection is a local failure", async () => {
+    const { result } = renderHook(() => useBackgroundJson<{ x: number }>());
+    act(() => result.current.load("/api/a"));
+    pending[0].reject(new Error("boom"));
+    await flush();
+    expect(result.current.failed).toBe(true);
+    expect(result.current.data).toBeNull();
+  });
+
+  it("latest wins: the earlier request is aborted and its late answer is dropped", async () => {
+    const { result } = renderHook(() => useBackgroundJson<{ x: number }>());
+    act(() => result.current.load("/api/a"));
+    act(() => result.current.load("/api/b"));
+    expect(pending[0].signal?.aborted).toBe(true);
+    pending[1].resolve(answer(true, { x: 2 }));
+    pending[0].resolve(answer(true, { x: 1 }));
+    await flush();
+    expect(result.current.data).toEqual({ x: 2 });
+    expect(result.current.failed).toBe(false);
+  });
+
+  it("the rejection of an ABORTED request (every product switch makes one) is not a failure of the current one", async () => {
+    const { result } = renderHook(() => useBackgroundJson<{ x: number }>());
+    act(() => result.current.load("/api/a"));
+    act(() => result.current.load("/api/b"));
+    const abort = new Error("The operation was aborted");
+    abort.name = "AbortError";
+    pending[0].reject(abort);
+    await flush();
+    expect(result.current.state).toBe("loading");
+    expect(result.current.failed).toBe(false);
+    pending[1].resolve(answer(true, { x: 2 }));
+    await flush();
+    expect(result.current.data).toEqual({ x: 2 });
+    expect(result.current.failed).toBe(false);
+  });
+
+  it("nothing is set after unmount", async () => {
+    const { result, unmount } = renderHook(() => useBackgroundJson<{ x: number }>());
+    act(() => result.current.load("/api/a"));
+    unmount();
+    expect(pending[0].signal?.aborted).toBe(true);
+    pending[0].resolve(answer(true, { x: 1 }));
+    await Promise.resolve();
+  });
+});
+
+import { useEditorImageManagement } from "~/hooks/useEditorImageManagement";
+
+describe("useEditorImageManagement on-demand images", () => {
+  const item = { id: "gid://shopify/Product/1", images: [] } as any;
+  const render = () =>
+    renderHook(() =>
+      useEditorImageManagement({ config: { contentType: "products" } as any, selectedItemId: item.id, baseSelectedItem: item }),
+    );
+
+  it("a 429 ends the spinner and shows no images; it is not retried in a loop", async () => {
+    const { result } = render();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].url).toBe("/api/product-images?productId=gid%3A%2F%2Fshopify%2FProduct%2F1");
+    pending[0].resolve(answer(false, { error: "Too many requests" }));
+    await flush();
+    expect(result.current.isLoadingImages).toBe(false);
+    expect(result.current.onDemandImages).toEqual([]);
+    expect(pending).toHaveLength(1);
+  });
+
+  it("a transport failure with NO body (rejected request) ends the spinner and is not retried", async () => {
+    const { result } = render();
+    expect(result.current.isLoadingImages).toBe(true);
+    pending[0].reject(new Error("socket hang up"));
+    await flush();
+    expect(result.current.isLoadingImages).toBe(false);
+    expect(result.current.onDemandImages).toEqual([]);
+    expect(pending).toHaveLength(1);
+  });
+
+  it("a failed read is marked as loaded: a new item object of the same product (a revalidation) does not ask again", async () => {
+    const make = () => ({ id: "gid://shopify/Product/1", images: [] }) as any;
+    const hook = renderHook(
+      ({ item }: { item: any }) =>
+        useEditorImageManagement({ config: { contentType: "products" } as any, selectedItemId: item.id, baseSelectedItem: item }),
+      { initialProps: { item: make() } },
+    );
+    pending[0].resolve(answer(false, { error: "Too many requests" }));
+    await flush();
+    hook.rerender({ item: make() });
+    hook.rerender({ item: make() });
+    await flush();
+    expect(pending).toHaveLength(1);
+    expect(hook.result.current.isLoadingImages).toBe(false);
+  });
+
+  it("the spinner ends when the selection goes away while a read is out", async () => {
+    const A = { id: "gid://shopify/Product/1", images: [] } as any;
+    const hook = renderHook(
+      ({ id, item }: { id: string | null; item: any }) =>
+        useEditorImageManagement({ config: { contentType: "products" } as any, selectedItemId: id, baseSelectedItem: item }),
+      { initialProps: { id: A.id as string | null, item: A as any } },
+    );
+    expect(hook.result.current.isLoadingImages).toBe(true);
+    hook.rerender({ id: null, item: undefined });
+    await flush();
+    expect(hook.result.current.isLoadingImages).toBe(false);
+  });
+
+  it("a failed read of product B never shows product A's images, and B's spinner stays on until B answers", async () => {
+    const A = { id: "gid://shopify/Product/1", images: [] } as any;
+    const B = { id: "gid://shopify/Product/2", images: [] } as any;
+    const hook = renderHook(
+      ({ item }: { item: any }) =>
+        useEditorImageManagement({ config: { contentType: "products" } as any, selectedItemId: item.id, baseSelectedItem: item }),
+      { initialProps: { item: A } },
+    );
+    pending[0].resolve(answer(true, { success: true, images: [{ url: "https://x/A.png", altText: "alt of A" }] }));
+    await flush();
+    expect(hook.result.current.onDemandImages).toHaveLength(1);
+
+    hook.rerender({ item: B });
+    await flush();
+    expect(hook.result.current.onDemandImages).toEqual([]); // A's images are gone at once
+    expect(hook.result.current.isLoadingImages).toBe(true); // A's old snapshot did not end B's spinner
+    expect(pending[1].url).toBe("/api/product-images?productId=gid%3A%2F%2Fshopify%2FProduct%2F2");
+
+    pending[1].resolve(answer(false, { error: "Too many requests" }));
+    await flush();
+    expect(hook.result.current.onDemandImages).toEqual([]);
+    expect(hook.result.current.selectedItem?.id).toBe("gid://shopify/Product/2");
+    expect(hook.result.current.selectedItem?.images ?? []).toEqual([]);
+    expect(hook.result.current.isLoadingImages).toBe(false);
+  });
+
+  it("a read still out for A does not leave the spinner on when the merchant moves to C, which has images in the DB", async () => {
+    const A = { id: "gid://shopify/Product/1", images: [] } as any;
+    const C = { id: "gid://shopify/Product/3", images: [{ url: "https://x/c.png", altText: "c" }] } as any;
+    const hook = renderHook(
+      ({ item }: { item: any }) =>
+        useEditorImageManagement({ config: { contentType: "products" } as any, selectedItemId: item.id, baseSelectedItem: item }),
+      { initialProps: { item: A } },
+    );
+    expect(hook.result.current.isLoadingImages).toBe(true);
+    hook.rerender({ item: C });
+    await flush();
+    expect(hook.result.current.isLoadingImages).toBe(false);
+    pending[0].resolve(answer(true, { success: true, images: [{ url: "https://x/A.png" }] })); // A answers late
+    await flush();
+    expect(hook.result.current.isLoadingImages).toBe(false);
+    expect(hook.result.current.onDemandImages).toEqual([]);
+    expect(pending).toHaveLength(1); // C asked for nothing
+  });
+
+  it("an answer lands as before", async () => {
+    const { result } = render();
+    pending[0].resolve(answer(true, { success: true, images: [{ url: "https://x/y.png", altText: "a" }] }));
+    await flush();
+    expect(result.current.onDemandImages).toHaveLength(1);
+  });
+});

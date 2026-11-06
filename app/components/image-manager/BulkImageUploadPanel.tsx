@@ -15,6 +15,8 @@ import {
 } from "@shopify/polaris";
 import { HelpTriggerButton } from "../HelpTrigger";
 import { useI18n } from "../../contexts/I18nContext";
+import { appFetch, isAuthError } from "../../utils/app-fetch";
+import { translateErrorMessage } from "../../utils/editor-error-messages";
 import { parseFilename, parseSku } from "../../utils/parseFilenames";
 import { ALL_UPLOADABLE_MIME_TYPES, classifyFile } from "../../utils/mediaKind";
 import { snapshotAndPersist } from "../../utils/threeDSnapshot";
@@ -190,7 +192,7 @@ export function BulkImageUploadPanel({
   // Memory: optionValue (display name) → last saved key segment
   const [memoryMap, setMemoryMap] = useState<Record<string, string>>({});
   useEffect(() => {
-    fetch("/api/option-value-memory")
+    appFetch("/api/option-value-memory")
       .then(r => r.json())
       .then(d => setMemoryMap(d.memory ?? {}))
       .catch(() => {});
@@ -316,7 +318,7 @@ export function BulkImageUploadPanel({
     setSaveError(null);
     setIsSaving(true);
     try {
-      const r = await fetch("/api/update-variant-match-key", {
+      const r = await appFetch("/api/update-variant-match-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: matchMode, updates, memoryEntries }),
@@ -344,11 +346,11 @@ export function BulkImageUploadPanel({
         setSaveError(msg);
       }
     } catch (err: any) {
-      setSaveError(`Network error: ${err?.message ?? "could not reach server"}`);
+      setSaveError(isAuthError(err) ? translateErrorMessage(err.message, t as never) : `Network error: ${err?.message ?? "could not reach server"}`);
     } finally {
       setIsSaving(false);
     }
-  }, [variants, localKeys, baseName, matchMode, labelMode, memoryMap, onItemsChange]);
+  }, [variants, localKeys, baseName, matchMode, labelMode, memoryMap, onItemsChange, t]);
 
   const handleDrop = useCallback(async (_dropFiles: File[], acceptedFiles: File[]) => {
     setQuotaError(null); // clear any stale quota banner from a previous drop
@@ -419,7 +421,7 @@ export function BulkImageUploadPanel({
       const item = assignedItems[i];
       console.log("[BulkUpload] requesting staged URL", { filename: file.name, mimeType: file.type, fileSize: file.size });
       try {
-        const res = await fetch("/api/staged-upload", {
+        const res = await appFetch("/api/staged-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
@@ -455,6 +457,7 @@ export function BulkImageUploadPanel({
       } catch (err) {
         console.error("[BulkUpload] unexpected error", err);
         onItemsChange(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
+        if (isAuthError(err)) setQuotaError(translateErrorMessage(err.message, t as never));
       }
     }));
   }, [onItemsChange]); // eslint-disable-line react-hooks/exhaustive-deps -- t/setQuotaError are stable enough; matches sibling callbacks

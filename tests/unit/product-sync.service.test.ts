@@ -263,7 +263,9 @@ describe('ProductSyncService', () => {
             key: 'material',
             value: 'Genuine Italian Leather',
           }),
-        ])
+        ]),
+        // The paged read reports whether it reached the last page.
+        { complete: expect.any(Boolean) },
       );
     });
 
@@ -452,6 +454,50 @@ describe('ProductSyncService', () => {
         expect.any(String),
         { variables: { first: expect.any(Number), after: 'cursor-abc' } }
       );
+    });
+  });
+
+  describe('fetchProductData metafield paging', () => {
+    function adminAnswering(pages: unknown[]) {
+      const graphql = vi.fn();
+      for (const page of pages) graphql.mockResolvedValueOnce({ json: async () => page });
+      return { graphql };
+    }
+
+    it('reports a read as TRUNCATED when a later page answers without metafields', async () => {
+      const admin = adminAnswering([
+        { data: { product: {
+          id: 'gid://shopify/Product/1', title: 'T', productType: 'X',
+          metafields: {
+            edges: [{ node: { id: 'gid://shopify/Metafield/1', namespace: 'custom', key: 'a', value: 'v', type: 'single_line_text_field' } }],
+            pageInfo: { hasNextPage: true, endCursor: 'c1' },
+          },
+        } } },
+        // Page 2: no `product.metafields` (a null product, a throttled data).
+        { data: { product: null } },
+      ]);
+      const svc = new ProductSyncService(admin as any, testShop);
+      const product = await (svc as any).fetchProductData('gid://shopify/Product/1');
+      expect(admin.graphql).toHaveBeenCalledTimes(2);
+      expect(product.metafields.edges).toHaveLength(1);
+      expect(product.metafields.pageInfo.hasNextPage).toBe(true);
+    });
+
+    it('reports a complete read when the last page says so', async () => {
+      const admin = adminAnswering([
+        { data: { product: {
+          id: 'gid://shopify/Product/1', title: 'T', productType: 'X',
+          metafields: { edges: [], pageInfo: { hasNextPage: true, endCursor: 'c1' } },
+        } } },
+        { data: { product: { metafields: {
+          edges: [{ node: { id: 'gid://shopify/Metafield/2', namespace: 'custom', key: 'b', value: 'w', type: 'single_line_text_field' } }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        } } } },
+      ]);
+      const svc = new ProductSyncService(admin as any, testShop);
+      const product = await (svc as any).fetchProductData('gid://shopify/Product/1');
+      expect(product.metafields.edges).toHaveLength(1);
+      expect(product.metafields.pageInfo.hasNextPage).toBe(false);
     });
   });
 });

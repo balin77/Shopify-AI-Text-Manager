@@ -818,3 +818,27 @@ describe("runInternalLinkSuggestions — synonym stage (batched)", () => {
     expect(summary.created).toBe(1);
   });
 });
+
+describe("runInternalLinkSuggestions — synonym language", () => {
+  // Regression: the run asked for synonyms with locale "" (the suggestion
+  // rows' code for "primary"), which the prompt reads as ENGLISH — a German
+  // shop got English synonyms that never match its German texts, so a run
+  // found nothing and the page showed no result at all.
+  it("asks for synonyms in the shop's primary locale, never with the empty code", async () => {
+    const db = makeDb({
+      products: [{ id: "gid-P1", handle: "gruene-vase", title: "Grüne Keramikvase" }],
+      articles: [{ id: "gid-A1", body: "<p>Diese Blumenvase ist handgemacht.</p>" }],
+    });
+    const locales: string[] = [];
+    const summary = await runInternalLinkSuggestions(SHOP, {
+      db,
+      primaryLocale: "de",
+      synonymProvider: async (terms, locale) => {
+        locales.push(locale);
+        return terms.map(() => (locale === "de" ? ["Blumenvase"] : ["flower vase"]));
+      },
+    });
+    expect(locales).toEqual(["de"]);
+    expect(summary.created).toBe(1);
+  });
+});

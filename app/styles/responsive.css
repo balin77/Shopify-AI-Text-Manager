@@ -1307,17 +1307,22 @@ html {
     width: 100% !important;
   }
 
-  /* Force images to scale down */
-  img {
+  /* Force images to scale down. Tile images (.app-touch-exempt-img) keep their own
+     inline size (square thumbSize + object-fit: cover); height:auto !important
+     made a non-square picture render at its natural ratio (ragged grid). */
+  img:not(.app-touch-exempt-img) {
     max-width: 100% !important;
     height: auto !important;
   }
 
 
-  /* Ensure all buttons meet minimum touch target size */
+  /* Ensure all buttons meet minimum touch target size. A media TILE carries
+     role="button" only for select/drag semantics and is sized by its image
+     (thumbSize); padding would push its absolutely positioned badges outside
+     the picture. Tiles opt out with .app-touch-exempt (see CLAUDE.md, Field chrome). */
   button:not(.help-tooltip-trigger),
   .Polaris-Button,
-  [role="button"]:not(.help-tooltip-trigger) {
+  [role="button"]:not(.help-tooltip-trigger):not(.app-touch-exempt) {
     min-height: var(--touch-target-min);
     min-width: var(--touch-target-min);
     padding: 12px 16px;
@@ -1641,6 +1646,16 @@ html {
   }
 }
 
+/* The replaced-media badge stays a 20px symbol but gets a 28px invisible hit
+   area: an enlargement, NOT the 44px touch minimum (44px would cover most of an
+   80px tile and swallow its own selection). */
+.app-media-badge-hit::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+}
+
 /* Touch Device Optimizations (regardless of screen size) */
 @media (hover: none) and (pointer: coarse) {
   /* This targets touch devices specifically */
@@ -1648,7 +1663,7 @@ html {
   /* Increase all interactive element sizes */
   button:not(.help-tooltip-trigger),
   a,
-  [role="button"]:not(.help-tooltip-trigger),
+  [role="button"]:not(.help-tooltip-trigger):not(.app-touch-exempt),
   [role="link"] {
     min-height: var(--touch-target-min);
     min-width: var(--touch-target-min);
@@ -1676,7 +1691,7 @@ html {
 
   /* Add active/pressed states for better touch feedback */
   button:active,
-  [role="button"]:active {
+  [role="button"]:not(.app-touch-exempt):active {
     transform: scale(0.97);
     transition: transform 100ms ease-out;
   }
@@ -1784,3 +1799,243 @@ a:focus:not(:focus-visible) {
   box-shadow: none !important;
 }
 
+
+/* Image manager, header of the product gallery: title + count + chevron and the Alle / Nicht
+   zugewiesen filter are ONE no-wrap line, so the header is the same row for 0, 3 or 153 photos and
+   for either filter state. The slider / WebP button live in .im-tools above it. */
+.im-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  column-gap: 0;
+}
+/* Same left edge as the "Varianten-Galerien" heading and the manager title: on a touch device the
+   rule `.Polaris-InlineStack > * { margin: 4px }` (touch block above) pushes those headings in by
+   4px, so the product header takes the same 4px. Fine pointers have no such margin (equal already). */
+@media (hover: none) and (pointer: coarse) {
+  .im-head,
+  .im-tools {
+    padding-inline-start: 4px;
+  }
+}
+.im-head-left {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* The size slider (and the WebP button) sit on their own row ABOVE the product header: the slider
+   first, so it never moves; the button follows and wraps below it on a narrow phone. */
+.im-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-bottom: 4px;
+}
+.im-filter {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+}
+.im-filter-item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+/* "Alle" is short and never truncates; only the long label gives way. */
+.im-filter-item:first-child {
+  flex-shrink: 0;
+}
+.im-filter-sep {
+  color: #8c9196;
+  padding: 0 4px;
+}
+/* No auto min-width: in a narrow desktop column the label truncates instead of the filter being
+   clipped. The touch rule (button { min-width: var(--touch-target-min) }, higher specificity)
+   still gives every filter button its 44px hit area on phones and touch tablets. */
+.im-filter-btn {
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+}
+.im-filter-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Image manager, variant gallery header: ONE left-aligned line (checkbox, title, SKU, count) and
+   the chevron at the right edge. The SKU gives way first (its shrink weight is far above the
+   title's, and it has a floor); the count and the chevron never shrink. */
+.im-vhead-left {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.im-vhead-title {
+  flex: 0 1 auto;
+  min-width: 3ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.im-vhead-sku {
+  flex: 0 100000 auto;
+  min-width: 6ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.im-vhead-count,
+.im-vhead-chevron {
+  flex: 0 0 auto;
+}
+.im-vhead-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--touch-target-min);
+  min-height: var(--touch-target-min);
+  margin-left: 4px;
+}
+@media (min-width: 769px) {
+  .im-vhead-chevron {
+    min-width: 0;
+    min-height: 0;
+  }
+}
+
+/* Image manager galleries: a centred grid with no frame (see SortableImageGrid). While something can
+   be dropped on a gallery, a tint plus a 2px ring drawn by an ::after overlay ABOVE the tiles marks
+   it; the overlay takes no layout space, is not clipped by the gallery's overflow wrapper and lets
+   pointer events through to the tiles. Same on phones and desktop. */
+.im-grid-frame {
+  position: relative;
+  justify-content: center;
+  justify-content: safe center;
+}
+.im-grid-frame[data-drop-target="true"] {
+  background: rgba(0, 91, 211, 0.04);
+}
+.im-grid-frame[data-drop-target="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 2px #005bd3;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Image manager, phones: tighter gallery spacing. The grid itself has no frame on any width (see
+   above); here the gap is 4px, the gallery bleeds into the card's 4px padding, and the page gutter
+   is halved while the full view is open, so 4 tiles of 80px fit at 360px and up. */
+@media (max-width: 768px) {
+  .im-grid-frame {
+    gap: 4px !important;
+    border-radius: 0 !important;
+    margin-inline: -4px;
+  }
+  .im-grid-bleed {
+    margin-inline: -4px;
+  }
+  .im-grid-bleed .im-grid-frame {
+    margin-inline: 0;
+  }
+  .unified-content-editor-layout:has(.unified-editor-container.im-full) {
+    padding-inline: 8px !important;
+  }
+  .im-filter-btn {
+    font-size: 12px !important;
+  }
+  .im-filter {
+    gap: 10px;
+  }
+  .im-filter-sep {
+    display: none;
+  }
+}
+
+/* Image manager: the selection bar. Sticky (not fixed: the app is an iframe) at the bottom of the
+   editor's one scroller while anything is selected; in flow, so it also takes its own height at the
+   end of the content and never permanently covers the last tiles. It hosts the existing alt editor
+   and selection actions. A bar taller than half the scroller scrolls inside itself. */
+.im-sel-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 4px;
+  max-height: 50vh;
+  overflow-y: auto;
+  background: var(--p-color-bg-surface, #fff);
+  border-top: 1px solid var(--app-surface-border-color);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08);
+}
+.im-alt-panel {
+  margin-top: 10px;
+  padding: 10px 12px;
+}
+.im-sel-bar .im-alt-panel {
+  margin-top: 0;
+}
+/* Copy / move / delete / clear: the word on desktop, the icon alone on phones (the accessible name
+   is the word either way). */
+.im-sel-iconbtn .Polaris-Button__Icon {
+  display: none;
+}
+@media (max-width: 768px) {
+  .im-sel-iconbtn .Polaris-Button__Icon {
+    display: flex;
+  }
+  .im-sel-iconbtn .Polaris-Button__Icon ~ * {
+    display: none;
+  }
+  .im-sel-iconbtn .Polaris-Button {
+    padding: 0;
+    justify-content: center;
+    min-width: var(--touch-target-min, 44px) !important;
+    min-height: var(--touch-target-min, 44px);
+  }
+  .im-sel-iconbtn .Polaris-Button .Polaris-Button__Icon {
+    flex-shrink: 0;
+  }
+  .im-sel-iconbtn .Polaris-Button .Polaris-Button__Icon {
+    margin: 0;
+  }
+  .im-sel-bar {
+    padding: 6px 4px;
+    gap: 6px;
+  }
+  .im-sel-bar .im-sel-actions {
+    gap: 6px !important;
+  }
+  /* the box itself says what it is (placeholder); the label row only costs height */
+  .im-sel-bar .im-alt-label {
+    display: none;
+  }
+  .im-sel-bar .im-alt-panel {
+    padding: 6px 8px;
+  }
+}
+
+/* The product gallery's header toggle looks like text (no grey box) but keeps the touch target the
+   phone rule gives every button (min-height / min-width). */
+.im-product-toggle {
+  padding: 4px 0 !important;
+  background: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}

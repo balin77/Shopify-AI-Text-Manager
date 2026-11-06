@@ -781,7 +781,13 @@ async function loadBulkRowsInner(
         ...(metafieldSpecs.length > 0
           ? {
               metafields: {
-                where: { OR: metafieldSpecs.map((s) => ({ namespace: s.namespace, key: s.key })) },
+                // A cleared slot (`value: ""`, product-metafields.shared.ts) is
+                // not a metafield: Shopify holds none, and its id names a
+                // deleted resource no translation may be written to.
+                where: {
+                  value: { not: "" },
+                  OR: metafieldSpecs.map((s) => ({ namespace: s.namespace, key: s.key })),
+                },
                 select: { id: true, namespace: true, key: true, value: true, type: true },
               },
             }

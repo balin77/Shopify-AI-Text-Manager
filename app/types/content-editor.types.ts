@@ -121,6 +121,19 @@ export interface TranslatableContentItem {
     value: string;
     type: string;
   }>;
+  /**
+   * CLEARED SLOTS (product-metafields.shared.ts): metafields deleted on
+   * Shopify whose cache row is kept so the primary card can show the field
+   * empty and re-create it on save. `id` is the DELETED metafield's GID —
+   * never a translation target, which is why these do not ride in `metafields`.
+   */
+  clearedMetafields?: Array<{
+    id: string;
+    namespace: string;
+    key: string;
+    value: string;
+    type: string;
+  }>;
   /** Pre-loaded sub-resource translations from DB (options, option values, metafields) */
   subResourceTranslations?: Record<string, Array<{ key: string; value: string; locale: string; marketId?: string }>>;
   /** Market-specific translations (marketId → translationKey → locale → value). Global rows stay in `translations`. */

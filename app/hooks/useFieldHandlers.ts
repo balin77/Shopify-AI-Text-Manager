@@ -9,10 +9,11 @@
 import type { PartialSave } from "./useUiDataLoader";
 import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
 import { isAttributeField, isTranslatableFieldDefinition } from "../services/content-attributes.shared";
-import { buildLocaleDeletedKey, dropLocaleMarks } from "../services/editor/deleted-translation-marks.shared";
-import { useCallback, useRef, useState } from "react";
+import { FOREIGN_STEP1_DEADLINE_MS, type ForeignStep1Flow, type Step1Result } from "../services/editor/foreign-step1.shared";
+import { buildLocaleDeletedKey, buildStageMark, dropLocaleMarks } from "../services/editor/deleted-translation-marks.shared";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
-import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
+import { getItemFieldValue, buildLocaleKey } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
 import { writeLastSelectedId } from "../utils/last-selected-item";
 import { writeLastContentLocale } from "../utils/last-content-locale";
@@ -40,6 +41,7 @@ import { partialLocaleCounts } from "../services/translations/partial-result.sha
 import { postContentEditorSave } from "../services/editor/content-action-endpoint.shared";
 import { runPerLocaleSavesDetailed, copyOutcomeMessage } from "../services/editor/per-locale-saves.shared";
 import { fallbackFieldsAfterDiscard, type LoadedFallbackSnapshot } from "../services/editor/discard-fallback.shared";
+import { PASSENGER_FIELDS_KEY, passengerKeysOf, savesNamePassengers } from "../services/editor/passenger-fields.shared";
 import { buildOwnSaveForm, isUnsavedPrimarySource, hasUnsavedPrimaryTranslateSource } from "../services/editor/own-field-save.shared";
 import { applyAltTranslateAllAnswer, forLocaleAltResults } from "../services/alt-text-feedback.shared";
 
@@ -118,8 +120,10 @@ export interface FieldHandlerProps {
   /** Tracks the fieldKey of a copy save so the response handler can clear the loading state. */
   pendingCopyFieldKeyRef: { current: string | null };
   pendingCopyFieldItemIdRef: { current: string | null };
-  pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string } | null };
+  pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string; step1Partial?: object } | null };
   acceptedPrimaryValueRef: { current: { fieldKey: string; value: string } | null };
+  foreignStep1Ref: { current: Map<object, ForeignStep1Flow> };
+  foreignAcceptPrimaryStepRef: { current: Map<object, { itemId: string; fieldKey: string; staged: string; step1: object }> };
   initialLoadSuccessfulRef: { current: boolean };
   retryCountRef: { current: number };
 
@@ -257,7 +261,6 @@ interface CopyFieldRollback {
   fieldKey: string;
   translationKey: string;
   localeKey: string;
-  deletedKey: string;
   /** This locale's own "cleared" mark, which the copy drops too. */
   localeDeletedKey: string;
   hadLocaleDeletedMarker: boolean;
@@ -265,7 +268,6 @@ interface CopyFieldRollback {
   marketId: string;
   value: string;
   prevOverlay: string | undefined;
-  hadDeletedMarker: boolean;
   prevBaseline: string | undefined;
   prevOriginalLoaded: string | undefined;
   prevEditable: string | undefined;
@@ -277,6 +279,17 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
   // Local to this hook: the keyword-insertion run spans several fields, so
   // no single field's own AI-loading flag describes it.
   const [isInsertingKeywords, setIsInsertingKeywords] = useState(false);
+  // Foreign accept-and-translate waits for step 1 with a deadline timer: every waiting flow registers a disposer
+  // here, and an unmount runs them all (a timer left behind would show its "nothing translated" box 2 minutes
+  // later, possibly on another page).
+  const step1DisposersRef = useRef<Set<() => void>>(new Set());
+  useEffect(() => {
+    const disposers = step1DisposersRef.current;
+    return () => {
+      for (const dispose of [...disposers]) dispose();
+      disposers.clear();
+    };
+  }, []);
   const {
     config,
     primaryLocale,
@@ -329,6 +342,8 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     pendingCopyFieldItemIdRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
+    foreignAcceptPrimaryStepRef,
+    foreignStep1Ref,
     initialLoadSuccessfulRef,
     retryCountRef,
     submitAIAction,
@@ -415,7 +430,7 @@ const refuseUnsavedSource = (): void => {
 const submitOwnFieldSave = (
   fieldKey: string,
   value: string,
-  opts: { markChanged?: boolean; fromTranslate?: boolean } = {},
+  opts: { markChanged?: boolean; fromTranslate?: boolean; onPartial?: (partial: object) => void } = {},
 ): boolean => {
   if (!selectedItemId) return false;
   const locale = currentLanguage;
@@ -449,7 +464,9 @@ const submitOwnFieldSave = (
       [fieldKey]: value,
     };
   }
-  partialSaveRef.current = { locale, marketId, values: { [fieldKey]: value }, altIndices: [] };
+  const ownPartial = { locale, marketId, values: { [fieldKey]: value }, altIndices: [], withheld: isPrimary && opts.markChanged === false };
+  partialSaveRef.current = ownPartial;
+  opts.onPartial?.(ownPartial);
   savedLocaleRef.current = locale;
   savedMarketIdRef.current = marketId;
   savedItemIdRef.current = selectedItemId;
@@ -559,6 +576,8 @@ const handleSave = () => {
   }
 
   // Add field values - for foreign locales, only send fields that actually changed
+  // The view's market, before the carried-value lookup in buildFieldsForSave reads it.
+  savedMarketIdRef.current = selectedMarketId;
   Object.assign(formDataObj, buildFieldsForSave(editableValues, currentLanguage));
 
   // Add image alt-texts ONLY if they actually changed (avoid sending unchanged alt-texts
@@ -583,6 +602,13 @@ const handleSave = () => {
     if (changedFields.length > 0) {
       formDataObj.changedFields = JSON.stringify(changedFields);
       debugLog.save(' Changed fields (translations will be deleted on server):', changedFields);
+    }
+
+    // The fields sent without the merchant having changed them are PASSENGERS: the server does not
+    // write them (passenger-fields.shared.ts), so an old text can never go over a newer one.
+    if (savesNamePassengers(config.resourceType, isThemeContentType(config.contentType))) {
+      const passengers = passengerKeysOf(Object.keys(formDataObj), changedFields, effectiveFieldDefinitions);
+      if (passengers.length > 0) formDataObj[PASSENGER_FIELDS_KEY] = JSON.stringify(passengers);
     }
 
     // PLAN §Phase 3 — a SEPARATE list, because it answers a different question.
@@ -1531,6 +1557,14 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     // Update the `L` overlay AND the change-detection baseline IMMEDIATELY so the
     // accepted field is not flagged "dirty" — everything here saves automatically,
     // so the Save button must stay inactive.
+    const overlayLocaleKey = buildLocaleKey(L, "");
+    // The deleted mark step 1 is about to clear (this locale's own mark), to put back on undo. A LAYER mark
+    // is never cleared by it (a stage mark exempts this locale), so nothing to put back there.
+    const stageMark = buildStageMark(translationKey, "", L);
+    const localeMark = buildLocaleDeletedKey(translationKey, "", L);
+    const hadLocaleMark = deletedTranslationKeysRef.current.has(localeMark);
+    const prevOriginal = originalLoadedValuesRef.current[fieldKey];
+    const prevBaseline = baselineValuesRef.current[fieldKey];
     const transResult = dataLoader.onTranslateFieldComplete(
       fieldKey,
       translationKey,
@@ -1554,7 +1588,39 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     // ONLY the accepted field: other fields may hold unsaved input, which
     // stays dirty for its own Save rather than riding along here.
     foreignForm[fieldKey] = suggestion;
-    partialSaveRef.current = { locale: L, marketId: "", values: { [fieldKey]: suggestion } };
+    const step1Partial = { locale: L, marketId: "", values: { [fieldKey]: suggestion } };
+    partialSaveRef.current = step1Partial;
+    // A REFUSED step 1 takes the staged foreign text back: the overlay entry and this field's baseline, so the
+    // text reads as an unsaved draft again and not as stored (only while they still hold what step 1 staged).
+    const undoStep1 = () => {
+      const entry = localTranslationsRef.current[translationKey];
+      if (entry && entry[overlayLocaleKey] === suggestion) {
+        // The text was never stored: the entry goes. What step 1 replaced may have been a CONFIRMED foreign value
+        // (see KNOWN_ISSUES), which is not put back. The deleted mark step 1 cleared comes back, so a field the
+        // merchant had cleared still reads as cleared; the stage mark goes with the staged text.
+        delete entry[overlayLocaleKey];
+        deletedTranslationKeysRef.current.delete(stageMark);
+        if (hadLocaleMark) deletedTranslationKeysRef.current.add(localeMark);
+      }
+      const put = (ref: { current: Record<string, string> }, prev: string | undefined) => {
+        if (ref.current[fieldKey] !== suggestion) return;
+        const next = { ...ref.current };
+        if (prev === undefined) delete next[fieldKey];
+        else next[fieldKey] = prev;
+        ref.current = next;
+      };
+      put(originalLoadedValuesRef, prevOriginal);
+      put(baselineValuesRef, prevBaseline);
+      setBaselineVersion((v) => v + 1);
+    };
+    foreignStep1Ref.current.set(step1Partial, { saved: null, step2: null, undo: undoStep1 });
+    // No step 2 will follow (an exit below that never sends it): the record is dropped once step 1 has answered.
+    const flowDone = () => {
+      const flow = foreignStep1Ref.current.get(step1Partial);
+      if (!flow) return;
+      flow.done = true;
+      if (flow.saved !== null) foreignStep1Ref.current.delete(step1Partial);
+    };
     savedLocaleRef.current = L;
     savedMarketIdRef.current = selectedMarketId;
     savedItemIdRef.current = requestItemId;
@@ -1578,6 +1644,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     // Nothing left to translate (no other foreign locales) — the accepted text is
     // already saved in `L`. For read-only rubrics that is the whole job; inform.
     if (allTargets.length === 0) {
+      flowDone();
       if (primaryReadOnly) {
         showInfoBox(
           String(t.content?.primaryReadOnlyTranslateInfo
@@ -1588,129 +1655,183 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
       return;
     }
 
-    debugLog.acceptAndTranslate(' Foreign locale: single batch translate (primary + others), source = ' + L);
-    submitAIAction(
-      {
-        action: "translateFieldToAllLocales",
-        itemId: requestItemId,
-        fieldType: fieldKey,
-        sourceText: suggestion,
-        targetLocales: JSON.stringify(allTargets),
-        // Translate the primary too, but don't persist it as a foreign
-        // translation — the client saves it as base content below. For read-only
-        // rubrics the primary is not a target at all, so nothing to skip.
-        skipSaveLocales: JSON.stringify(primaryReadOnly ? [] : [primaryLocale]),
-        contextTitle,
-        // Server treats `primaryLocale` as the SOURCE language for the AI call.
-        primaryLocale: L,
-      },
-      fieldKey,
-      (result) => {
-        if (selectedItemIdRef.current !== requestItemId) return;
-        // A run of this item started while the AI worked: the PRIMARY base
-        // save below is not made and nothing is staged for it (the server
-        // already stored what it translated; a reload shows it).
-        // The foreign text AND the other languages WERE saved (the request
-        // ran with skipSaveLocales=[primary]); only the primary save is
-        // skipped -- said exactly that way.
-        if (isOwnSaveBlocked?.(requestItemId, primaryLocale)) {
-          sayPrimaryTextSkipped?.();
-          setIsAcceptAndTranslateFlow(false);
-          if (revalidatorRef.current.state === 'idle') {
-            try { revalidatorRef.current.revalidate(); } catch {}
-          }
-          return;
-        }
-        const translations = (result.translations as Record<string, string>) || {};
-
-        // Save the primary-language value as BASE content (this field only, NO
-        // changedFields → existing foreign translations are preserved).
-        // Read-only rubrics never translate/save/overlay the main language.
-        const primaryTranslated = primaryReadOnly ? "" : (translations[primaryLocale] || "").trim();
-        if (primaryTranslated) {
-          // Overlay the new primary value so the main language shows it
-          // IMMEDIATELY when the user switches to it — independent of when the
-          // primary base save commits or whether the loader reads stale data.
-          // resolve() checks savedPrimaryValuesRef first for the primary locale.
-          if (!savedPrimaryValuesRef.current[requestItemId]) {
-            savedPrimaryValuesRef.current[requestItemId] = {};
-          }
-          savedPrimaryValuesRef.current[requestItemId][fieldKey] = primaryTranslated;
-
-          const primaryForm: Record<string, string> = {
-            action: "updateContent",
-            itemId: requestItemId,
-            locale: primaryLocale,
-            primaryLocale,
-            [fieldKey]: primaryTranslated,
-          };
-          // Products reject any primary-locale update without a non-empty title
-          // (updatePrimaryProduct); include the real primary title for non-title
-          // single-field saves.
-          if (config.contentType === "products" && fieldKey !== "title") {
-            primaryForm.title = getItemFieldValue(selectedItem!, "title", primaryLocale, config);
-          }
-          if (config.resourceType === "ShopPolicy" && selectedItem?.type) {
-            primaryForm.policyType = selectedItem.type;
-          }
-          // Keep savedLocaleRef on `L`: we are viewing L, the server persists
-          // this as primary via the form `locale` field, and processing the
-          // response under `primaryLocale` would pick a stale primary baseline.
-          savedLocaleRef.current = L;
-          savedMarketIdRef.current = selectedMarketId;
-          savedItemIdRef.current = requestItemId;
-          isSavePendingRef.current = true;
-          isSaveFromTranslateRef.current = true;
-          // PARTIAL, carrying no foreign value at all: this writes the PRIMARY
-          // field, so nothing of the L view is saved by it — handled as a full
-          // save it overlaid every field on screen as an L translation and
-          // marked unsaved input clean.
-          partialSaveRef.current = { locale: L, marketId: selectedMarketId, values: {} };
-          safeSubmit(primaryForm, { method: "POST" });
-        }
-
-        // Update overlays for the OTHER foreign locales (already saved server-side).
-        const othersTranslations: Record<string, string> = {};
-        for (const [loc, val] of Object.entries(translations)) {
-          if (loc !== primaryLocale) othersTranslations[loc] = val;
-        }
-        if (Object.keys(othersTranslations).length > 0) {
-          dataLoader.onTranslateFieldToAllLocalesComplete(translationKey, othersTranslations, L);
-        }
-
-        const failedLocales = (result.failedLocales as string[]) || [];
-        const fieldLabel = resolveFieldLabel(fieldKey);
-        if (failedLocales.length > 0) {
-          showInfoBox(
-            String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
-              .replace("{successCount}", String(Object.keys(translations).length))
-              .replace("{totalCount}", String(Object.keys(translations).length + failedLocales.length))
-              .replace("{failedLocales}", failedLocales.join(", ")),
-            "warning"
-          );
-        } else {
-          showInfoBox(
-            t.common?.fieldTranslatedToLanguages
-              ?.replace("{fieldType}", fieldLabel)
-              .replace("{count}", String(Object.keys(othersTranslations).length + (primaryTranslated ? 1 : 0)))
-              || `${fieldLabel} translated`,
-            "success"
-          );
-        }
-
-        setIsLoadingData(true);
-        // Revalidate to reconcile with the server's canonical data. The primary
-        // and other-locale overlays above already drive the UI, so even if this
-        // revalidation races the in-flight primary save and briefly reads stale
-        // data, resolve() keeps showing the new (overlaid) values until the
-        // server catches up.
-        try { revalidatorRef.current.revalidate(); } catch {}
-      },
-      () => {
-        // Translation failed — the accepted foreign text is still saved in `L`.
-        if (selectedItemIdRef.current !== requestItemId) return;
+    // The AI call starts only after step 1 (the text in `L`) is CONFIRMED: the server stores every other foreign
+    // language it translates at once, so a refused / unconfirmed step 1 must not be followed by translations of a
+    // text that does not exist in `L`. Refusal, an unconfirmed field and no answer before the deadline all end the
+    // flow with NOTHING translated (and said so).
+    const startTranslation = () => {
+      if (selectedItemIdRef.current !== requestItemId) { flowDone(); return; }
+      // A run of the item started while step 1 was out: the translation would race it.
+      if (isOwnSaveBlocked?.(requestItemId, primaryLocale)) {
+        flowDone();
+        sayTranslateToOthersSkipped?.();
+        setIsAcceptAndTranslateFlow(false);
+        return;
       }
-    );
+      debugLog.acceptAndTranslate(' Foreign locale: single batch translate (primary + others), source = ' + L);
+      submitAIAction(
+        {
+          action: "translateFieldToAllLocales",
+          itemId: requestItemId,
+          fieldType: fieldKey,
+          sourceText: suggestion,
+          targetLocales: JSON.stringify(allTargets),
+          // Translate the primary too, but don't persist it as a foreign
+          // translation — the client saves it as base content below. For read-only
+          // rubrics the primary is not a target at all, so nothing to skip.
+          skipSaveLocales: JSON.stringify(primaryReadOnly ? [] : [primaryLocale]),
+          contextTitle,
+          // Server treats `primaryLocale` as the SOURCE language for the AI call.
+          primaryLocale: L,
+        },
+        fieldKey,
+        (result) => {
+          if (selectedItemIdRef.current !== requestItemId) { flowDone(); return; }
+          // A run of this item started while the AI worked: the PRIMARY base
+          // save below is not made and nothing is staged for it (the server
+          // already stored what it translated; a reload shows it).
+          // The foreign text AND the other languages WERE saved (the request
+          // ran with skipSaveLocales=[primary]); only the primary save is
+          // skipped -- said exactly that way.
+          if (isOwnSaveBlocked?.(requestItemId, primaryLocale)) {
+            flowDone();
+            sayPrimaryTextSkipped?.();
+            setIsAcceptAndTranslateFlow(false);
+            if (revalidatorRef.current.state === 'idle') {
+              try { revalidatorRef.current.revalidate(); } catch {}
+            }
+            return;
+          }
+          const translations = (result.translations as Record<string, string>) || {};
+
+          // Save the primary-language value as BASE content (this field only, NO
+          // changedFields → existing foreign translations are preserved).
+          // Read-only rubrics never translate/save/overlay the main language.
+          const primaryTranslated = primaryReadOnly ? "" : (translations[primaryLocale] || "").trim();
+          // Step 1 is CONFIRMED by construction (the AI call started only after it), so step 2 follows.
+          if (!primaryTranslated) flowDone();
+          if (primaryTranslated) {
+            // Overlay the new primary value so the main language shows it
+            // IMMEDIATELY when the user switches to it — independent of when the
+            // primary base save commits or whether the loader reads stale data.
+            // resolve() checks savedPrimaryValuesRef first for the primary locale.
+            if (!savedPrimaryValuesRef.current[requestItemId]) {
+              savedPrimaryValuesRef.current[requestItemId] = {};
+            }
+            // Remembered so a REFUSED save gives the overlay back (nothing was stored under it).
+            savedPrimaryValuesRef.current[requestItemId][fieldKey] = primaryTranslated;
+
+            const primaryForm: Record<string, string> = {
+              action: "updateContent",
+              itemId: requestItemId,
+              locale: primaryLocale,
+              primaryLocale,
+              [fieldKey]: primaryTranslated,
+            };
+            // No title rides along: an absent title is "not sent" for updatePrimaryProduct (only a sent, empty one is
+            // refused), and one read from a click-time item could be stale and would be written unannounced.
+            if (config.resourceType === "ShopPolicy" && selectedItem?.type) {
+              primaryForm.policyType = selectedItem.type;
+            }
+            // Keep savedLocaleRef on `L`: we are viewing L, the server persists
+            // this as primary via the form `locale` field, and processing the
+            // response under `primaryLocale` would pick a stale primary baseline.
+            savedLocaleRef.current = L;
+            savedMarketIdRef.current = selectedMarketId;
+            savedItemIdRef.current = requestItemId;
+            isSavePendingRef.current = true;
+            isSaveFromTranslateRef.current = true;
+            // PARTIAL, carrying no foreign value at all: this writes the PRIMARY
+            // field, so nothing of the L view is saved by it — handled as a full
+            // save it overlaid every field on screen as an L translation and
+            // marked unsaved input clean.
+            // holdsView: counted as an own save in flight (a view switch is refused while it is out), although it carries no field.
+            const stepPartial = { locale: L, marketId: selectedMarketId, values: {}, holdsView: true };
+            partialSaveRef.current = stepPartial;
+            // The request's own description is its identity: only ITS answer settles the staged overlay.
+            foreignAcceptPrimaryStepRef.current.set(stepPartial, { itemId: requestItemId, fieldKey, staged: primaryTranslated, step1: step1Partial });
+            const ownFlow = foreignStep1Ref.current.get(step1Partial);
+            if (ownFlow) ownFlow.step2 = stepPartial;
+            safeSubmit(primaryForm, { method: "POST" });
+          }
+
+          // Update overlays for the OTHER foreign locales (already saved server-side).
+          const othersTranslations: Record<string, string> = {};
+          for (const [loc, val] of Object.entries(translations)) {
+            if (loc !== primaryLocale) othersTranslations[loc] = val;
+          }
+          if (Object.keys(othersTranslations).length > 0) {
+            dataLoader.onTranslateFieldToAllLocalesComplete(translationKey, othersTranslations, L);
+          }
+
+          const failedLocales = (result.failedLocales as string[]) || [];
+          const fieldLabel = resolveFieldLabel(fieldKey);
+          if (failedLocales.length > 0) {
+            showInfoBox(
+              String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
+                .replace("{successCount}", String(Object.keys(translations).length))
+                .replace("{totalCount}", String(Object.keys(translations).length + failedLocales.length))
+                .replace("{failedLocales}", failedLocales.join(", ")),
+              "warning"
+            );
+          } else {
+            showInfoBox(
+              (t.common?.fieldTranslatedToLanguages
+                ?.replace("{fieldType}", fieldLabel)
+                .replace("{count}", String(Object.keys(othersTranslations).length + (primaryTranslated ? 1 : 0)))
+                || `${fieldLabel} translated`),
+              "success"
+            );
+          }
+
+          setIsLoadingData(true);
+          // Revalidate to reconcile with the server's canonical data. The primary
+          // and other-locale overlays above already drive the UI, so even if this
+          // revalidation races the in-flight primary save and briefly reads stale
+          // data, resolve() keeps showing the new (overlaid) values until the
+          // server catches up.
+          try { revalidatorRef.current.revalidate(); } catch {}
+        },
+        () => {
+          // Translation failed — the accepted foreign text is still saved in `L`.
+          flowDone();
+          if (selectedItemIdRef.current !== requestItemId) return;
+        }
+      );
+    };
+
+    // Wait for step 1's answer. `onSettled` is called exactly once by the answer handlers (saved / refused /
+    // unconfirmed); the deadline covers an answer that never comes (a send that threw, an abort).
+    const waitingFlow = foreignStep1Ref.current.get(step1Partial);
+    if (!waitingFlow) return;
+    let deadline: ReturnType<typeof setTimeout> | null = null;
+    const dispose = () => {
+      if (deadline) { clearTimeout(deadline); deadline = null; }
+      waitingFlow.onSettled = undefined;
+      step1DisposersRef.current.delete(dispose);
+    };
+    const settle = (result: Step1Result | "timeout") => {
+      dispose();
+      if (result === "saved") { startTranslation(); return; }
+      flowDone();
+      // A refusal says so itself (its own message names the reason and appends that nothing was translated).
+      if (result === "refused") return;
+      if (selectedItemIdRef.current !== requestItemId) return;
+      showInfoBox(
+        result === "timeout"
+          ? String(t.content?.foreignAcceptNothingTranslatedTimeout
+            || "Nothing was translated, because no answer arrived in time. Please check whether the text in this language was saved.")
+          : String(t.content?.foreignAcceptNothingTranslatedUnconfirmed
+            || "Nothing was translated, because Shopify did not confirm that the text in this language was saved."),
+        "warning",
+      );
+    };
+    waitingFlow.onSettled = settle;
+    step1DisposersRef.current.add(dispose);
+    deadline = setTimeout(() => {
+      if (!waitingFlow.onSettled) return;
+      settle("timeout");
+    }, FOREIGN_STEP1_DEADLINE_MS);
     return;
   }
 
@@ -1767,7 +1888,13 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
   // `changedFields` (the flow is about to write its translations itself).
   // After save completes, the useEffect will trigger the translation.
   debugLog.acceptAndTranslate(' Saving primary text first, then will translate');
-  submitOwnFieldSave(fieldKey, suggestion, { markChanged: false });
+  submitOwnFieldSave(fieldKey, suggestion, {
+    markChanged: false,
+    // Step 1's request identity: only ITS refusal abandons the pending step 2.
+    onPartial: (partial) => {
+      if (pendingTranslationAfterSaveRef.current) pendingTranslationAfterSaveRef.current.step1Partial = partial;
+    },
+  });
 };
 
 const handleRejectSuggestion = useCallback((fieldKey: string) => {
@@ -2344,21 +2471,18 @@ const handleCopyField = (fieldKey: string): void => {
   {
     const copyMarketId = selectedMarketIdRef.current;
     const copyLocaleKey = buildLocaleKey(currentLanguage, copyMarketId);
-    const copyDeletedKey = buildDeletedKey(field.translationKey, copyMarketId);
     const copyLocaleDeletedKey = buildLocaleDeletedKey(field.translationKey, copyMarketId, currentLanguage);
     copyFieldRollbackRef.current = {
       itemId: selectedItemId,
       fieldKey,
       translationKey: field.translationKey,
       localeKey: copyLocaleKey,
-      deletedKey: copyDeletedKey,
       localeDeletedKey: copyLocaleDeletedKey,
       hadLocaleDeletedMarker: deletedTranslationKeysRef.current.has(copyLocaleDeletedKey),
       locale: currentLanguage,
       marketId: copyMarketId,
       value: primaryValue,
       prevOverlay: localTranslationsRef.current[field.translationKey]?.[copyLocaleKey],
-      hadDeletedMarker: deletedTranslationKeysRef.current.has(copyDeletedKey),
       prevBaseline: baselineValuesRef.current[fieldKey],
       prevOriginalLoaded: originalLoadedValuesRef.current[fieldKey],
       prevEditable: editableValuesRef.current[fieldKey],
@@ -2420,7 +2544,8 @@ const rollbackCopyField = (opts?: { keepVisible?: boolean }): void => {
     if (rec.prevOverlay === undefined) delete overlay[rec.localeKey];
     else overlay[rec.localeKey] = rec.prevOverlay;
   }
-  if (rec.hadDeletedMarker) deletedTranslationKeysRef.current.add(rec.deletedKey);
+  // The copy never clears a LAYER mark (a stage mark exempts this locale from it): only that exemption goes.
+  deletedTranslationKeysRef.current.delete(buildStageMark(rec.translationKey, rec.marketId, rec.locale));
   if (rec.hadLocaleDeletedMarker) deletedTranslationKeysRef.current.add(rec.localeDeletedKey);
 
   // Everything below is what the merchant SEES: only while that is still the

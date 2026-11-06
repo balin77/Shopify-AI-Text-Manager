@@ -9,6 +9,8 @@ import {
 import { resourceTypeLabel } from "../../services/tasks/task-labels.shared";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import { formatTime } from "../../utils/format";
+import { appFetch } from "../../utils/app-fetch";
+import { taskErrorText } from "../../utils/task-error-text";
 
 /**
  * The expanded half of a card on /app/tasks (PLAN_TASK_LIST_CLARITY §3.3/§3.4).
@@ -232,7 +234,7 @@ export function TaskDetailsPanel({
       lastFetchAtRef.current = Date.now();
       if (!cancelled) setFailed(false);
       try {
-        const res = await fetch(
+        const res = await appFetch(
           `/api/task-result?taskId=${encodeURIComponent(taskId)}&detail=1`,
           { headers: { Accept: "application/json" } },
         );
@@ -441,6 +443,10 @@ export function TaskDetailsPanel({
             <BlockStack gap="100">
               {shownFailures.map((failure, index) => {
                 const subject = failureSubject(failure, t, appLocale);
+                // A failure line may carry a machine code written outside any
+                // request (e.g. a WebP item's `webp_expired_in_queue`); any
+                // other text passes through `taskErrorText` unchanged.
+                const message = failure.message ? (taskErrorText(failure.message, t) ?? failure.message) : failure.message;
                 // BOTH halves are optional and each is rendered alone rather
                 // than with a dangling separator: `altTextTemplateApply`
                 // records an unstructured line with no subject, and the bulk
@@ -448,9 +454,9 @@ export function TaskDetailsPanel({
                 // runner keeps no per-image error).
                 return (
                   <Text as="p" variant="bodySm" key={`${subject}-${index}`}>
-                    {subject && failure.message
-                      ? `${subject}: ${failure.message}`
-                      : subject || failure.message}
+                    {subject && message
+                      ? `${subject}: ${message}`
+                      : subject || message}
                   </Text>
                 );
               })}

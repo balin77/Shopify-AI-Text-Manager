@@ -86,6 +86,7 @@ import "../styles/content-editor-global.css";
 import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition, TranslatableContentItem, ShopLocale, ContentImage } from "../types/content-editor.types";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { UnifiedItem, SortOption } from "./unified/UnifiedItemList";
+import { appFetch } from "../utils/app-fetch";
 
 interface UnifiedContentEditorProps {
   /** Configuration for this content type */
@@ -262,6 +263,10 @@ interface UnifiedContentEditorProps {
   /** Optional: replaces the image-gallery field for Pro/Max users */
   imageGalleryReplacement?: React.ReactNode;
 
+  /** The image manager's FULL view is open: every other text element of the editor is hidden (kept
+   *  mounted, so typed text, running saves and refs survive) and the manager takes the content area. */
+  imageManagerFullView?: boolean;
+
   /** Optional: Variant Image Manager für Pro/Max */
   showImageManager?: boolean;
 
@@ -281,6 +286,8 @@ interface UnifiedContentEditorProps {
     imageManagerSettings: { firstImageBig: boolean; showAltTags: boolean; autoAltText: boolean };
     variantsForBulk?: import("./image-manager/types").VariantWithGallery[];
     onVariantsLoaded?: (variants: import("./image-manager/types").VariantWithGallery[]) => void;
+    /** false while the variants are being re-read or the read failed: variant-wide bulk actions wait. */
+    variantsCurrent?: boolean;
     selectedGalleryGids?: string[];
     onConfirm?: () => Promise<string | null>;
     isApplying?: boolean;
@@ -353,8 +360,20 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     showImageManager,
     imageManager,
     imageGalleryReplacement,
+    imageManagerFullView,
     extraMissingPrimaryIds,
   } = props;
+  // Only with a manager to show: the class switches the text elements off by CSS, never by unmounting.
+  const imFull = !!imageManagerFullView && !!imageGalleryReplacement;
+  // The right sidebar's section: the full view forces the image-processing part (the SEO part is hidden).
+  const hasImagePanels = !!showImageManager && !!imageManager;
+  const rightTab: "seo" | "images" = imFull && hasImagePanels ? "images" : (imageManager?.activeRightTab ?? "seo");
+  // Without image-processing tabs there is nothing to keep of the sidebar in the full view.
+  const sidebarHiddenInFull = imFull && !hasImagePanels;
+  // A field wrapper that exists whenever a manager is mounted (so toggling the view only flips its
+  // style and never remounts the field).
+  const hideWhenFull = (key: string, node: ReactNode): ReactNode =>
+    imageGalleryReplacement ? <div key={key} style={imFull ? { display: "none" } : undefined}>{node}</div> : node;
 
   const { locale } = useI18n();
 
@@ -545,7 +564,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     setIsDiscovering(true);
     setSyncFailure(null);
     try {
-      const res = await fetch(endpoint, { method: "POST" });
+      const res = await appFetch(endpoint, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json().catch(() => null)) as
         | {
@@ -775,11 +794,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // The whole-item "Translate all" on the primary locale translates the SAVED
   // values into every language; a primary draft would be saved later and that
   // Save purges what the button wrote. So it waits, like the per-field one.
+  // A landed primary save whose reload is still out blocks it too, but that
+  // is a moment's wait, not an unsaved change: it says so.
   const translateAllSaveFirstHint =
-    state.currentLanguage === primaryLocale &&
-    (helpers.hasUnsavedTranslateAllSource() || !!subResourceState?.translateAllSaveFirst)
-      ? saveFirstSourceHint
-      : undefined;
+    state.currentLanguage !== primaryLocale
+      ? undefined
+      : helpers.hasUnsavedTranslateAllSource() || !!subResourceState?.translateAllSaveFirst
+        ? saveFirstSourceHint
+        : subResourceState?.translateAllReloadPending
+          ? String(t.common?.sourceReloading || "One moment — the saved text is reloading.")
+          : undefined;
 
   const renderEditorField = (field: FieldDefinition) => (
         <UnifiedFieldRenderer
@@ -939,7 +963,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         </BlockStack>
       );
     }
-    return renderEditorField(field);
+    return hideWhenFull(field.key, renderEditorField(field));
   };
 
   /**
@@ -1725,7 +1749,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         </div>
 
         {/* Middle: Content Editor */}
-        <div className="unified-editor-container" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+        <div className={`unified-editor-container${imFull ? " im-full" : ""}`} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
           {selectedItem ? (
             <>
 
@@ -1751,8 +1775,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   // /api/update-variant-galleries POST (→ Shopify 422 on the
                   // duplicate productCreateMedia for the same staging URL).
                   if (state.isSavingCurrentItem || subResourceState?.isSaving || commerceSave.saving) return;
+                  // The card's Save first: when it REFUSES the press (the values of
+                  // a landed save are still being reloaded, or its own validation
+                  // refused an empty option name / value or an invalid metafield)
+                  // nothing else is saved either, so no green "saved" can cover
+                  // its message.
+                  const subResult = subResourceHandlers?.saveSubResources?.();
+                  if (subResult === "waiting" || subResult === "refused") return;
                   handlers.handleSave();
-                  subResourceHandlers?.saveSubResources?.();
                   // Third writer, same button. Its failures surface INSIDE the
                   // panel (a refused stock write names the number that moved),
                   // so nothing is awaited here and nothing can fail the save.
@@ -1793,6 +1823,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
                   disableBulkActions={isEmbedTechnical}
+                  languageOnly={imFull}
                   translateAllDisabledHint={state.currentLanguage === primaryLocale ? translateAllSaveFirstHint : undefined}
                   isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
                   reloadResourceId={selectedItem.id}
@@ -1943,7 +1974,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 )}
 
                 {/* Operation Buttons */}
-                <div style={{ marginTop: "1rem" }}>
+                <div className="im-hide-when-full" style={{ marginTop: "1rem" }}>
                   <Card padding="400">
                   <InlineStack align="space-between" blockAlign="center" gap="300">
                     {/* Left: Translate All + Clear All Buttons */}
@@ -2162,15 +2193,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               )}
 
               {/* Scrollable Content Area */}
-              <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
-                <Card padding="600">
+              <div className={`field-editor-area${imFull ? " im-full" : ""}`} style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
+                {/* Full image view on a phone: the nested cards/frames ate the width
+                    (fewer than 3 tiles per row), so the paddings shrink on xs only. */}
+                <Card padding={imFull ? { xs: "100", sm: "600" } : "600"}>
                   <BlockStack gap="500">
                     {/* Card heading for products */}
-                    {config.contentType === "products" && (
+                    {config.contentType === "products" && hideWhenFull("card-heading", (
                       <Text as="h2" variant="headingMd" fontWeight="bold">
                         {t.products?.productCardTitle || "Product"}
                       </Text>
-                    )}
+                    ))}
                     {/* Field Search (always visible when available) */}
                     {onFieldSearch && (
                       <div className="field-search-always-clear" style={{ outline: 'none', marginBottom: '0.5rem' }} onKeyDown={(e) => {
@@ -2330,7 +2363,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     the text they summarise, and above the cards that describe
                     the item rather than what it says. */}
                 {searchEngineFields.length > 0 && !isFieldsLoading && (
-                  <div style={{ marginTop: "1rem" }}>
+                  <div className="im-hide-when-full" style={{ marginTop: "1rem" }}>
                     <Card padding="400">
                       <BlockStack gap="400">
                         <Text as="h2" variant="headingMd">
@@ -2349,7 +2382,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     foreign-locale branch still renders nothing — there is no
                     translation to make. */}
                 {config.contentType === "products" && subResourceState && subResourceHandlers && selectedItem && (
-                  <div style={{ marginTop: "1rem" }}>
+                  <div className="im-hide-when-full" style={{ marginTop: "1rem" }}>
                     <OptionsField
                       options={selectedItem.options ?? []}
                       isPrimaryLocale={state.currentLanguage === primaryLocale}
@@ -2365,7 +2398,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onOptionNameChange={subResourceHandlers.handleOptionNameChange}
                       onOptionValueChange={subResourceHandlers.handleOptionValueChange}
                       onPrimaryOptionNameChange={subResourceHandlers.handlePrimaryOptionNameChange}
-                      onPrimaryOptionValuesChange={subResourceHandlers.handlePrimaryOptionValuesChange}
+                      onPrimaryOptionValueChange={subResourceHandlers.handlePrimaryOptionValueChange}
                       primaryOptions={subResourceState.primaryOptionEdits}
                       productId={selectedItem.id}
                       savedNonce={subResourceState.savedNonce}
@@ -2440,11 +2473,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 )}
 
                 {/* Metafields Card */}
+                {/* A cleared field (its metafield deleted on Shopify) is shown in
+                    the PRIMARY language only, so a product whose metafields are
+                    all cleared still gets the card there. */}
                 {config.contentType === "products" && subResourceState && subResourceHandlers &&
-                  selectedItem?.metafields && selectedItem.metafields.length > 0 && (
-                  <div style={{ marginTop: "1rem" }}>
+                  ((selectedItem?.metafields?.length ?? 0) > 0 ||
+                    (state.currentLanguage === primaryLocale && (selectedItem?.clearedMetafields?.length ?? 0) > 0)) && (
+                  <div className="im-hide-when-full" style={{ marginTop: "1rem" }}>
                     <MetafieldsField
-                      metafields={selectedItem.metafields}
+                      metafields={selectedItem?.metafields ?? []}
+                      clearedMetafields={selectedItem?.clearedMetafields ?? []}
                       isPrimaryLocale={state.currentLanguage === primaryLocale}
                       currentLanguage={state.currentLanguage}
                       translations={subResourceState.metafieldTranslations}
@@ -2454,11 +2492,20 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onPrimaryMetafieldChange={subResourceHandlers.handlePrimaryMetafieldChange}
                       primaryValues={subResourceState.primaryMetafieldEdits}
                       translatingFieldIds={subResourceState.translatingFieldIds}
+                      translationBlocked={subResourceState.metafieldTranslationBlocked}
                       t={{
                         title: t.products?.productMetafields,
                         notEditableInPrimary: t.products?.metafieldsNotEditableInPrimary,
                         editInstructionPrimary: t.products?.metafieldsEditInstructionPrimary,
                         translateButton: t.products?.translateMetafield,
+                        listHint: t.products?.metafieldListHint,
+                        listReadOnly: t.products?.metafieldListReadOnly,
+                        clearedHint: t.products?.metafieldClearedHint,
+                        listErrorLine: t.products?.metafieldListErrorLine,
+                        listErrors: t.products?.metafieldListErrors,
+                        saveFirstSource: t.common?.saveFirstSource,
+                        sourceReloading: t.common?.sourceReloading,
+                        typeNotTranslatable: t.products?.metafieldTypeNotTranslatable,
                       }}
                     />
                   </div>
@@ -2470,7 +2517,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     than things it says, and mixed into the text fields they
                     pushed the actual content off the first screen. */}
                 {detailsFields.length > 0 && !isFieldsLoading && (
-                  <div style={{ marginTop: "1rem" }}>
+                  <div className="im-hide-when-full" style={{ marginTop: "1rem" }}>
                     <Card padding="400">
                       <BlockStack gap="400">
                         <Text as="h2" variant="headingMd">
@@ -2572,7 +2619,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               width: 8,
               flexShrink: 0,
               cursor: "col-resize",
-              display: "flex",
+              display: sidebarHiddenInFull ? "none" : "flex",
               alignItems: "center",
               justifyContent: "center",
               marginInline: -4,
@@ -2596,7 +2643,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           <div
             ref={sidebarElRef}
             className="seo-sidebar-container"
-            style={{ width: sidebarWidth ?? "var(--app-editor-sidebar-width)", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}
+            style={{ width: sidebarWidth ?? "var(--app-editor-sidebar-width)", flexShrink: 0, display: sidebarHiddenInFull ? "none" : "flex", flexDirection: "column", overflow: "hidden" }}
           >
             {/* Way back to the content. `open` can survive a resize past the
                 breakpoint, where the sidebar is shown normally and this row
@@ -2608,8 +2655,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 </Button>
               </div>
             )}
-            {/* Section switch (Pro/Max image manager) */}
+            {/* Section switch (Pro/Max image manager). In the image manager's full view only the
+                image-processing part is offered: the switch is hidden (kept mounted) and the images
+                tab is forced for display, `activeRightTab` itself is untouched so closing restores it. */}
             {showImageManager && imageManager && (
+              <div style={imFull ? { display: "none" } : undefined}>
               <SidebarTabBar
                 size="md"
                 items={[
@@ -2620,11 +2670,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 onSelect={(id) => imageManager.onTabChange(id as "seo" | "images")}
                 containerStyle={{ marginBottom: 8 }}
               />
+              </div>
             )}
             {/* Image-processing tabs. Same component and the same trailing "?"
                 as the SEO card's own tab row one level over — the section used
                 to carry a differently-styled bar and no help at all. */}
-            {showImageManager && imageManager && imageManager.activeRightTab === "images" && (
+            {showImageManager && imageManager && rightTab === "images" && (
               <SidebarTabBar
                 items={[
                   { id: "bulkUpload", label: t.imageManager?.bulkUploadSubTab ?? "Bulk Upload" },
@@ -2648,10 +2699,18 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 them and the whole panel shifts sideways by its width. Same
                 rule as the page scroll containers in responsive.css. */}
             <div style={{ flex: 1, overflowY: "auto", scrollbarGutter: "stable" }}>
-              {(!showImageManager || !imageManager || imageManager.activeRightTab === "seo") && (
+              {/* The SEO part, when it is the active section, stays MOUNTED but hidden by style in the
+                  full view, so opening and closing it never remounts it. */}
+              {(!showImageManager || !imageManager) ? (
                 sidebarRenderer(selectedItem, state.editableValues)
+              ) : (
+                imageManager.activeRightTab === "seo" && (
+                  <div style={rightTab === "seo" ? undefined : { display: "none" }}>
+                    {sidebarRenderer(selectedItem, state.editableValues)}
+                  </div>
+                )
               )}
-              {showImageManager && imageManager && imageManager.activeRightTab === "images" && imageManager.activeImageSubTab === "bulkUpload" && (
+              {showImageManager && imageManager && rightTab === "images" && imageManager.activeImageSubTab === "bulkUpload" && (
                 <BulkImageUploadPanel
                   items={imageManager.bulkItems}
                   selectedUniqueIds={imageManager.selectedBulkIds}
@@ -2666,7 +2725,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   isConfirming={imageManager.isApplying}
                 />
               )}
-              {showImageManager && imageManager && imageManager.activeRightTab === "images" && imageManager.activeImageSubTab === "bulkAltText" && (
+              {showImageManager && imageManager && rightTab === "images" && imageManager.activeImageSubTab === "bulkAltText" && (
                 <BulkAltTextPanel
                   productId={imageManager.productId ?? ""}
                   productTitle={imageManager.productTitle ?? ""}
@@ -2675,7 +2734,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   primaryLocale={primaryLocale}
                   onApplySuccess={imageManager.onApplySuccess}
                   onSaveResponse={imageManager.onSaveResponse}
-                  selectedGids={imageManager.selectedGalleryGids}
+                  // The selection kept from the full view is hidden once it is closed: it must not scope a write then.
+                  variantsNotCurrent={imageManager.variantsCurrent === false}
+                  selectedGids={imFull ? imageManager.selectedGalleryGids : undefined}
                 />
               )}
             </div>

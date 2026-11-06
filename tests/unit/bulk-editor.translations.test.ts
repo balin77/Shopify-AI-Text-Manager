@@ -724,7 +724,7 @@ describe("estimateCalls", () => {
     value,
   });
 
-  it("row with base + 2 metafields + 1 option + alt-text ⇒ 4 calls (§12)", () => {
+  it("row with base + 2 metafields + 1 option + alt-text ⇒ 4 calls, +1 for the live read of the other SEO half (§12)", () => {
     const diff = [
       primary("field.title"),
       primary("field.seoTitle"),
@@ -733,7 +733,8 @@ describe("estimateCalls", () => {
       primary(optionColumnId(1, "name")),
       primary(IMG_ALT_COLUMN_ID),
     ];
-    expect(estimateCalls(diff, productColumns)).toBe(4);
+    // seoTitle without seoDescription: the untouched half is read live (one batched call).
+    expect(estimateCalls(diff, productColumns)).toBe(5);
   });
 
   it("counts a metafieldsDelete for cleared metafield cells separately from the set chunk", () => {

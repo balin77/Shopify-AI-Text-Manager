@@ -9,6 +9,7 @@
  *   Foreign locale: deleted → localOverride → itemTranslation → fallback → empty
  */
 
+import type { OverlayConfirmed } from "../services/editor/primary-overlay-ownership.shared";
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { useRef, useState, useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
@@ -19,7 +20,7 @@ import {
   type MetaobjectEntryLike,
 } from "../services/metaobject-fields.shared";
 import { debugLog } from "../utils/debug";
-import { buildLocaleDeletedKey, buildPurgeMarketKey, dropMarksAfterSave, isMarkedDeleted } from "../services/editor/deleted-translation-marks.shared";
+import { buildLocaleDeletedKey, buildPurgeMarketKey, buildStageMark, dropMarksAfterSave, dropStageMarksOfLayer, isMarkedDeleted, isStageMark, layerMarkOfStage } from "../services/editor/deleted-translation-marks.shared";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import { RULES_UNREADABLE } from "../config/collection-rules.shared";
 import type {
@@ -87,6 +88,10 @@ export interface PartialSave {
    *  while the save was in flight holds text that was not sent, and marking it
    *  saved would keep the next Save from sending it. */
   altValues?: Record<number, string>;
+  /** The form deliberately withholds `changedFields` (accept-and-translate writes the translations itself). */
+  withheld?: boolean;
+  /** Counts as an own save in flight (view switches are refused) although it carries no field or alt text. */
+  holdsView?: boolean;
 }
 
 export interface ResolvedField {
@@ -214,7 +219,11 @@ export interface UseUiDataLoaderReturn {
   onItemSwitch: () => void;
 
   /** When user clicks ReloadButton */
-  onRefresh: (itemId: string | null) => void;
+  /** `keepConfirmed`: a save of the item is still out (Reload pressed meanwhile) - the values EARLIER
+   *  saves confirmed stay in the overlay, or a read that lags behind them shows the old text again and
+   *  the next save would carry it as a change. `keepKeys`: keys a save still out or queued owns - their
+   *  answer settles them (a refusal gives them back), so the press must not drop them under it. */
+  onRefresh: (itemId: string | null, opts?: { keepConfirmed?: boolean; keepKeys?: ReadonlySet<string> }) => void;
 
   /** After a BACKGROUND re-translation this save started has finished and the
    *  loader has been re-read. See the implementation for why it clears exactly
@@ -234,6 +243,18 @@ export interface UseUiDataLoaderReturn {
     savedPrimaryValuesRef: React.MutableRefObject<
       Record<string, Record<string, string>>
     >;
+    /** What saves confirmed, per item and field; lives exactly as long as the overlay
+     *  entry it can restore (see primary-overlay-ownership.shared.ts). */
+    primaryConfirmedRef: React.MutableRefObject<OverlayConfirmed>;
+    /** Per field (`item|locale|market|key`): the values that count as ours or older. */
+    preSaveSeenRef: React.MutableRefObject<Record<string, Set<string>>>;
+    /** Per item and field: the event number at which the loader read a value somebody else wrote.
+     *  A save pressed BEFORE it must not be recorded as confirmed afterwards. */
+    overtakenRef: React.MutableRefObject<Record<string, Record<string, number>>>;
+    /** The editor's one monotonic counter (presses, edits, overtakes). */
+    eventSeqRef: React.MutableRefObject<number>;
+    /** The clock of each item's overlay entry (deleted with the entry). */
+    overlayLifeRef: React.MutableRefObject<Record<string, { values: Record<string, string>; start: number; caught: number | null }>>;
     originalLoadedValuesRef: React.MutableRefObject<Record<string, string>>;
     originalTemplateValuesRef: React.MutableRefObject<Record<string, string>>;
     /** Unified change-detection baseline — single source of truth for all content types */
@@ -369,6 +390,11 @@ export function getItemFieldValue(
  * preserved edit into it would mark that edit as already saved and the merchant
  * could never save it.
  */
+/** How long a saved overlay stays after the server confirmed it. */
+const SAVED_OVERLAY_BRIDGE_MS = 60_000;
+/** The latest end of a saved overlay, whatever the server shows. */
+const SAVED_OVERLAY_MAX_MS = 600_000;
+
 export function preserveUnsavedEdits(
   resolved: Record<string, string>,
   current: Record<string, string>,
@@ -429,6 +455,12 @@ export function useUiDataLoader(
   const savedPrimaryValuesRef = useRef<
     Record<string, Record<string, string>>
   >({});
+
+  /** The values saves CONFIRMED, per item and field. Ends with the overlay entry: whoever
+   *  deletes an entry of `savedPrimaryValuesRef` deletes its confirmation too. */
+  const primaryConfirmedRef = useRef<OverlayConfirmed>({});
+  const overtakenRef = useRef<Record<string, Record<string, number>>>({});
+  const eventSeqRef = useRef(0);
 
   /** Baseline of loaded values for foreign-locale change detection.
    *  Prevents re-sending unchanged fields like handle on every save. */
@@ -596,6 +628,110 @@ export function useUiDataLoader(
   // RESOLVE ALL — All fields at once
   // ---------------------------------------------------------------------------
 
+  /** The server value each cache entry was last compared against, per
+   *  item / language / market / field. */
+  const serverSeenRef = useRef<Record<string, string>>({});
+  /** Per field: every value that counts as OURS or OLDER while a cached save stands:
+   *  the server value from before the first save and every value cached during the
+   *  overlay's life. A read showing any of them is a lagging or stale read, not
+   *  somebody else's change (a second save must not turn the first one's value
+   *  into a "third value"). */
+  const preSaveSeenRef = useRef<Record<string, Set<string>>>({});
+  /** Every server value the loader has read for a field (bounded): a lagging read can show any
+   *  of them again, so none of them is somebody else's NEW change. */
+  const everSeenRef = useRef<Record<string, Set<string>>>({});
+  /** Per item: the overlay it describes, when it was first seen, and when the server
+   *  first showed it. The overlay has an ABSOLUTE end counted from these, whatever
+   *  the server shows later. */
+  const overlayLifeRef = useRef<Record<string, { values: Record<string, string>; start: number; caught: number | null }>>({});
+
+  /** The same clock for the foreign overlay, per cache entry. */
+  const foreignLifeRef = useRef<Record<string, { value: string; start: number; caught: number | null }>>({});
+
+  const yieldToServerChanges = (
+    item: TranslatableContentItem,
+    locale: string,
+    fieldDefinitions: FieldDefinition[]
+  ) => {
+    const seen = serverSeenRef.current;
+    const isPrimary = locale === primaryLocale;
+    const marketId = isPrimary ? "" : selectedMarketIdRef.current;
+    for (const field of fieldDefinitions) {
+      let serverValue: string;
+      let cached: string | undefined;
+      const seenKey = `${item.id}|${locale}|${marketId}|${field.key}`;
+      if (isPrimary) {
+        serverValue = getItemFieldValue(item, field.key, primaryLocale, config);
+        cached = savedPrimaryValuesRef.current[item.id]?.[field.key];
+      } else {
+        if (!field.translationKey) continue;
+        serverValue = marketId
+          ? item.marketTranslations?.[marketId]?.[field.translationKey]?.[locale] ?? ""
+          : getTranslatedValue(item, field.translationKey, locale, "", primaryLocale);
+        cached = localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];
+      }
+      const previous = seen[seenKey];
+      let ours = preSaveSeenRef.current[seenKey];
+      if (cached === undefined) {
+        delete preSaveSeenRef.current[seenKey];
+        ours = undefined as unknown as Set<string>;
+      } else {
+        if (!ours) ours = preSaveSeenRef.current[seenKey] = new Set();
+        // First pass since a save was cached: what was seen before it.
+        if (ours.size === 0 && previous !== undefined) ours.add(previous);
+        ours.add(cached);
+      }
+      // Somebody else's change: the server moved on to a value that is neither ours
+      // or older (see preSaveSeenRef), nor blank (a read that momentarily has no
+      // translations). Limit: a change back to one of those values, or to blank, is
+      // indistinguishable from a stale read and does not yield until the overlay ends.
+      if (
+        cached !== undefined &&
+        previous !== undefined &&
+        serverValue !== previous &&
+        serverValue !== cached &&
+        !ours.has(serverValue) &&
+        !everSeenRef.current[seenKey]?.has(serverValue) &&
+        serverValue !== ""
+      ) {
+        if (isPrimary) {
+          const override = savedPrimaryValuesRef.current[item.id];
+          if (override) delete override[field.key];
+          delete primaryConfirmedRef.current[item.id]?.[field.key];
+          delete preSaveSeenRef.current[seenKey];
+          delete everSeenRef.current[seenKey];
+          (overtakenRef.current[item.id] ??= {})[field.key] = ++eventSeqRef.current;
+        } else {
+          delete localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];
+        }
+      }
+      if (!isPrimary && cached !== undefined) {
+        // The foreign overlay ends on a clock too (see overlayLifeRef): whatever the
+        // server shows, it is gone a minute after it was first seen caught up and ten
+        // minutes after it was staged at the latest.
+        const now = Date.now();
+        let life = foreignLifeRef.current[seenKey];
+        if (!life || life.value !== cached) life = foreignLifeRef.current[seenKey] = { value: cached, start: now, caught: null };
+        if (serverValue === cached && life.caught === null) life.caught = now;
+        if ((life.caught !== null && now - life.caught > SAVED_OVERLAY_BRIDGE_MS) || now - life.start > SAVED_OVERLAY_MAX_MS) {
+          delete localTranslationsRef.current[field.translationKey]?.[buildLocaleKey(locale, marketId)];
+          delete foreignLifeRef.current[seenKey];
+        }
+      } else if (!isPrimary) {
+        delete foreignLifeRef.current[seenKey];
+      }
+      // Only values read while a cached save stands: a value read BEFORE it was staged is
+      // not "older than our save" in the sense that matters (see yield above).
+      if (cached !== undefined) {
+        const everSeen = (everSeenRef.current[seenKey] ??= new Set());
+        if (everSeen.size < 50) everSeen.add(serverValue);
+      } else {
+        delete everSeenRef.current[seenKey];
+      }
+      seen[seenKey] = serverValue;
+    }
+  };
+
   const resolveAll = useCallback(
     (
       item: TranslatableContentItem,
@@ -604,6 +740,12 @@ export function useUiDataLoader(
     ): { values: Record<string, string>; fallbackFields: Set<string> } => {
       const values: Record<string, string> = {};
       const fallbackFields = new Set<string>();
+
+      // The local caches (a saved value staged until the read catches up) bridge
+      // a LAGGING read, never an answer that moved on: when the server value
+      // changed since the last pass and is not the value we saved either,
+      // somebody else wrote it and the server wins.
+      yieldToServerChanges(item, locale, fieldDefinitions);
 
       // For primary locale with savedPrimaryValuesRef: check if server caught up
       if (locale === primaryLocale) {
@@ -630,12 +772,31 @@ export function useUiDataLoader(
             }
             return serverValue === savedValue;
           });
-          if (serverCaughtUp) {
-            debugLog.dataLoad(
-              "Server data caught up, clearing saved values override"
-            );
-            delete savedPrimaryValuesRef.current[item.id];
+          // The overlay ends on a clock, not on what the server shows: a minute after
+          // it was first seen caught up (an older read landing right behind the
+          // confirming one would otherwise show the text from before the save, see
+          // yieldToServerChanges), and at the latest SAVED_OVERLAY_MAX_MS after it
+          // was staged. A server that moved back to the pre-save value, or to blank,
+          // never "catches up", and an overlay that outlived it would be written
+          // back by the next save of another field.
+          const now = Date.now();
+          let life = overlayLifeRef.current[item.id];
+          // A NEW save (a key or a value the last look did not have) starts the clock again;
+          // a key the comparison dropped (somebody else's change) does not. An entry that
+          // is removed altogether takes its clock with it (`onRefresh`, `forgetOwnedKeys`).
+          if (!life || Object.entries(savedOverride).some(([k, v]) => life!.values[k] !== v)) {
+            life = overlayLifeRef.current[item.id] = { values: { ...savedOverride }, start: now, caught: null };
           }
+          if (serverCaughtUp && life.caught === null) life.caught = now;
+          if ((life.caught !== null && now - life.caught > SAVED_OVERLAY_BRIDGE_MS) || now - life.start > SAVED_OVERLAY_MAX_MS) {
+            debugLog.dataLoad("Saved values override ended, clearing it");
+            delete savedPrimaryValuesRef.current[item.id];
+            delete overlayLifeRef.current[item.id];
+            delete primaryConfirmedRef.current[item.id];
+            delete overtakenRef.current[item.id];
+          }
+        } else {
+          delete overlayLifeRef.current[item.id];
         }
       }
 
@@ -707,10 +868,14 @@ export function useUiDataLoader(
       const localeKey = buildLocaleKey(targetLocale, marketId);
       const delKey = buildDeletedKey(translationKey, marketId);
 
-      // 1. Clear deleted key
+      // 1. A LAYER mark (a primary save's purge, every locale) STAYS: other
+      //    locales still read the key as purged until that save answers. The
+      //    locale just written is exempted from it by a STAGE mark, so its
+      //    freshly staged value wins there (resolve order) and is cleared
+      //    together with the layer marks. Only this locale's own clear mark goes.
       if (deletedTranslationKeysRef.current.has(delKey)) {
-        deletedTranslationKeysRef.current.delete(delKey);
-        debugLog.transition(`  cleared deletedKey: ${delKey}`);
+        deletedTranslationKeysRef.current.add(buildStageMark(translationKey, marketId, targetLocale));
+        debugLog.transition(`  layer mark ${delKey} kept, ${targetLocale} exempted by a stage mark`);
       }
       deletedTranslationKeysRef.current.delete(buildLocaleDeletedKey(translationKey, marketId, targetLocale));
 
@@ -787,6 +952,7 @@ export function useUiDataLoader(
         for (const fieldDef of fieldDefinitions) {
           if (!fieldMap?.[fieldDef.key]) continue;
           const delKey = buildDeletedKey(fieldDef.translationKey, "");
+          dropStageMarksOfLayer(deletedTranslationKeysRef.current, fieldDef.translationKey, "");
           if (deletedTranslationKeysRef.current.delete(delKey)) {
             debugLog.transition(`  cleared deletedKey: ${delKey}`);
           }
@@ -884,6 +1050,7 @@ export function useUiDataLoader(
       for (const fieldDef of fieldDefinitions) {
         if (!translations[fieldDef.key]) continue;
         const delKey = buildDeletedKey(fieldDef.translationKey, "");
+        dropStageMarksOfLayer(deletedTranslationKeysRef.current, fieldDef.translationKey, "");
         if (deletedTranslationKeysRef.current.delete(delKey)) {
           debugLog.transition(`  cleared deletedKey: ${delKey}`);
         }
@@ -1097,6 +1264,7 @@ export function useUiDataLoader(
       //    still holds that state).
       if (deletedTranslationKeysRef.current.has(translationKey)) {
         deletedTranslationKeysRef.current.delete(translationKey);
+        dropStageMarksOfLayer(deletedTranslationKeysRef.current, translationKey, "");
         clearedDeletedByCopyRef.current.add(translationKey);
       } else {
         clearedDeletedByCopyRef.current.delete(translationKey);
@@ -1241,14 +1409,44 @@ export function useUiDataLoader(
     clearedDeletedByCopyRef.current.clear();
     clearedLocaleMarksByCopyRef.current.clear();
     localTranslationsRef.current = {};
-  }, []);
+    // Bounded for the session: only what an item still holding a saved primary
+    // overlay needs is kept (its comparison state must survive a switch away and
+    // back, or the first read after coming back cannot tell a lagging read from
+    // somebody else's change).
+    const keep = <V,>(map: Record<string, V>) => {
+      const next: Record<string, V> = {};
+      for (const [key, value] of Object.entries(map)) {
+        const [itemId, locale] = key.split("|");
+        if (locale === primaryLocale && savedPrimaryValuesRef.current[itemId]) next[key] = value;
+      }
+      return next;
+    };
+    foreignLifeRef.current = {};
+    serverSeenRef.current = keep(serverSeenRef.current);
+    preSaveSeenRef.current = keep(preSaveSeenRef.current);
+    everSeenRef.current = keep(everSeenRef.current);
+  }, [primaryLocale]);
 
   /** When user clicks ReloadButton */
-  const onRefresh = useCallback((itemId: string | null) => {
+  const onRefresh = useCallback((itemId: string | null, opts?: { keepConfirmed?: boolean; keepKeys?: ReadonlySet<string> }) => {
     debugLog.transition(`onRefresh: itemId=${itemId}`);
     dropPurgeMarks();
     if (itemId && savedPrimaryValuesRef.current[itemId]) {
-      delete savedPrimaryValuesRef.current[itemId];
+      const overlay = savedPrimaryValuesRef.current[itemId];
+      const confirmed = primaryConfirmedRef.current[itemId] ?? {};
+      // Only what a save confirmed (and nobody overtook since); the unconfirmed rest is the press' to drop.
+      const kept = opts?.keepConfirmed
+        ? Object.fromEntries(Object.entries(overlay).filter(([key, value]) => (confirmed[key]?.value === value && !(key in (overtakenRef.current[itemId] ?? {}))) || opts.keepKeys?.has(key)))
+        : {};
+      if (Object.keys(kept).length > 0) {
+        savedPrimaryValuesRef.current[itemId] = kept;
+        primaryConfirmedRef.current[itemId] = Object.fromEntries(Object.entries(confirmed).filter(([key]) => key in kept));
+      } else {
+        delete savedPrimaryValuesRef.current[itemId];
+        delete primaryConfirmedRef.current[itemId];
+        delete overtakenRef.current[itemId];
+        delete overlayLifeRef.current[itemId];
+      }
     }
     localTranslationsRef.current = {};
     deletedTranslationKeysRef.current.clear();
@@ -1295,7 +1493,10 @@ export function useUiDataLoader(
     // A clear whose removal is still on its way keeps its marks: the server
     // has not caught up with it, and the re-read would show what it removes.
     for (const mark of [...deletedTranslationKeysRef.current]) {
-      if (!keepMarks?.has(mark)) deletedTranslationKeysRef.current.delete(mark);
+      // A stage mark stays with its layer mark: the locale it exempts must not read empty while the layer mark
+      // (a primary save still out) is kept.
+      const keptWithLayer = isStageMark(mark) && !!keepMarks?.has(layerMarkOfStage(mark));
+      if (!keepMarks?.has(mark) && !keptWithLayer) deletedTranslationKeysRef.current.delete(mark);
     }
     clearedDeletedByCopyRef.current.clear();
     clearedLocaleMarksByCopyRef.current.clear();
@@ -1340,6 +1541,11 @@ export function useUiDataLoader(
       localTranslationsRef,
       deletedTranslationKeysRef,
       savedPrimaryValuesRef,
+      primaryConfirmedRef,
+      preSaveSeenRef,
+      overtakenRef,
+      eventSeqRef,
+      overlayLifeRef,
       originalLoadedValuesRef,
       originalTemplateValuesRef,
       baselineValuesRef,

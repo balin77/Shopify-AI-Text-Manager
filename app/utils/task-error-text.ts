@@ -28,6 +28,15 @@
  * English sentence is a FLAG argument (`1`), so it is translated with the rest
  * instead of being English appended to German.
  */
+/**
+ * True for the machine code the orphan recovery writes (`task_interrupted`).
+ * Pages show it as a WARNING, not a red error: nothing is wrong with the
+ * merchant's shop or input, the app was restarted under the run.
+ */
+export function isInterruptedTaskError(error: string | null | undefined): boolean {
+  return typeof error === "string" && error.split(":")[0] === "task_interrupted";
+}
+
 /** `BlockSource` (crawl.service.ts) → its explanatory text in `seo.crawlPage`.
  *  Shared with the crawl page so both render the same attribution. */
 export const BLOCK_SOURCE_TEXT_KEY: Record<string, string> = {
@@ -60,11 +69,15 @@ const FALLBACK: Record<string, string> = {
   aiEmptyValue: "The AI returned an empty value.",
   itemMissing: "This entry no longer exists in the content cache — reload it and try again.",
   webpBatchNotStarted: "The image conversion could not be started. No image was changed — please try again.",
+  webpExpiredInQueue:
+    "Not converted: the conversion waited in the queue for too long and was not started any more. The image is unchanged and the image operation was credited back — start it again if you still want it.",
   slugEmpty: "The translated URL slug for {language} came out empty and was not saved.",
   invalidApiKey: "(the AI API key was rejected)",
   someFailed: "Some entries could not be processed — open the task for details.",
   translationsNotMirrored:
     "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
+  seoOtherHalfUnreadable:
+    "The other half of the SEO text (title or description) could not be read from Shopify, so nothing was saved. Your text is kept - please try again.",
   translationsNoneUsable: "The automatic re-translation produced no usable translation.",
   managedAiBudgetExceeded:
     "The AI volume included in your plan is used up for this period. Nothing was changed — your translations were left as they are.",
@@ -74,6 +87,8 @@ const FALLBACK: Record<string, string> = {
     "AI processing has not been confirmed for this shop, so this ran nothing and changed nothing. Confirm it in Settings and try again.",
   managedAiUnavailable:
     "The included AI was temporarily unavailable, so this ran nothing and changed nothing. Please try again later.",
+  serverShuttingDown:
+    "The server was restarted during this run. Entries translated before that were saved where possible; the rest was not translated. Please check the result and run it again.",
   handleRedirectsMissing:
     "{count} URL handle(s) were re-translated, but no redirect could be created for the previous address — add it under URL redirects, or old links will lead nowhere.",
   autoTranslateDailyLimit:
@@ -166,6 +181,10 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
     // Nothing the AI returned could be registered — a provider error, an empty
     // answer, an echo that never came. Its own code rather than a count: zero
     // of zero says nothing a merchant can act on.
+    // A one-sided SEO save whose other half could not be read (seo-half-refusal.shared.ts): nothing was
+    // saved. The SAME code is the editor's error text and a bulk run's per-item failure.
+    case "seoOtherHalfUnreadable":
+      return phrase(t, "seoOtherHalfUnreadable");
     case "translations_none_usable":
       return phrase(t, "translationsNoneUsable");
     // The brake on first translations proven by the primary digest baseline
@@ -201,6 +220,10 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
       if (reason === "consentMissing") return phrase(t, "managedAiConsentMissing");
       return phrase(t, "managedAiUnavailable");
     }
+    // The run was cut short by a server restart (deploy): see the bulk-editor
+    // translate runner. Not a failure of the text; the finished part was saved.
+    case "server_shutting_down":
+      return phrase(t, "serverShuttingDown");
     case "rows_failed": {
       const failed = count(parts[1]);
       if (failed === null) return neutral();
@@ -264,6 +287,12 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
     // describe twenty conversions that never started.
     case "webp_batch_not_started":
       return phrase(t, "webpBatchNotStarted");
+    // One image of a WebP run that waited past WEBP_QUEUE_MAX_AGE_MS
+    // (app/config/webp-tasks.js) and was refused rather than run — its
+    // original was never touched. It reaches the merchant through the batch's
+    // failure list (TaskDetailsPanel), not as a row's own error.
+    case "webp_expired_in_queue":
+      return phrase(t, "webpExpiredInQueue");
     case "slug_empty": {
       // The locale code is the only thing the runner knows; a name would need a
       // shop lookup this module has no business doing.

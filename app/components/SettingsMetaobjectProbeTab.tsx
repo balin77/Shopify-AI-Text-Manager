@@ -16,6 +16,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { Card, Text, BlockStack, Button, Banner, InlineStack, Checkbox, TextField } from "@shopify/polaris";
+import { appFetch } from "../utils/app-fetch";
 
 interface StepOutcome {
   step: string;
@@ -317,7 +318,7 @@ export function SettingsMetaobjectProbeTab() {
       body.set("steps", steps.join(","));
       body.set("sampleType", sampleType);
       body.set("writeType", writeType);
-      const res = await fetch("/api/metaobject-probe", { method: "POST", body });
+      const res = await appFetch("/api/metaobject-probe", { method: "POST", body });
       const data = await res.json();
       if (!data.success) {
         setError(typeof data.error === "string" ? data.error : "The probe returned no report.");
@@ -348,7 +349,7 @@ export function SettingsMetaobjectProbeTab() {
       const body = new FormData();
       body.set("steps", "cleanup");
       body.set("cleanupIds", cleanupIds);
-      const res = await fetch("/api/metaobject-probe", { method: "POST", body });
+      const res = await appFetch("/api/metaobject-probe", { method: "POST", body });
       const data = await res.json();
       if (!data.success) {
         setError(typeof data.error === "string" ? data.error : "The cleanup returned no report.");

@@ -31,7 +31,8 @@
 
 import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
-import { errorMessage, createAIService, isAuthError } from "./shared";
+import { errorMessage, createAIService, isManagedRefusal, isRunAbortingAIError } from "./shared";
+import { isAIQueueShuttingDown } from "../../../src/services/ai-queue.service";
 import type { AIService } from "../../../src/services/ai.service";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { getTaskExpirationDate } from "~/config/constants";
@@ -77,6 +78,7 @@ import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { buildTranslateInstructions } from "~/utils/character-limits";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import type { DataResponse } from "~/types/data-response";
+import { backgroundAdmin } from "~/utils/offline-admin.server";
 
 /** Fields compact enough for the short-batch prompt — the subset
  * translateShortFieldsBatch accepts (productType runs its own grouped path). */
@@ -86,7 +88,7 @@ const SHORT_FIELDS = new Set(["title", "seoTitle", "handle"]);
 const HANDLE_COLUMN_ID = "field.handle";
 
 /** One row's work: which columns to translate into which locales. */
-interface TranslateJob {
+export interface TranslateJob {
   rowId: string;
   /** columnId → { column, source text, target locales }. */
   cells: {
@@ -224,7 +226,8 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
   void runBulkEditorTranslate(task.id, {
     db,
     shop,
-    admin,
+    // Outlives the request — see offline-admin.server.ts.
+    admin: backgroundAdmin(shop, admin),
     settings,
     jobs,
     units,
@@ -381,7 +384,7 @@ function isShortFieldColumn(column: ColumnDescriptor): boolean {
 
 // ─── Runner ────────────────────────────────────────────────────────────────
 
-interface RunArgs {
+export interface RunArgs {
   db: PrismaClient;
   shop: string;
   admin: AdminApiContext;
@@ -421,7 +424,11 @@ interface TranslateResultJson {
   }[];
 }
 
-async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<void> {
+/** How often the run proves it is alive (Task.updatedAt). Well under the boot silence threshold. */
+export const BULK_TRANSLATE_HEARTBEAT_MS = 15_000;
+
+/** Exported as a TEST SEAM only — the handler above is the one caller. */
+export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<void> {
   const { db, shop, admin, settings, jobs, units, rowType, primaryLocale, columnsByType } = args;
   const { aiInstructions, seoLimits, translationMode } = args;
   /** The merchant's instructions, with the SEO caps for the fields of ONE call.
@@ -464,8 +471,47 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
   const productTypeCache = new Map<string, Record<string, string>>();
 
   let processed = 0;
+  // A managed-AI refusal (budget spent, pool closed, consent withdrawn) stops
+  // the run like a rejected key would — every further call would be refused
+  // too — but, unlike a rejected key, it must not throw away what the run
+  // already translated: the loops stop, the diff collected so far is still
+  // written through applyBulkDiff, and the machine code
+  // (`managed_ai_refused:<reason>`) becomes the Task error, which the Tasks
+  // tab renders as a stand-down. A rejected PROVIDER key still aborts the run
+  // as before.
+  // Widened on purpose: it is set inside `standsDown`, which TS's narrowing of
+  // a `let` initialised to null does not see.
+  let managedRefusal = null as string | null;
+  /** True when the error stopped the run on a managed refusal (recorded);
+   * re-throws a rejected provider key; false for an ordinary failure. */
+  const standsDown = (err: unknown): boolean => {
+    if (isManagedRefusal(err)) {
+      managedRefusal ??= managedRefusalCode(err);
+      return true;
+    }
+    // The AI queue was stopped for a deploy / restart: every further call would
+    // be rejected the same way, but what the run ALREADY translated is real work
+    // and is still written through applyBulkDiff (a throw here used to skip it,
+    // the outer catch only failing the task). Recorded under its own machine
+    // code, which the Tasks tab renders as "stopped by a server restart".
+    if (isAIQueueShuttingDown(err)) {
+      managedRefusal ??= "server_shutting_down";
+      return true;
+    }
+    if (isRunAbortingAIError(err)) throw err;
+    return false;
+  };
+  // A bounded-interval HEARTBEAT, independent of the job loop (one AI call may take minutes): boot recovery and
+  // the reaper treat this type as orphaned only after a silence (orphan-run-recovery.js), so a run that is alive
+  // in another container during a deploy overlap is never failed under its own feet.
+  const beat = setInterval(() => {
+    void db.task
+      .updateMany({ where: { id: taskId, status: "running" }, data: { updatedAt: new Date() } })
+      .catch(() => undefined);
+  }, BULK_TRANSLATE_HEARTBEAT_MS);
   try {
     for (const job of jobs) {
+      if (managedRefusal) break;
       // Routing keys on the COLUMN, never on the AI payload key: a metaobject
       // field may legitimately be called "handle" or "productType", and it must
       // NOT be slugified or written into the shop-wide productType cache.
@@ -524,13 +570,13 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
             ),
           );
         } catch (err: unknown) {
-          // An invalid AI key fails every remaining row identically — abort.
-          if (isAuthError(err)) throw err;
-          failGroup(short, errorMessage(err));
+          // An invalid AI key fails every remaining row identically — abort;
+          // a managed refusal stops the run but keeps what it collected.
+          if (!standsDown(err)) failGroup(short, errorMessage(err));
         }
       }
 
-      if (long.length > 0) {
+      if (long.length > 0 && !managedRefusal) {
         try {
           collect(
             await aiService.translateFieldsToLocalesChunked(
@@ -545,12 +591,12 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
             ),
           );
         } catch (err: unknown) {
-          if (isAuthError(err)) throw err;
-          failGroup(long, errorMessage(err));
+          if (!standsDown(err)) failGroup(long, errorMessage(err));
         }
       }
 
       for (const cell of grouped) {
+        if (managedRefusal) break;
         try {
           const values = await translateProductTypeValue(
             cell.source,
@@ -564,12 +610,11 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
             ),
           );
         } catch (err: unknown) {
-          if (isAuthError(err)) throw err;
-          failGroup([cell], errorMessage(err));
+          if (!standsDown(err)) failGroup([cell], errorMessage(err));
         }
       }
 
-      if (sub.length > 0) {
+      if (sub.length > 0 && !managedRefusal) {
         // The sub-resource strings of the row, over EVERY language they need at
         // once. This was one call per locale, not by design but because
         // `translateBatchValues` takes a single `toLang`: a product with sixty
@@ -589,6 +634,7 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
         }
 
         for (const [signature, cellsForSet] of byLocaleSet) {
+          if (managedRefusal) break;
           const localesForSet = signature.split(",").filter(Boolean);
           const slices: { cell: TranslateJob["cells"][number]; start: number; length: number }[] = [];
           const values: string[] = [];
@@ -629,7 +675,7 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
             // Only a run whose EVERY chunk failed throws; a single bad chunk
             // leaves its own entries empty instead. So this is the whole group's
             // failure, in every language it covered.
-            if (isAuthError(err)) throw err;
+            if (standsDown(err)) continue;
             const message = errorMessage(err);
             for (const cell of cellsForSet) {
               for (const locale of localesForSet) {
@@ -650,6 +696,12 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
           // Never substitute the source text — an untranslated value written
           // as a "translation" is silent corruption.
           let value = (results[locale]?.[cell.fieldKey] ?? "").trim();
+          if (!value && managedRefusal) {
+            // Not attempted (or refused) after the stand-down: it is counted
+            // as not saved and explained by the Task error, not reported as
+            // an AI that answered nothing.
+            continue;
+          }
           if (!value) {
             failures.push({
               rowId: job.rowId,
@@ -732,10 +784,19 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
     const failed = Math.max(0, units - saved - skippedHandles);
     const result: TranslateResultJson = { saved, failed, skippedHandles, failures };
     const failedRows = new Set(failures.map((f) => f.rowId)).size;
-    await db.task.update({
-      where: { id: taskId },
+    if (managedRefusal) {
+      // A managed-AI refusal OR a queue shutdown (`server_shutting_down`): the
+      // code says which.
+      logger.warn("[API-AI] Bulk-editor translate: stood down", {
+        context: "AI", taskId, refusal: managedRefusal, saved,
+      });
+    }
+    // CONDITIONAL on still being "running": a row somebody else already settled (boot recovery of a genuinely
+    // dead run) keeps its terminal state instead of flipping back.
+    await db.task.updateMany({
+      where: { id: taskId, status: "running" },
       data: {
-        status: saved === 0 && failedRows > 0 ? "failed" : "completed",
+        status: saved === 0 && (failedRows > 0 || managedRefusal) ? "failed" : "completed",
         progress: 100,
         processed: units,
         completedAt: new Date(),
@@ -743,19 +804,36 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
         // A machine code, translated at render time by `taskErrorText` — this
         // runner has no merchant locale. No total: `units` counts translated
         // CELLS, not rows, so it is not the denominator of `failedRows`.
-        error: failedRows > 0 ? `rows_failed:${failedRows}`.substring(0, 1000) : null,
+        // A managed stand-down outranks the row count: it is the reason the
+        // rest was not translated.
+        error: managedRefusal
+          ? managedRefusal.substring(0, 1000)
+          : failedRows > 0
+            ? `rows_failed:${failedRows}`.substring(0, 1000)
+            : null,
       },
     });
   } catch (err: unknown) {
     const message = errorMessage(err);
     logger.error("[API-AI] Bulk-editor translate: run failed", { context: "AI", taskId, error: message });
     await db.task
-      .update({
-        where: { id: taskId },
+      .updateMany({
+        where: { id: taskId, status: "running" },
         data: { status: "failed", progress: 100, completedAt: new Date(), error: message.substring(0, 1000) },
       })
       .catch(() => undefined);
+  } finally {
+    clearInterval(beat);
   }
+}
+
+/** The Task-error code of a managed refusal: `managed_ai_refused:<reason>`
+ * (ManagedAiRefusedError's own message; built from `reason` otherwise). */
+function managedRefusalCode(err: unknown): string {
+  const message = errorMessage(err);
+  if (/^managed_ai_refused:/.test(message)) return message;
+  const reason = (err as { reason?: unknown } | null)?.reason;
+  return `managed_ai_refused:${typeof reason === "string" && reason ? reason : "unknown"}`;
 }
 
 /** { fieldKey → source } for one AI call. */

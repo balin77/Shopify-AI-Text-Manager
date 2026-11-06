@@ -483,6 +483,15 @@ export interface RunInternalLinksDeps {
    * DB-cache-first module.
    */
   synonymProvider?: (terms: string[], locale: string, avoid: string[][]) => Promise<string[][]>;
+  /**
+   * The shop's PRIMARY locale code (e.g. "de"), handed to `synonymProvider`
+   * so the synonyms come back in the language the matched content is written
+   * in. Every anchor and source here is primary-locale content, but the
+   * suggestion rows store `locale: ""` for "primary" — and that empty code
+   * must never reach the AI: the prompt reads it as English, so a German
+   * shop received English synonyms that could never match its German texts.
+   */
+  primaryLocale?: string;
   onProgress?: (processed: number, total: number) => void | Promise<void>;
   heartbeatEvery?: number;
 }
@@ -541,7 +550,7 @@ export function groupSuggestionsBySource<T extends { fromResourceType: string; f
  * the database — everything above is pure and unit-testable without a DB.
  */
 export async function runInternalLinkSuggestions(shop: string, deps: RunInternalLinksDeps): Promise<InternalLinksSummary> {
-  const { db, synonymProvider, onProgress, heartbeatEvery = HEARTBEAT_EVERY_SOURCES } = deps;
+  const { db, synonymProvider, primaryLocale = "", onProgress, heartbeatEvery = HEARTBEAT_EVERY_SOURCES } = deps;
 
   // ── Targets ────────────────────────────────────────────────────────────
   const [products, collections, assignments] = await Promise.all([
@@ -618,7 +627,7 @@ export async function runInternalLinkSuggestions(shop: string, deps: RunInternal
       let lists: string[][];
       try {
         synonymRequests++;
-        lists = await synonymProvider(terms, "", avoid);
+        lists = await synonymProvider(terms, primaryLocale, avoid);
       } catch {
         // Best-effort — a failed synonym batch must not abort the run; those
         // targets simply match on title/keywords only.

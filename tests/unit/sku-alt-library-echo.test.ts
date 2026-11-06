@@ -75,4 +75,14 @@ describe("handleGenerateAltTextFromSku", () => {
     });
     expect(purge).toHaveBeenCalledWith(expect.objectContaining({ written: [{ mediaId: MEDIA, alt: "A1" }] }));
   });
+
+  it("reads the variants only within the session shop (productId comes from the form)", async () => {
+    const { db, ctx } = ctxWith({
+      data: { fileUpdate: { files: [{ id: MEDIA, alt: "A1" }], userErrors: [] } },
+    });
+    await handleGenerateAltTextFromSku(ctx as never, form());
+    expect(db.productVariant.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { productId: "gid://shopify/Product/1", product: { shop: "s" } } }),
+    );
+  });
 });

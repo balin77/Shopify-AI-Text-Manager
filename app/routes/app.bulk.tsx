@@ -42,6 +42,7 @@ import { getFormString, getFormJSON } from "../utils/form-data.utils";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { bulkColumnHeading } from "../services/bulk-editor/labels.shared";
 import { meetsPlan } from "../utils/planUtils";
+import { taskErrorText } from "../utils/task-error-text";
 import { type Plan } from "../config/plans";
 // Pure/client-safe pieces from the shared module — the component uses them,
 // so they must not drag server-only code into the client bundle (see the
@@ -2222,11 +2223,13 @@ export default function BulkEditor() {
       // a failure in another locale stays visible via the banner (and its
       // edit is kept in the map for when the merchant switches back).
       if ((f.locale ?? "") !== locale || (f.marketId ?? "") !== marketId) continue;
-      if (f.columnId) byCell.set(`${f.rowId}|${f.columnId}`, f.message);
-      else rowLevel.set(f.rowId, f.message);
+      // A machine code (seoOtherHalfUnreadable) is worded in the merchant's language; other text passes through.
+      const text = taskErrorText(f.message, t) ?? f.message;
+      if (f.columnId) byCell.set(`${f.rowId}|${f.columnId}`, text);
+      else rowLevel.set(f.rowId, text);
     }
     return { failuresByCell: byCell, rowLevelFailures: rowLevel };
-  }, [lastFailures, locale, marketId]);
+  }, [lastFailures, locale, marketId, t]);
 
   const failedRowCount = useMemo(
     () => new Set(lastFailures.map((f) => f.rowId)).size,
@@ -2518,7 +2521,7 @@ export default function BulkEditor() {
                     <BlockStack gap="100">
                       {bannerFailures.map((f) => (
                         <Text as="p" variant="bodySm" key={`${f.rowType}:${f.rowId}:${f.columnId ?? ""}`}>
-                          {f.rowId}: {f.message}
+                          {f.rowId}: {taskErrorText(f.message, t) ?? f.message}
                         </Text>
                       ))}
                     </BlockStack>

@@ -263,6 +263,8 @@ export async function loadProductSubResourceCaches(
         // it a client-supplied product id could reach another shop's rows.
         product: { shop },
         productId: { in: productIds },
+        // Never a cleared slot: its id is a DELETED metafield's GID.
+        value: { not: "" },
         OR: metafieldKeys.map((k) => ({ namespace: k.namespace, key: k.key })),
       },
       select: { id: true, productId: true, namespace: true, key: true },

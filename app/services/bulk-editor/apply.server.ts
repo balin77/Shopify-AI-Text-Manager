@@ -76,6 +76,7 @@ import {
   type TranslationInput,
 } from "../translations/verified-translations.server";
 import { logger } from "../../utils/logger.server";
+import { DIGEST_BATCH_CHUNK } from "../translations/translation-digest.shared";
 import { redirectResourceFor, wasEverLive, type RedirectableResource } from "../seo/handle-redirect.shared";
 // The single editor parses tags with exactly this function — one rule, so the
 // two surfaces cannot disagree about what a tag list is.
@@ -136,6 +137,7 @@ import {
 } from "./columns.shared";
 import { moneyToDecimalString } from "../product-variant-sync.server";
 import { writeMetaobjectFields, type MetaobjectFieldWrite } from "../metaobject-write.server";
+import { dropSupersededMetafieldSlots, keepClearedMetafieldSlot } from "../product-metafield-slots.server";
 
 interface ApplyContext {
   db: PrismaClient;
@@ -204,6 +206,46 @@ function chunk<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+/** The SEO halves Shopify holds right now; a half that is empty there is undefined (omitted, never ""). */
+type LiveSeoHalves = { title?: string; description?: string };
+
+/** The machine code of a refused one-sided SEO cell; the page words it (taskErrorText). */
+const SEO_OTHER_HALF_UNREADABLE = "seoOtherHalfUnreadable";
+
+/**
+ * The live SEO of the given products/collections, `nodes(ids:)` in chunks (one call per chunk).
+ * A chunk that fails or a node that does not come back leaves its rows ABSENT, which refuses them.
+ */
+async function loadLiveSeoHalves(gateway: ShopifyApiGateway, ids: string[]): Promise<Map<string, LiveSeoHalves>> {
+  const out = new Map<string, LiveSeoHalves>();
+  const unique = Array.from(new Set(ids));
+  for (let i = 0; i < unique.length; i += DIGEST_BATCH_CHUNK) {
+    const chunk = unique.slice(i, i + DIGEST_BATCH_CHUNK);
+    try {
+      const response = await gateway.graphql(
+        `#graphql
+          query bulkEditorLiveSeo($ids: [ID!]!) {
+            nodes(ids: $ids) {
+              ... on Product { id seo { title description } }
+              ... on Collection { id seo { title description } }
+            }
+          }`,
+        { variables: { ids: chunk } },
+      );
+      const data = (await response.json()) as { data?: { nodes?: Array<{ id?: string; seo?: { title?: string | null; description?: string | null } | null } | null> } };
+      for (const node of data.data?.nodes ?? []) {
+        if (!node?.id || !node.seo) continue;
+        out.set(node.id, { title: node.seo.title || undefined, description: node.seo.description || undefined });
+      }
+    } catch (err: unknown) {
+      logger.warn("[bulk-editor] live SEO read failed; the one-sided SEO cells of this chunk are refused", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return out;
+}
+
 interface PersistDeps {
   db: PrismaClient;
   shop: string;
@@ -220,6 +262,9 @@ interface PersistDeps {
    * GID is cached nowhere and cannot be derived from the parent, so it is
    * resolved once per row instead of once per (row, locale, market) group. */
   featuredImageIds: Map<string, string | null>;
+  /** The OTHER SEO half of every product/collection row that saves exactly one half, read live in
+   *  ONE batched pass by applyBulkDiff. A row that is absent could not be read. */
+  liveSeo: Map<string, LiveSeoHalves>;
   /** The shop's collections as membership screening needs them — the `known`
    *  map `diffCollectionMembership` takes, plus titles for a refusal message.
    *  The same for every row of one save, so it is read ONCE per run (a
@@ -955,30 +1000,18 @@ async function persistProductBaseFields(
 
   // Partial SEO clobber guard: productUpdate treats `seo` as a unit —
   // sending only `title` wipes the existing description (and vice versa).
-  // When only one half is dirty, load the untouched half from the DB cache
-  // and send it too. See "Partial SEO clobber" in CLAUDE.md. If the cache
-  // row cannot be resolved, the SEO write is REJECTED as a cell error
-  // (Finding 7) — falling back to "" would be exactly the wipe the guard
-  // exists to prevent. A cached row with NULL values is fine: null means
-  // "no value set on Shopify", so sending "" changes nothing.
+  // When only one half is dirty, the untouched half is the LIVE value from Shopify
+  // (`loadLiveSeoHalves`, one batched read per run; the local cache may be older and
+  // must never be written over Shopify). When it could not be read the SEO cells are
+  // REFUSED per cell (`seoOtherHalfUnreadable`, worded on the page) and the rest of the
+  // row still saves. A half that is empty in Shopify is omitted, never sent as "".
   const partialSeo = (fields.seoTitle !== undefined) !== (fields.seoDescription !== undefined);
-  let untouchedSeo: { seoTitle: string | null; seoDescription: string | null } | null = null;
+  let untouchedSeo: LiveSeoHalves | null = null;
   if (partialSeo) {
-    untouchedSeo = await db.product
-      .findUnique({
-        where: { shop_id: { shop, id } },
-        select: { seoTitle: true, seoDescription: true },
-      })
-      .catch(() => null);
+    untouchedSeo = deps.liveSeo.get(id) ?? null;
     if (!untouchedSeo) {
       const dirtyHalf = fields.seoTitle !== undefined ? "field.seoTitle" : "field.seoDescription";
-      failures.push(
-        failureOf(
-          group,
-          "The untouched SEO value could not be loaded from the local cache — resync this product, then save the SEO change. (Sending only one half would wipe the other on Shopify.)",
-          dirtyHalf,
-        ),
-      );
+      failures.push(failureOf(group, SEO_OTHER_HALF_UNREADABLE, dirtyHalf));
       delete fields.seoTitle;
       delete fields.seoDescription;
     }
@@ -1022,9 +1055,8 @@ async function persistProductBaseFields(
     const wroteMembership = membershipDiff !== null;
     if (fields.seoTitle !== undefined || fields.seoDescription !== undefined) {
       input.seo = {
-        title: fields.seoTitle !== undefined ? fields.seoTitle : untouchedSeo?.seoTitle ?? "",
-        description:
-          fields.seoDescription !== undefined ? fields.seoDescription : untouchedSeo?.seoDescription ?? "",
+        title: fields.seoTitle !== undefined ? fields.seoTitle : untouchedSeo?.title,
+        description: fields.seoDescription !== undefined ? fields.seoDescription : untouchedSeo?.description,
       };
     }
     // `product { id handle tags }` is the echo the mirror and the redirect
@@ -1305,17 +1337,44 @@ async function persistProductMetafields(
           failures.push(failureOf(group, "Shopify did not confirm the metafield write.", entry.columnId));
           continue;
         }
-        await db.productMetafield.upsert({
+        // Shop-scoped mirror: an upsert cannot carry a relation filter in its
+        // `where`, so the existing row is looked up WITH the shop first. A row
+        // under that id that belongs to another shop's product is never
+        // touched — the cell fails instead of writing across tenants.
+        const existingMetafield = await db.productMetafield.findUnique({
           where: { id: echo.id },
-          create: {
-            id: echo.id,
-            productId,
-            namespace: echo.namespace,
-            key: echo.key,
-            value: echo.value,
-            type: echo.type,
-          },
-          update: { value: echo.value, type: echo.type },
+          select: { id: true, product: { select: { shop: true } } },
+        });
+        if (existingMetafield && existingMetafield.product?.shop !== shop) {
+          failures.push(failureOf(group, "Shopify confirmed the metafield, but its cache row belongs to another shop.", entry.columnId));
+          continue;
+        }
+        if (existingMetafield) {
+          await db.productMetafield.update({
+            where: { id: echo.id },
+            data: { value: echo.value, type: echo.type },
+          });
+        } else {
+          await db.productMetafield.create({
+            data: {
+              id: echo.id,
+              productId,
+              namespace: echo.namespace,
+              key: echo.key,
+              value: echo.value,
+              type: echo.type,
+            },
+          });
+        }
+        // A CLEARED SLOT of this namespace/key (product-metafields.shared.ts)
+        // has a real row again and goes, or the editor's card shows the
+        // field twice.
+        await dropSupersededMetafieldSlots(db, {
+          shop,
+          productId,
+          namespace: echo.namespace,
+          key: echo.key,
+          keepId: echo.id,
         });
         // The metafield's own foreign translations are now stale (§6.6) — they
         // live on the METAFIELD gid, so they need their own invalidation.
@@ -1368,19 +1427,22 @@ async function persistProductMetafields(
           }
           // The metafield is gone — so are its translations. Delete the local
           // rows by gid; Shopify removed them with the metafield itself, so
-          // there is nothing to confirm remotely.
-          const removed = await db.productMetafield.findFirst({
-            where: { productId, namespace: entry.identifier.namespace, key: entry.identifier.key },
-            select: { id: true },
+          // there is nothing to confirm remotely. The cache row itself is KEPT
+          // as a cleared slot (value ""), the same rule as the product
+          // editor's card: there it is what keeps the field on screen so a
+          // new value can be typed. This grid never reads a slot (its loader
+          // filters `value: ""`), so nothing changes here.
+          const formerIds = await keepClearedMetafieldSlot(db, {
+            shop,
+            productId,
+            namespace: entry.identifier.namespace,
+            key: entry.identifier.key,
           });
-          if (removed) {
+          if (formerIds.length > 0) {
             await db.contentTranslation.deleteMany({
-              where: { shop, resourceId: removed.id, resourceType: "Metafield" },
+              where: { shop, resourceId: { in: formerIds }, resourceType: "Metafield" },
             });
           }
-          await db.productMetafield.deleteMany({
-            where: { productId, namespace: entry.identifier.namespace, key: entry.identifier.key },
-          });
         }
       }
     } catch (err: unknown) {
@@ -1399,7 +1461,7 @@ async function persistProductOptions(
   cells: ProductCellGroups,
   deps: PersistDeps,
 ): Promise<BulkFailure[]> {
-  const { db, gateway } = deps;
+  const { db, shop, gateway } = deps;
   const productId = group.rowId;
   const failures: BulkFailure[] = [];
 
@@ -1413,7 +1475,7 @@ async function persistProductOptions(
       for (const columnId of columnIds) failures.push(failureOf(group, message, columnId));
     };
 
-    const option = await db.productOption.findFirst({ where: { productId, position } });
+    const option = await db.productOption.findFirst({ where: { productId, position, product: { shop } } });
     if (!option) {
       failAll(`This product has no option at position ${position}.`);
       continue;
@@ -1716,7 +1778,7 @@ async function persistProductImageAlt(
 
   // Main image = lowest position — the same image the loader resolved.
   const image = await db.productImage.findFirst({
-    where: { productId },
+    where: { productId, product: { shop } },
     orderBy: { position: "asc" },
   });
   if (!image) {
@@ -2130,6 +2192,15 @@ async function persistSingleMutationRow(
   for (const name of Object.keys(fields)) {
     if (ATTRIBUTE_FIELD_NAMES.has(name)) delete fields[name];
   }
+  // A collection row saving ONE SEO half whose other half could not be read live: refuse those SEO
+  // cells (per cell, worded on the page) and let the rest of the row save.
+  if (type === "collection" && (fields.seoTitle !== undefined) !== (fields.seoDescription !== undefined) && !deps.liveSeo.get(id)) {
+    attributeFailures.push(
+      failureOf(group, SEO_OTHER_HALF_UNREADABLE, fields.seoTitle !== undefined ? "field.seoTitle" : "field.seoDescription"),
+    );
+    delete fields.seoTitle;
+    delete fields.seoDescription;
+  }
   const hasAttributes = Object.keys(attributes).length > 0;
 
   /**
@@ -2195,34 +2266,21 @@ async function persistSingleMutationRow(
 
   switch (type) {
     case "collection": {
-      // Same partial-SEO clobber guard as products — collectionUpdate also
-      // treats `seo` as a unit. An unresolvable cache row REJECTS the write
-      // (Finding 7): falling back to "" would wipe the untouched half. This
-      // throw happens BEFORE any Shopify call, so nothing is half-written;
-      // collection rows are single-mutation, so the failure is row-level.
-      let seo: { title: string; description: string } | undefined;
+      // Same partial-SEO clobber guard as products: the untouched half is the LIVE Shopify value; an
+      // unreadable one REFUSES the SEO cells (the throw is caught by the row loop as a row failure,
+      // BEFORE any Shopify mutation, so nothing is half-written; the cells are normally refused earlier,
+      // per cell, above). An empty live half is omitted.
+      let seo: { title?: string; description?: string } | undefined;
       if (fields.seoTitle !== undefined || fields.seoDescription !== undefined) {
         const partialSeo = (fields.seoTitle !== undefined) !== (fields.seoDescription !== undefined);
-        let untouched: { seoTitle: string | null; seoDescription: string | null } | null = null;
+        let untouched: LiveSeoHalves | null = null;
         if (partialSeo) {
-          untouched = await db.collection
-            .findUnique({
-              where: { shop_id: { shop, id } },
-              select: { seoTitle: true, seoDescription: true },
-            })
-            .catch(() => null);
-          if (!untouched) {
-            throw new Error(
-              "The untouched SEO value could not be loaded from the local cache — resync this collection, then save the SEO change. (Sending only one half would wipe the other on Shopify.)",
-            );
-          }
+          untouched = deps.liveSeo.get(id) ?? null;
+          if (!untouched) throw new Error(SEO_OTHER_HALF_UNREADABLE);
         }
         seo = {
-          title: fields.seoTitle !== undefined ? fields.seoTitle : untouched?.seoTitle ?? "",
-          description:
-            fields.seoDescription !== undefined
-              ? fields.seoDescription
-              : untouched?.seoDescription ?? "",
+          title: fields.seoTitle !== undefined ? fields.seoTitle : untouched?.title,
+          description: fields.seoDescription !== undefined ? fields.seoDescription : untouched?.description,
         };
       }
       echoedResource = await contentService.updateCollection(id, {
@@ -4422,6 +4480,14 @@ export async function applyBulkDiff(
       ? await loadDigestsForRows(gateway, foreignResourceIds, [...foreignKeys])
       : new Map<string, Map<string, string>>();
 
+  // One-sided SEO saves (primary product/collection rows): read the untouched half LIVE, batched.
+  const seoReadIds: string[] = [];
+  for (const group of groups) {
+    if (group.locale !== "" || (group.rowType !== "product" && group.rowType !== "collection")) continue;
+    if (("field.seoTitle" in group.cells) !== ("field.seoDescription" in group.cells)) seoReadIds.push(group.rowId);
+  }
+  const liveSeo = seoReadIds.length > 0 ? await loadLiveSeoHalves(gateway, seoReadIds) : new Map<string, LiveSeoHalves>();
+
   // §Phase 3.3 — ONE read per run, not per row. A failed lookup falls back to
   // the column's own default (on): the setting protects URLs, so the safe
   // failure is to protect them, and an unwanted redirect is removable while a
@@ -4437,6 +4503,7 @@ export async function applyBulkDiff(
     digests,
     digestRefetched: new Set(),
     featuredImageIds: new Map(),
+    liveSeo,
     foreignLocales,
     subResourceCaches,
     purgeStaleTranslations,

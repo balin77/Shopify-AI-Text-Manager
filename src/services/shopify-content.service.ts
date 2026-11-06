@@ -12,7 +12,8 @@ import { FIELD_TO_TRANSLATION_KEY, fieldTranslationKeyMap } from '../../app/serv
 import { collectRetranslationTaskIds } from '../../app/services/translations/retranslation-tasks.shared';
 import { echoComparisonKey, ECHO_PAIR_SEP } from '../../app/services/translations/translation-echo.shared';
 import type { VerifiedWriteResult, TranslationUserError } from '../../app/services/translations/verified-translations.server';
-import { isAuthError, isManagedRefusal, localeName } from './ai.service';
+import { isProviderKeyRejection, isManagedRefusal, localeName } from './ai.service';
+import { SeoOtherHalfUnreadableError, seoOtherHalfRefusalBody } from '../../app/services/editor/seo-half-refusal.shared';
 import { attributeInputFor as buildAttributeInput } from '../../app/services/content-attributes.shared';
 import {
   keywordTranslationDirective,
@@ -592,7 +593,8 @@ export class ShopifyContentService {
    *
    * Shopify's productUpdate/collectionUpdate treats `seo` as a unit: sending
    * `seo: { title }` without a description CLEARS the existing seo.description
-   * (and vice versa). A normal full save sends both fields, but single-field
+   * (and vice versa). When the other half cannot be read this THROWS
+   * `SeoOtherHalfUnreadableError` and the caller saves nothing. A normal full save sends both fields, but single-field
    * primary saves — e.g. the Accept & Translate flow that translates only the
    * meta title back into the primary locale — send just one side. For that
    * partial case we fetch the current live SEO and carry the missing half over.
@@ -635,18 +637,20 @@ export class ShopifyContentService {
           { variables: { id: resourceGid } }
         );
         const data = await response.json();
-        const currentSeo = data.data?.node?.seo || {};
-        if (!hasTitle) seo.title = currentSeo.title ?? undefined;
-        if (!hasDescription) seo.description = currentSeo.description ?? undefined;
+        const node = data.data?.node;
+        if (!node || !node.seo) throw new Error("no SEO in the answer");
+        const currentSeo = node.seo;
+        if (!hasTitle) seo.title = currentSeo.title || undefined;
+        if (!hasDescription) seo.description = currentSeo.description || undefined;
       } catch (error: unknown) {
-        // On lookup failure, drop the missing side (JSON.stringify omits undefined)
-        // rather than sending "" and clearing it — Shopify then leaves it unchanged.
-        loggers.translation('warn', '[buildPreservedSeo] Failed to fetch current SEO for preservation', {
+        // The other half cannot be read: NOTHING is saved. The old stand-ins (the editor's value of the
+        // half, or dropping it) either overwrote Shopify's value with an older one or sent one half alone,
+        // which may clear the other. The caller answers a refusal the merchant can retry.
+        loggers.translation('warn', '[buildPreservedSeo] Other SEO half unreadable, save refused', {
           resourceGid,
           error: error instanceof Error ? error.message : String(error),
         });
-        if (!hasTitle) seo.title = undefined;
-        if (!hasDescription) seo.description = undefined;
+        throw new SeoOtherHalfUnreadableError();
       }
     }
 
@@ -1725,7 +1729,14 @@ export class ShopifyContentService {
         });
       } else if (resourceType === 'Collection') {
         // Preserve the untouched SEO half on partial saves (see buildPreservedSeo).
-        const preservedSeo = await this.buildPreservedSeo(resourceId, updates.seoTitle, updates.metaDescription);
+        let preservedSeo: Awaited<ReturnType<ShopifyContentService['buildPreservedSeo']>>;
+        try {
+          preservedSeo = await this.buildPreservedSeo(resourceId, updates.seoTitle, updates.metaDescription);
+        } catch (seoError: unknown) {
+          // Nothing has been written yet: the refusal leaves the collection as it was.
+          if (seoError instanceof SeoOtherHalfUnreadableError) return seoOtherHalfRefusalBody();
+          throw seoError;
+        }
         updatedResource = await this.updateCollection(resourceId, {
           title: updates.title,
           handle: updates.handle,
@@ -2818,7 +2829,7 @@ export class ShopifyContentService {
       } catch (batchError: unknown) {
         // Invalid API key: the sequential fallback would fail for every locale
         // too — surface it so the caller reports failure instead of success.
-        if (isAuthError(batchError) || isManagedRefusal(batchError)) throw batchError;
+        if (isProviderKeyRejection(batchError) || isManagedRefusal(batchError)) throw batchError;
         loggers.translation('error', 'Batch short fields failed', { error: batchError instanceof Error ? batchError.message : String(batchError) });
         loggers.translation('warn', 'Falling back to sequential for short fields...');
         for (const locale of targetLocales) {
@@ -2831,7 +2842,7 @@ export class ShopifyContentService {
             }
           } catch (localeError: unknown) {
             // Invalid key: abort — every remaining locale would fail identically.
-            if (isAuthError(localeError) || isManagedRefusal(localeError)) throw localeError;
+            if (isProviderKeyRejection(localeError) || isManagedRefusal(localeError)) throw localeError;
             loggers.translation('error', `Fallback failed for ${locale}`, { error: localeError instanceof Error ? localeError.message : String(localeError) });
             if (!failedLocales.includes(locale)) failedLocales.push(locale);
           }
@@ -2899,7 +2910,7 @@ export class ShopifyContentService {
         } catch (batchError: unknown) {
           // Invalid API key: the per-locale fallback would fail identically —
           // surface it instead of degrading to a doomed second pass.
-          if (isAuthError(batchError) || isManagedRefusal(batchError)) throw batchError;
+          if (isProviderKeyRejection(batchError) || isManagedRefusal(batchError)) throw batchError;
           loggers.translation('error', 'Batch long fields failed, falling back to per-locale', {
             error: batchError instanceof Error ? batchError.message : String(batchError),
           });
@@ -2940,7 +2951,7 @@ export class ShopifyContentService {
               const localeTranslations = await translationService.translateProduct(retryFields, [locale], contentType, customInstructions, keywordDirectiveFor(locale));
               retried = localeTranslations[locale];
             } catch (retryError: unknown) {
-              if (isAuthError(retryError) || isManagedRefusal(retryError)) throw retryError;
+              if (isProviderKeyRejection(retryError) || isManagedRefusal(retryError)) throw retryError;
               loggers.translation('error', `Long-field retry failed for ${locale} — keeping what the batch delivered`, {
                 fields: missingKeys,
                 error: retryError instanceof Error ? retryError.message : String(retryError),
@@ -3003,7 +3014,7 @@ export class ShopifyContentService {
           }
         } catch (localeError: unknown) {
           // Invalid key: abort — every remaining locale would fail identically.
-          if (isAuthError(localeError) || isManagedRefusal(localeError)) throw localeError;
+          if (isProviderKeyRejection(localeError) || isManagedRefusal(localeError)) throw localeError;
           loggers.translation('error', `Failed to translate long fields to ${locale}`, { error: localeError instanceof Error ? localeError.message : String(localeError) });
           if (!failedLocales.includes(locale)) failedLocales.push(locale);
         }

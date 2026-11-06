@@ -390,7 +390,10 @@ describe("primary theme image save", () => {
       expect(queries.some((q) => q.includes("themeImageFile"))).toBe(false);
       expect(queries.some((q) => q.includes("translationsRemove"))).toBe(true);
     }
-  });
+    // Two saves of about 4-5 s each (measured: no timer, no network call - the
+    // handler is CPU-bound in this environment), i.e. 9 s against the default
+    // 10 s limit. This one test gets room instead of the whole file.
+  }, 30_000);
 
   it("removes foreign COPIES of the old original (global and market), keeps replacements that differ", async () => {
     const R = "gid://shopify/OnlineStoreThemeSettingsCategory/1";

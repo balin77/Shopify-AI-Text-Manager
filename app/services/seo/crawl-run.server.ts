@@ -24,6 +24,7 @@ import {
 } from "../../../orphan-run-recovery.js";
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
+import { backgroundAdmin } from "~/utils/offline-admin.server";
 
 const SHOP_CONTEXT_QUERY = `#graphql
   query seoCrawlShop {
@@ -136,7 +137,7 @@ export async function startCrawlRun(args: StartCrawlArgs): Promise<StartCrawlRes
   const snapshot = await db.seoCrawlSnapshot.create({ data: { shop, status: "running" } });
 
   // Fire-and-forget: survives navigation, same pattern as runSeoAudit.
-  void runSeoCrawlTask(task.id, snapshot.id, { db, admin, shop }).catch((err: unknown) => {
+  void runSeoCrawlTask(task.id, snapshot.id, { db, admin: backgroundAdmin(shop, admin), shop }).catch((err: unknown) => {
     logger.error("[SeoCrawl] Crawl crashed", { taskId: task.id, error: errorMessage(err) });
   });
 

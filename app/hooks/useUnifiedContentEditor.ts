@@ -21,6 +21,8 @@ import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey, pr
 import type { PartialSave } from "./useUiDataLoader";
 import { dropSavedFieldsFromFallbackSnapshot, type LoadedFallbackSnapshot } from "../services/editor/discard-fallback.shared";
 import { useEditorAutoSave } from "./useEditorAutoSave";
+import { markWrittenUnannounced } from "../services/editor/passenger-fields.shared";
+import { viewContentFingerprint } from "../services/editor/content-fingerprint.shared";
 import { useEditorAltText } from "./useEditorAltText";
 import type {
   UseContentEditorProps,
@@ -54,11 +56,14 @@ import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-m
 import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { isTranslatableFieldDefinition } from "../services/content-attributes.shared";
 import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource, altValuesForSaveResponse, revertAltsWithoutPrimary, sentAltsFromForm, sentFieldsFromForm, saveAnswerViewMoved, type SentSaveScope } from "../services/editor/own-field-save.shared";
-import { settleOwnSave, settleUnsentSave, backstopOwnSaves, hasOwnSaveInFlight, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
+import { sanitizeSlug } from "../utils/slug.utils";
+import { forgetOwnedKeys, recordConfirmedValues, pruneOwners, type FormMeta, type OverlayOwners, type OverlayConfirmed } from "../services/editor/primary-overlay-ownership.shared";
+import { settleOwnSave, settleUnsentSave, backstopOwnSaves, hasOwnSaveInFlight, isStaleAcceptStep, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
+import { step1AnswerResult, type ForeignStep1Flow, type Step1Result } from "../services/editor/foreign-step1.shared";
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import { appFetch, appFetchJson } from "../utils/app-fetch";
-import { isMarkedDeleted, buildLocaleDeletedKey, dropLocaleMarks } from "../services/editor/deleted-translation-marks.shared";
+import { isMarkedDeleted, buildLocaleDeletedKey, dropLocaleMarks, dropStageMarksOfLayer } from "../services/editor/deleted-translation-marks.shared";
 import { CONTENT_EDITOR_ACTION_ENDPOINT, contentEditorActionPage, setContentEditorPage } from "../services/editor/content-action-endpoint.shared";
 import {
   markOperationActive,
@@ -86,6 +91,17 @@ import {
  * into that language, or ANY run of the item for the primary language (a
  * primary save purges or re-translates every language).
  */
+/** What a refused save answer meant for a foreign accept-and-translate flow (see `abandonAcceptAndTranslate`). */
+interface AcceptOutcome {
+  /** The refused request was step 2 (the main-language save). */
+  stepTwoRefused: boolean;
+  /** Step 1 of that flow (the text in this language): true = answered with success, false = refused, null = not answered. */
+  step1Saved: boolean | null;
+  /** The refused request was step 1 and the translation into the other languages was still waiting for it: nothing is translated. */
+  translateNotStarted?: boolean;
+}
+const NO_ACCEPT_OUTCOME: AcceptOutcome = { stepTwoRefused: false, step1Saved: null };
+
 export function ownSaveBlockedByRuns(
   runs: ReadonlyArray<{ itemId: string | null; locale: string }>,
   itemId: string | null,
@@ -739,16 +755,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     );
   };
 
-  const localizedUnconfirmedFields = (data: unknown): string => {
+  const localizedUnconfirmedFields = (data: unknown, textLeft = false): string => {
     const labels = (t.content?.fieldLabels ?? {}) as Record<string, string>;
     return unconfirmedFieldsMessage(
       data,
       (key) => labels[key] || effectiveFieldDefinitionsRef.current.find((f) => f.key === key)?.label || key,
       {
-        unconfirmed: String(
-          t.content?.unconfirmedFieldsWarning ||
-            "Shopify did not confirm storing: {fields}. These fields were NOT saved - your text is still in the fields, please try again.",
-        ),
+        // `textLeft`: the merchant has left the product, so the text is NOT in the fields.
+        unconfirmed: textLeft
+          ? String(t.content?.unconfirmedFieldsWarningLeft || "Shopify did not confirm storing: {fields}. These fields were NOT saved - please open the product and try again.")
+          : String(
+              t.content?.unconfirmedFieldsWarning ||
+                "Shopify did not confirm storing: {fields}. These fields were NOT saved - your text is still in the fields, please try again.",
+            ),
         skipped: String(
           t.content?.skippedFieldsSamePrimary ||
             "Not saved: {fields} is identical to the main language. A translated URL needs a different value.",
@@ -792,6 +811,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const prevTranslationSignalRef = useRef<number>(0);
 
   const selectedItemRef = useLatestRef(selectedItem);
+  useEffect(() => { itemReadSeqRef.current = ++eventSeqRef.current; }, [selectedItem]);
   const selectedItemIdRef = useLatestRef(selectedItemId);
 
   // ============================================================================
@@ -827,6 +847,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     savedItemId: string | null;
     partial: PartialSave | null;
     successToast: string | null;
+    pressSeq?: number;
   }>>([]);
 
   const editableValuesRef = useLatestRef(editableValues);
@@ -845,6 +866,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   /** Locale, market and alt texts of the save IN FLIGHT (full or partial),
    *  bound at submit time beside `inFlightPartialRef`. */
   const inFlightScopeRef = useRef<SentSaveScope | null>(null);
+  /** Per item and field: the request that last cached that primary value (see forgetFailedPrimarySave). */
+  const primaryOwnerRef = useRef<OverlayOwners>({});
+  /** What each primary form needs to remember (carried-only announcements, withheld changedFields). */
+  const formMetaRef = useRef(new WeakMap<FormData, FormMeta>());
+  /** The event number at which the selected item was last (re)loaded: a loader read. */
+  const itemReadSeqRef = useRef(0);
+  /** Assigned below (it reads the queue and the in-flight scope). */
+  const pendingCarriedValueRef = useRef<(locale: string, marketId: string, key: string) => string | undefined>(() => undefined);
+  /** What earlier saves confirmed, per item and field (primary-overlay-ownership.shared.ts). */
+  const primaryConfirmedRef = dataLoader.refs.primaryConfirmedRef;
+  /** ONE monotonic counter: a request's press, a confirmation, an edit of the merchant. */
+  const eventSeqRef = dataLoader.refs.eventSeqRef;
 
   /** The saves of the selected item that are out (in flight on the fetcher)
    *  or waiting in the queue, with the form fields each carries. */
@@ -934,6 +967,272 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    */
   const [ownSavesInFlight, setOwnSavesInFlight] = useState<OwnSaveInFlight[]>([]);
   /** The answer to `partial` landed (or will never be applied): stop covering it. */
+  /** A save that was refused or failed stored nothing: the main-language
+   *  overlay `savedPrimaryValuesRef` it was given before submit must go, or
+   *  every later re-resolve shows the unsent text as if it were stored (and
+   *  not dirty). Only the keys this save carried; an older, confirmed overlay
+   *  of other fields keeps bridging its lagging read. */
+  const forgetFailedPrimarySave = (onlyKeys?: ReadonlySet<string>): string[] => {
+    const scope = inFlightScopeRef.current;
+    const itemId = scope?.sentFields?.itemId;
+    if (!scope || !itemId || scope.locale !== primaryLocale) return [];
+    // Only what this request still owns, and what an earlier request confirmed
+    // meanwhile goes back into the cache instead of nothing.
+    const touched = forgetOwnedKeys({
+      cacheByItem: savedPrimaryValuesRef.current,
+      owners: primaryOwnerRef.current,
+      confirmed: primaryConfirmedRef.current,
+      itemId,
+      sentKeys: Object.keys(scope.sentFields ?? {}),
+      token: scope.token,
+      onlyKeys,
+    });
+    if (!savedPrimaryValuesRef.current[itemId]) delete dataLoader.refs.overlayLifeRef.current[itemId];
+    if (savesOfItemOut(itemId).length === 0) pruneOwners(primaryOwnerRef.current, itemId);
+    return touched;
+  };
+  /**
+   * A save was CONFIRMED: Shopify now holds its values. A save of the same item queued
+   * behind it that carries a different value for a field announces that field as a
+   * change, whatever baseline it was pressed against (mirror of `handOnRefusedChanges`).
+   */
+  const handOnAgainstConfirmed = (scope: SentSaveScope | null, unconfirmed: ReadonlySet<string>) => {
+    const sent = scope?.sentFields;
+    if (!sent?.itemId || scope?.locale !== primaryLocale) return;
+    for (const entry of saveQueueRef.current) {
+      if (entry.savedItemId !== sent.itemId || entry.savedLocale !== primaryLocale) continue;
+      if (entry.formData.get("action") !== "updateContent") continue;
+      // A form that withholds `changedFields` (accept-and-translate) must stay without them;
+      // an own (partial) save that announces is judged like any other.
+      if (formMetaRef.current.get(entry.formData)?.withheld) continue;
+      let list: string[] = [];
+      try { list = JSON.parse(String(entry.formData.get("changedFields") ?? "[]")); } catch { continue; }
+      let added = false;
+      for (const field of effectiveFieldDefinitionsRef.current) {
+        const key = field.key;
+        if (!(key in sent) || unconfirmed.has(key) || list.includes(key) || !entry.formData.has(key)) continue;
+        if (entry.formData.get(key) === sent[key]) continue;
+        list.push(key);
+        added = true;
+        if (field.translationKey) deletedTranslationKeysRef.current.add(field.translationKey);
+      }
+      if (added) entry.formData.set("changedFields", JSON.stringify(list));
+    }
+  };
+  /** A refused save on the item on screen: its cache entries go back, and what change
+   *  detection compares against with them (a read that landed while the save was out
+   *  resolved the unsent text from the cache and made it the baseline). */
+  /**
+   * A refused (or not confirmed) save announced changes (`changedFields`) that were
+   * never stored. A save of the same item queued behind it carries the same text but,
+   * having been pressed while that text was already the screen's baseline, does not
+   * announce it: the purge / re-translation it needs would never run. The queued save
+   * inherits the announcement (the form is still unsent).
+   */
+  const handOnRefusedChanges = (scope: SentSaveScope | null, onlyKeys?: ReadonlySet<string>) => {
+    const sent = scope?.sentFields;
+    if (!sent?.itemId || scope?.locale !== primaryLocale) return;
+    let announced: string[] = [];
+    try { announced = JSON.parse(sent.changedFields ?? "[]"); } catch { return; }
+    const queue = saveQueueRef.current;
+    for (let index = 0; index < queue.length; index++) {
+      const entry = queue[index];
+      if (entry.savedItemId !== sent.itemId || entry.savedLocale !== primaryLocale) continue;
+      if (entry.formData.get("action") !== "updateContent") continue;
+      const meta = formMetaRef.current.get(entry.formData);
+      if (meta?.withheld) continue;
+      let list: string[] = [];
+      try { list = JSON.parse(String(entry.formData.get("changedFields") ?? "[]")); } catch { continue; }
+      // A key this entry announced ONLY because the refused save carried another value:
+      // with that save refused, Shopify still holds the entry's value (= the loaded
+      // one), so the announcement would purge translations of unchanged text. Kept
+      // while another save queued ahead of the entry still carries a different value.
+      for (const key of [...(meta?.carryOnly ?? [])]) {
+        if (!list.includes(key) || (onlyKeys && !onlyKeys.has(key)) || !(key in sent)) continue;
+        // What Shopify holds: the item's last read where it can be told, else the loaded baseline.
+        const held = serverValueOf(key, sent.itemId) ?? (originalLoadedValuesRef.current[key] ?? "");
+        if (entry.formData.get(key) !== held) continue;
+        const stillCarried = queue.slice(0, index).some((other) =>
+          other !== entry && other.savedItemId === sent.itemId && other.formData.has(key) &&
+          other.formData.get(key) !== held);
+        if (stillCarried) continue;
+        list = list.filter((k) => k !== key);
+        meta?.carryOnly.delete(key);
+        const field = effectiveFieldDefinitionsRef.current.find((f) => f.key === key);
+        if (field?.translationKey) {
+          deletedTranslationKeysRef.current.delete(field.translationKey);
+          dropStageMarksOfLayer(deletedTranslationKeysRef.current, field.translationKey, "");
+        }
+        entry.formData.set("changedFields", JSON.stringify(list));
+        // No longer announced, still WRITTEN: the merchant typed it back, and the refused save may have
+        // written something else (a refusal is not always "nothing stored").
+        markWrittenUnannounced(entry.formData, key);
+      }
+      let added = false;
+      for (const key of announced) {
+        if (list.includes(key) || (onlyKeys && !onlyKeys.has(key))) continue;
+        if (entry.formData.get(key) !== sent[key]) continue;
+        list.push(key);
+        added = true;
+        const field = effectiveFieldDefinitionsRef.current.find((f) => f.key === key);
+        if (field?.translationKey) deletedTranslationKeysRef.current.add(field.translationKey);
+      }
+      if (added) entry.formData.set("changedFields", JSON.stringify(list));
+    }
+  };
+  const forgetAndRebaseline = () => {
+    const refusedItemId = inFlightScopeRef.current?.sentFields?.itemId;
+    handOnRefusedChanges(inFlightScopeRef.current);
+    reresolveForgotten(refusedItemId, forgetFailedPrimarySave(), true);
+  };
+  /** What the item's last read says Shopify holds for a plain-text primary field (no overlay), or undefined. */
+  const serverValueOf = (key: string, forItemId?: string): string | undefined => {
+    const item = selectedItemRef.current;
+    // A product the merchant has left is not the one `selectedItemRef` holds.
+    if (forItemId !== undefined && item?.id !== forItemId) return undefined;
+    const field = effectiveFieldDefinitionsRef.current.find((f) => f.key === key);
+    if (!item || !field || isThemeContentType(config.contentType)) return undefined;
+    // Plain text only: a rich-text value is normalised by the editor and by Shopify, so a byte
+    // difference there says nothing (the load baseline exists for exactly that).
+    if (field.type !== "text" && field.type !== "textarea" && field.type !== "slug") return undefined;
+    const cache = savedPrimaryValuesRef.current;
+    const held = cache[item.id];
+    try {
+      if (held) delete cache[item.id];
+      return dataLoader.resolve(item as never, key, field.translationKey ?? "", primaryLocale).value;
+    } finally {
+      if (held) cache[item.id] = held;
+    }
+  };
+  pendingCarriedValueRef.current = (locale, marketId, key) => {
+    const itemId = selectedItemIdRef.current;
+    if (!itemId) return undefined;
+    for (let i = saveQueueRef.current.length - 1; i >= 0; i--) {
+      const entry = saveQueueRef.current[i];
+      if (entry.savedItemId !== itemId || entry.formData.get("action") !== "updateContent") continue;
+      if ((entry.savedLocale ?? "") !== locale || (entry.savedMarketId ?? "") !== marketId || !entry.formData.has(key)) continue;
+      return String(entry.formData.get(key));
+    }
+    const scope = inFlightScopeRef.current;
+    const busy = fetcherRef.current.state === "submitting" || justSubmittedRef.current;
+    if (busy && scope?.sentFields?.itemId === itemId && scope.locale === locale && (scope.marketId ?? "") === marketId && key in scope.sentFields) {
+      return scope.sentFields[key];
+    }
+    return undefined;
+  };
+  /** `unconfirmed` plus the keys the loader read a foreign value for AFTER this request was pressed. */
+  const overtakenKeys = (itemId: string, pressSeq: number | undefined, unconfirmed: ReadonlySet<string>): ReadonlySet<string> => {
+    const out = new Set(unconfirmed);
+    for (const [key, seq] of Object.entries(dataLoader.refs.overtakenRef.current[itemId] ?? {})) {
+      if (seq > (pressSeq ?? 0)) out.add(key);
+    }
+    return out;
+  };
+  /**
+   * What a save that was just answered moves a baseline to: the value it SENT while its overlay entry
+   * still stands, but what the item's read holds once the entry is gone (the server may have normalised
+   * the sent text, and a baseline of the unnormalised text would read as a difference from then on).
+   */
+  const baselineValueFor = (itemId: string, key: string, sent: string, changedBySave: boolean): string => {
+    // An overlay entry of an earlier confirmed save still stands for the key: what that save wrote wins.
+    if (savedPrimaryValuesRef.current[itemId] && key in savedPrimaryValuesRef.current[itemId]) return sent;
+    const server = serverValueOf(key, itemId);
+    // A key this save did not change takes what the read holds (an untouched field moved elsewhere is not
+    // ours), unless the read shows a value of the key's ours-or-older set (a lagging read of our own text).
+    // Deliberate: a lagging read can therefore show an old text that does not count as a change. That is a
+    // display residual only (the field is a passenger and is not written), listed in KNOWN_ISSUES.md.
+    if (!changedBySave) {
+      if (server === undefined || dataLoader.refs.preSaveSeenRef.current[`${itemId}|${primaryLocale}||${key}`]?.has(server)) return sent;
+      return server;
+    }
+    if (server === undefined || server === sent) return sent;
+    // Only the server's own normalisation of the sent text counts; any other read (a stale or third value)
+    // must not replace what was just confirmed, or the next save would write that old text unannounced.
+    const isSlug = effectiveFieldDefinitionsRef.current.find((f) => f.key === key)?.type === "slug";
+    const norm = (v: string) => (isSlug ? sanitizeSlug(v) : v.trim());
+    return norm(sent) === server ? server : sent;
+  };
+  /** Did this save change the key: named in its changedFields, or different from the baseline before it. */
+  const savedChangedKey = (sentFields: Record<string, string>, key: string, sent: string, before: Record<string, string>): boolean => {
+    // The form names what the merchant changed; a key it does not name is a passenger. A form without the
+    // list (withheld: accept-and-translate) falls back to the baseline at answer time.
+    if (sentFields.changedFields !== undefined) {
+      try {
+        return (JSON.parse(sentFields.changedFields) as string[]).includes(key);
+      } catch { /* not JSON: fall through */ }
+    }
+    return !(key in before) || before[key] !== sent;
+  };
+  /** The field values of a request's form (not action / itemId / locale ...). */
+  const fieldValuesOf = (sentFields: Record<string, string>): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const field of effectiveFieldDefinitionsRef.current) if (field.key in sentFields) out[field.key] = sentFields[field.key];
+    return out;
+  };
+  /** A product's display name for a message about a request the merchant has left. */
+  const itemNameOf = (itemId: string | undefined | null): string => {
+    const item = itemId ? itemsRef.current.find((i) => i.id === itemId) : undefined;
+    return item ? String(config.getPrimaryField?.(item as never, t as never) ?? (item as { title?: string }).title ?? "") : "";
+  };
+  /** The text of a refusal that names an `errorKey`: the one builder for the screen and for a left product. */
+  const errorKeyMessage = (data: unknown): string => {
+    const errorKey = String((data as { errorKey?: string }).errorKey);
+    // A key the content bundle does not own (seoOtherHalfUnreadable) is worded by the shared error text.
+    return (t.content as Record<string, string>)?.[errorKey] || translateErrorMessage(errorKey, t);
+  };
+  /**
+   * The sentence of a refused foreign accept-and-translate request. STEP TWO refused: the text in this language
+   * WAS saved (step one), only the main-language translation was not, so the generic "nothing was saved" must not
+   * be said. STEP ONE refused: nothing was translated (the translation waits for step 1), and the message says so.
+   */
+  const stepTwoRefusalText = (data: unknown, outcome: AcceptOutcome, otherwise: string): string => {
+    const content = t.content as Record<string, string> | undefined;
+    if (outcome.translateNotStarted) {
+      const nothing = String(content?.foreignAcceptNothingTranslated || "Nothing was translated, because the text in this language was not saved.");
+      return `${otherwise} ${nothing}`.trim();
+    }
+    if (!outcome.stepTwoRefused) return otherwise;
+    const key = String((data as { error?: string; errorKey?: string }).errorKey || (data as { error?: string }).error || "");
+    if (key === "seoOtherHalfUnreadable" && outcome.step1Saved === true) {
+      return String(content?.seoOtherHalfUnreadablePrimaryStep
+        || "The text in this language was saved, but the translation into the main language was not: the other half of the SEO text could not be read from Shopify. Please try again.");
+    }
+    // EVERY other refusal of step 2: when step 1 really answered success the foreign text IS saved; where it
+    // was refused (or has not answered) nothing is claimed.
+    if (outcome.step1Saved !== true) return otherwise;
+    const saved = String(content?.foreignAcceptPrimaryStepSaved || "The text in this language was saved, but the translation into the main language was not.");
+    return `${saved} ${otherwise}`.trim();
+  };
+  /** The refusal of a save of an item that is NOT on screen: said with its name. */
+  const showRefusalOfOtherItem = (itemId: string | undefined | null, data: unknown, outcome: AcceptOutcome = NO_ACCEPT_OUTCOME) => {
+    const name = itemNameOf(itemId);
+    const text = stepTwoRefusalText(data, outcome, localizedUnconfirmedFields(data, true) || translateErrorMessage(String((data as { error?: string }).error || ""), t));
+    showInfoBox(name ? `${name}: ${text}` : text, "critical");
+  };
+  /**
+   * A cache entry was taken back for an item that IS on screen again (the merchant
+   * switched away and back before the answer): the fields and every baseline that
+   * change detection uses go back to what the item holds now, or the refused text
+   * would read as stored and the next save would write it unannounced.
+   */
+  const reresolveForgotten = (itemId: string | undefined | null, keys: string[], keepText = false) => {
+    if (!itemId || keys.length === 0 || itemId !== selectedItemIdRef.current || currentLanguageRef.current !== primaryLocale) return;
+    const item = itemsRef.current.find((i) => i.id === itemId);
+    if (!item) return;
+    const { values } = dataLoader.resolveAll(item as never, primaryLocale, effectiveFieldDefinitionsRef.current);
+    const picked: Record<string, string> = {};
+    for (const key of keys) if (key in values) picked[key] = values[key];
+    if (Object.keys(picked).length === 0) return;
+    // A refusal on the item the merchant is looking at keeps the text in the field as a
+    // draft; only what change detection compares against goes back.
+    // Text typed since the merchant came back (`lastEditSeqRef` starts empty at a switch)
+    // is theirs: only its baseline moves.
+    const untouched = Object.fromEntries(Object.entries(picked).filter(([key]) => !(lastEditSeqRef.current[key] > 0)));
+    if (!keepText && Object.keys(untouched).length > 0) setEditableValues((prev) => ({ ...prev, ...untouched }));
+    baselineValuesRef.current = { ...baselineValuesRef.current, ...picked };
+    originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, ...picked };
+    setBaselineVersion((v) => v + 1);
+  };
   const settleOwnSaveFor = useCallback((partial: PartialSave | null) => {
     if (!partial) return;
     setOwnSavesInFlight((prev) => settleOwnSave(prev, partial));
@@ -970,8 +1269,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    *  writes into its language (useEditorAutoSave.safeSubmit): it is not held
    *  (a held own save would refuse every switch for the whole run). The value
    *  stays in the field as a draft; a copy's spinner stops. */
-  const onOwnSaveRefusedRef = useRef(() => {});
-  onOwnSaveRefusedRef.current = () => {
+  const onOwnSaveRefusedRef = useRef((_partial?: object) => {});
+  onOwnSaveRefusedRef.current = (refusedPartial?: object) => {
+    // A foreign accept-and-translate step 1 that never went out: the translation waiting for it is dropped.
+    settleForeignStep1(refusedPartial, "refused");
     if (pendingCopyFieldKeyRef.current) {
       const itemId = pendingCopyFieldItemIdRef.current ?? savedItemIdRef.current ?? selectedItemIdRef.current;
       if (itemId) markOperationFailed(itemId, pendingCopyFieldKeyRef.current);
@@ -1299,6 +1600,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     preserveEditsUntilRef,
     setOwnSavesInFlight,
     inFlightScopeRef,
+    primaryOwnerRef,
+    formMetaRef,
+    pendingCarriedValueRef,
+    primaryConfirmedRef,
+    eventSeqRef,
   });
 
   // Stable signal that changes when translations arrive for the selected item.
@@ -1329,6 +1635,26 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return `${item.title || ''}|${(item.descriptionHtml || '').length}|${item.handle || ''}`;
   }, [items, selectedItemId]);
 
+  // The same question answered by CONTENT. The two signals above compare sizes
+  // (the sum of the translation lengths, the description's length), so a value
+  // that becomes another value of the same length -- a save of this session, an
+  // AI run, an external edit -- moved neither: nothing re-resolved, and the
+  // baseline kept saying the old text, so retyping it counted as "unchanged"
+  // and was left out of the save. Scoped to what THIS view resolves from, so
+  // another language changing does not re-resolve it.
+  const selectedItemContentSignal = useMemo(() => {
+    if (!selectedItemId) return '';
+    const item = items.find(i => i.id === selectedItemId);
+    if (!item) return '';
+    return viewContentFingerprint({
+      locale: currentLanguage,
+      translations: item.translations,
+      marketTranslations: (item as { marketTranslations?: Record<string, Record<string, Record<string, string>>> }).marketTranslations,
+      primaryValues: effectiveFieldDefinitions.map((field) => getItemFieldValue(item, field.key, primaryLocale, config)),
+    });
+  }, [items, selectedItemId, currentLanguage, effectiveFieldDefinitions, primaryLocale, config]);
+  const prevContentSignalRef = useRef<string>('');
+
   const prevSelectedItemPrimarySignalRef = useRef<string>('');
 
   useEffect(() => {
@@ -1351,8 +1677,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const refreshTriggered = prevDataRefreshTriggerRef.current !== dataRefreshTrigger;
     const translationsArrived = prevTranslationSignalRef.current !== selectedItemTranslationSignal;
     const primaryContentChanged = prevSelectedItemPrimarySignalRef.current !== selectedItemPrimarySignal;
+    const contentChanged = prevContentSignalRef.current !== selectedItemContentSignal;
+    // The data moved underneath the view the merchant is in -- nobody switched
+    // item, language or market and nobody pressed Reload. That is the data
+    // catching up with itself (a save's re-read, an AI run, an external edit),
+    // never a request to throw away what is being typed.
+    const onlyContentMoved =
+      (contentChanged || translationsArrived || primaryContentChanged) &&
+      !itemIdChanged && !languageChanged && !marketChanged && !refreshTriggered;
 
-    if (!itemIdChanged && !languageChanged && !marketChanged && !refreshTriggered && !translationsArrived && !primaryContentChanged) {
+    if (!itemIdChanged && !languageChanged && !marketChanged && !refreshTriggered && !translationsArrived && !primaryContentChanged && !contentChanged) {
       // Don't log on skip to reduce console spam
       return;
     }
@@ -1369,6 +1703,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     prevDataRefreshTriggerRef.current = dataRefreshTrigger;
     prevTranslationSignalRef.current = selectedItemTranslationSignal;
     prevSelectedItemPrimarySignalRef.current = selectedItemPrimarySignal;
+    prevContentSignalRef.current = selectedItemContentSignal;
 
     // A refresh this page asked for AFTER a background re-translation finished
     // is not a ReloadButton press, and the two differ in both directions.
@@ -1394,7 +1729,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     if (refreshTriggered && !isBackgroundRefresh) {
       debugLog.dataLoad(' Data refresh triggered by ReloadButton');
-      dataLoader.onRefresh(selectedItemId);
+      const outNow = savesOfItemOut(selectedItemId).length > 0;
+      dataLoader.onRefresh(selectedItemId, {
+        keepConfirmed: outNow,
+        keepKeys: outNow ? new Set(Object.keys(primaryOwnerRef.current[selectedItemId!] ?? {})) : undefined,
+      });
 
       // For templates, skip loading from stale item data after a reload.
       // The page-level reload effect (app.templates.tsx) fetches fresh data from the API
@@ -1427,7 +1766,29 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Clear data caches and processed response refs when switching to a different item
     if (itemIdChanged) {
       dataLoader.onItemSwitch();
-      processedSaveResponseRef.current = null;
+      // `processedSaveResponseRef` is NOT reset: `fetcher.data` still holds the last
+      // answer until the next one replaces it, and a reset would make that old answer
+      // look new to the next save pressed here (it would be taken as that save's answer).
+      lastEditSeqRef.current = {};
+      // A save still out when the merchant leaves: its answer is no longer applied
+      // here, but a FAILURE must still be recognised (see the answer effect).
+      // `fetcher.data` still holds the answer of an EARLIER request until the
+      // save's own answer replaces it: that one is not this save's answer.
+      // A further switch (back to the first item, say) before the answer keeps the
+      // record: only a save that is out REPLACES it.
+      if (isSavePendingRef.current && inFlightScopeRef.current) {
+        abandonedSaveRef.current = { scope: inFlightScopeRef.current, staleData: fetcher.data };
+      }
+      // A foreign accept-and-translate still waiting for its step 1 belongs to the item just left: it stands
+      // down (its answer is no longer applied here, and a deadline firing later would show a false box).
+      for (const [waitingPartial, flow] of [...foreignStep1Ref.current]) {
+        if (!flow.onSettled) continue;
+        const settled = flow.onSettled;
+        flow.onSettled = undefined;
+        flow.saved = false;
+        settled("refused");
+        foreignStep1Ref.current.delete(waitingPartial);
+      }
       isSavePendingRef.current = false;
       // Nor will it clear the busy flag: back on the old item it read as
       // saving for the rest of the session.
@@ -1494,7 +1855,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const preserveAfterPartialSave =
       !switchedDuringRefresh &&
       !(refreshTriggered && !isBackgroundRefresh) &&
-      (Date.now() < preserveEditsUntilRef.current ||
+      // A pass the data alone caused keeps whatever the merchant typed and has
+      // not saved (see `onlyContentMoved`).
+      (onlyContentMoved ||
+        Date.now() < preserveEditsUntilRef.current ||
         unconfirmedKeptKeysRef.current.size > 0 ||
         // Drafts a run deadline gave back (never sent): kept until saved or
         // discarded.
@@ -1538,6 +1902,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       );
       if (preservedKeys.length > 0) {
         debugLog.dataLoad(` Background refresh preserved ${preservedKeys.length} unsaved field(s)`);
+        // Typed text is the field's own value, not the inherited one the load
+        // flagged: a flagged field is left OUT of a foreign/market save, so
+        // keeping the flag would show the text and silently not store it.
+        const stillInherited = new Set([...newFallbackFields].filter((key) => !preservedKeys.includes(key)));
+        setFallbackFields(stillInherited);
       }
       setEditableValues(merged);
       return;
@@ -1547,7 +1916,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // IMPORTANT: Deps are kept minimal to prevent unnecessary re-runs.
     // selectedItemTranslationSignal is stable (only changes when translation count changes)
     // so it won't cause extra re-runs during normal editing.
-  }, [selectedItemId, currentLanguage, selectedMarketId, primaryLocale, config, dataRefreshTrigger, selectedItemTranslationSignal, selectedItemPrimarySignal]);
+  }, [selectedItemId, currentLanguage, selectedMarketId, primaryLocale, config, dataRefreshTrigger, selectedItemTranslationSignal, selectedItemPrimarySignal, selectedItemContentSignal]);
 
   // Mark loading as complete after editableValues have been updated
   // This is in a separate useEffect to ensure the state update has completed
@@ -1664,7 +2033,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        const res = await fetch(`/api/task-result?taskId=${encodeURIComponent(taskId)}`, {
+        const res = await appFetch(`/api/task-result?taskId=${encodeURIComponent(taskId)}`, {
           headers: { Accept: "application/json" },
         });
         if (!res.ok) {
@@ -1854,6 +2223,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     targetLocales: string[];
     contextTitle: string;
     itemId: string;
+    /** The description of step 1's own save request: the identity that abandons this step when refused. */
+    step1Partial?: object;
   } | null>(null);
 
   // Ref to store the accepted primary locale value during Accept & Translate flow
@@ -1863,6 +2234,95 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     fieldKey: string;
     value: string;
   } | null>(null);
+
+  /**
+   * Step 2 of a FOREIGN accept-and-translate: the translation back into the main language is saved as the
+   * primary value, and the saved-primary overlay is staged up front (`previous` = what it held before, so a
+   * refused save can give it back). Armed when that save is sent; cleared by its answer.
+   */
+  /**
+   * Step 1 of every FOREIGN accept-and-translate (the text in this language), keyed by its request identity (the
+   * partial-save object), with how it ended and the step 2 that followed it. A Map, because two flows of different
+   * fields may overlap; each is keyed by its own requests.
+   */
+  const foreignStep1Ref = useRef<Map<object, ForeignStep1Flow>>(new Map());
+  /** Settles the translation waiting for a foreign step 1 (once): its answer was consumed elsewhere (an abandoned
+   *  save) or the request never went out (the backstop refusal). */
+  const settleForeignStep1 = (partial: object | null | undefined, result: Step1Result) => {
+    const flow = partial ? foreignStep1Ref.current.get(partial) : undefined;
+    if (!flow?.onSettled) return;
+    const settled = flow.onSettled;
+    flow.onSettled = undefined;
+    if (result !== "saved") flow.saved = false;
+    settled(result);
+    // Settled without an answer to come (never sent): nothing is left to remember.
+    if (partial && result !== "saved") foreignStep1Ref.current.delete(partial);
+  };
+  /** The step 2 of those flows, keyed by ITS request identity: the staged overlay it can give back. */
+  const foreignAcceptPrimaryStepRef = useRef<Map<object, { itemId: string; fieldKey: string; staged: string; step1: object }>>(new Map());
+
+  /**
+   * A save answer that REFUSED. Takes back everything an accept-and-translate flow armed for the item the
+   * refused request carried, so nothing fires on the NEXT successful save with an old suggestion
+   * (pending step 2, accepted value, the flow flag) and the main-language overlay of a refused foreign
+   * step 2 stops showing text that was never stored. Returns whether that foreign step was the refused one.
+   */
+  const abandonAcceptAndTranslate = (refusedItemId: string | null | undefined): AcceptOutcome => {
+    const pending = pendingTranslationAfterSaveRef.current;
+    const refusedPartial = inFlightPartialRef.current;
+    // Identity of the REFUSED request: only step 1's own save abandons the pending step 2 (a refused
+    // earlier Save-bar save of the same item does not). Without a recorded identity: the item decides.
+    const isStepOne = !!pending && (pending.step1Partial
+      ? pending.step1Partial === refusedPartial
+      : (!refusedItemId || pending.itemId === refusedItemId));
+    if (pending && isStepOne) {
+      pendingTranslationAfterSaveRef.current = null;
+      acceptedPrimaryValueRef.current = null;
+      setIsAcceptAndTranslateFlow(false);
+    }
+    // Gives back what step 2 staged, and ONLY while the overlay still holds exactly that: an earlier save that
+    // cached another value first may have been refused meanwhile (its refusal already removed the entry), and
+    // putting a value captured before then would show a text that was never stored. What goes back is the
+    // value an earlier request CONFIRMED (`primaryConfirmedRef`), else nothing.
+    const giveBack = (step: { itemId: string; fieldKey: string; staged: string }) => {
+      const overlay = savedPrimaryValuesRef.current[step.itemId];
+      if (!overlay || overlay[step.fieldKey] !== step.staged) return;
+      const confirmedValue = primaryConfirmedRef.current[step.itemId]?.[step.fieldKey];
+      if (confirmedValue) overlay[step.fieldKey] = confirmedValue.value;
+      else delete overlay[step.fieldKey];
+      if (Object.keys(overlay).length === 0) {
+        delete savedPrimaryValuesRef.current[step.itemId];
+        delete dataLoader.refs.overlayLifeRef.current[step.itemId];
+      }
+    };
+    const outcome: AcceptOutcome = { stepTwoRefused: false, step1Saved: null };
+    if (!refusedPartial) return outcome;
+    // The refused request is a foreign STEP ONE: its step 2 must not be written from a text that was never saved.
+    const flow = foreignStep1Ref.current.get(refusedPartial);
+    if (flow) {
+      flow.saved = false;
+      flow.undo?.();
+      // The translation into the other languages waits for step 1: it never starts.
+      if (flow.onSettled) {
+        const settled = flow.onSettled;
+        flow.onSettled = undefined;
+        outcome.translateNotStarted = true;
+        settled("refused");
+      }
+      // Step 2 only starts after step 1 is confirmed, so none can be queued behind a refused step 1: nothing is left to remember.
+      foreignStep1Ref.current.delete(refusedPartial);
+    }
+    // Step 2 is identified by the request it was sent as, not by the shape of its description.
+    const step = foreignAcceptPrimaryStepRef.current.get(refusedPartial);
+    if (step) {
+      outcome.stepTwoRefused = true;
+      outcome.step1Saved = foreignStep1Ref.current.get(step.step1)?.saved ?? null;
+      giveBack(step);
+      foreignAcceptPrimaryStepRef.current.delete(refusedPartial);
+      foreignStep1Ref.current.delete(step.step1);
+    }
+    return outcome;
+  };
 
   // Ref to track the last fetcher.data object (to detect actual data changes vs dependency re-runs)
   const lastFetcherDataRef = useRef<FetcherData | null>(null);
@@ -1874,6 +2334,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Ref to track processed save responses (prevents duplicate InfoBox/revalidation on re-renders)
   const processedSaveResponseRef = useRef<FetcherData | null>(null);
+  const itemsRef = useLatestRef(items);
+  /** The scope of a save that was out when the merchant switched to another item. */
+  /** Field keys typed into while a save was out. */
+  const lastEditSeqRef = useRef<Record<string, number>>({});
+  const abandonedSaveRef = useRef<{ scope: SentSaveScope; staleData: unknown } | null>(null);
 
   // Ref to track processed translateAltTextToAllLocales responses (prevents infinite revalidation loop)
   const processedTranslateAltTextAllRef = useRef<FetcherData | null>(null);
@@ -1940,12 +2405,23 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // happen, and its values are not "saved" -- only the draft remains.
       const fields = sentFieldsFromForm(entry.formData.entries());
       const changedKeys = changedTranslationKeysOf(fields, effectiveFieldDefinitionsRef.current);
-      for (const tKey of changedKeys) deletedTranslationKeysRef.current.delete(tKey);
-      const cache = savedPrimaryValuesRef.current[entry.savedItemId];
-      if (cache) {
-        let changed: unknown = [];
-        try { changed = JSON.parse(fields.changedFields ?? "[]"); } catch { /* none */ }
-        if (Array.isArray(changed)) for (const key of changed) delete cache[String(key)];
+      for (const tKey of changedKeys) {
+        deletedTranslationKeysRef.current.delete(tKey);
+        dropStageMarksOfLayer(deletedTranslationKeysRef.current, tKey, "");
+      }
+      let changed: unknown = [];
+      try { changed = JSON.parse(fields.changedFields ?? "[]"); } catch { /* none */ }
+      if (Array.isArray(changed)) {
+        // Same take-back as a refused save: only what this entry still owns, and an
+        // earlier confirmed value goes back instead of nothing.
+        forgetOwnedKeys({
+          cacheByItem: savedPrimaryValuesRef.current,
+          owners: primaryOwnerRef.current,
+          confirmed: primaryConfirmedRef.current,
+          itemId: entry.savedItemId,
+          sentKeys: changed.map(String),
+          token: entry.formData,
+        });
       }
     }
     if (dropped > 0) setIsSaving(false);
@@ -2188,6 +2664,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // construction, and must not take the processed slot of the fetcher's
     // answer (which would then be re-applied on the next run).
     const handleAnswer = (answer: FetcherData | undefined, scopeItemId: string | null | undefined, fromQueue = false) => {
+      // The fetcher path (theme pages): a refused or failed run must release
+      // its spinner too, or the item reads as translating for the rest of the
+      // session. Only an answer that is this run's own (or the limiter's
+      // synthesized one) and only when no tracked run of the item is out.
+      if (answer && !answer.success && !fromQueue && ((answer as { actionType?: string }).actionType === ANSWER_ACTION || ((answer as { rateLimited?: boolean }).rateLimited && (!(answer as { actionType?: string }).actionType || (answer as { actionType?: string }).actionType === ANSWER_ACTION)))) {
+        if (answer !== processedTranslateAllRef.current) {
+          processedTranslateAllRef.current = answer;
+          const failedItemId = scopeItemId || selectedItemIdRef.current;
+          if (failedItemId && isOperationActive(failedItemId, "__translateAll__") && !translateRunsRef.current.some((run) => run.itemId === failedItemId) &&
+            // ...nor when the run itself is still queued behind the request that failed.
+            !saveQueueRef.current.some((entry) => entry.formData.get("action") === "translateAll" && entry.formData.get("itemId") === failedItemId)) {
+            markOperationFailed(failedItemId, "__translateAll__");
+          }
+        }
+        return;
+      }
       if (answer?.success && answer.actionType === "translateAll") {
         // Prevent re-processing when effectiveFieldDefinitions change (e.g. after Remix revalidation)
         if (!fromQueue) {
@@ -2309,7 +2801,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // own request (translateRunAnswer) answer the same way.
     handleAnswer(fetcher.data, fetcherScopeRef.current?.resourceId);
     for (const entry of takeTranslateRunAnswers(ANSWER_ACTION)) handleAnswer(entry.data, entry.itemId, true);
-  }, [fetcher.data, translateRunVersion, currentLanguage, effectiveFieldDefinitions, config.contentType, showInfoBox, t]); // Use selectedItemRef instead of selectedItem
+  }, [fetcher.data, translateRunVersion, currentLanguage, effectiveFieldDefinitions, config.contentType, showInfoBox, t, shopLocales]); // Use selectedItemRef instead of selectedItem
 
   // Handle "translateAllForLocale" response (translates to ONE specific locale)
   useEffect(() => {
@@ -2318,6 +2810,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // construction, and must not take the processed slot of the fetcher's
     // answer (which would then be re-applied on the next run).
     const handleAnswer = (answer: FetcherData | undefined, scopeItemId: string | null | undefined, fromQueue = false) => {
+      // A refused or failed run releases its spinner (and with it the retry), unless
+      // a tracked run of that item and language is still out.
+      if (answer && !answer.success && !fromQueue && ((answer as { actionType?: string }).actionType === ANSWER_ACTION || ((answer as { rateLimited?: boolean }).rateLimited && (!(answer as { actionType?: string }).actionType || (answer as { actionType?: string }).actionType === ANSWER_ACTION)))) {
+        if (answer !== processedTranslateAllForLocaleRef.current) {
+          processedTranslateAllForLocaleRef.current = answer;
+          const failedItemId = scopeItemId || selectedItemIdRef.current;
+          // The failed answer does not name its language: every language of this item
+          // that shows a run on the fetcher path (none tracked, none queued) is released.
+          for (const failedLocale of shopLocales.map((l) => l.locale)) {
+            if (
+              failedItemId &&
+              isOperationActive(failedItemId, `__translateAllForLocale__${failedLocale}`) &&
+              !translateRunsRef.current.some((run) => run.itemId === failedItemId && (run.locale === failedLocale || run.locale === "*")) &&
+              !saveQueueRef.current.some((entry) => entry.formData.get("action") === "translateAllForLocale" && entry.formData.get("itemId") === failedItemId && entry.formData.get("targetLocale") === failedLocale)
+            ) {
+              markOperationFailed(failedItemId, `__translateAllForLocale__${failedLocale}`);
+            }
+          }
+        }
+        return;
+      }
       if (answer?.success && answer.actionType === "translateAllForLocale") {
         // Prevent re-processing when effectiveFieldDefinitions change (e.g. after Remix revalidation)
         if (!fromQueue) {
@@ -2441,6 +2954,24 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
       lastFetcherDataRef.current = fetcher.data;
 
+      // The answer of a request that is not a save of the item on screen (an abandoned
+      // save, whatever has been queued behind it since) says nothing about this item's
+      // refs or overlays: `savedItemIdRef`/`savedLocaleRef` may already describe the
+      // NEXT save, which the queue has not sent yet. The abandoned save is settled by
+      // the answer effect below.
+      const answeredItemId = inFlightScopeRef.current?.sentFields?.itemId;
+      if (
+        (answeredItemId && answeredItemId !== selectedItemIdRef.current) ||
+        (abandonedSaveRef.current && inFlightScopeRef.current === abandonedSaveRef.current.scope)
+      ) {
+        debugLog.response(' Answer of an abandoned save — leaving this item alone');
+        if (savedItemIdRef.current === answeredItemId) {
+          savedLocaleRef.current = null;
+          savedItemIdRef.current = null;
+        }
+        return;
+      }
+
       // Guard: if the user navigated to a different item while this save was
       // in-flight, clear refs but do NOT apply state changes to the wrong item.
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
@@ -2473,7 +3004,25 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         primaryLocale,
       );
       const sentFieldValues: Record<string, string> = {};
-      if (viewMoved) {
+      // A foreign full save stands for the fields it SENT: text typed into any
+      // other field (or on top of a sent one) while it was out is not stored and
+      // must not be cached as if it were.
+      const foreignSent = !partial && !viewMoved && savedLocale !== primaryLocale && !!sentScope?.sentFields;
+      // Text typed into a field the save did not carry is not stored: such a field
+      // is staged with the value it was loaded with, never the live text.
+      const unsentAtLoaded: Record<string, string> = {};
+      if (foreignSent) {
+        for (const field of effectiveFieldDefinitions) {
+          if (
+            !(field.key in (sentScope?.sentFields ?? {})) &&
+            field.key in baselineValuesRef.current &&
+            (lastEditSeqRef.current[field.key] ?? 0) > (sentScope?.pressSeq ?? Infinity)
+          ) {
+            unsentAtLoaded[field.key] = baselineValuesRef.current[field.key];
+          }
+        }
+      }
+      if (viewMoved || foreignSent) {
         for (const field of effectiveFieldDefinitions) {
           const value = sentScope?.sentFields?.[field.key];
           if (value !== undefined) sentFieldValues[field.key] = value;
@@ -2512,7 +3061,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
       const result = dataLoader.onSaveComplete(
         savedLocale,
-        partial ? { ...editableValues, ...partial.values } : viewMoved ? sentFieldValues : editableValues,
+        partial ? { ...editableValues, ...partial.values } : viewMoved ? sentFieldValues : foreignSent ? { ...editableValues, ...unsentAtLoaded, ...sentFieldValues } : editableValues,
         effectiveFieldDefinitions,
         viewMoved ? undefined : fallbackFieldsRef.current,
         onlyKeys,
@@ -2637,10 +3186,86 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       return;
     }
 
+    // The answer of a save the merchant switched away from is that save's, whatever
+    // the pending flag says: a save of the item now on screen may already be queued
+    // behind it (its press set the flag), but the request the fetcher carries is
+    // still the abandoned one until the queue drains. Ownership is decided by what
+    // was actually submitted (`inFlightScopeRef`), and only an answer of a save
+    // (`updateContent`, or the limiter's synthesized refusal with no action type)
+    // can be it.
+    const abandonedEntry = abandonedSaveRef.current;
+    const answerData = fetcher.data as (FetcherData & { rateLimited?: boolean }) | undefined;
+    const isSaveAnswer = !!answerData && (!answerData.actionType || answerData.actionType === "updateContent");
+    // An old non-save failure still held on the fetcher is not the pending save's refusal.
+    // ...and an answer identical to what the fetcher held when the request went out is an old one.
+    const isSaveAnswerShape = isSaveAnswer && fetcher.data !== inFlightScopeRef.current?.staleData;
+    const ownedByAbandoned =
+      !!abandonedEntry && inFlightScopeRef.current === abandonedEntry.scope && isSaveAnswer && answerData !== abandonedEntry.staleData;
+
     // Skip if no save was actually initiated (prevents false "saved" messages during reload/revalidation)
-    if (!isSavePendingRef.current) {
+    if (!isSavePendingRef.current || ownedByAbandoned) {
+      // A refusal or failure must not leave that item looking saved (its unsent text
+      // cached as stored): the overlay goes, the item shows what Shopify holds, and
+      // the merchant is told which item it concerned. The text is NOT restored as a
+      // draft (owner decision).
+      const abandoned = abandonedEntry?.scope;
+      const data = answerData;
+      if (abandoned && data && data !== abandonedEntry?.staleData && isSaveAnswer) {
+        abandonedSaveRef.current = null;
+        processedSaveResponseRef.current = data;
+        if (data.success) {
+          // Confirmed in part: what Shopify did not echo is not stored.
+          const unconfirmed = unconfirmedClearedFieldSet(data);
+          const abandonedItemId = abandoned.sentFields?.itemId;
+          if (abandoned.sentFields && abandonedItemId && abandoned.locale === primaryLocale) {
+            recordConfirmedValues(primaryConfirmedRef.current, abandonedItemId, fieldValuesOf(abandoned.sentFields), overtakenKeys(abandonedItemId, abandoned.pressSeq, unconfirmed), savedPrimaryValuesRef.current[abandonedItemId], ++eventSeqRef.current);
+          }
+          const savedScope = inFlightScopeRef.current;
+          inFlightScopeRef.current = abandoned;
+          if (unconfirmed.size > 0) {
+            handOnRefusedChanges(abandoned, unconfirmed);
+            reresolveForgotten(abandonedItemId, forgetFailedPrimarySave(unconfirmed));
+          }
+          else if (abandonedItemId && savesOfItemOut(abandonedItemId).length === 0) pruneOwners(primaryOwnerRef.current, abandonedItemId);
+          inFlightScopeRef.current = savedScope;
+          // What the save's answer says to the merchant survives the switch: the
+          // purge warning, the redirect note, fields and alt texts Shopify did not
+          // confirm, each with the product's name.
+          const abandonedItem = abandonedItemId ? itemsRef.current.find((i) => i.id === abandonedItemId) : undefined;
+          const name = abandonedItem ? String(config.getPrimaryField?.(abandonedItem as never, t as never) ?? (abandonedItem as { title?: string }).title ?? "") : "";
+          const lines: Array<{ text: string; tone: InfoBoxTone }> = [];
+          if (hasPurgeUnconfirmedWarning(data)) {
+            lines.push({ text: String(t.content?.translationPurgeUnconfirmed || "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them."), tone: "warning" });
+          }
+          const redirectMessage = buildRedirectMessage(redirectNoteOf(data), t);
+          if (redirectMessage) lines.push({ text: redirectMessage.text, tone: redirectMessage.tone as InfoBoxTone });
+          const unconfirmedText = localizedUnconfirmedFields(data, true);
+          if (unconfirmedText) lines.push({ text: unconfirmedText, tone: "warning" });
+          const failedAlts = (data as { failedAltTextIndices?: unknown }).failedAltTextIndices;
+          if (Array.isArray(failedAlts) && failedAlts.length > 0 && "warning" in data && (data as { warning?: unknown }).warning) {
+            lines.push({ text: String((data as { warning?: unknown }).warning), tone: "warning" });
+          }
+          if (lines.length > 0) {
+            const text = lines.map((l) => l.text).filter(Boolean).join(" ");
+            showInfoBox(name ? `${name}: ${text}` : text, lines.some((l) => l.tone === "critical") ? "critical" : "warning");
+          }
+        } else {
+          const failedItemId = abandoned.sentFields?.itemId;
+          const savedScope = inFlightScopeRef.current;
+          inFlightScopeRef.current = abandoned;
+          handOnRefusedChanges(abandoned);
+          const forgotten = forgetFailedPrimarySave();
+          inFlightScopeRef.current = savedScope;
+          reresolveForgotten(failedItemId, forgotten);
+          showRefusalOfOtherItem(failedItemId, data);
+        }
+      }
       return;
     }
+    // Here the answer is a save of the item on screen: the abandoned one (if any) was
+    // answered before it (the fetcher is serial), so its record is stale and must not
+    // claim a later, unrelated answer.
+    if (abandonedSaveRef.current && fetcher.data !== abandonedSaveRef.current.staleData) abandonedSaveRef.current = null;
 
     if (fetcher.data?.success && fetcher.data.actionType === "updateContent") {
       // Mark this response as processed and clear save pending flag
@@ -2654,6 +3279,28 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Taken now, beside `partial`: anything below that chains a new save
       // rebinds the in-flight slot.
       const answeredScope = inFlightScopeRef.current;
+      // Fields edited AFTER this save was pressed: judged against this request's own
+      // press (`pressSeq`), so overlapping saves each settle their own view.
+      const editedDuringFlight = {
+        has: (key: string) => (lastEditSeqRef.current[key] ?? 0) > (answeredScope?.pressSeq ?? Infinity),
+      };
+      // What this save confirmed is what Shopify holds now (a refused newer save of
+      // the same field gives it back, see forgetFailedPrimarySave).
+      if (answeredScope?.sentFields && answeredScope.locale === primaryLocale && answeredScope.sentFields.itemId) {
+        handOnAgainstConfirmed(answeredScope, unconfirmedClearedFieldSet(fetcher.data));
+        recordConfirmedValues(
+          primaryConfirmedRef.current,
+          answeredScope.sentFields.itemId,
+          fieldValuesOf(answeredScope.sentFields),
+          overtakenKeys(answeredScope.sentFields.itemId, answeredScope.pressSeq, unconfirmedClearedFieldSet(fetcher.data)),
+          savedPrimaryValuesRef.current[answeredScope.sentFields.itemId],
+          ++eventSeqRef.current,
+        );
+        // Nothing of the item left out or queued: ownership and confirmations end.
+        if (savesOfItemOut(answeredScope.sentFields.itemId).length === 0) {
+          pruneOwners(primaryOwnerRef.current, answeredScope.sentFields.itemId);
+        }
+      }
       // Answered: from here the field's baseline (moved below) decides.
       settleOwnSaveFor(partial);
 
@@ -2786,11 +3433,70 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             Object.keys(primarySnapshot).length > 0 &&
             currentLanguageRef.current === primaryLocale
           ) {
-            baselineValuesRef.current = { ...primarySnapshot };
+            // What this save SENT is what is stored; the snapshot also holds the text of
+            // any newer save of the item that is still out (its own answer decides).
+            baselineValuesRef.current = {
+              ...primarySnapshot,
+              ...(answeredScope?.sentFields
+                ? Object.fromEntries(Object.entries(fieldValuesOf(answeredScope.sentFields)).map(([k, v]) => [k, answeredScope.sentFields?.itemId ? baselineValueFor(answeredScope.sentFields.itemId, k, v, savedChangedKey(answeredScope.sentFields, k, v, baselineBeforeSave)) : v]))
+                : {}),
+            };
+            setBaselineVersion(v => v + 1);
+            // The server made something else of a sent text (a sanitised handle, a trimmed title): the
+            // field shows what Shopify holds, unless the merchant typed into it since the press.
+            if (answeredScope?.sentFields) {
+              const normalised: Record<string, string> = {};
+              for (const [k, v] of Object.entries(fieldValuesOf(answeredScope.sentFields))) {
+                const b = baselineValuesRef.current[k];
+                if (b !== undefined && b !== v && editableValuesRef.current[k] === v && !((lastEditSeqRef.current[k] ?? 0) > (answeredScope.pressSeq ?? Infinity))) {
+                  normalised[k] = b;
+                }
+              }
+              if (Object.keys(normalised).length > 0) setEditableValues((prev) => ({ ...prev, ...normalised }));
+            }
+          } else if (answeredScope?.sentFields) {
+            // What the save SENT is what is stored; text typed after the submit is
+            // not, and must stay a change (it was lost when the baseline took the
+            // live fields: the field read as clean and the re-read replaced it).
+            const sent = answeredScope.sentFields;
+            // A field the save did not carry takes what it holds now, except one typed
+            // into WHILE the save was out: that one keeps its previous baseline and
+            // stays a change.
+            const nextBaseline = { ...editableValuesRef.current };
+            for (const field of effectiveFieldDefinitionsRef.current) {
+              if (field.key in sent) nextBaseline[field.key] = sent[field.key];
+              else if (editedDuringFlight.has(field.key) && field.key in baselineBeforeSave) {
+                nextBaseline[field.key] = baselineBeforeSave[field.key];
+              }
+            }
+            baselineValuesRef.current = nextBaseline;
             setBaselineVersion(v => v + 1);
           } else {
             baselineValuesRef.current = { ...editableValuesRef.current };
             setBaselineVersion(v => v + 1);
+          }
+          if (!partial && answeredScope?.sentFields) {
+            // What a FULL save wrote is what the field holds now: the loaded
+            // baseline moves to the values that were SENT -- not to the live
+            // fields (text typed since the submit is not stored) and not
+            // later, when the re-read lands, because that re-read cannot tell
+            // a value from one of the same length ("noir" -> "bleu"). Left on
+            // the old text, retyping it was "unchanged": a foreign save left
+            // it out, a primary save did not announce it as changed, and the
+            // answer was success while Shopify kept the new text. A field
+            // Shopify did not confirm keeps its old baseline and is sent again.
+            const notConfirmed = unconfirmedClearedFieldSet(fetcher.data);
+            const sentValues: Record<string, string> = {};
+            for (const field of effectiveFieldDefinitionsRef.current) {
+              if (field.key in answeredScope.sentFields && !notConfirmed.has(field.key)) {
+                sentValues[field.key] = answeredScope.locale === primaryLocale && answeredScope.sentFields.itemId
+                  ? baselineValueFor(answeredScope.sentFields.itemId, field.key, answeredScope.sentFields[field.key], savedChangedKey(answeredScope.sentFields, field.key, answeredScope.sentFields[field.key], baselineBeforeSave))
+                  : answeredScope.sentFields[field.key];
+              }
+            }
+            if (Object.keys(sentValues).length > 0) {
+              originalLoadedValuesRef.current = { ...originalLoadedValuesRef.current, ...sentValues };
+            }
           }
           if (!partial) {
             // A full save stored every field that was no longer inherited
@@ -2832,16 +3538,38 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // redirect after "Accept & Translate" was swallowed and the merchant went
       // on believing the old URL still resolved.
       const pendingRedirectMessage = buildRedirectMessage(redirectNoteOf(fetcher.data), t);
+      // Only the ANSWER of the save that staged a foreign accept's main-language overlay makes it stand;
+      // an earlier save answering first must not drop the rollback of a later refusal.
+      const answeredFlow = partial ? foreignStep1Ref.current.get(partial) : undefined;
+      if (answeredFlow) {
+        // Confirmed only if Shopify echoed the carried field: an unconfirmed one stays a draft (its own rules) and
+        // the translation into the other languages is NOT started from a text that is not stored.
+        const step1Result = step1AnswerResult(Object.keys(partial?.values ?? {}), unconfirmedClearedFieldSet(fetcher.data));
+        answeredFlow.saved = step1Result === "saved";
+        if (answeredFlow.onSettled) {
+          const settled = answeredFlow.onSettled;
+          answeredFlow.onSettled = undefined;
+          settled(step1Result);
+        }
+        if (answeredFlow.done && partial) foreignStep1Ref.current.delete(partial);
+      }
+      const answeredStep = partial ? foreignAcceptPrimaryStepRef.current.get(partial) : undefined;
+      if (partial && answeredStep) {
+        foreignAcceptPrimaryStepRef.current.delete(partial);
+        foreignStep1Ref.current.delete(answeredStep.step1);
+      }
 
-      // Check if there's a pending translation to start after this save
-      if (pendingTranslationAfterSaveRef.current) {
+      // Check if there's a pending translation to start after this save - but only the ANSWER of step 1's
+      // own save acts on it: an earlier save answering while step 1 is still queued must not consume it.
+      const pendingStep = pendingTranslationAfterSaveRef.current;
+      if (pendingStep && (!pendingStep.step1Partial || pendingStep.step1Partial === partial)) {
         if (pendingRedirectMessage) {
           showInfoBox(
             pendingRedirectMessage.text,
             pendingRedirectMessage.tone
           );
         }
-        const { fieldKey, sourceText, targetLocales, contextTitle, itemId } = pendingTranslationAfterSaveRef.current;
+        const { fieldKey, sourceText, targetLocales, contextTitle, itemId } = pendingStep;
         pendingTranslationAfterSaveRef.current = null;
         // Step 2 of accept-and-translate: a run of the item started while the
         // primary save was out. The primary text IS saved; the translation into
@@ -3297,9 +4025,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           debugLog.revalidate(' Error during revalidation (ignored):', error);
         }
       }
-    } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data && isSavePendingRef.current) {
+    } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data && isSavePendingRef.current && isSaveAnswerShape) {
       // Also mark error responses as processed
       processedSaveResponseRef.current = fetcher.data;
+      // Before the re-resolve: a refused accept-and-translate takes its overlay and armed step back.
+      const stepTwoRefused = abandonAcceptAndTranslate(inFlightScopeRef.current?.sentFields?.itemId ?? savedItemIdRef.current);
+      forgetAndRebaseline();
+
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
       inFlightToastRef.current = null;
@@ -3330,17 +4062,28 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         rollbackCopyAltText();
       }
 
-      const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
+      // The item the REFUSED request carried: the press-time ref may already name the
+      // next save's item.
+      const refusedItemId = inFlightScopeRef.current?.sentFields?.itemId ?? savedItemIdRef.current;
+      const isSavedItemCurrent = refusedItemId === selectedItemIdRef.current;
       savedItemIdRef.current = null;
 
+      if (!isSavedItemCurrent) {
+        // A queued save of a product the merchant has left: its refusal is said with
+        // the product's name, not swallowed.
+        showRefusalOfOtherItem(refusedItemId, fetcher.data, stepTwoRefused);
+      }
       if (isSavedItemCurrent) {
-        const translatedError =
+        const translatedError = stepTwoRefusalText(
+          fetcher.data,
+          stepTwoRefused,
           localizedUnconfirmedFields(fetcher.data) ||
-          localizedThemeSaveIssues(fetcher.data) ||
-          translateErrorMessage(String(fetcher.data.error || ""), t);
+            localizedThemeSaveIssues(fetcher.data) ||
+            translateErrorMessage(String(fetcher.data.error || ""), t),
+        );
         showInfoBox(translatedError, "critical");
       }
-    } else if (fetcher.data && !fetcher.data.success && 'errorKey' in fetcher.data && isSavePendingRef.current) {
+    } else if (fetcher.data && !fetcher.data.success && 'errorKey' in fetcher.data && isSavePendingRef.current && isSaveAnswerShape) {
       // ─── Handle i18n error-key responses (e.g. emptyPrimaryFieldsError) ───
       // When the server rejects a save with an errorKey, we must:
       //  1. Show the localised error message
@@ -3351,6 +4094,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // revert the UI immediately to prevent accidental data loss.
       // ──────────────────────────────────────────────────────────────────
       processedSaveResponseRef.current = fetcher.data;
+      const stepTwoRefused = abandonAcceptAndTranslate(inFlightScopeRef.current?.sentFields?.itemId ?? savedItemIdRef.current);
+      forgetAndRebaseline();
       isSavePendingRef.current = false;
       settleOwnSaveFor(inFlightPartialRef.current);
       inFlightPartialRef.current = null;
@@ -3378,14 +4123,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         rollbackCopyAltText();
       }
 
-      const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
+      const refusedKeyItemId = inFlightScopeRef.current?.sentFields?.itemId ?? savedItemIdRef.current;
+      const isSavedItemCurrent = refusedKeyItemId === selectedItemIdRef.current;
       savedItemIdRef.current = null;
 
+      if (!isSavedItemCurrent) {
+        const keyName = itemNameOf(refusedKeyItemId);
+        const keyText = stepTwoRefusalText(fetcher.data, stepTwoRefused, errorKeyMessage(fetcher.data));
+        showInfoBox(keyName ? `${keyName}: ${keyText}` : keyText, "critical");
+      }
       if (isSavedItemCurrent) {
-        const errorKey = String((fetcher.data as { errorKey?: string }).errorKey);
-        const errorMessage =
-          (t.content as Record<string, string>)?.[errorKey] ||
-          errorKey;
+        const errorMessage = stepTwoRefusalText(fetcher.data, stepTwoRefused, errorKeyMessage(fetcher.data));
         showInfoBox(errorMessage, "critical");
 
         // Auto-restore empty fields to their original values (discard empty edits)
@@ -3427,6 +4175,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // answer. Left alone, the pending flag stuck and refused every later
       // "translate all" as racing a save that had long ended.
       processedSaveResponseRef.current = fetcher.data;
+      const stepTwoRefusedNoKey = abandonAcceptAndTranslate(inFlightScopeRef.current?.sentFields?.itemId ?? savedItemIdRef.current);
+      forgetAndRebaseline();
       isSavePendingRef.current = false;
       settleOwnSaveFor(inFlightPartialRef.current);
       inFlightPartialRef.current = null;
@@ -3449,7 +4199,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         rollbackCopyAltText();
       }
       if (savedItemIdRef.current === selectedItemIdRef.current) {
-        showInfoBox(translateErrorMessage("", t), "critical");
+        showInfoBox(stepTwoRefusalText(fetcher.data, stepTwoRefusedNoKey, translateErrorMessage("", t)), "critical");
       }
       savedItemIdRef.current = null;
     }
@@ -3506,6 +4256,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (fetcher.state !== "idle" || saveQueueRef.current.length > 0) return;
     const justSubmitted = justSubmittedRef.current ? inFlightPartialRef.current : null;
     setOwnSavesInFlight((prev) => backstopOwnSaves(prev, justSubmitted));
+    // A pending primary accept-and-translate step 2 whose step-1 save is neither in flight nor queued will
+    // never be answered (an unrecognised answer, a request that never went out): leaving it armed would mark
+    // every later save as "withheld" (no changedFields) until an item switch.
+    const armed = pendingTranslationAfterSaveRef.current;
+    if (isStaleAcceptStep(armed, justSubmitted)) {
+      pendingTranslationAfterSaveRef.current = null;
+      acceptedPrimaryValueRef.current = null;
+      setIsAcceptAndTranslateFlow(false);
+    }
   }, [fetcher.state]);
 
   // Process queued saves when the fetcher becomes idle.
@@ -3538,6 +4297,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         marketId: next.savedMarketId ?? "",
         sentAlts: sentAltsFromForm(next.formData.get("imageAltTexts")),
         sentFields: sentFieldsFromForm(next.formData.entries()),
+        token: next.formData,
+        pressSeq: next.pressSeq,
+        staleData: fetcherRef.current.data,
       };
       isSavePendingRef.current = true;
       // A save held behind a "translate all" run: another view's answer may
@@ -3556,6 +4318,16 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           // The queued request never left: settle exactly what the direct
           // submit's catch settles (useEditorAutoSave.safeSubmit), or its
           // own-save entry, the in-flight slots and the pending flag stick.
+          if (next.savedItemId && next.savedLocale === primaryLocale) {
+            forgetOwnedKeys({
+              cacheByItem: savedPrimaryValuesRef.current,
+              owners: primaryOwnerRef.current,
+              confirmed: primaryConfirmedRef.current,
+              itemId: next.savedItemId,
+              sentKeys: Object.keys(sentFieldsFromForm(next.formData.entries())),
+              token: next.formData,
+            });
+          }
           settleUnsentSave({
             partial: next.partial,
             successToast: next.successToast,
@@ -3594,6 +4366,26 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // ============================================================================
   // FIELD EVENT HANDLERS (extracted to useFieldHandlers)
   // ============================================================================
+
+  // Every edit the merchant makes through the field handlers (typing, a clear, "clear
+  // all", an accepted suggestion, a discard) while a save is out is NOT part of that
+  // save: its field is remembered, and after the answer it keeps its previous baseline
+  // (stays a change) instead of reading as saved.
+  const setEditableValuesTracked: typeof setEditableValues = useCallback((value) => {
+    // Decided when the edit is MADE, not when the updater runs: a "clear all" saves
+    // first and empties the fields right after, and that belongs to the save.
+    // Also while a save is only HELD behind a translate run (it is queued and the
+    // pending flag is down): its form is already fixed.
+    const track = isSavePendingRef.current || savesOfItemOut(selectedItemIdRef.current).length > 0;
+    const editSeq = track ? ++eventSeqRef.current : 0;
+    setEditableValues((prev) => {
+      const next = typeof value === "function" ? (value as (p: Record<string, string>) => Record<string, string>)(prev) : value;
+      if (track) {
+        for (const key of Object.keys(next)) if (next[key] !== prev[key]) lastEditSeqRef.current[key] = editSeq;
+      }
+      return next;
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const {
     handleSave,
@@ -3677,6 +4469,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     pendingCopyFieldItemIdRef,
     pendingTranslationAfterSaveRef,
     acceptedPrimaryValueRef,
+    foreignAcceptPrimaryStepRef,
+    foreignStep1Ref,
     initialLoadSuccessfulRef,
     retryCountRef,
     submitAIAction,
@@ -3700,7 +4494,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setCurrentLanguage,
     setSelectedMarketId,
     markets,
-    setEditableValues,
+    setEditableValues: setEditableValuesTracked,
     setHtmlModes,
     setEnabledLanguages,
     setIsAcceptAndTranslateFlow,

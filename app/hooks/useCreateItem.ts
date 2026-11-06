@@ -25,6 +25,7 @@ import { createSpecFor, suggestHandle } from "../config/create-fields.config";
 import type { CreateNoteLike } from "../utils/create-note-message";
 import { getMaxForResource } from "../utils/planUtils";
 import type { Plan, ResourceType } from "../utils/planUtils";
+import { appFetch } from "../utils/app-fetch";
 
 export interface CreatedItemInfo {
   id: string;
@@ -266,7 +267,7 @@ export function useCreateItem({
     }
     let cancelled = false;
     setOptionsLoading(true);
-    fetch(`/api/create-options?resource=${encodeURIComponent(openResource)}`)
+    appFetch(`/api/create-options?resource=${encodeURIComponent(openResource)}`)
       .then((r) => r.json())
       .then((data) => {
         if (cancelled) return;

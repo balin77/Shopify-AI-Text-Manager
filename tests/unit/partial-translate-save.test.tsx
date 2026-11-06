@@ -78,3 +78,81 @@ describe("single-field translate — a partial save", () => {
     expect(result.current.refs.localTranslationsRef.current.title?.en).toBeUndefined();
   });
 });
+
+describe("single-field translate while a primary save's purge is still out (layer mark)", () => {
+  const item = {
+    id: "gid://shopify/Product/1",
+    title: "Vase",
+    translations: [
+      { key: "title", locale: "fr", value: "Vase FR" },
+      { key: "title", locale: "es", value: "Vase ES" },
+    ],
+  } as never;
+
+  it("keeps the layer mark: other locales stay purged, the translated one shows its new text", () => {
+    const { result } = loader();
+    // A primary save marks the key BEFORE it is submitted.
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+    });
+    expect(result.current.resolve(item, "title", "title", "es").value).toBe("");
+
+    act(() => {
+      result.current.onTranslateFieldComplete("title", "title", "Nuevo", "fr", { title: "" });
+    });
+
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(true);
+    // Spanish is still purged (it must not fall back to the stale ES row) ...
+    expect(result.current.resolve(item, "title", "title", "es").value).toBe("");
+    // ... and French shows what was just translated, not an empty field.
+    expect(result.current.resolve(item, "title", "title", "fr").value).toBe("Nuevo");
+  });
+
+  it("everything settles when the primary save answers (layer + stage marks go, overlay of the key is wiped)", () => {
+    const { result } = loader();
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+      result.current.onTranslateFieldComplete("title", "title", "Nuevo", "fr", { title: "" });
+    });
+    act(() => {
+      result.current.onSaveComplete("de", { title: "Neu" }, [TITLE]);
+    });
+    expect([...result.current.refs.deletedTranslationKeysRef.current]).toEqual([]);
+  });
+
+  it("a background re-read that keeps the layer mark (a primary save out) keeps the stage mark too: the translated locale does not go empty", () => {
+    const { result } = loader();
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+      result.current.onTranslateFieldComplete("title", "title", "Nuevo", "fr", { title: "" });
+    });
+    act(() => {
+      result.current.onBackgroundRetranslation(new Set(["title"]));
+    });
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(true);
+    // the overlay is dropped by the re-read, so the translated locale shows what the server holds -- but it is
+    // exempt from the kept layer mark, the others stay purged
+    expect(result.current.resolve(item, "title", "title", "fr").value).toBe("Vase FR");
+    expect(result.current.resolve(item, "title", "title", "es").value).toBe("");
+  });
+
+  it("a translate-to-all answer that deletes the layer mark deletes its stage marks too", () => {
+    const { result } = loader();
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+      result.current.onTranslateFieldComplete("title", "title", "Nuevo", "fr", { title: "" });
+    });
+    act(() => {
+      result.current.onTranslateFieldToAllLocalesComplete("title", { es: "Nuevo ES" }, "de");
+    });
+    expect([...result.current.refs.deletedTranslationKeysRef.current]).toEqual([]);
+  });
+
+  it("without a standing layer mark nothing extra is recorded", () => {
+    const { result } = loader();
+    act(() => {
+      result.current.onTranslateFieldComplete("title", "title", "Nuevo", "fr", { title: "" });
+    });
+    expect([...result.current.refs.deletedTranslationKeysRef.current]).toEqual([]);
+  });
+});

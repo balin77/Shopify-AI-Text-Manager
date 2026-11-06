@@ -16,6 +16,9 @@
  * on screen while its removal was still on its way, and the save's answer then
  * staged them as Italian's saved values.
  *
+ * A STAGE mark is a fourth kind (see `buildStageMark`): it exempts ONE locale
+ * from a LAYER mark while a freshly staged value of that locale stands.
+ *
  * Client-safe and import-free.
  */
 
@@ -46,6 +49,47 @@ export function isPurgeMark(mark: string): boolean {
   return mark.startsWith(PURGE_PREFIX);
 }
 
+/**
+ * A STAGE mark says: a value was just translated/copied INTO (key, market,
+ * locale) while a LAYER mark of that key was standing (a primary save whose
+ * purge is still on its way). The layer mark must stay -- every OTHER locale
+ * still reads the purged key as empty -- but it must not blank the locale that
+ * was just written, so its overlay value wins there. It lives exactly as long
+ * as the layer marks it exempts from: every `dropMarksAfterSave` drops it with
+ * them (a primary answer wipes the overlay of marked keys in the same step), a
+ * language/market/discard switch (`dropLocaleMarks`) leaves it alone.
+ * A locale mark of the same locale (a later clear) still applies.
+ */
+const STAGE_PREFIX = "~stage~";
+
+export function buildStageMark(translationKey: string, marketId: string, locale: string): string {
+  return `${STAGE_PREFIX}${buildLocaleDeletedKey(translationKey, marketId, locale)}`;
+}
+
+export function isStageMark(mark: string): boolean {
+  return mark.startsWith(STAGE_PREFIX);
+}
+
+/** The LAYER mark a stage mark exempts a locale from (`key` or `key@@market`). */
+export function layerMarkOfStage(stageMark: string): string {
+  const body = stageMark.slice(STAGE_PREFIX.length);
+  const at = body.lastIndexOf(LOCALE_MARK_SEP);
+  return at < 0 ? body : body.slice(0, at);
+}
+
+/**
+ * Wherever a LAYER mark of (key, market) is deleted, the stage marks that
+ * exempted a locale from it go too: left behind they would outlive the mark
+ * they belong to (and a later layer mark of the same key would be exempted for
+ * a locale nobody translated into).
+ */
+export function dropStageMarksOfLayer(marks: Set<string>, translationKey: string, marketId: string): void {
+  const layer = layerMark(translationKey, marketId);
+  for (const mark of [...marks]) {
+    if (isStageMark(mark) && layerMarkOfStage(mark) === layer) marks.delete(mark);
+  }
+}
+
 /** The mark of ONE locale's cleared value of `translationKey` in a layer. */
 export function buildLocaleDeletedKey(translationKey: string, marketId: string, locale: string): string {
   return `${layerMark(translationKey, marketId)}${LOCALE_MARK_SEP}${locale}`;
@@ -60,14 +104,15 @@ export function isMarkedDeleted(
   locale: string,
 ): boolean {
   return (
-    marks.has(layerMark(translationKey, marketId)) ||
+    (marks.has(layerMark(translationKey, marketId)) &&
+      !marks.has(buildStageMark(translationKey, marketId, locale))) ||
     marks.has(buildLocaleDeletedKey(translationKey, marketId, locale)) ||
     (!!marketId && marks.has(buildPurgeMarketKey(translationKey, marketId, locale)))
   );
 }
 
 export function isLocaleMark(mark: string): boolean {
-  return !isPurgeMark(mark) && mark.includes(LOCALE_MARK_SEP);
+  return !isPurgeMark(mark) && !isStageMark(mark) && mark.includes(LOCALE_MARK_SEP);
 }
 
 /** Whether `mark` is a locale mark of exactly (locale, market). */
@@ -117,7 +162,7 @@ export function dropLocaleMarks(
 ): void {
   if (!marks) return;
   for (const mark of [...marks]) {
-    if (keep?.has(mark) || isPurgeMark(mark)) continue;
+    if (keep?.has(mark) || isPurgeMark(mark) || isStageMark(mark)) continue;
     if (isLocaleMarkOf(mark, locale, marketId)) marks.delete(mark);
   }
 }

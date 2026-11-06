@@ -26,7 +26,10 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import {
   WEBP_ITEM_TASK_TYPE,
+  WEBP_HEARTBEAT_MAX_MS,
+  WEBP_ITEM_HEARTBEAT_MS,
   WEBP_PARENT_TASK_TYPE,
+  WEBP_RUNNING_STALE_MS,
   isWebpParentRow,
   isWebpWorkRow,
   webpBatchStatus,
@@ -748,5 +751,345 @@ describe("failTask needs the whole row", () => {
 
     expect(table[0].status).toBe("running");
     expect(refunds).toEqual([]);
+  });
+});
+
+describe("an item that waited too long in the queue is refused, not run", () => {
+  // The processor was not started in production until 2026-10 while the image
+  // manager kept queueing work. The first start after that must not swap
+  // images nobody is waiting for any more — the age guard fails such an item
+  // with a code and refunds it through the ordinary failTask.
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it("the predicate reads createdAt and only past the limit", async () => {
+    const { isWebpItemExpiredInQueue, WEBP_QUEUE_MAX_AGE_MS } = await import(
+      "../../app/config/webp-tasks.js"
+    );
+    const now = Date.parse("2026-10-29T12:00:00Z");
+    expect(WEBP_QUEUE_MAX_AGE_MS).toBe(DAY);
+    expect(isWebpItemExpiredInQueue(new Date(now - DAY - 1), now)).toBe(true);
+    expect(isWebpItemExpiredInQueue(new Date(now - 30 * DAY), now)).toBe(true);
+    expect(isWebpItemExpiredInQueue(new Date(now - DAY + 60_000), now)).toBe(false);
+    expect(isWebpItemExpiredInQueue(new Date(now - 60_000).toISOString(), now)).toBe(false);
+    // Unreadable is not expired: refusing on a value we cannot read would fail
+    // a fresh request; the stuck-task reaper still bounds that row.
+    expect(isWebpItemExpiredInQueue(null, now)).toBe(false);
+    expect(isWebpItemExpiredInQueue(undefined, now)).toBe(false);
+    expect(isWebpItemExpiredInQueue("not a date", now)).toBe(false);
+  });
+
+  it("a weeks-old queued item is failed with the code, refunded once, never started, and settles its batch", async () => {
+    const table = useTable([
+      {
+        id: "p1",
+        shop: "kumiko.myshopify.com",
+        type: WEBP_PARENT_TASK_TYPE,
+        status: "running",
+        total: 1,
+        processed: 0,
+        progress: 0,
+        resourceId: "gid://shopify/Product/9",
+        createdAt: new Date(Date.now() - 21 * DAY - 1000),
+        result: JSON.stringify({ total: 1 }),
+        error: null,
+      },
+      workItem("i1", {
+        status: "queued",
+        progress: 0,
+        resourceId: "gid://shopify/Product/9",
+        createdAt: new Date(Date.now() - 21 * DAY),
+      }),
+    ]);
+    const original = processor._runWebpSteps;
+    const steps = vi.fn(async () => {});
+    processor._runWebpSteps = steps;
+    try {
+      await processor.processTask({ ...row("i1") });
+    } finally {
+      processor._runWebpSteps = original;
+    }
+
+    expect(steps).not.toHaveBeenCalled();
+    expect(row("i1").status).toBe("failed");
+    expect(row("i1").error).toBe("webp_expired_in_queue");
+    expect(refunds).toEqual([{ n: 1, shop: "kumiko.myshopify.com" }]);
+    // The batch is closed from the item, all images failed ⇒ `failed`.
+    expect(table[0].status).toBe("failed");
+    expect(JSON.parse(table[0].result)).toMatchObject({ total: 1, converted: 0, failed: 1 });
+  });
+
+  it("a fresh queued item still runs", async () => {
+    useTable([
+      workItem("i1", { status: "pending", progress: 0, createdAt: new Date(Date.now() - 5 * 60_000) }),
+    ]);
+    const original = processor._runWebpSteps;
+    const steps = vi.fn(async () => {});
+    processor._runWebpSteps = steps;
+    try {
+      await processor._processTaskItem({ ...row("i1") });
+    } finally {
+      processor._runWebpSteps = original;
+    }
+    expect(steps).toHaveBeenCalledTimes(1);
+    expect(row("i1").status).toBe("pending");
+    expect(refunds).toEqual([]);
+  });
+});
+
+// ── deploy overlap: two containers, one `running` row ───────────────────────
+//
+// Railway starts the new container before the old one is gone. Both read the
+// same Task table, so "who owns this row" has to be answered by the row.
+
+describe("claiming a work item", () => {
+  const taskData = JSON.parse(jobInput("p1"));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("only one of two workers that read the item as waiting gets to run it", async () => {
+    const table = useTable([workItem("i1", { status: "pending", progress: 0 })]);
+    // The download is where the first worker parks; a second download means the
+    // destructive sequence was started twice.
+    const fetchSpy = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchSpy);
+    const task = { id: "i1", shop: "kumiko.myshopify.com", result: jobInput("p1") };
+
+    void processor._runWebpSteps(task, taskData);
+    await processor._runWebpSteps(task, taskData); // loses the claim, returns at once
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(table[0].status).toBe("running");
+    expect(table[0].progress).toBe(10);
+  });
+
+  it("skips an item that is already running elsewhere or was closed, touching nothing", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    for (const status of ["running", "failed", "completed"]) {
+      const table = useTable([workItem("i1", { status, progress: 55 })]);
+      await processor._runWebpSteps({ id: "i1", shop: "kumiko.myshopify.com", result: jobInput("p1") }, taskData);
+      expect(table[0].status).toBe(status);
+      expect(table[0].progress).toBe(55);
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(refunds).toEqual([]);
+  });
+});
+
+describe("the heartbeat while a conversion runs", () => {
+  it("stamps the row on an interval far below the stale window, until the steps end", async () => {
+    vi.useFakeTimers();
+    const table = useTable([workItem("i1", { updatedAt: new Date() })]);
+    let finish!: () => void;
+    const original = processor._runWebpSteps;
+    processor._runWebpSteps = vi.fn(() => new Promise<void>((r) => (finish = r)));
+    try {
+      const inFlight = processor._processTaskItem({ id: "i1", shop: "kumiko.myshopify.com", result: jobInput("p1") });
+      const started = Date.now();
+      await vi.advanceTimersByTimeAsync(WEBP_ITEM_HEARTBEAT_MS * 3 + 100);
+      expect(new Date(table[0].updatedAt).getTime() - started).toBeGreaterThanOrEqual(WEBP_ITEM_HEARTBEAT_MS * 3 - 1);
+      expect(WEBP_ITEM_HEARTBEAT_MS * 3).toBeLessThan(WEBP_RUNNING_STALE_MS);
+
+      finish();
+      await inFlight;
+      const stamped = table[0].updatedAt;
+      await vi.advanceTimersByTimeAsync(WEBP_ITEM_HEARTBEAT_MS * 3);
+      expect(table[0].updatedAt).toBe(stamped); // heartbeat stopped with the steps
+    } finally {
+      processor._runWebpSteps = original;
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("boot recovery of running WebP items", () => {
+  const ago = (ms: number) => new Date(Date.now() - ms);
+
+  it("leaves a row with a fresh heartbeat alone — the old container is converting it", async () => {
+    const table = useTable([workItem("i1", { progress: 30, retryCount: 0, updatedAt: ago(20_000) })]);
+
+    await expect(recovery.recoverRunningWebpTasks()).resolves.toEqual({ retried: 0, failed: 0 });
+
+    expect(table[0].status).toBe("running");
+    expect(table[0].progress).toBe(30);
+    expect(refunds).toEqual([]);
+  });
+
+  it("recovers a silent one: under 70% back to pending, from 70% flagged and refunded", async () => {
+    const stale = ago(WEBP_RUNNING_STALE_MS + 5_000);
+    useTable([
+      workItem("early", { progress: 30, retryCount: 0, updatedAt: stale }),
+      workItem("late", { progress: 80, retryCount: 0, updatedAt: stale }),
+    ]);
+
+    await expect(recovery.recoverRunningWebpTasks()).resolves.toEqual({ retried: 1, failed: 1 });
+
+    expect(row("early").status).toBe("pending");
+    expect(row("late").status).toBe("failed");
+    expect(refunds).toEqual([{ n: 1, shop: "kumiko.myshopify.com" }]);
+  });
+
+  it("does not reset a row a live worker stamps between the SELECT and the write", async () => {
+    const table = useTable([workItem("i1", { progress: 30, retryCount: 0, updatedAt: ago(WEBP_RUNNING_STALE_MS + 5_000) })]);
+    const read = taskFindMany.getMockImplementation()!;
+    taskFindMany.mockImplementation(async (args: any) => {
+      const rows = await read(args);
+      store.find((r) => r.id === "i1")!.updatedAt = new Date(); // the heartbeat lands
+      return rows;
+    });
+
+    await expect(recovery.recoverRunningWebpTasks()).resolves.toEqual({ retried: 0, failed: 0 });
+    expect(table[0].status).toBe("running");
+  });
+});
+
+describe("the heartbeat has a ceiling", () => {
+  it("goes silent after WEBP_HEARTBEAT_MAX_MS so the stuck-task reaper can close a wedged step", async () => {
+    vi.useFakeTimers();
+    const table = useTable([workItem("i1", { updatedAt: new Date() })]);
+    const original = processor._runWebpSteps;
+    processor._runWebpSteps = vi.fn(() => new Promise(() => {})); // never settles
+    try {
+      void processor._processTaskItem({ id: "i1", shop: "kumiko.myshopify.com", result: jobInput("p1") });
+      await vi.advanceTimersByTimeAsync(WEBP_HEARTBEAT_MAX_MS + WEBP_ITEM_HEARTBEAT_MS * 2);
+      const stamped = new Date(table[0].updatedAt).getTime();
+      // Still beating shortly before the ceiling, silent after it.
+      expect(stamped).toBeGreaterThan(Date.now() - WEBP_HEARTBEAT_MAX_MS);
+      await vi.advanceTimersByTimeAsync(WEBP_RUNNING_STALE_MS * 2);
+      expect(new Date(table[0].updatedAt).getTime()).toBe(stamped);
+      expect(WEBP_HEARTBEAT_MAX_MS).toBeGreaterThan(60 * 60 * 1000);
+    } finally {
+      processor._runWebpSteps = original;
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("a failure BEFORE the claim never closes a row another worker holds", () => {
+  it("an expired item that another worker claimed meanwhile is left alone, with no refund", async () => {
+    const table = useTable([workItem("i1", { status: "running", progress: 40, createdAt: new Date(Date.now() - 48 * 3600_000) })]);
+    await processor._processTaskItem({ ...row("i1"), status: "pending" });
+    expect(table[0].status).toBe("running");
+    expect(refunds).toEqual([]);
+  });
+
+  it("unreadable job data on a row somebody else holds is left alone", async () => {
+    const table = useTable([workItem("i1", { status: "running", result: "{oops" })]);
+    await processor._processTaskItem({ id: "i1", shop: "kumiko.myshopify.com", result: "{oops", createdAt: new Date() });
+    expect(table[0].status).toBe("running");
+    expect(refunds).toEqual([]);
+  });
+
+  it("the same failures still close a row that is genuinely waiting", async () => {
+    const table = useTable([workItem("i1", { status: "pending", result: "{oops" })]);
+    await processor._processTaskItem({ id: "i1", shop: "kumiko.myshopify.com", result: "{oops", createdAt: new Date() });
+    expect(table[0].status).toBe("failed");
+    expect(refunds).toEqual([{ n: 1, shop: "kumiko.myshopify.com" }]);
+  });
+
+  it("a claim statement that throws fails only a still-waiting row", async () => {
+    const table = useTable([workItem("i1", { status: "running", progress: 40 })]);
+    taskUpdateMany.mockRejectedValueOnce(new Error("db blip"));
+    await processor._runWebpSteps(
+      { id: "i1", shop: "kumiko.myshopify.com", result: jobInput("p1") },
+      JSON.parse(jobInput("p1")),
+    );
+    expect(table[0].status).toBe("running");
+    expect(refunds).toEqual([]);
+  });
+});
+
+describe("recovery never resets a row THIS process is converting (m1)", () => {
+  const ago = (ms: number) => new Date(Date.now() - ms);
+  afterEach(() => {
+    delete (globalThis as any).__webpInFlightTaskIds;
+  });
+
+  it("skips an own in-flight row however silent it is, and still recovers a foreign silent one", async () => {
+    // e.g. a Postgres outage longer than the stale window: the heartbeat failed quietly.
+    const stale = ago(WEBP_RUNNING_STALE_MS + 60_000);
+    const table = useTable([
+      workItem("mine", { progress: 30, retryCount: 0, updatedAt: stale }),
+      workItem("theirs", { progress: 30, retryCount: 0, updatedAt: stale }),
+    ]);
+    (globalThis as any).__webpInFlightTaskIds = () => new Set(["mine"]);
+
+    await expect(recovery.recoverRunningWebpTasks()).resolves.toEqual({ retried: 1, failed: 0 });
+
+    expect(row("mine").status).toBe("running");
+    expect(row("theirs").status).toBe("pending");
+    expect(table).toHaveLength(2);
+  });
+
+  it("the worker publishes its in-flight ids while the steps run and withdraws them when they end", async () => {
+    vi.useFakeTimers();
+    useTable([workItem("i1", { updatedAt: new Date() })]);
+    let finish!: () => void;
+    const original = processor._runWebpSteps;
+    processor._runWebpSteps = vi.fn(() => new Promise<void>((r) => (finish = r)));
+    try {
+      (globalThis as any).__webpInFlightTaskIds = () => new Set(processor.inFlightIds);
+      const inFlight = processor._processTaskItem({ id: "i1", shop: "kumiko.myshopify.com", result: jobInput("p1") });
+      await vi.advanceTimersByTimeAsync(10);
+      expect((globalThis as any).__webpInFlightTaskIds().has("i1")).toBe(true);
+      finish();
+      await inFlight;
+      await vi.advanceTimersByTimeAsync(10);
+      expect((globalThis as any).__webpInFlightTaskIds().has("i1")).toBe(false);
+    } finally {
+      processor._runWebpSteps = original;
+      vi.useRealTimers();
+    }
+  });
+
+  it("without the hook (worker not started, as at boot) nothing is treated as own", async () => {
+    useTable([workItem("i1", { progress: 30, retryCount: 0, updatedAt: ago(WEBP_RUNNING_STALE_MS + 60_000) })]);
+    await expect(recovery.recoverRunningWebpTasks()).resolves.toEqual({ retried: 1, failed: 0 });
+  });
+
+  it("a row flagged for review says 'Worker stopped', true for a restart and for a lost worker", async () => {
+    useTable([workItem("late", { progress: 80, retryCount: 0, updatedAt: ago(WEBP_RUNNING_STALE_MS + 5_000) })]);
+    await recovery.recoverRunningWebpTasks();
+    expect(row("late").error).toMatch(/^Worker stopped at progress 80/);
+  });
+});
+
+describe("the stuck monitor runs the WebP recovery on every tick, before the reaper (m2)", () => {
+  it("calls recoverRunningWebpTasks, then markStuckTasksAsFailed", async () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    const r1 = vi.spyOn(recovery, "recoverRunningWebpTasks").mockImplementation(async () => {
+      order.push("recover");
+      return { retried: 0, failed: 0 };
+    });
+    const r2 = vi.spyOn(recovery, "markStuckTasksAsFailed").mockImplementation(async () => {
+      order.push("reap");
+      return 0;
+    });
+    try {
+      recovery.startStuckTaskMonitoring();
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 10);
+      expect(order.slice(0, 2)).toEqual(["recover", "reap"]);
+    } finally {
+      recovery.stopStuckTaskMonitoring();
+      r1.mockRestore();
+      r2.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("a recovery that throws does not stop the reaper", async () => {
+    vi.useFakeTimers();
+    const r1 = vi.spyOn(recovery, "recoverRunningWebpTasks").mockRejectedValue(new Error("db down"));
+    const r2 = vi.spyOn(recovery, "markStuckTasksAsFailed").mockResolvedValue(0);
+    try {
+      recovery.startStuckTaskMonitoring();
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 10);
+      expect(r2).toHaveBeenCalled();
+    } finally {
+      recovery.stopStuckTaskMonitoring();
+      r1.mockRestore();
+      r2.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });

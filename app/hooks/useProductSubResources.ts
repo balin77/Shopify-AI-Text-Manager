@@ -7,6 +7,10 @@
  * 2. Shopify fetch: Hook triggers fetcher POST → server loads from Shopify for any missing
  *    → merges into state (catches translations from Translate & Adapt)
  *
+ * The fetcher is for that Phase-2 LOAD only. The card's SAVES run in a module-
+ * scope queue over plain fetch (sub-resource-save-queue.ts) and are read by
+ * `handleSaveAnswer` against what each request carried; see CLAUDE.md.
+ *
  * Manages:
  * - Reading pre-loaded translations from item data (DB pipeline)
  * - Fetching from Shopify for translations not yet in DB
@@ -62,9 +66,34 @@ import {
   confirmedClearIds,
   settleClearAll,
   stageClearAll,
-  subResourceSaveRacesRun,
 } from "../services/editor/sub-resource-clear.shared";
 import { retirePurgedMarketResources } from "~/services/editor/sub-resource-market-purge.shared";
+import { appFetch } from "../utils/app-fetch";
+import { isPrimaryMetafieldUnsaved, primaryMetafieldChange } from "../services/product-metafields.shared";
+import {
+  hasKeptEdits,
+  hasStructural,
+  isOptionEditUnsaved,
+  metafieldEditsAfterSave,
+  optionEditsAfterSave,
+  retypedForeignIds,
+  snapshotPrimaryEdits,
+  snapshotStructural,
+  structuralAfterSave,
+  type OptionEdit,
+  type PrimarySaveSnapshot,
+  type StructuralLists,
+} from "../services/editor/sub-resource-edits.shared";
+import {
+  enqueueSave,
+  getSaveEntries,
+  observeFinishedSaves,
+  subscribeSaves,
+  SAVE_NOT_CONFIRMED_CODE,
+  type QueuedSave,
+  type SaveOwner,
+} from "../services/editor/sub-resource-save-queue";
+import { isBatchTranslatableValueType } from "../services/metaobject-fields.shared";
 
 /**
  * Where this hook's plain-`fetch` requests go. NOT `/app/products`: that is a
@@ -91,6 +120,28 @@ interface SubResourceFetcherData {
   notTranslatable?: string[];
   failedOptions?: string[];
   failedMetafields?: string[];
+  /** Cleared-slot refills not written: Shopify could not be asked whether one
+   *  exists (`metafieldSlotUnverified`). Kept as drafts, never reverted. */
+  unverifiedMetafields?: string[];
+  /** Edits Shopify refused for their VALUE: id -> Shopify's reason. Kept as
+   *  drafts like `unverifiedMetafields`, but worded as a refusal. */
+  metafieldRefusals?: Record<string, string>;
+  /** Foreign saves: why each failed resource failed (server-scrubbed, bounded). */
+  failureReasons?: Record<string, string>;
+  /** Foreign saves: failures with no Shopify message - a CODE the client words. */
+  failureCodes?: Record<string, string>;
+  /** Primary save: Shopify's own message when it refused to clear a metafield. */
+  metafieldDeleteRefusal?: string;
+  /** Primary save: Shopify's own messages when it refused an option write (two at most). */
+  optionRefusals?: string[];
+  /** The HTTP status of an answer that was refused before the app ran (a non-JSON 4xx). */
+  httpStatus?: number;
+  /** The outcome is unknown (no answer in time, connection lost, gateway). */
+  notConfirmed?: boolean;
+  /** Ids from `metafieldRefusals` that are about PERMISSION, not the text. */
+  permissionRefusedMetafields?: string[];
+  /** Cleared slots filled again: slot id -> the GID of the re-created metafield. */
+  recreatedMetafields?: Record<string, string>;
   /** Failure CODES from the option write paths; the client owns the wording. */
   optionWarnings?: string[];
   /** Create / delete / reorder failures, which carry no option id. */
@@ -98,6 +149,8 @@ interface SubResourceFetcherData {
   removedOptionIds?: string[];
   /** The server's sentence (or the plan refusal's code "gated") when `success` is false. */
   error?: string;
+  /** Machine code beside `error` (e.g. `metafieldTypeNotTranslatable`); the client owns the wording. */
+  errorCode?: string;
   /** Ids of detached repairs a save started, offered even when the save failed. */
   retranslationTaskIds?: string[];
   /** Sub-resources whose MARKET overrides the primary save's purge CONFIRMED removed. */
@@ -151,11 +204,17 @@ export function __resetSubResourceSpinnerHolds(): void {
  * back as `null`, which every caller treats as a failed request -- the spinner
  * is settled by the caller's `finally` either way.
  */
-async function postSubResourceRequest(fd: FormData): Promise<SubResourceFetcherData | null> {
+async function postSubResourceRequest(fd: FormData, timeoutMs?: number): Promise<SubResourceFetcherData | null> {
+  // Optional cut-off. Translates run AI calls for minutes and have none; a
+  // "clear all" is plain writes, and one that never answered would hold
+  // `clearsOutRef` (and with it clear-all and translate-all) for good.
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
-    const resp = await fetch(SUB_RESOURCE_ENDPOINT, {
+    const resp = await appFetch(SUB_RESOURCE_ENDPOINT, {
       method: "POST",
       body: setContentEditorPage(fd, "/app/products"),
+      ...(controller ? { signal: controller.signal } : {}),
     });
     const data = (await resp.json().catch(() => null)) as SubResourceFetcherData | null;
     if (!data || typeof data !== "object") return null;
@@ -164,6 +223,8 @@ async function postSubResourceRequest(fd: FormData): Promise<SubResourceFetcherD
     return data;
   } catch {
     return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -225,6 +286,250 @@ interface CopyRecord {
   previous: string | undefined;
 }
 
+type Tone = "success" | "info" | "warning" | "critical";
+
+/**
+ * The view a save was pressed for. A primary save belongs to the product and the
+ * market (switching either resets the primary edits); a foreign one to the
+ * product, language and market.
+ */
+/**
+ * View generations, unique across hook instances. A reset of the view (the load
+ * effect's full reset on a product / language / market switch) takes a new one;
+ * a save remembers the generation it was pressed in.
+ */
+let viewEpochCounter = 0;
+
+/** How long what the last landed save wrote is trusted over a possibly stale item. */
+const LAST_LANDED_MS = 10 * 60 * 1000;
+
+interface LandedRecord {
+  at: number;
+  metafields: Record<string, string>;
+  options: Record<string, { name?: string; values: Record<string, string> }>;
+}
+
+/** What the last landed saves of one product wrote, while that is still worth trusting. */
+function landedFor(map: Map<string, LandedRecord>, itemId: string | null | undefined): LandedRecord | undefined {
+  const record = itemId ? map.get(itemId) : undefined;
+  return record && Date.now() - record.at < LAST_LANDED_MS ? record : undefined;
+}
+
+/** A "clear all" is plain writes; one that has not answered after this is given up on. */
+const CLEAR_ALL_TIMEOUT_MS = 240_000;
+
+/** How long after an answer of unknown outcome the second re-read is asked for. */
+const LATE_RELOAD_MS = 8000;
+
+/** The structural lists out of the pending state. */
+function structuralOf(p: SubResourcePendingState | null): StructuralLists {
+  return {
+    valuesToAdd: (p?.optionValuesToAdd ?? {}) as Record<string, string[]>,
+    linkedToAdd: (p?.optionLinkedValuesToAdd ?? {}) as Record<string, Array<{ id: string; name: string }>>,
+    valuesToDelete: (p?.optionValuesToDelete ?? {}) as Record<string, string[]>,
+    optionsToCreate: (p?.optionsToCreate ?? []) as StructuralLists["optionsToCreate"],
+    optionsToDelete: (p?.optionsToDelete ?? []) as string[],
+    optionOrder: (p?.optionOrder ?? null) as string[] | null,
+    valueOrder: (p?.optionValueOrder ?? {}) as Record<string, string[]>,
+  };
+}
+
+function saveViewKey(isPrimary: boolean, itemId: string, language: string, marketId: string): string {
+  return isPrimary ? `${itemId}::primary::${marketId}` : `${itemId}::${buildLocaleKey(language, marketId)}`;
+}
+
+/** Shopify's / the server's reason for a failed request, in the merchant's language ("" when none). */
+function failureReasonText(data: SubResourceFetcherData | null, strings: UseProductSubResourcesStrings): string {
+  const status = typeof data?.httpStatus === "number" ? data.httpStatus : 0;
+  const raw = typeof data?.error === "string" ? data.error : "";
+  if (!raw || raw === SAVE_NOT_CONFIRMED_CODE) return status ? `(HTTP ${status})` : "";
+  const translated = String(
+    translateErrorMessage(raw, {
+      content: { upgradeRequired: strings.upgradeRequired },
+      errors: {
+        sessionExpired: strings.errorSessionExpired,
+        reauthorizeRequired: strings.errorReauthorizeRequired,
+      },
+    } as unknown as TranslationStrings) || "",
+  );
+  return status && translated ? `${translated} (HTTP ${status})` : translated;
+}
+
+/**
+ * Why foreign resources failed, two reasons at most: Shopify's own message
+ * where it gave one, else the localised sentence for the failure code (the
+ * server never ships English text of its own).
+ */
+function foreignReasonsText(data: SubResourceFetcherData | null, strings: UseProductSubResourcesStrings): string {
+  const texts: string[] = [];
+  for (const reason of Object.values(data?.failureReasons ?? {})) {
+    if (typeof reason === "string" && reason.trim()) texts.push(reason);
+  }
+  for (const code of Object.values(data?.failureCodes ?? {})) {
+    const text = strings[`failureReason_${code}`];
+    if (text) texts.push(text);
+  }
+  return [...new Set(texts)].slice(0, 2).join(" ");
+}
+
+/** The reasons / refusals of a (partly) failed PRIMARY save, as sentences. */
+function primaryFailureDetails(
+  data: SubResourceFetcherData,
+  strings: UseProductSubResourcesStrings,
+  /** The answer lands where the typed text is NOT on screen: no "stays in the field". */
+  elsewhere = false,
+) {
+  // The warning codes carry the only specific reason there is (the last option
+  // cannot go, an empty name, an unconfirmed write), and the generic count
+  // alone leaves the merchant guessing.
+  const reasons = [...new Set(data.optionWarnings || [])]
+    .map((code) => strings[`optionWarning_${code}`] || "")
+    .filter(Boolean)
+    .join(" ");
+  const permissionIds = new Set<string>((data.permissionRefusedMetafields ?? []).map(String));
+  const refusals = Object.entries(data.metafieldRefusals ?? {})
+    .map(([id, message]) =>
+      // A replacer FUNCTION: Shopify's text is arbitrary and a string
+      // replacement would interpret `$&`, `$1`, `$$` in it. A refusal about
+      // PERMISSION gets its own wording: "adjust your value" cannot help when
+      // the text was never the problem.
+      (permissionIds.has(id)
+        ? elsewhere
+          ? strings.metafieldPermissionElsewhere || "Shopify does not allow this app to write this metafield: {message}"
+          : strings.metafieldPermissionRefused ||
+            "Shopify does not allow this app to write this metafield: {message} Nothing was saved; your value stays in the field."
+        : elsewhere
+          ? strings.metafieldRefusedElsewhere || "Shopify did not accept the value for a metafield: {message}"
+          : strings.metafieldValueRefused || "Shopify did not accept the value: {message}"
+      ).replace("{message}", () => String(message)),
+    )
+    .join(" ");
+  const deleteRefusal = data.metafieldDeleteRefusal
+    ? (strings.metafieldDeleteRefused || "Shopify did not remove the metafield: {message}").replace("{message}", () => String(data.metafieldDeleteRefusal))
+    : "";
+  const optionRefusal = (data.optionRefusals ?? [])
+    .map((message) => (strings.optionRefusedByShopify || "Shopify said: {message}").replace("{message}", () => String(message)))
+    .join(" ");
+  const purge = unconfirmedPurgeOf(data as { warnings?: unknown; unconfirmedPurge?: unknown });
+  const purgeText = purge.unconfirmed
+    ? strings.translationPurgeUnconfirmed ||
+      "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them."
+    : "";
+  return { reasons: [reasons, optionRefusal, deleteRefusal].filter(Boolean).join(" "), refusals, purge, purgeText };
+}
+
+/**
+ * What to tell the merchant about a save whose answer lands where it cannot be
+ * applied: on another product / language / market, or with no page mounted at
+ * all. It NAMES the product (known at press time, no server change needed) and,
+ * when something was not saved, says so plainly: the text that was typed was
+ * not saved and has to be entered again. Never a green toast for a save that
+ * was only partly settled.
+ */
+export function describeSaveForOtherView(
+  kind: "primary" | "foreign",
+  title: string | null,
+  data: SubResourceFetcherData | null,
+  strings: UseProductSubResourcesStrings,
+  options: { reloading?: boolean } = {},
+): { text: string; tone: Tone } {
+  const name = title && title.trim() ? title : strings.previousProductLabel || "the previous product";
+  const fill = (template: string) => template.replace("{title}", () => name);
+  if (!data || data.success === false) {
+    if ((data as { notConfirmed?: boolean } | null)?.notConfirmed || data?.error === SAVE_NOT_CONFIRMED_CODE) {
+      // "Being reloaded" is only true while a mounted hook is re-reading the
+      // product; with none, the merchant has to open it again.
+      return {
+        text: fill(
+          options.reloading === false
+            ? strings.saveNotConfirmedDetached ||
+                "We could not confirm that the save for {title} arrived. Open the product again and check the values before you save again."
+            : strings.saveNotConfirmed || "No answer for {title} in time. Open it again to check whether it was saved.",
+        ),
+        tone: "warning",
+      };
+    }
+    const reason = failureReasonText(data, strings);
+    return {
+      text: [
+        fill(
+          strings.saveFailedOtherProduct ||
+            "{title} could not be saved: what you entered was not saved and has to be entered again.",
+        ),
+        reason,
+      ].filter(Boolean).join(" "),
+      tone: "critical",
+    };
+  }
+  if (kind === "foreign") {
+    const failedAny = (data.failedResources?.length ?? 0) > 0;
+    return failedAny
+      ? {
+          text: [
+            fill(
+              strings.savePartialOtherProduct ||
+                "Not everything was saved for {title}; what was not saved has to be entered again.",
+            ),
+            foreignReasonsText(data, strings),
+          ].filter(Boolean).join(" "),
+          tone: "warning",
+        }
+      : { text: fill(strings.savedOtherProduct || "Saved: {title}"), tone: "success" };
+  }
+  const failedAny =
+    (data.failedOptions?.length ?? 0) + (data.failedMetafields?.length ?? 0) + (data.structuralFailures ?? 0) > 0;
+  const details = primaryFailureDetails(data, strings, true);
+  return {
+    text: [
+      fill(
+        failedAny
+          ? strings.savePartialOtherProduct ||
+              "Not everything was saved for {title}; what was not saved has to be entered again."
+          : strings.savedOtherProduct || "Saved: {title}",
+      ),
+      failedAny ? details.reasons : "",
+      failedAny ? details.refusals : "",
+      details.purgeText,
+    ].filter(Boolean).join(" "),
+    tone: failedAny || details.purge.unconfirmed ? "warning" : "success",
+  };
+}
+
+const primaryFingerprint = (s: {
+  metafieldEdits: unknown;
+  optionEdits: unknown;
+  valuesToAdd: unknown;
+  linkedToAdd: unknown;
+  valuesToDelete: unknown;
+  optionsToCreate: unknown;
+  optionsToDelete: unknown;
+  optionOrder: unknown;
+  valueOrder: unknown;
+}): string => JSON.stringify([s.metafieldEdits, s.optionEdits, s.valuesToAdd, s.linkedToAdd, s.valuesToDelete, s.optionsToCreate, s.optionsToDelete, s.optionOrder, s.valueOrder]);
+
+const foreignFingerprint = (s: {
+  item: Pick<TranslatableContentItem, "options" | "metafields"> | null | undefined;
+  dirtyOptions: ReadonlySet<string>;
+  dirtyValues: ReadonlySet<string>;
+  dirtyMetafields: ReadonlySet<string>;
+  optionTranslations: Record<string, OptionTranslation>;
+  metafieldTranslations: Record<string, string>;
+}): string => {
+  // ONLY the fields that are dirty: a translate or a load that lands for other
+  // fields while a save is out must not make the card look "unsent".
+  const parts: unknown[] = [];
+  for (const opt of s.item?.options ?? []) {
+    if (s.dirtyOptions.has(opt.id) || opt.values.some((v) => s.dirtyValues.has(v.id))) {
+      const entry = s.optionTranslations[opt.id];
+      parts.push([opt.id, entry?.name, entry?.values]);
+    }
+  }
+  for (const mf of s.item?.metafields ?? []) {
+    if (s.dirtyMetafields.has(mf.id)) parts.push([mf.id, s.metafieldTranslations[mf.id]]);
+  }
+  return JSON.stringify([[...s.dirtyOptions].sort(), [...s.dirtyValues].sort(), [...s.dirtyMetafields].sort(), parts]);
+};
+
 /** How long a translate answer stays protected from a reload's overlay reset. */
 const RECENT_TRANSLATE_KEEP_MS = 2 * 60 * 1000;
 
@@ -233,8 +538,8 @@ export interface SubResourceState {
   optionTranslations: Record<string, OptionTranslation>;
   /** Metafield translations keyed by metafield GID → translated value */
   metafieldTranslations: Record<string, string>;
-  /** Primary locale option edits keyed by option GID → { name, values[] } */
-  primaryOptionEdits: Record<string, { name: string; values: string[] }>;
+  /** Primary locale option edits keyed by option GID → { name?, values: { [valueGid]: renamed text } } (id-keyed, never positional) */
+  primaryOptionEdits: Record<string, OptionEdit>;
   /** Pending structural edits, so the card can render them before the save. */
   optionValuesToAdd: Record<string, string[]>;
   /** Metaobject entries queued on a LINKED option: its values are entries, not
@@ -256,6 +561,12 @@ export interface SubResourceState {
    * either window translates the text the merchant just replaced.
    */
   optionTranslationBlockedIds: Set<string>;
+  /**
+   * True from a landed PRIMARY save until the reload that follows it: every
+   * metafield translate would send the CACHED value, i.e. the text from before
+   * the save. The 🌍 buttons and the whole-item "Translate all" wait for it.
+   */
+  metafieldTranslationBlocked: boolean;
   /** Primary locale metafield edits keyed by metafield GID → value */
   primaryMetafieldEdits: Record<string, string>;
   /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
@@ -278,6 +589,12 @@ export interface SubResourceState {
    */
   translateAllSaveFirst?: boolean;
   /**
+   * Set by the products page: a landed PRIMARY save's reload is still out, so
+   * the whole-item "Translate all" would send the text from before it. Blocks
+   * the button like `translateAllSaveFirst`, but says "one moment" instead.
+   */
+  translateAllReloadPending?: boolean;
+  /**
    * Translations written by a copy / translate and not yet in the loaded item,
    * `{ locale: { resourceId: { key: value } } }` (market-folded keys for market
    * layers). Read-only for callers; `overlayVersion` changes when it does.
@@ -286,8 +603,19 @@ export interface SubResourceState {
   overlayVersion: number;
   /** Whether translations are loading from Shopify */
   isLoading: boolean;
-  /** Whether sub-resources are currently being saved */
+  /**
+   * Whether a save of THIS product is out (in flight or queued), or a Phase-2
+   * load is. A save of ANOTHER product does not count: switching products while
+   * one saves is allowed, and the next product's Save must stay usable.
+   */
   isSaving: boolean;
+  /**
+   * Changes that NO save carries yet. Equal to `hasChanges`, except while a save
+   * of this very view is out: what it carries is not "unsaved" (switching away
+   * loses nothing), only edits typed after it went out count. Drives the
+   * unsaved-changes confirm of the page's switches.
+   */
+  hasUnsentChanges: boolean;
 }
 
 export interface SubResourceHandlers {
@@ -295,7 +623,8 @@ export interface SubResourceHandlers {
   handleOptionValueChange: (optionId: string, valueIndex: number, value: string) => void;
   handleMetafieldChange: (metafieldId: string, value: string) => void;
   handlePrimaryOptionNameChange: (optionId: string, value: string) => void;
-  handlePrimaryOptionValuesChange: (optionId: string, values: string[]) => void;
+  /** Rename ONE value, addressed by its GID (never by position). */
+  handlePrimaryOptionValueChange: (optionId: string, valueId: string, name: string) => void;
   /** A value the merchant added. Shopify assigns its GID on save. */
   handleAddOptionValue: (optionId: string, name: string) => void;
   /** Queue a metaobject entry on a LINKED option. */
@@ -328,7 +657,15 @@ export interface SubResourceHandlers {
   translateMetafield: (metafieldId: string) => void;
   translateAllSubResources: () => void;
   translateAllSubResourcesToAllLocales: () => void;
-  saveSubResources: () => void;
+  /**
+   * Press Save. Returns "waiting" when the press was REFUSED because the values
+   * a landed save wrote are still being reloaded, and "refused" when the card's
+   * own validation refused it (empty option name/value, blank row, invalid
+   * metafield; a red message was shown). Nothing was sent in either case: the
+   * caller must not go on to run the page's other saves and show a green "saved"
+   * that would cover the message.
+   */
+  saveSubResources: () => void | "waiting" | "refused";
   /**
    * The sub-resource half of the editor's "clear all" in a FOREIGN locale:
    * removes every option name, option value and metafield translation of the
@@ -385,10 +722,56 @@ interface UseProductSubResourcesStrings {
   optionNameEmpty?: string;
   optionValuesEmpty?: string;
   metafieldValuesEmpty?: string;
+  /** A list metafield with entries its element type refuses (the save is not sent). */
+  metafieldListInvalid?: string;
+  /** Appended to the red message of a refused press: nothing at all was saved (also not images, alt texts, texts). */
+  refusedNothingSaved?: string;
+  /** A primary translate refused because its source field has an unsaved edit. */
+  saveFirstSource?: string;
+  /** A translate refused because a landed primary save's reload is still out. */
+  sourceReloading?: string;
+  /** Why a metafield that is not single-line text is not translated. */
+  metafieldTypeNotTranslatable?: string;
+  /** "{message}" is Shopify's own reason for a value it refused. */
+  metafieldValueRefused?: string;
+  /** Same, for a refusal about permission (the text was not the problem). */
+  metafieldPermissionRefused?: string;
+  /** The save of the PREVIOUS product finished while another one is shown. */
+  savedOtherProduct?: string;
+  savePartialOtherProduct?: string;
+  /** The whole request for the PREVIOUS product failed ({title}). */
+  saveFailedOtherProduct?: string;
+  /** No answer in time ({title}): the write may or may not have landed. */
+  saveNotConfirmed?: string;
+  /** The same two refusals, worded for a view where the typed text is NOT on screen. */
+  metafieldRefusedElsewhere?: string;
+  metafieldPermissionElsewhere?: string;
+  /** A Save pressed while the saved values are still being reloaded. */
+  reloadBeforeSave?: string;
+  /** A save answered 'unknown' while no page is open to reload: open it again. */
+  saveNotConfirmedDetached?: string;
+  /** Appended to a whole-request failure of a PRIMARY save: part of it may have landed. */
+  saveMaybePartial?: string;
+  /** A foreign view whose dirty fields no longer exist on the item. */
+  fieldsGone?: string;
+  /** After an unknown outcome the reload showed these were added already ({names}). */
+  alreadyAdded?: string;
+  pendingRowsLost?: string;
+  /** The server's code strings the editor translates (t.errors.*). */
+  errorSessionExpired?: string;
+  errorReauthorizeRequired?: string;
+  /** Used for {title} when the product has none ("the previous product"). */
+  previousProductLabel?: string;
   /** One per `OptionWriteWarning` code, e.g. `optionWarning_optionLastOne`.
    *  Indexed rather than listed: the server owns the code list, and a missing
    *  entry drops that reason instead of printing an English one. */
   [optionWarning: `optionWarning_${string}`]: string | undefined;
+  /** One per foreign failure code (`failureReason_error`, ...). */
+  [failureReason: `failureReason_${string}`]: string | undefined;
+  /** "Shopify did not remove the metafield: {message}". */
+  metafieldDeleteRefused?: string;
+  /** "Shopify said: {message}" - Shopify's own reason for a refused option write. */
+  optionRefusedByShopify?: string;
 }
 
 interface UseProductSubResourcesProps {
@@ -526,11 +909,12 @@ export function useProductSubResources({
   const [dirtyMetafieldIds, setDirtyMetafieldIds] = useState<Set<string>>(new Set());
 
   // Primary locale editing state
-  const [primaryOptionEdits, setPrimaryOptionEdits] = useState<Record<string, { name: string; values: string[] }>>({});
+  const [primaryOptionEdits, setPrimaryOptionEdits] = useState<Record<string, OptionEdit>>({});
   const [primaryMetafieldEdits, setPrimaryMetafieldEdits] = useState<Record<string, string>>({});
-  /** True from a landed save of the options until the reload that follows it
-   *  has finished — see `optionTranslationBlockedIds`. */
-  const [awaitingOptionReload, setAwaitingOptionReload] = useState(false);
+  /** The products whose landed save is still waiting for its reload - see
+   *  `awaitingOptionReload`. A set: a merchant can leave A for B while A's save
+   *  is out, and both answers lock their own product. */
+  const [awaitingReloadItemIds, setAwaitingReloadItemIds] = useState<ReadonlySet<string>>(new Set());
 
   // Shared state
   // translatingFieldIds is now derived from the global AI operations store
@@ -545,8 +929,8 @@ export function useProductSubResources({
   }, []);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Own fetcher for the Shopify load (Phase 2) and the save bar's save -- the
-  // two requests of which there is only ever one at a time. Must NOT be shared
+  // Own fetcher for the Shopify load (Phase 2) ONLY -- one load at a time. The
+  // card's saves do not use it (module-scope queue, plain fetch). Must NOT be shared
   // with the main editor (its safeSubmit queue vs. direct submit here). Every
   // translate and every copy goes through its OWN plain fetch instead (see
   // `postSubResourceRequest`): a second `submit()` on one fetcher aborts the
@@ -572,8 +956,8 @@ export function useProductSubResources({
   const itemLoadedAtRef = useRef(0);
   // The view a Phase-2 load was submitted for (and the ids it asked), so its
   // answer is applied only while that view still shows. `deferredLoadRef`
-  // holds a load that could not go out (the shared fetcher was busy with a
-  // save, or a save aborted it) until the fetcher is idle again.
+  // holds a load that could not go out (the load fetcher was busy with another
+  // load) until the fetcher is idle again.
   const pendingLoadRef = useRef<(TranslateTarget & { resourceIds: string[] }) | null>(null);
   const deferredLoadRef = useRef<(TranslateTarget & { resourceIds: string[] }) | null>(null);
   // A reload asked for while the revalidator was busy: the run in flight may
@@ -602,16 +986,48 @@ export function useProductSubResources({
     }
     return keep;
   };
-  // What the last foreign save / primary save SENT, so the answer can settle
-  // the overlay for exactly those resources (the answer does not echo values).
-  const pendingForeignSaveRef = useRef<{
-    localeKey: string;
-    marketLayer?: boolean;
-    values: Record<string, Record<string, string>>;
-  } | null>(null);
-  const pendingPrimarySaveIdsRef = useRef<string[]>([]);
-  // What the primary save SENT, so a partial failure can still settle the saved subset.
-  const pendingPrimarySaveSentRef = useRef<{ options: Record<string, any>; metafields: Record<string, unknown> } | null>(null);
+  // The card's SAVES live in a module-scope queue (sub-resource-save-queue.ts):
+  // plain fetch in one chain, so they survive this component unmounting (the
+  // merchant leaving for Bulk or Settings with a save still waiting), never
+  // abort each other (a second submit on one fetcher aborts the first), and
+  // never share the load fetcher. What an answer is read against - what was
+  // SENT - travels on the queue entry itself (`entry.sent`), so there is no
+  // shared slot an earlier or later request could overwrite.
+  const [saveTrackVersion, setSaveTrackVersion] = useState(0);
+  const saveOwnerRef = useRef<SaveOwner>({ mounted: false, handle: () => {} });
+  /** The structural lists of a save whose outcome nobody knows, until the reload shows. */
+  const unknownOutcomeRef = useRef<{ itemId: string; carried: StructuralLists } | null>(null);
+  /**
+   * What the last LANDED primary saves wrote, per product: Shopify holds these
+   * values whatever the (possibly pre-save) loaded item says. A Save compares an
+   * edit against THIS first - concluding "unchanged" from a stale item (an edit
+   * typed back to the original while the save was out) would send nothing, clear
+   * the bar and leave Shopify with the other value. Covers the 20 s fallback of
+   * the reload lock as well. Per product, keyed on the answer's own item whichever view is showing; expires 10 minutes after the first landing.
+   */
+  const lastLandedRef = useRef<Map<string, LandedRecord>>(new Map());
+  const viewEpochRef = useRef(0);
+  if (viewEpochRef.current === 0) viewEpochRef.current = ++viewEpochCounter;
+  /** Reads the answer of a save pressed by a hook instance that is gone. */
+  const detachedAnswerRef = useRef<(entry: QueuedSave, data: Record<string, any> | null) => void>(() => {});
+  /** A "late" reload after an answer whose outcome was unknown. */
+  const lateReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const owner = saveOwnerRef.current;
+    owner.mounted = true;
+    const bump = () => setSaveTrackVersion((v) => v + 1);
+    const unsubscribe = subscribeSaves(bump);
+    const stopObserving = observeFinishedSaves((entry, data) => detachedAnswerRef.current(entry, data));
+    bump();
+    return () => {
+      // After this the owner never touches state again: answers that arrive go
+      // to the newest mounted hook, or to a toast (the queue checks `mounted`).
+      owner.mounted = false;
+      unsubscribe();
+      stopObserving();
+      if (lateReloadTimerRef.current) clearTimeout(lateReloadTimerRef.current);
+    };
+  }, []);
   // The item/language/market a translate was REQUESTED for; its answer is
   // staged there, never into whatever is showing when it arrives.
   const translateAllTargetRef = useRef<TranslateTarget | null>(null);
@@ -624,6 +1040,38 @@ export function useProductSubResources({
   const isPrimaryLocale = currentLanguage === primaryLocale;
   const itemId = selectedItem?.id;
   const currentViewRef = useLatestRef({ itemId, locale: currentLanguage, marketId: selectedMarketId });
+  // The saves out or waiting (module scope; `saveTrackVersion` re-renders on change).
+  void saveTrackVersion;
+  const saveEntries = getSaveEntries();
+  // A PRIMARY save of this product is out: the source text is moving. Until its
+  // answer is read (and the reload after it has landed) the item still carries
+  // the OLD text, so a translate must not use it as its source - the same lock
+  // `awaitingOptionReload` is after the answer. Also true on a merchant's return
+  // to a product whose save is still on its way.
+  const primarySaveOut = saveEntries.some((e) => e.kind === "primary" && e.itemId === (itemId ?? null));
+  // True from a landed save of the options until the reload that follows it
+  // has finished - see `optionTranslationBlockedIds`. Per PRODUCT: a Save of
+  // another product (and a main / gallery / alt save) is not held by it, and
+  // the lock is set by the answer's own product whichever view is showing, so
+  // it is there when the merchant comes back to a product whose save answered
+  // meanwhile.
+  const awaitingOptionReload = !!itemId && awaitingReloadItemIds.has(itemId);
+  const lockReload = useCallback((id: string | null | undefined) => {
+    if (!id) return;
+    setAwaitingReloadItemIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }, []);
+  /** One product's lock, or (no id) every lock. */
+  const releaseReload = useCallback((id?: string | null) => {
+    setAwaitingReloadItemIds((prev) => {
+      if (prev.size === 0) return prev;
+      if (id == null) return new Set();
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+  const sourceMoving = awaitingOptionReload || primarySaveOut;
   const revalidatorRef = useLatestRef(revalidator);
 
   /** Stamps overlay entries of one layer as staged now (see `overlayStampsRef`). */
@@ -722,9 +1170,9 @@ export function useProductSubResources({
   };
 
   /**
-   * Phase 2 on the shared fetcher, TAGGED with the view it was asked for. Never
-   * submitted while a save bar's save is in flight (a second `submit()` would
-   * abort it): it is deferred until the fetcher is idle again.
+   * Phase 2 on the load fetcher, TAGGED with the view it was asked for. Never
+   * submitted while another load is out (a second `submit()` would abort it): it
+   * is deferred until the fetcher is idle again. Saves do not use this fetcher.
    */
   const submitPhase2Load = (load: TranslateTarget & { resourceIds: string[] }) => {
     if (fetcher.state !== "idle") {
@@ -762,6 +1210,9 @@ export function useProductSubResources({
     if (loadedForRef.current === loadKey) return;
 
     // Reset state — unsaved edits belong to the previous item/locale/market.
+    // A new view generation: a save pressed before this reset can tell, when it
+    // answers, that what is on screen is no longer what it carried.
+    viewEpochRef.current = ++viewEpochCounter;
     setHasChanges(false);
     setDirtyOptionIds(new Set());
     setDirtyOptionValueIds(new Set());
@@ -783,6 +1234,12 @@ export function useProductSubResources({
     // product -- shown in the card and locking its translate button behind a
     // "save first" nothing could satisfy.
     setPrimaryOptionEdits({});
+    // The metafield edits are the same case: `hasChanges` is reset above, so a
+    // draft left here had no save bar, yet a LATER save on this item would
+    // write it (and purge its translations). This effect returns early on the
+    // same key, so a draft kept by a save on the SAME item/locale/market is
+    // never touched by it.
+    setPrimaryMetafieldEdits({});
     // Note: translatingFieldIds is now in the global AI operations store
     // and should NOT be cleared on item change — it's resource-specific.
 
@@ -797,9 +1254,11 @@ export function useProductSubResources({
       keepOverlayIdsRef.current = new Set();
       recentlyStagedRef.current = new Map();
       overlayStampsRef.current = new Map();
-      pendingForeignSaveRef.current = null;
-      pendingPrimarySaveIdsRef.current = [];
-      pendingPrimarySaveSentRef.current = null;
+      // Nothing of the card's SAVES is reset here: a save of the previous product
+      // may still be out or waiting in the module-scope queue, and its answer is
+      // read against what its own request carried (`entry.sent`) and the view it
+      // was pressed for, so it recognises itself as foreign and settles nothing
+      // of THIS product.
     }
 
     if (!itemId || isPrimaryLocale || subResourceIds.length === 0) {
@@ -815,29 +1274,54 @@ export function useProductSubResources({
   }, [itemId, currentLanguage, selectedMarketId, isPrimaryLocale, subResourceIds, selectedItem]);
 
   const [refreshVersion, setRefreshVersion] = useState(0);
+  // A re-read asked for BEFORE the fresh item arrived (a Discard / Reload while
+  // the loader is still out - the Reload button gives up waiting after about 2 s)
+  // reads the OLD item, and the fresh one then lands on the same load key and is
+  // never read. So it is re-read ONCE more when the item next changes, as long as
+  // nothing is unsaved.
+  const rereadArmedRef = useRef<{ base: unknown } | null>(null);
+  const selectedItemLatestRef = useLatestRef(selectedItem);
+  const armRereadOnNextItem = useCallback(() => {
+    rereadArmedRef.current = { base: selectedItemLatestRef.current };
+  }, [selectedItemLatestRef]);
+  const hasChangesLatestRef = useLatestRef(hasChanges);
+  useEffect(() => {
+    const armed = rereadArmedRef.current;
+    if (!armed || armed.base === selectedItem) return;
+    // A reload is queued behind the one that just ended: this item was read
+    // BEFORE the write, the one that counts is still to come.
+    if (pendingRevalidateRef.current) {
+      armed.base = selectedItem;
+      return;
+    }
+    rereadArmedRef.current = null;
+    if (hasChangesLatestRef.current) return;
+    setRefreshVersion((v) => v + 1);
+  }, [selectedItem, hasChangesLatestRef]);
   useEffect(() => {
     if (refreshVersion === 0) return;
-    // Unsaved input wins, always. The page does not start a background refresh
-    // while this card is dirty, but an edit can land between that decision and
-    // this pass.
-    if (hasChanges) return;
     // A different item/locale/market is the load effect's job, with its full
     // reset; this pass only re-reads what is already on screen.
     if (loadedForRef.current !== `${itemId}::${currentLanguage}::${selectedMarketId}`) return;
-    if (!itemId || isPrimaryLocale || subResourceIds.length === 0) return;
     // The server has just rewritten these languages; a staged copy would
     // otherwise keep winning over the fresh loader value. The overlay only ever
     // holds values that were already saved, which the fresh item carries too --
     // except a translate answer from the last moments, which the loader may
-    // have read before its write (see `overlayResetKeepIds`).
+    // have read before its write (see `overlayResetKeepIds`). Done even when the
+    // re-read below is skipped: a stale overlay shadows synced values for minutes.
     localSubResourceOverlayRef.current = overlayKeepingOnly(
       localSubResourceOverlayRef.current,
       overlayResetKeepIds(),
     );
     pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
     touchOverlay();
-    // Phase 2 goes through the SAME fetcher as a save; while it is busy the
-    // Shopify supplement is deferred until it is idle (`submitPhase2Load`).
+    // Unsaved input wins, always. The page does not start a background refresh
+    // while this card is dirty, but an edit can land between that decision and
+    // this pass.
+    if (hasChanges) return;
+    if (!itemId || isPrimaryLocale || subResourceIds.length === 0) return;
+    // If a Phase-2 load is out, the Shopify supplement is deferred until the
+    // load fetcher is idle (`submitPhase2Load`).
     readTranslationsFromItem();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the bump alone; reads the render it runs in
   }, [refreshVersion]);
@@ -846,24 +1330,28 @@ export function useProductSubResources({
     setRefreshVersion((v) => v + 1);
   }, []);
 
-  // A request that failed as a whole, from either fetcher. The plan refusal
+  // A request that failed as a whole (the load fetcher, or a save). The plan refusal
   // arrives as the code "gated" and goes through the editor's one translator so
   // it reads as the upgrade message; a managed-AI refusal already carries a
   // localised sentence. A save that failed still hands its task ids (a repair
   // some other resource of the same save may have started) to the watcher.
-  const reportFailedRequest = (data: SubResourceFetcherData) => {
-    const raw = typeof data.error === "string" ? data.error : "";
-    const translated = raw
-      ? translateErrorMessage(raw, {
-          content: { upgradeRequired: strings.upgradeRequired },
-          errors: {},
-        } as unknown as TranslationStrings)
-      : "";
+  const reportFailedRequest = (data: SubResourceFetcherData, extra = "") => {
+    // A refusal the server answers with a code the client has its own
+    // localised sentence for: never the server's English fallback.
+    if (data.errorCode === "metafieldTypeNotTranslatable") {
+      showInfoBox?.(
+        strings.metafieldTypeNotTranslatable ||
+          "This metafield type cannot be translated automatically. Enter the translation by hand.",
+        "warning",
+      );
+      return;
+    }
+    const translated = failureReasonText(data, strings);
     const isSave = data.actionType === "savePrimarySubResources" || data.actionType === "saveSubResourceTranslations";
     const fallback = isSave
       ? strings.subResourcesRequestFailed || "Saving failed. Your edits are kept - please try again."
       : strings.translateFailed || strings.subResourcesRequestFailed || "Translation failed";
-    showInfoBox?.(translated || fallback, "critical");
+    showInfoBox?.([translated || fallback, extra].filter(Boolean).join(" "), "critical");
     if (Array.isArray(data.retranslationTaskIds) && data.retranslationTaskIds.length > 0) {
       onSaveResponse?.(data);
     }
@@ -959,7 +1447,423 @@ export function useProductSubResources({
   };
 
   // ============================================================================
-  // Handle fetcher responses (load + translate + save)
+  // The ANSWER of a save (from the module-scope queue, while this hook is mounted)
+  //
+  // The merchant may have moved on while the save was out: to another product,
+  // another language or market, or the primary tab of the same product. The
+  // answer is read against what its OWN request carried (`entry.sent`, taken at
+  // press time) and the view it was pressed for (`entry.viewKey`):
+  //   - on the view it was pressed for, it settles exactly what it carried and
+  //     nothing else (edits, option lists, dirty ids typed after the press stay);
+  //   - anywhere else it touches nothing on screen. It records what belongs to
+  //     the PRODUCT (the overlay, the reload lock, a re-read) and tells the
+  //     merchant, naming the product, what happened.
+  // ============================================================================
+  const handleSaveAnswer = (entry: QueuedSave, answer: Record<string, any> | null) => {
+    const data = answer as SubResourceFetcherData | null;
+    const sameItem = entry.itemId === (selectedItem?.id ?? null);
+    const sameView =
+      sameItem && entry.viewKey === saveViewKey(isPrimaryLocale, entry.itemId ?? "", currentLanguage, selectedMarketId);
+    const kind = entry.kind;
+    // The view the save was pressed for AND not reset since: only then are the
+    // edits / fields on screen the ones this save carried. Returning to the same
+    // product re-reads it from the item (the load effect's reset), so the same
+    // key is not the same view - what was typed before leaving is gone.
+    const viewIntact = sameView && entry.epoch === viewEpochRef.current;
+    const notConfirmed = !!(data as { notConfirmed?: boolean } | null)?.notConfirmed;
+
+    // ---- the outcome is UNKNOWN (no answer in time, connection lost, gateway) ----
+    if (notConfirmed) {
+      // The write may or may not have landed: re-read now and once more a little
+      // later, hold the translate lock until the reload has landed, and do NOT
+      // keep the structural ADDITIONS this save carried (a re-press would create
+      // the option / value a second time if the first landed). Text edits are
+      // idempotent and stay.
+      lockReload(entry.itemId);
+      if (sameItem) {
+        requestRevalidate();
+        if (lateReloadTimerRef.current) clearTimeout(lateReloadTimerRef.current);
+        lateReloadTimerRef.current = setTimeout(() => {
+          lateReloadTimerRef.current = null;
+          if (saveOwnerRef.current.mounted) requestRevalidate();
+        }, LATE_RELOAD_MS);
+      } else {
+        requestRevalidate();
+      }
+      if (viewIntact && kind === "primary") {
+        // The structural lists (creates, adds, deletes, orders) STAY: if the first
+        // request did not land they are the merchant's work, and dropping them
+        // would lose it silently. When the reload arrives, `reconcileUnknownOutcome`
+        // drops only what the fresh item already carries, and says which additions
+        // it did not repeat. The Save is held until then (reload lock).
+        unknownOutcomeRef.current = {
+          itemId: entry.itemId ?? "",
+          carried: (entry.sent as { snapshot: PrimarySaveSnapshot }).snapshot.structural,
+        };
+      }
+      // A mounted hook (this one) is re-reading the product.
+      const described = entry.describe(data, { reloading: true });
+      showInfoBox?.(described.text, described.tone);
+      return;
+    }
+
+    // ---- the whole request failed ----------------------------------------------
+    if (!data || data.success === false) {
+      const failed: SubResourceFetcherData = {
+        ...(data ?? {}),
+        success: false,
+        actionType: kind === "primary" ? "savePrimarySubResources" : "saveSubResourceTranslations",
+      };
+      // A handler-level failure of a PRIMARY save (500 from inside it) can come
+      // AFTER part of the work landed (a create, a reorder): re-read, and say so.
+      // Not for what proves nothing ran: a plan gate, a session, a 4xx.
+      const maybePartial =
+        kind === "primary" &&
+        !!data &&
+        typeof data.actionType === "string" &&
+        typeof (data as { httpStatus?: unknown }).httpStatus !== "number" &&
+        !["gated", "sessionExpired", "reauthorizeRequired", "Invalid product ID"].includes(String(data.error));
+      if (maybePartial) {
+        lockReload(entry.itemId);
+        requestRevalidate();
+      }
+      const partialNote = maybePartial
+        ? strings.saveMaybePartial || "Part of it may have been saved - the product is being reloaded, check the values before you save again."
+        : "";
+      if (viewIntact) {
+        // Nothing was settled: the edits are still here and the Save can be pressed again.
+        reportFailedRequest(failed, partialNote);
+      } else {
+        // Not this view's, or the same product re-read since: say WHICH product,
+        // why (the server's reason), and that what was typed there was not saved -
+        // no draft is kept for a view that is gone.
+        if (Array.isArray(data?.retranslationTaskIds) && data.retranslationTaskIds.length > 0) onSaveResponse?.(data);
+        const described = entry.describe(failed);
+        showInfoBox?.([described.text, partialNote].filter(Boolean).join(" "), described.tone);
+      }
+      return;
+    }
+
+    // ---- foreign (translation) save ------------------------------------------------
+    if (kind === "foreign") {
+      const sent = entry.sent as { localeKey: string; marketLayer: boolean; values: Record<string, Record<string, string>> };
+      const failedResources = data.failedResources || [];
+      const notTranslatable = data.notTranslatable || [];
+
+      // What the merchant saved is the truth for those resources, whichever view
+      // shows now (the overlay is per product + language/market): record the
+      // confirmed values, or an earlier staged translate keeps shadowing them.
+      if (sameItem) {
+        if (
+          recordConfirmedForeignSave(
+            localSubResourceOverlayRef.current,
+            sent.localeKey,
+            sent.values,
+            failedResources,
+            notTranslatable,
+            { marketLayer: !!sent.marketLayer, savedIds: Array.isArray(data.savedResources) ? data.savedResources : null },
+          )
+        ) {
+          stampStaged(sent.localeKey, Object.keys(sent.values));
+          touchOverlay();
+          // ... and are kept across an overlay reset for a while (a Discard or a
+          // Reload before the reload has landed would otherwise drop the staged
+          // saved text and show the OLD one), like a translate answer is.
+          for (const id of Object.keys(sent.values)) {
+            if (!failedResources.includes(id) && !notTranslatable.includes(id)) recentlyStagedRef.current.set(id, Date.now());
+          }
+        }
+        // A confirmed removal of a MARKET override leaves the market inheriting
+        // the global value, but the loaded item still carries the removed market
+        // row and would resurface it on the next locale/market switch: re-read.
+        const removedMarketOverride =
+          !!sent.marketLayer &&
+          Object.entries(sent.values).some(
+            ([resourceId, fields]) =>
+              !failedResources.includes(resourceId) && Object.values(fields || {}).some((value) => value === ""),
+          );
+        // The saved text is in Shopify now but not in the loaded item: re-read,
+        // or leaving the view and coming back (or any later re-read of the item)
+        // shows the OLD text. The overlay holds the saved values on screen until
+        // the item has caught up. This used to be the fetcher's automatic
+        // revalidation after an action; a plain fetch has none.
+        const savedSomething = Object.keys(sent.values).some(
+          (id) => !failedResources.includes(id) && !notTranslatable.includes(id),
+        );
+        if (removedMarketOverride || savedSomething) requestRevalidate();
+      } else {
+        // Its data changed on Shopify: re-read, so it is fresh when reopened.
+        requestRevalidate();
+      }
+
+      if (!sameView) {
+        const described = entry.describe(data);
+        showInfoBox?.(described.text, described.tone);
+        return;
+      }
+
+      // The view the save was pressed for. Settle exactly the ids it carried -
+      // except those whose text was changed AFTER the press: those stay dirty,
+      // are neither reverted nor shown as saved, and the Save stays available.
+      const currentText = (resourceId: string, key: string): string | undefined => {
+        for (const opt of selectedItem?.options ?? []) {
+          if (opt.id === resourceId) return key === "name" ? optionTranslations[opt.id]?.name : undefined;
+          const index = opt.values.findIndex((v) => v.id === resourceId);
+          if (index !== -1) return optionTranslations[opt.id]?.values?.[index];
+        }
+        return metafieldTranslations[resourceId];
+      };
+      // Only a DIRTY id can have been retyped: a view re-entered while the save
+      // was out was re-read from the item, its fields are not dirty, and the
+      // empty text they show is not "typed after the press".
+      const pendingBefore = pendingStateRef.current;
+      const dirtyNow = new Set<string>([
+        ...(pendingBefore?.dirtyOptionIds ?? []),
+        ...(pendingBefore?.dirtyOptionValueIds ?? []),
+        ...(pendingBefore?.dirtyMetafieldIds ?? []),
+      ]);
+      const retyped = new Set([...retypedForeignIds(sent.values, currentText)].filter((id) => dirtyNow.has(id)));
+      const carried = Object.keys(sent.values);
+      const failedIds = new Set<string>(failedResources);
+      // On a re-read view the fields are only dirty because the merchant typed
+      // them AGAIN: one whose save failed stays dirty (and the bar up), or text
+      // that was never saved would sit in the field with no way to save it.
+      const settled = carried.filter((id) => !retyped.has(id) && (viewIntact || !failedIds.has(id)));
+
+      if (failedResources.length > 0 && !viewIntact) {
+        // Re-read since the press: nothing typed before leaving is on screen, so
+        // "reverted to original values" would describe something that did not
+        // happen. Name the product instead.
+        const described = entry.describe(data);
+        showInfoBox?.(described.text, described.tone);
+      } else if (failedResources.length > 0) {
+        showInfoBox?.(
+          [
+            (strings.saveFailedOptions || "Failed to save {count} option(s). Changes have been reverted to original values.").replace("{count}", String(failedResources.length)),
+            foreignReasonsText(data, strings),
+          ].filter(Boolean).join(" "),
+          "critical",
+        );
+        restoreFailedResources(failedResources.filter((id: string) => !retyped.has(id)));
+      } else if (notTranslatable.length > 0) {
+        // Not a refused write: Shopify exposes no digest for the field, so it
+        // cannot be translated there. Nothing is reverted (the typed value is
+        // the merchant's) and nothing is claimed as saved.
+        const outcome = subResourceOutcome(data, strings);
+        if (outcome) showInfoBox?.(outcome.text, outcome.tone);
+      } else {
+        showInfoBox?.(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success");
+      }
+
+      // Show what was saved even if this view was RE-ENTERED while the save was
+      // out (it was then read from the item, which is not reloaded yet): the
+      // confirmed text goes into the fields that still hold the old one.
+      const failedSet = new Set<string>(failedResources);
+      const notTranslatableSet = new Set<string>(notTranslatable);
+      const savedText: Record<string, Record<string, string>> = {};
+      for (const id of settled) {
+        if (failedSet.has(id) || notTranslatableSet.has(id)) continue;
+        savedText[id] = sent.values[id];
+      }
+      if (selectedItem && Object.keys(savedText).length > 0) {
+        // The merges skip empty values, so a saved CLEAR is applied explicitly.
+        setOptionTranslations((prev) =>
+          applyStagedOptionClears(mergeOptionTranslations(prev, selectedItem, savedText), selectedItem, savedText),
+        );
+        setMetafieldTranslations((prev) =>
+          applyStagedMetafieldClears(mergeMetafieldTranslations(prev, selectedItem, savedText), savedText),
+        );
+      }
+
+      // Dirty ids: only the settled ones leave. Anything typed after the press
+      // (another field, or a retype of a carried one) is still unsaved.
+      const pending = pendingStateRef.current;
+      const nextDirty = {
+        dirtyOptionIds: withoutIds(pending?.dirtyOptionIds ?? new Set<string>(), settled),
+        dirtyOptionValueIds: withoutIds(pending?.dirtyOptionValueIds ?? new Set<string>(), settled),
+        dirtyMetafieldIds: withoutIds(pending?.dirtyMetafieldIds ?? new Set<string>(), settled),
+      };
+      setDirtyOptionIds(nextDirty.dirtyOptionIds);
+      setDirtyOptionValueIds(nextDirty.dirtyOptionValueIds);
+      setDirtyMetafieldIds(nextDirty.dirtyMetafieldIds);
+      setHasChanges(
+        nextDirty.dirtyOptionIds.size > 0 || nextDirty.dirtyOptionValueIds.size > 0 || nextDirty.dirtyMetafieldIds.size > 0,
+      );
+      return;
+    }
+
+    // ---- primary save -----------------------------------------------------------------
+    const sent = entry.sent as {
+      options: Record<string, any>;
+      metafields: Record<string, unknown>;
+      ids: string[];
+      snapshot: PrimarySaveSnapshot;
+    };
+    // Offered whatever the outcome: a save can fail for one option and still
+    // have started the repair for the others.
+    onSaveResponse?.(data);
+    // The save's purge removed these resources' MARKET overrides on Shopify;
+    // the loaded item carries the old rows until it is re-read.
+    if (sameItem && Array.isArray(data.marketPurgedResourceIds)) {
+      for (const id of data.marketPurgedResourceIds) marketPurgedIdsRef.current.set(String(id), selectedItem);
+    }
+    const failedOptions = data.failedOptions || [];
+    const failedMetafields = data.failedMetafields || [];
+    // Create, delete and reorder failures have no id to report under, so
+    // counting only the two id-lists made every one of them read as a success -
+    // green toast, pending lists cleared, merchant's edit gone.
+    const structuralFailures = data.structuralFailures || 0;
+    const totalFailed = failedOptions.length + failedMetafields.length + structuralFailures;
+    const partial = totalFailed > 0;
+    const details = primaryFailureDetails(data, strings);
+
+    // What the save really changed in the PRODUCT's source text: all of it on a
+    // clean answer, the saved subset on a partial one.
+    const savedIds = partial
+      ? savedIdsAfterPartialSave(sent.options, sent.metafields, failedOptions, failedMetafields)
+      : sent.ids;
+    // What Shopify holds now, recorded under the answer's OWN product: this
+    // answer may land while another product is showing, and the merchant can
+    // come back to the stale item before its reload does.
+    if (entry.itemId) {
+      const book = lastLandedRef.current;
+      for (const [id, rec] of book) if (Date.now() - rec.at >= LAST_LANDED_MS) book.delete(id);
+      const landed = book.get(entry.itemId) ?? { at: Date.now(), metafields: {}, options: {} };
+      const failedMf = new Set(failedMetafields.map(String));
+      const failedOpt = new Set(failedOptions.map(String));
+      for (const [id, value] of Object.entries(sent.metafields)) {
+        if (!failedMf.has(id) && typeof value === "string") landed.metafields[id] = value;
+      }
+      for (const [id, change] of Object.entries(sent.options)) {
+        if (failedOpt.has(id)) continue;
+        const rec = landed.options[id] ?? { values: {} };
+        if (typeof change?.name === "string") rec.name = change.name;
+        for (const u of change?.valueUpdates ?? []) rec.values[u.id] = u.name;
+        landed.options[id] = rec;
+      }
+      book.set(entry.itemId, landed);
+    }
+    if (sameItem) {
+      updateKeepIds(keepOverlayIdsRef.current, savedIds, details.purge.resourceIds);
+      if (dropOverlayForPrimaryChange(localSubResourceOverlayRef.current, savedIds, keepOverlayIdsRef.current)) {
+        touchOverlay();
+      }
+      pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
+    }
+    // Re-read: the saved part moved its source text and purged its overrides, a
+    // cleared field found filled meanwhile was replaced by the live one. Until
+    // the reload lands the item still carries the old text, which a translate
+    // would send - keyed on the save itself, never on the tab now showing.
+    // ANY answer that reached the handler reloads: a partial answer may have
+    // landed creates, deletes or reorders that carry no resource id (so
+    // `savedIds` cannot see them), and a missed reload leaves a new option
+    // invisible and a re-create would collide with it.
+    if (partial || revalidator) {
+      lockReload(entry.itemId);
+      requestRevalidate();
+    }
+
+    if (!viewIntact && (partial || !sameView)) {
+      // Another product, another tab/market of this one, or this view re-read
+      // since the press: nothing of what is on screen is this answer's (a clean
+      // answer on a re-read view still settles below, against the snapshot).
+      // Name the product.
+      if (sameItem) {
+        setSavedNonce((n) => n + 1);
+        // On a foreign tab of the same product the purged translations stay
+        // visible until the view is read again: re-read once the reload lands.
+        if (!isPrimaryLocale) armRereadOnNextItem();
+      }
+      const described = entry.describe(data);
+      showInfoBox?.(described.text, described.tone);
+      return;
+    }
+
+    // Edits that stay in the maps are what no save has carried yet (compared
+    // with the SNAPSHOT of what was sent, never with `selectedItem`, which may
+    // already be the reloaded one): kept drafts, text typed after the press, and
+    // fields retyped while it was out. Everything the save settled leaves.
+    const unverified = new Set<string>(Array.isArray(data.unverifiedMetafields) ? data.unverifiedMetafields.map(String) : []);
+    const pendingNow = pendingStateRef.current;
+    const keptMetafieldEdits = metafieldEditsAfterSave({
+      edits: (pendingNow?.primaryMetafieldEdits ?? {}) as Record<string, string>,
+      snapshot: sent.snapshot.metafieldEdits,
+      unverifiedIds: unverified,
+      recreated: (data.recreatedMetafields ?? {}) as Record<string, string>,
+    });
+    const keptOptionEdits = optionEditsAfterSave({
+      edits: (pendingNow?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>,
+      snapshot: sent.snapshot,
+    });
+    // The structural lists: only what the save CARRIED leaves. A value added or a
+    // delete queued after the press is still pending (and so is the save bar).
+    const lists: StructuralLists = {
+      valuesToAdd: pendingNow?.optionValuesToAdd as Record<string, string[]> ?? {},
+      linkedToAdd: pendingNow?.optionLinkedValuesToAdd as Record<string, Array<{ id: string; name: string }>> ?? {},
+      valuesToDelete: pendingNow?.optionValuesToDelete as Record<string, string[]> ?? {},
+      optionsToCreate: (pendingNow?.optionsToCreate ?? []) as StructuralLists["optionsToCreate"],
+      optionsToDelete: (pendingNow?.optionsToDelete ?? []) as string[],
+      optionOrder: (pendingNow?.optionOrder ?? null) as string[] | null,
+      valueOrder: (pendingNow?.optionValueOrder ?? {}) as Record<string, string[]>,
+    };
+    const remaining = structuralAfterSave(lists, sent.snapshot.structural);
+    setPrimaryOptionEdits(keptOptionEdits);
+    setPrimaryMetafieldEdits(keptMetafieldEdits);
+    setOptionValuesToAdd(remaining.valuesToAdd);
+    setOptionLinkedValuesToAdd(remaining.linkedToAdd);
+    setOptionValuesToDelete(remaining.valuesToDelete);
+    setOptionsToCreate(remaining.optionsToCreate);
+    setOptionsToDelete(remaining.optionsToDelete);
+    setOptionOrder(remaining.optionOrder);
+    setOptionValueOrder(remaining.valueOrder);
+    setSavedNonce((n) => n + 1);
+    // The save bar follows what is LEFT: by construction exactly what no save
+    // has carried yet - also an edit typed back to the old value during the save,
+    // which differs from what Shopify holds now.
+    setHasChanges(hasKeptEdits(keptMetafieldEdits, keptOptionEdits) || hasStructural(remaining));
+
+    if (!showInfoBox) return;
+    if (partial) {
+      // Cleared fields whose refill was NOT written because Shopify could not be
+      // asked whether one exists, or whose value Shopify refused: nothing changed
+      // anywhere, the typed value stays as a draft instead of being reverted.
+      // Only the failures that were REVERTED get the "reverted" lead; a kept
+      // draft is explained by its own reason, and a message that only reports
+      // kept drafts is a warning, not a failure.
+      const keptDraftCount = failedMetafields.filter((id: string) => unverified.has(String(id))).length;
+      const revertedCount = totalFailed - keptDraftCount;
+      const onlyUnverified = keptDraftCount > 0 && revertedCount === 0;
+      showInfoBox(
+        [
+          revertedCount > 0
+            ? (strings.saveFailedItems || "Failed to save {count} item(s). Changes have been reverted to original values.").replace("{count}", String(revertedCount))
+            : "",
+          details.reasons,
+          details.refusals,
+          details.purgeText,
+        ].filter(Boolean).join(" "),
+        onlyUnverified ? "warning" : "critical",
+      );
+    } else if (details.purge.unconfirmed) {
+      // Saved -- but removing the now-stale foreign translations may not have
+      // been confirmed on Shopify. Those are still LIVE: say so.
+      showInfoBox(details.purgeText, "warning");
+    } else {
+      showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success");
+    }
+  };
+  // Always the latest render's closure (state, strings, item), read by the queue.
+  saveOwnerRef.current.handle = handleSaveAnswer as SaveOwner["handle"];
+  // The answer of a save pressed by a hook instance that is gone (the merchant
+  // left for Settings and came back): never "this view" - this instance did not
+  // press it and its epoch differs - but the product may be on screen, and then
+  // it reloads, locks and hands the task ids to the watcher.
+  detachedAnswerRef.current = (entry, answer) => handleSaveAnswer(entry, answer);
+
+  // ============================================================================
+  // Handle fetcher responses -- the Phase-2 LOAD only. The card's saves no longer
+  // ride on this fetcher (see sub-resource-save-queue.ts); their answers arrive
+  // through `handleSaveAnswer` below.
   // ============================================================================
   useEffect(() => {
     if (fetcher.state !== "idle" || !fetcher.data) return;
@@ -971,26 +1875,18 @@ export function useProductSubResources({
     lastProcessedDataRef.current = data;
 
     if (!data.success) {
-      // The fetcher serves one request at a time, so ANY failed answer ends a
-      // load that may have been in flight - including one with no `actionType`
-      // (a plan refusal, a proxy error), which used to leave `isLoading` stuck.
+      // ANY failed answer ends a load that may have been in flight - including
+      // one with no `actionType` (a plan refusal, a proxy error), which used to
+      // leave `isLoading` stuck.
       setIsLoading(false);
-      if (data.actionType === "loadSubResourceTranslations") {
+      // The limiter's synthesized refusal carries no `actionType` either, but it
+      // is nobody's error to report: the rate-limit notice already says it, and
+      // a load nobody pressed must not show a red message.
+      if (data.actionType === "loadSubResourceTranslations" || (data as { rateLimited?: boolean }).rateLimited) {
         pendingLoadRef.current = null;
         return;
       }
-      // A request that failed as a whole (server error, plan refusal, managed
-      // AI refusal). It used to return silently: the spinner of a copy or a
-      // translate hung until the store's ten-minute timeout and the merchant
-      // heard nothing. Edits stay PENDING (nothing here touches the dirty sets
-      // or `hasChanges`) so the save can simply be pressed again.
       reportFailedRequest(data);
-      pendingForeignSaveRef.current = null;
-      pendingPrimarySaveIdsRef.current = [];
-      pendingPrimarySaveSentRef.current = null;
-      // No translate or copy spinner is touched here: none of them rides on
-      // this fetcher any more, and a failed SAVE used to take down the
-      // spinners of translates that were still running beside it.
       return;
     }
 
@@ -1009,7 +1905,15 @@ export function useProductSubResources({
         load.locale === currentLanguage &&
         load.marketId === selectedMarketId;
       if (!viewMatches) return;
-      const translations = (data.translations || {}) as Record<string, Record<string, string>>;
+      const loaded = (data.translations || {}) as Record<string, Record<string, string>>;
+      // Text the merchant typed while this load was out is theirs: the loaded
+      // value must not overwrite it (the next Save would send the loaded one).
+      const dirtyNow = pendingStateRef.current;
+      const translations = answerWithoutDirty(loaded, [
+        dirtyNow?.dirtyOptionIds ?? new Set<string>(),
+        dirtyNow?.dirtyOptionValueIds ?? new Set<string>(),
+        dirtyNow?.dirtyMetafieldIds ?? new Set<string>(),
+      ]);
       // Entries the item has caught up with must not be merged back on top.
       pruneOverlay();
       if (selectedItem) {
@@ -1055,237 +1959,12 @@ export function useProductSubResources({
       // Unsaved edits made while this load was in flight are still unsaved.
       syncHasChanges();
     }
-
-    if (data.actionType === "saveSubResourceTranslations") {
-      // Only the save bar's foreign save arrives here: a single-option Copy
-      // has its own request (see `copyOptionField`).
-      const failedResources = data.failedResources || [];
-
-      // What the merchant just saved is the truth for those resources: write the
-      // confirmed values into the overlay (failed and untranslatable ones
-      // excluded), or an earlier staged translate keeps shadowing them.
-      const sentSave = pendingForeignSaveRef.current;
-      pendingForeignSaveRef.current = null;
-      if (sentSave) {
-        if (
-          recordConfirmedForeignSave(
-            localSubResourceOverlayRef.current,
-            sentSave.localeKey,
-            sentSave.values,
-            failedResources,
-            data.notTranslatable || [],
-            { marketLayer: !!sentSave.marketLayer, savedIds: Array.isArray(data.savedResources) ? data.savedResources : null },
-          )
-        ) {
-          stampStaged(sentSave.localeKey, Object.keys(sentSave.values));
-          touchOverlay();
-        }
-        // A confirmed removal of a MARKET override leaves the market inheriting
-        // the global value, but the loaded item still carries the removed market
-        // row and would resurface it on the next locale/market switch: re-read.
-        const removedMarketOverride =
-          !!sentSave.marketLayer &&
-          Object.entries(sentSave.values).some(
-            ([resourceId, fields]) =>
-              !failedResources.includes(resourceId) &&
-              Object.values(fields || {}).some((value) => value === ""),
-          );
-        if (removedMarketOverride) requestRevalidate();
-      }
-
-      if (failedResources.length > 0) {
-        // Some resources failed - show error and restore original values for failed resources
-        if (showInfoBox) {
-          showInfoBox(
-            (strings.saveFailedOptions || "Failed to save {count} option(s). Changes have been reverted to original values.").replace("{count}", String(failedResources.length)),
-            "critical"
-          );
-        }
-        restoreFailedResources(failedResources);
-        setHasChanges(false);
-      } else if ((data.notTranslatable || []).length > 0) {
-        // Not a refused write: Shopify exposes no digest for the field, so it
-        // cannot be translated there. Nothing is reverted (the typed value is
-        // the merchant's) and nothing is claimed as saved.
-        const outcome = subResourceOutcome(data, strings);
-        if (outcome) showInfoBox?.(outcome.text, outcome.tone);
-        setHasChanges(false);
-        // The rest of the save landed; leaving the dirty sets armed re-sent the
-        // untranslatable field on every later save and repeated the warning.
-        setDirtyOptionIds(new Set());
-        setDirtyOptionValueIds(new Set());
-        setDirtyMetafieldIds(new Set());
-      } else {
-        // All saved successfully
-        if (showInfoBox) {
-          showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success");
-        }
-        setHasChanges(false);
-        setDirtyOptionIds(new Set());
-        setDirtyOptionValueIds(new Set());
-        setDirtyMetafieldIds(new Set());
-      }
-    }
-
-    if (data.actionType === "savePrimarySubResources") {
-      // Offered whatever the outcome: a save can fail for one option and still
-      // have started the repair for the others.
-      onSaveResponse?.(data);
-      // The save's purge removed these resources' MARKET overrides on Shopify;
-      // the loaded item carries the old rows until it is re-read.
-      if (Array.isArray(data.marketPurgedResourceIds)) {
-        for (const id of data.marketPurgedResourceIds) marketPurgedIdsRef.current.set(String(id), selectedItem);
-      }
-      const failedOptions = data.failedOptions || [];
-      const failedMetafields = data.failedMetafields || [];
-      // Create, delete and reorder failures have no id to report under, so
-      // counting only the two id-lists made every one of them read as a
-      // success -- green toast, pending lists cleared, merchant's edit gone.
-      const structuralFailures = data.structuralFailures || 0;
-      const totalFailed = failedOptions.length + failedMetafields.length + structuralFailures;
-
-      if (totalFailed > 0) {
-        // The part that WAS saved still moved its source text: settle the
-        // overlay for it exactly like a full success.
-        const sentPrimary = pendingPrimarySaveSentRef.current;
-        pendingPrimarySaveSentRef.current = null;
-        const partialPurge = unconfirmedPurgeOf(data as { warnings?: unknown; unconfirmedPurge?: unknown });
-        const partialSavedIds = sentPrimary
-          ? savedIdsAfterPartialSave(sentPrimary.options, sentPrimary.metafields, failedOptions, failedMetafields)
-          : [];
-        updateKeepIds(keepOverlayIdsRef.current, partialSavedIds, partialPurge.resourceIds);
-        if (dropOverlayForPrimaryChange(localSubResourceOverlayRef.current, partialSavedIds, keepOverlayIdsRef.current)) {
-          touchOverlay();
-        }
-        pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
-        // The part that WAS saved moved its text and purged its overrides too:
-        // re-read, so the item stops carrying them.
-        if (partialSavedIds.length > 0 || (data.marketPurgedResourceIds ?? []).length > 0) requestRevalidate();
-        // Some resources failed - show error and restore original values
-        if (showInfoBox) {
-          // The warning codes carry the only specific reason there is (the
-          // last option cannot go, an empty name, an unconfirmed write), and
-          // the generic count alone leaves the merchant guessing.
-          const reasons = [...new Set(data.optionWarnings || [])]
-            .map((code) => strings[`optionWarning_${code}`] || "")
-            .filter(Boolean)
-            .join(" ");
-          showInfoBox(
-            [
-              (strings.saveFailedItems || "Failed to save {count} item(s). Changes have been reverted to original values.").replace("{count}", String(totalFailed)),
-              reasons,
-              partialPurge.unconfirmed
-                ? strings.translationPurgeUnconfirmed ||
-                  "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them."
-                : "",
-            ].filter(Boolean).join(" "),
-            "critical"
-          );
-        }
-
-        // Restore original values for failed resources from selectedItem
-        if (selectedItem) {
-          setPrimaryOptionEdits(prev => {
-            const restored = { ...prev };
-
-            for (const optionId of failedOptions) {
-              // Remove the failed edit to restore original value
-              delete restored[optionId];
-            }
-
-            return restored;
-          });
-
-          setPrimaryMetafieldEdits(prev => {
-            const restored = { ...prev };
-
-            for (const metafieldId of failedMetafields) {
-              // Remove the failed edit to restore original value
-              delete restored[metafieldId];
-            }
-
-            return restored;
-          });
-        }
-
-        // The structural lists go too. Left armed while `hasChanges` is
-        // cleared, the card would keep showing a deletion as applied with no
-        // save bar to undo it -- and the next unrelated edit would re-fire the
-        // whole queue. Reverting is what the message already promises.
-        setOptionValuesToAdd({});
-        setOptionLinkedValuesToAdd({});
-        setOptionValuesToDelete({});
-        setOptionsToCreate([]);
-        setOptionsToDelete([]);
-        setOptionOrder(null);
-        setOptionValueOrder({});
-        setSavedNonce((n) => n + 1);
-        pendingPrimarySaveIdsRef.current = [];
-        pendingPrimarySaveSentRef.current = null;
-
-        setHasChanges(false);
-      } else {
-        // Saved -- but removing the now-stale foreign translations may not have
-        // been confirmed on Shopify. Those are still LIVE: say so, and keep what
-        // the card holds for them instead of treating them as gone.
-        const purge = unconfirmedPurgeOf(data as { warnings?: unknown; unconfirmedPurge?: unknown });
-        // The source text of these resources moved: every language's staged
-        // value for them is stale, except where the removal was not confirmed.
-        const savedIds = pendingPrimarySaveIdsRef.current;
-        pendingPrimarySaveIdsRef.current = [];
-        pendingPrimarySaveSentRef.current = null;
-        updateKeepIds(keepOverlayIdsRef.current, savedIds, purge.resourceIds);
-        if (dropOverlayForPrimaryChange(localSubResourceOverlayRef.current, savedIds, keepOverlayIdsRef.current)) {
-          touchOverlay();
-        }
-        pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
-        if (showInfoBox) {
-          if (purge.unconfirmed) {
-            showInfoBox(
-              strings.translationPurgeUnconfirmed ||
-                "The text was saved, but some translations of it could not be removed on Shopify and were kept. Please check them.",
-              "warning",
-            );
-          } else {
-            showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success");
-          }
-        }
-        setHasChanges(false);
-        // Clear primary edits after successful save
-        setPrimaryOptionEdits({});
-        // The matrix-changing lists too: a discarded delete that survives the
-        // save would fire again on the next one.
-        setOptionValuesToAdd({});
-        setOptionLinkedValuesToAdd({});
-        setOptionValuesToDelete({});
-        setOptionsToCreate([]);
-        setOptionsToDelete([]);
-        setOptionOrder(null);
-        setOptionValueOrder({});
-        setSavedNonce((n) => n + 1);
-
-        setPrimaryMetafieldEdits({});
-
-        // Trigger revalidation to reload fresh data from DB/Shopify
-        // This ensures new option value GIDs and updated values are loaded
-        if (revalidator) {
-          // Until it lands, the item still carries the text from BEFORE the
-          // save, and that is what a translate would send as its source. Only
-          // a PRIMARY save moves that text; a foreign one changes nothing a
-          // translate reads.
-          if (isPrimaryLocale) setAwaitingOptionReload(true);
-          // Queued behind a running reload (which may have read before this
-          // write) instead of skipped.
-          requestRevalidate();
-        }
-      }
-    }
   }, [fetcher.state, fetcher.data, selectedItem, selectedMarketId, currentLanguage]);
 
-  // A Phase-2 load that waited for the save bar's save (or was aborted by it)
-  // goes out once the fetcher is idle -- for the view it was asked for only.
-  // Declared AFTER the answer effect: both read the same render, so the save's
-  // answer is processed before this submit replaces `fetcher.data`.
+  // A Phase-2 load that waited for the fetcher (another load was out) goes out
+  // once it is idle -- for the view it was asked for only. Declared AFTER the
+  // answer effect: both read the same render, so the answer is processed before
+  // this submit replaces `fetcher.data`.
   useEffect(() => {
     if (fetcher.state !== "idle") return;
     const load = deferredLoadRef.current;
@@ -1325,6 +2004,11 @@ export function useProductSubResources({
   }, [clearFallback]);
 
   const handleOptionValueChange = useCallback((optionId: string, valueIndex: number, value: string) => {
+    // A value without a Shopify id (a legacy plain-string value) cannot be
+    // translated: there is nothing to address the write to. The field is not
+    // offered; this stops anything that still calls (a clear button) from
+    // marking the card changed with no dirty id to send.
+    if (!selectedItem?.options?.find((o) => o.id === optionId)?.values[valueIndex]?.id) return;
     setOptionTranslations(prev => {
       const existing = prev[optionId] || { name: "", values: [] };
       const newValues = [...existing.values];
@@ -1394,6 +2078,24 @@ export function useProductSubResources({
     optionsToDelete,
     optionOrder,
     optionValueOrder,
+    // Real differences, not key counts: an edit typed back to its original (or
+    // one a save already settled) is no pending change.
+    optionEditUnsaved: (id, edit) => {
+      const original = selectedItem?.options?.find((o) => o.id === id);
+      return original
+        ? isOptionEditUnsaved(original, edit as OptionEdit, landedFor(lastLandedRef.current, selectedItem?.id)?.options[id])
+        : false;
+    },
+    metafieldEditUnsaved: (id, edit) => {
+      const original =
+        selectedItem?.metafields?.find((m) => m.id === id) ??
+        selectedItem?.clearedMetafields?.find((m) => m.id === id);
+      if (!original) return false;
+      // Same rule as the press: typed back to the item's value while Shopify
+      // holds another one is still to be sent.
+      const landed = landedFor(lastLandedRef.current, selectedItem?.id)?.metafields[id];
+      return isPrimaryMetafieldUnsaved(original, edit as string) || (landed !== undefined && landed !== original.value);
+    },
   };
 
   const handleAddLinkedOptionValue = useCallback(
@@ -1479,38 +2181,26 @@ export function useProductSubResources({
   }, []);
 
   const handlePrimaryOptionNameChange = useCallback((optionId: string, value: string) => {
-    setPrimaryOptionEdits(prev => {
-      // If this option hasn't been edited yet, get the original values from selectedItem
-      const originalOption = selectedItem?.options?.find(o => o.id === optionId);
-      const originalValues = originalOption?.values.map(v => v.name) || [];
+    setPrimaryOptionEdits(prev => ({
+      ...prev,
+      [optionId]: { ...(prev[optionId] ?? { values: {} }), name: value },
+    }));
+    setHasChanges(true);
+  }, []);
 
+  // Keyed by the value's GID: the list can be re-numbered under an edit (a
+  // reorder, an add, a delete - this save's or another's) and a positional edit
+  // would then pair the text with the wrong value.
+  const handlePrimaryOptionValueChange = useCallback((optionId: string, valueId: string, name: string) => {
+    setPrimaryOptionEdits(prev => {
+      const current = prev[optionId];
       return {
         ...prev,
-        [optionId]: {
-          name: value,
-          values: prev[optionId]?.values || originalValues,
-        },
+        [optionId]: { ...(current ?? {}), values: { ...(current?.values ?? {}), [valueId]: name } },
       };
     });
     setHasChanges(true);
-  }, [selectedItem]);
-
-  const handlePrimaryOptionValuesChange = useCallback((optionId: string, values: string[]) => {
-    setPrimaryOptionEdits(prev => {
-      // If this option hasn't been edited yet, get the original name from selectedItem
-      const originalOption = selectedItem?.options?.find(o => o.id === optionId);
-      const originalName = originalOption?.name || "";
-
-      return {
-        ...prev,
-        [optionId]: {
-          name: prev[optionId]?.name || originalName,
-          values,
-        },
-      };
-    });
-    setHasChanges(true);
-  }, [selectedItem]);
+  }, []);
 
   const handlePrimaryMetafieldChange = useCallback((metafieldId: string, value: string) => {
     setPrimaryMetafieldEdits(prev => ({ ...prev, [metafieldId]: value }));
@@ -1521,20 +2211,27 @@ export function useProductSubResources({
   // the text Shopify holds now, so the options may be translated again. Keyed
   // on the TRANSITION, because the save sets the flag while the revalidator is
   // still idle.
+  const deferLockReleaseRef = useRef(false);
   const revalidatorState = revalidator?.state ?? "idle";
   const previousRevalidatorStateRef = useRef(revalidatorState);
   useEffect(() => {
     const previous = previousRevalidatorStateRef.current;
     previousRevalidatorStateRef.current = revalidatorState;
     if (previous !== "idle" && revalidatorState === "idle") {
-      setAwaitingOptionReload(false);
+      // A reload that was already RUNNING when the answer arrived read before the
+      // write; the one asked for meanwhile (`pendingRevalidateRef`) is the one
+      // that counts. Releasing now would let a Save compare with a pre-save item.
+      if (!pendingRevalidateRef.current) releaseReload();
     }
     // A reload asked for while one was running (`requestRevalidate`).
     if (revalidatorState === "idle" && pendingRevalidateRef.current) {
       pendingRevalidateRef.current = false;
+      // The run that just ended read BEFORE the write: the item it delivers (in
+      // this same commit) must not release the lock either.
+      deferLockReleaseRef.current = true;
       revalidatorRef.current?.revalidate();
     }
-  }, [revalidatorState, revalidatorRef]);
+  }, [revalidatorState, revalidatorRef, releaseReload]);
 
   // Two more ways out, because a lock nothing releases is worse than the bug
   // it prevents: the item the reload brings back is a NEW object (if React
@@ -1544,18 +2241,148 @@ export function useProductSubResources({
   useEffect(() => {
     if (!awaitingOptionReload) {
       itemWhenAwaitingRef.current = null;
+      deferLockReleaseRef.current = false;
       return;
     }
     if (itemWhenAwaitingRef.current === null) {
       itemWhenAwaitingRef.current = selectedItem;
     } else if (itemWhenAwaitingRef.current !== selectedItem) {
-      setAwaitingOptionReload(false);
+      if (deferLockReleaseRef.current || pendingRevalidateRef.current || (revalidatorRef.current?.state ?? "idle") !== "idle") {
+        // An item from a reload that began before the write: not the one we wait for.
+        deferLockReleaseRef.current = false;
+        itemWhenAwaitingRef.current = selectedItem;
+      } else {
+        releaseReload(selectedItem?.id);
+      }
     }
-  }, [awaitingOptionReload, selectedItem]);
+  }, [awaitingOptionReload, selectedItem, revalidatorRef, releaseReload]);
+  // One bound for all locks (a new lock restarts it); runs whichever product is
+  // showing, and is cleaned up on unmount.
   useEffect(() => {
-    if (!awaitingOptionReload) return;
-    const timer = setTimeout(() => setAwaitingOptionReload(false), 20_000);
+    if (awaitingReloadItemIds.size === 0) return;
+    const timer = setTimeout(() => releaseReload(), 20_000);
     return () => clearTimeout(timer);
+  }, [awaitingReloadItemIds, releaseReload]);
+
+  // After a save of UNKNOWN outcome the reload has landed (the lock released):
+  // drop, from what the merchant still has queued, only what the fresh item
+  // already carries - an option / value that exists now is not created a second
+  // time, a delete of something already gone is not repeated, an order that
+  // already holds is not re-sent. Anything the fresh item does not carry stays.
+  const prevAwaitingForReconcileRef = useRef(false);
+  useEffect(() => {
+    const was = prevAwaitingForReconcileRef.current;
+    prevAwaitingForReconcileRef.current = awaitingOptionReload;
+    if (!was || awaitingOptionReload) return;
+    const unknown = unknownOutcomeRef.current;
+    if (!unknown) return;
+    unknownOutcomeRef.current = null;
+    if (!selectedItem || selectedItem.id !== unknown.itemId) return;
+    const now = structuralOf(pendingStateRef.current);
+    const norm = (value: string) => value.trim().toLowerCase();
+    const options = selectedItem.options ?? [];
+    const dropped: string[] = [];
+    // Typed rows of an option the fresh item no longer has: they cannot be kept
+    // (invisible and sent for an option that is not on the item), so they are
+    // NAMED in a warning instead of vanishing silently.
+    const lost: string[] = [];
+    const valuesToAdd: Record<string, string[]> = {};
+    for (const [optionId, list] of Object.entries(now.valuesToAdd)) {
+      // An option the fresh item no longer has shows no rows and takes no
+      // additions: its pending rows go (they would be invisible and unsendable).
+      if (!options.some((o) => o.id === optionId)) {
+        // An option the merchant deliberately deleted (queued now, or carried by the save) is not "lost":
+        // its rows went with it on purpose.
+        const deliberately = now.optionsToDelete.includes(optionId) || unknown.carried.optionsToDelete.includes(optionId);
+        if (!deliberately) for (const name of list) if (name.trim() !== "") lost.push(name.trim());
+        continue;
+      }
+      // A match the merchant has queued for DELETION does not count: it is
+      // still there (the save did not land) and goes on being removed.
+      const going = new Set(now.valuesToDelete[optionId] ?? []);
+      const existing = new Set((options.find((o) => o.id === optionId)?.values ?? []).filter((v) => !going.has(v.id)).map((v) => norm(v.name)));
+      const carried = unknown.carried.valuesToAdd[optionId] ?? [];
+      const keep = list.filter((name) => {
+        const already = carried.includes(name) && existing.has(norm(name));
+        if (already) dropped.push(name);
+        return !already;
+      });
+      if (keep.length > 0) valuesToAdd[optionId] = keep;
+    }
+    const existingOptionNames = new Set(options.filter((o) => !now.optionsToDelete.includes(o.id)).map((o) => norm(o.name)));
+    const linkedToAdd: Record<string, Array<{ id: string; name: string }>> = {};
+    for (const [optionId, list] of Object.entries(now.linkedToAdd)) {
+      const going = new Set(now.valuesToDelete[optionId] ?? []);
+      const held = new Set(
+        (options.find((o) => o.id === optionId)?.values ?? []).filter((v) => !going.has(v.id) && v.linkedValue).map((v) => v.linkedValue as string),
+      );
+      const carried = unknown.carried.linkedToAdd[optionId] ?? [];
+      const keep = list.filter((entry) => {
+        const already = carried.some((c) => c.id === entry.id) && held.has(entry.id);
+        if (already) dropped.push(entry.name);
+        return !already;
+      });
+      if (keep.length > 0) linkedToAdd[optionId] = keep;
+    }
+    const optionsToCreate = now.optionsToCreate.filter((o) => {
+      const already = unknown.carried.optionsToCreate.some((c) => c.name === o.name) && existingOptionNames.has(norm(o.name));
+      if (already) dropped.push(o.name);
+      return !already;
+    });
+    const valuesToDelete: Record<string, string[]> = {};
+    for (const [optionId, ids] of Object.entries(now.valuesToDelete)) {
+      const present = new Set((options.find((o) => o.id === optionId)?.values ?? []).map((v) => v.id));
+      const keep = ids.filter((id) => present.has(id) || !(unknown.carried.valuesToDelete[optionId] ?? []).includes(id));
+      if (keep.length > 0) valuesToDelete[optionId] = keep;
+    }
+    const optionIds = new Set(options.map((o) => o.id));
+    const optionsToDelete = now.optionsToDelete.filter((id) => optionIds.has(id) || !unknown.carried.optionsToDelete.includes(id));
+    const itemOrder = [...options].sort((a, b) => a.position - b.position).map((o) => o.id);
+    const optionOrder = now.optionOrder && JSON.stringify(now.optionOrder) === JSON.stringify(itemOrder) ? null : now.optionOrder;
+    const valueOrder: Record<string, string[]> = {};
+    for (const [optionId, order] of Object.entries(now.valueOrder)) {
+      const held = (options.find((o) => o.id === optionId)?.values ?? []).map((v) => v.id);
+      if (JSON.stringify(order) !== JSON.stringify(held)) valueOrder[optionId] = order;
+    }
+    const left: StructuralLists = { ...now, valuesToAdd, linkedToAdd, optionsToCreate, valuesToDelete, optionsToDelete, optionOrder, valueOrder };
+    setOptionValuesToAdd(left.valuesToAdd);
+    setOptionLinkedValuesToAdd(left.linkedToAdd);
+    setOptionsToCreate(left.optionsToCreate);
+    setOptionValuesToDelete(left.valuesToDelete);
+    setOptionsToDelete(left.optionsToDelete);
+    setOptionOrder(left.optionOrder);
+    setOptionValueOrder(left.valueOrder);
+    setSavedNonce((n) => n + 1);
+    const edits = pendingStateRef.current;
+    setHasChanges(
+      hasKeptEdits(
+        (edits?.primaryMetafieldEdits ?? {}) as Record<string, string>,
+        (edits?.primaryOptionEdits ?? {}) as Record<string, OptionEdit>,
+      ) ||
+        hasStructural(left) ||
+        // Typed translations (foreign tab) are unsaved too.
+        (edits?.dirtyOptionIds?.size ?? 0) > 0 ||
+        (edits?.dirtyOptionValueIds?.size ?? 0) > 0 ||
+        (edits?.dirtyMetafieldIds?.size ?? 0) > 0,
+    );
+    if (dropped.length > 0 || lost.length > 0) {
+      // One box holds one message: both sentences go into it, the warning one
+      // decides the tone.
+      const parts: string[] = [];
+      if (dropped.length > 0) {
+        parts.push((strings.alreadyAdded || "Already added, so not added again: {names}").replace("{names}", () => dropped.join(", ")));
+      }
+      if (lost.length > 0) {
+        parts.push(
+          (
+            strings.pendingRowsLost ||
+            "These new values could not be kept because their option no longer exists: {names}."
+          ).replace("{names}", () => lost.join(", ")),
+        );
+      }
+      showInfoBox?.(parts.join(" "), lost.length > 0 ? "warning" : "info");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the lock's release alone; reads the render it runs in
   }, [awaitingOptionReload]);
 
   /**
@@ -1569,15 +2396,12 @@ export function useProductSubResources({
   const optionTranslationBlockedIds = useMemo((): Set<string> => {
     const blocked = new Set<string>();
     for (const opt of selectedItem?.options || []) {
-      if (awaitingOptionReload) {
+      if (sourceMoving) {
         blocked.add(opt.id);
         continue;
       }
       const edit = primaryOptionEdits[opt.id];
-      const textChanged = !!edit && (
-        edit.name !== opt.name ||
-        opt.values.some((v, i) => (edit.values[i] ?? v.name) !== v.name)
-      );
+      const textChanged = !!edit && isOptionEditUnsaved(opt, edit);
       if (
         textChanged ||
         (optionValuesToAdd[opt.id]?.length ?? 0) > 0 ||
@@ -1588,7 +2412,7 @@ export function useProductSubResources({
       }
     }
     return blocked;
-  }, [selectedItem, awaitingOptionReload, primaryOptionEdits, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete]);
+  }, [selectedItem, sourceMoving, primaryOptionEdits, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete]);
 
   const buildSourceData = useCallback((filterOptionId?: string, filterMetafieldId?: string) => {
     if (!selectedItem) return [];
@@ -1624,6 +2448,14 @@ export function useProductSubResources({
     if (!filterOptionId) {
       for (const mf of selectedItem.metafields || []) {
         if (filterMetafieldId && mf.id !== filterMetafieldId) continue;
+        // Left out like a blocked option: its cached text may not be the
+        // text the merchant just saved (reload pending) or typed (unsaved),
+        // and a type the value prompt would corrupt is never sent at all.
+        if (
+          sourceMoving ||
+          isPrimaryMetafieldUnsaved(mf, primaryMetafieldEdits[mf.id]) ||
+          !isBatchTranslatableValueType(mf.type)
+        ) continue;
         sourceData.push({
           resourceId: mf.id,
           resourceType: "Metafield",
@@ -1635,7 +2467,7 @@ export function useProductSubResources({
     }
 
     return sourceData;
-  }, [selectedItem, optionTranslationBlockedIds]);
+  }, [selectedItem, optionTranslationBlockedIds, sourceMoving, primaryMetafieldEdits]);
 
   // Merge a translations map ({ resourceId: { key: value } }) into option/metafield
   // state, field by field (see `mergeOptionTranslations`).
@@ -1866,10 +2698,42 @@ export function useProductSubResources({
   }, [selectedItem, runIndividualTranslate, optionTranslationBlockedIds]);
 
   const translateMetafield = useCallback((metafieldId: string) => {
-    if (isPrimaryLocale || !selectedItem) return;
+    if (!selectedItem) return;
 
     const mf = selectedItem.metafields?.find(m => m.id === metafieldId);
     if (!mf) return;
+    // Primary: a translate to EVERY language, from the SAVED value. With an
+    // unsaved edit of the field its own Save would purge or re-translate what
+    // this writes — the card disables the button; this is the backstop.
+    // The same holds after a landed primary save until the reload brings the
+    // saved text: `mf.value` is still the text from BEFORE the save, and a
+    // translate would write translations of it (and claim the GID, so a
+    // running repair of the NEW text would abandon itself).
+    // An unsaved edit is named first: after the reload it still blocks.
+    if (isPrimaryLocale && isPrimaryMetafieldUnsaved(mf, primaryMetafieldEdits[metafieldId])) {
+      showInfoBox?.(
+        stringsRef.current.saveFirstSource || "Save first — the main-language text has unsaved changes.",
+        "warning",
+      );
+      return;
+    }
+    if (sourceMoving) {
+      showInfoBox?.(
+        stringsRef.current.sourceReloading || "One moment — the saved text is reloading.",
+        "info",
+      );
+      return;
+    }
+    // Only a single-line text survives the value prompt (multi-line loses its
+    // newlines, a list or rich text its JSON). The card disables the button.
+    if (!isBatchTranslatableValueType(mf.type)) {
+      showInfoBox?.(
+        stringsRef.current.metafieldTypeNotTranslatable ||
+          "This metafield type cannot be translated automatically. Enter the translation by hand.",
+        "warning",
+      );
+      return;
+    }
 
     runIndividualTranslate(`${metafieldId}:value`, [{
       resourceId: mf.id,
@@ -1878,7 +2742,7 @@ export function useProductSubResources({
       value: mf.value,
       label: `${mf.namespace}.${mf.key}`,
     }]);
-  }, [isPrimaryLocale, selectedItem, runIndividualTranslate]);
+  }, [isPrimaryLocale, selectedItem, runIndividualTranslate, primaryMetafieldEdits, sourceMoving, showInfoBox, stringsRef]);
 
   // Every granular spinner a translate-all covers, plus its global marker.
   const translateAllFieldIds = useCallback((item: TranslatableContentItem): string[] => {
@@ -1917,17 +2781,18 @@ export function useProductSubResources({
   }, []);
   // The card's own "clear all" requests that are out, as `<item>|<locale>`.
   const clearsOutRef = useRef<Map<string, number>>(new Map());
-  const fetcherForSaveCheckRef = useRef(fetcher);
-  fetcherForSaveCheckRef.current = fetcher;
   const isSaveInFlight = useCallback((itemId: string, locale: string) => {
     for (const key of clearsOutRef.current.keys()) {
       const [clearItem, clearLocale] = key.split("|");
       if (clearItem === itemId && (locale === "*" || clearLocale === locale)) return true;
     }
-    const f = fetcherForSaveCheckRef.current;
-    if (f.state === "idle" || !f.formData) return false;
-    const form = f.formData;
-    return subResourceSaveRacesRun((key) => form.get(key), itemId, locale);
+    // The card's save queue: a save out OR waiting counts (a "translate all" or
+    // a "clear all" must not overtake it).
+    for (const entry of getSaveEntries()) {
+      if (entry.itemId !== itemId) continue;
+      if (entry.kind === "primary" || locale === "*" || entry.locale === locale) return true;
+    }
+    return false;
   }, []);
 
   const isTranslateAllRunning = useCallback((itemId: string, locale: string) => {
@@ -1990,24 +2855,37 @@ export function useProductSubResources({
     }));
   }, [isPrimaryLocale, buildSourceData, selectedItem, primaryLocale, translateAllFieldIds, runTranslateRequest, trackTranslateAllRun]);
 
-  // The save bar's save shares the fetcher with Phase 2, and its submit ABORTS
-  // a load still in flight: that load is re-queued for when the save is done
-  // (see the deferred-load effect) instead of leaving `isLoading` stuck and
-  // the Shopify supplement lost.
-  const yieldLoadToSave = useCallback(() => {
-    if (!pendingLoadRef.current) return;
-    deferredLoadRef.current = pendingLoadRef.current;
-    pendingLoadRef.current = null;
-  }, []);
-
   // Unified save handler - automatically detects primary vs foreign locale
+  const refusedText = (message: string) => `${message} ${stringsRef.current.refusedNothingSaved || "Nothing was saved."}`;
   const saveSubResources = useCallback(() => {
     if (!hasChanges || !selectedItem) {
+      return;
+    }
+    // A save of this very view is already out or waiting: its edits are still in
+    // the maps until the answer settles them, so a second press would send them
+    // again. (The Save button is busy for the same reason.)
+    const viewKeyNow = saveViewKey(isPrimaryLocale, selectedItem.id ?? "", currentLanguage, selectedMarketId);
+    const kindNow: QueuedSave["kind"] = isPrimaryLocale ? "primary" : "foreign";
+    if (getSaveEntries().some((e) => e.kind === kindNow && e.viewKey === viewKeyNow)) {
       return;
     }
 
     if (isPrimaryLocale) {
       // PRIMARY LOCALE: Save primary values (options + metafields)
+      //
+      // While the reload that follows a landed save is still out, `selectedItem`
+      // is the item from BEFORE it. Comparing an edit with it would read "typed
+      // back to the old value" as UNCHANGED - nothing sent, the bar cleared -
+      // while Shopify holds the new value and the field shows the old one. So the
+      // press waits for the reload (seconds; the lock releases on its own after
+      // 20 s) instead of concluding anything from a stale item.
+      if (awaitingOptionReload) {
+        showInfoBox?.(
+          strings.reloadBeforeSave || "The saved values are still being reloaded - please press Save again in a moment.",
+          "info",
+        );
+        return "waiting";
+      }
       const optionsChanges: Record<
         string,
         {
@@ -2029,20 +2907,25 @@ export function useProductSubResources({
           continue;
         }
 
-        const hasNameChange = edit.name !== undefined && edit.name !== originalOption.name;
-        const hasValuesChange =
-          edit.values !== undefined &&
-          JSON.stringify(edit.values) !== JSON.stringify(originalOption.values.map(v => v.name));
+        // An edit is SENT when it differs from the loaded item OR from what the
+        // last landed save wrote (the item may still be the one from before it).
+        // An extra send is idempotent; a missed one loses the text.
+        const landedHere = landedFor(lastLandedRef.current, selectedItem.id)?.options[optionId];
+        const differs = (edited: string | undefined, item: string, landed: string | undefined): edited is string =>
+          edited !== undefined && (edited !== item || (landed !== undefined && edited !== landed));
+        const hasNameChange = differs(edit.name, originalOption.name, landedHere?.name);
+        const changedValues = originalOption.values.filter((v) => differs(edit.values?.[v.id], v.name, landedHere?.values[v.id]));
+        const hasValuesChange = changedValues.length > 0;
 
         if (hasNameChange || hasValuesChange) {
           // VALIDATION: Prevent empty option names and values
-          if (hasNameChange && edit.name.trim() === "") {
+          if (hasNameChange && (edit.name ?? "").trim() === "") {
             if (showInfoBox) {
-              showInfoBox(strings.optionNameEmpty || "Option name cannot be empty", "critical");
+              showInfoBox(refusedText(strings.optionNameEmpty || "Option name cannot be empty"), "critical");
             } else {
               alert("Option name cannot be empty");
             }
-            return;
+            return "refused";
           }
           // A value the merchant renamed and then DELETED must not be sent as
           // both a rename and a delete: Shopify rejects the contradiction, and
@@ -2051,28 +2934,30 @@ export function useProductSubResources({
           // empty-value guard below -- a value on its way out is allowed to
           // read blank.
           const deletedHere = new Set(optionValuesToDelete[optionId] ?? []);
-          const survivingEdits = originalOption.values
-            .map((v, i) => ({ id: v.id, name: edit.values[i], original: v.name }))
+          // Only values the merchant EDITED are looked at: one without an edit
+          // has nothing to send (its name is whatever Shopify holds).
+          const survivingEdits = changedValues
+            .map((v) => ({ id: v.id, name: edit.values?.[v.id] as string }))
             .filter((v) => !deletedHere.has(v.id));
 
-          if (hasValuesChange && survivingEdits.some(v => (v.name ?? "").trim() === "")) {
+          // A blanked value is refused HERE, nothing at all is sent: the server
+          // would fail the whole option and the client would drop its edits.
+          if (hasValuesChange && survivingEdits.some((v) => v.name.trim() === "")) {
             if (showInfoBox) {
-              showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical");
+              showInfoBox(refusedText(strings.optionValuesEmpty || "Option values cannot be empty"), "critical");
             } else {
               alert("Option values cannot be empty");
             }
-            return;
+            return "refused";
           }
 
           optionsChanges[optionId] = {};
-          if (hasNameChange) optionsChanges[optionId].name = edit.name;
+          if (hasNameChange) optionsChanges[optionId].name = edit.name as string;
           // For metaobject-linked options, only save name changes (not values)
           if (hasValuesChange && !originalOption.isLinked) {
             // Only include values that actually changed — and never one that
             // is being deleted in the same save.
-            const updates = survivingEdits
-              .filter((v) => v.name !== v.original)
-              .map((v) => ({ id: v.id, name: v.name }));
+            const updates = survivingEdits;
             if (updates.length > 0) optionsChanges[optionId].valueUpdates = updates;
           }
         }
@@ -2087,8 +2972,37 @@ export function useProductSubResources({
       // is told the opposite of what happened -- the delete succeeded and is
       // irreversible. The value-order pass already filtered this; the add and
       // remove passes did not.
+      // A NEW option whose values are all blank fails on the server the same way
+      // (`optionValueEmpty`, nothing created): refused here too.
+      if (optionsToCreate.some((o) => !o.values.some((v) => v.trim() !== ""))) {
+        if (showInfoBox) {
+          showInfoBox(refusedText(strings.optionValuesEmpty || "Option values cannot be empty"), "critical");
+        } else {
+          alert("Option values cannot be empty");
+        }
+        return "refused";
+      }
       for (const [optionId, added] of Object.entries(optionValuesToAdd)) {
         if (added.length === 0 || optionsToDelete.includes(optionId)) continue;
+        // A pending row cleared to blank is refused HERE, nothing is sent: the
+        // server reports it for the whole option and the client would drop the
+        // option's other edits. The row is not dropped quietly either.
+        // An option that is no longer on the item shows no rows: its blank rows
+        // are neither refused nor sent (the others behave as they always did).
+        const onItem = !!selectedItem.options?.some((o) => o.id === optionId);
+        if (!onItem) {
+          const real = added.filter((name) => name.trim() !== "");
+          if (real.length > 0) optionsChanges[optionId] = { ...(optionsChanges[optionId] ?? {}), valuesToAdd: real };
+          continue;
+        }
+        if (added.some((name) => name.trim() === "")) {
+          if (showInfoBox) {
+            showInfoBox(refusedText(strings.optionValuesEmpty || "Option values cannot be empty"), "critical");
+          } else {
+            alert("Option values cannot be empty");
+          }
+          return "refused";
+        }
         optionsChanges[optionId] = { ...(optionsChanges[optionId] ?? {}), valuesToAdd: added };
       }
       for (const [optionId, removed] of Object.entries(optionValuesToDelete)) {
@@ -2106,22 +3020,38 @@ export function useProductSubResources({
       }
 
       // Collect metafield value changes with validation
+      // The edits are held in the card's DISPLAY form (a list one entry per
+      // line); `primaryMetafieldChange` turns each into what Shopify stores.
+      // A cleared field (a metafield deleted on Shopify, kept as a slot) is
+      // looked up too: typing into it re-creates the metafield.
       for (const [metafieldId, editValue] of Object.entries(primaryMetafieldEdits)) {
-        const originalMetafield = selectedItem.metafields?.find(m => m.id === metafieldId);
+        const originalMetafield =
+          selectedItem.metafields?.find(m => m.id === metafieldId) ??
+          selectedItem.clearedMetafields?.find(m => m.id === metafieldId);
         if (!originalMetafield) continue;
 
-        if (editValue !== originalMetafield.value) {
-          // VALIDATION: Prevent empty metafield values
-          if (editValue.trim() === "") {
-            if (showInfoBox) {
-              showInfoBox(strings.metafieldValuesEmpty || "Metafield values cannot be empty", "critical");
-            } else {
-              alert("Metafield values cannot be empty");
-            }
-            return;
-          }
-          metafieldChanges[metafieldId] = editValue;
+        let change = primaryMetafieldChange(originalMetafield, editValue);
+        // "Unchanged" against the loaded item is only real if Shopify still holds
+        // the item's value: after a landed save it may hold another one.
+        const landedValue = landedFor(lastLandedRef.current, selectedItem.id)?.metafields[metafieldId];
+        if (change.kind === "unchanged" && landedValue !== undefined && landedValue !== originalMetafield.value) {
+          change = { kind: "value", value: originalMetafield.value };
         }
+        if (change.kind === "unchanged") continue;
+        if (change.kind === "refused") {
+          // Nothing is sent: the field shows the reason itself (list entries),
+          // and this names it for the save that did not happen.
+          const message =
+            change.reason === "blank"
+              ? strings.optionWarning_metafieldValueBlank ||
+                "A metafield cannot consist of spaces only. Empty the field completely to remove the value."
+              : strings.metafieldListInvalid ||
+                "A list field contains entries that do not match its type. Correct the marked lines.";
+          if (showInfoBox) showInfoBox(refusedText(message), "critical");
+          return "refused";
+        }
+        // "" = clear: the server deletes the metafield and keeps the field.
+        metafieldChanges[metafieldId] = change.value;
       }
 
       // The order counts as changed only if it DIFFERS from the saved one:
@@ -2206,10 +3136,52 @@ export function useProductSubResources({
         formData.append("optionValueOrder", JSON.stringify(movedValueOrder));
       }
 
-      pendingPrimarySaveIdsRef.current = changedIdsOfPrimarySave(optionsChanges, metafieldChanges);
-      pendingPrimarySaveSentRef.current = { options: optionsChanges, metafields: metafieldChanges };
-      yieldLoadToSave();
-      fetcher.submit(formData, { method: "POST", action: "/app/products" });
+      // Everything the answer will be read against is captured NOW (what the
+      // merchant pressed) and travels on the entry: no shared slot.
+      const structuralNow: StructuralLists = {
+        valuesToAdd: optionValuesToAdd,
+        linkedToAdd: optionLinkedValuesToAdd,
+        valuesToDelete: optionValuesToDelete,
+        optionsToCreate,
+        optionsToDelete,
+        optionOrder,
+        valueOrder: optionValueOrder,
+      };
+      const primaryTitle = (selectedItem as { title?: string }).title ?? null;
+      enqueueSave({
+        kind: "primary",
+        itemId: selectedItem.id ?? null,
+        title: primaryTitle,
+        viewKey: saveViewKey(true, selectedItem.id ?? "", currentLanguage, selectedMarketId),
+        epoch: viewEpochRef.current,
+        locale: "",
+        fingerprint: primaryFingerprint({
+          metafieldEdits: primaryMetafieldEdits,
+          optionEdits: primaryOptionEdits,
+          valuesToAdd: optionValuesToAdd,
+          linkedToAdd: optionLinkedValuesToAdd,
+          valuesToDelete: optionValuesToDelete,
+          optionsToCreate,
+          optionsToDelete,
+          optionOrder,
+          valueOrder: optionValueOrder,
+        }),
+        formData,
+        owner: saveOwnerRef.current,
+        describe: (answer, options) => describeSaveForOtherView("primary", primaryTitle, answer as SubResourceFetcherData | null, stringsRef.current, options),
+        sent: {
+          options: optionsChanges,
+          metafields: metafieldChanges,
+          ids: changedIdsOfPrimarySave(optionsChanges, metafieldChanges),
+          snapshot: snapshotPrimaryEdits({
+            metafieldEdits: primaryMetafieldEdits,
+            optionEdits: primaryOptionEdits,
+            optionsToDelete,
+            valuesToDelete: optionValuesToDelete,
+            structural: structuralNow,
+          }),
+        },
+      });
     } else {
       // FOREIGN LOCALE: Save translations
       const translationsData: Record<string, Record<string, string>> = {};
@@ -2243,27 +3215,59 @@ export function useProductSubResources({
         }
       }
 
-      if (Object.keys(translationsData).length === 0) return;
+      if (Object.keys(translationsData).length === 0) {
+        // The dirty ids name resources this item no longer has (deleted, or the
+        // item was reloaded): there is nothing to send. A silent return left the
+        // bar up for good, a silent CLEAR left text in the fields that was never
+        // saved. So: say it, drop the dirty ids and re-read the view in place, so
+        // the fields show what is really stored.
+        setDirtyOptionIds(new Set());
+        setDirtyOptionValueIds(new Set());
+        setDirtyMetafieldIds(new Set());
+        setHasChanges(false);
+        setRefreshVersion((v) => v + 1);
+        showInfoBox?.(
+          strings.fieldsGone || "The fields you changed no longer exist on this product, so nothing was saved. The view was reloaded.",
+          "warning",
+        );
+        return;
+      }
 
-      pendingForeignSaveRef.current = {
-        localeKey: buildLocaleKey(currentLanguage, selectedMarketId),
-        marketLayer: !!selectedMarketId,
-        values: translationsData,
-      };
-      yieldLoadToSave();
-      fetcher.submit(
-        {
-          action: "saveSubResourceTranslations",
-          locale: currentLanguage,
-          translationsData: JSON.stringify(translationsData),
-          resourceTypes: JSON.stringify(resourceTypes),
-          itemId: selectedItem.id,
-          marketId: selectedMarketId,
+      const foreignLocaleKey = buildLocaleKey(currentLanguage, selectedMarketId);
+      const foreignTitle = (selectedItem as { title?: string }).title ?? null;
+      const foreignForm = new FormData();
+      foreignForm.set("action", "saveSubResourceTranslations");
+      foreignForm.set("locale", currentLanguage);
+      foreignForm.set("translationsData", JSON.stringify(translationsData));
+      foreignForm.set("resourceTypes", JSON.stringify(resourceTypes));
+      foreignForm.set("itemId", selectedItem.id);
+      foreignForm.set("marketId", selectedMarketId);
+      enqueueSave({
+        kind: "foreign",
+        itemId: selectedItem.id ?? null,
+        title: foreignTitle,
+        viewKey: saveViewKey(false, selectedItem.id ?? "", currentLanguage, selectedMarketId),
+        epoch: viewEpochRef.current,
+        locale: currentLanguage,
+        fingerprint: foreignFingerprint({
+          item: selectedItem,
+          dirtyOptions: dirtyOptionIds,
+          dirtyValues: dirtyOptionValueIds,
+          dirtyMetafields: dirtyMetafieldIds,
+          optionTranslations,
+          metafieldTranslations,
+        }),
+        formData: foreignForm,
+        owner: saveOwnerRef.current,
+        describe: (answer, options) => describeSaveForOtherView("foreign", foreignTitle, answer as SubResourceFetcherData | null, stringsRef.current, options),
+        sent: {
+          localeKey: foreignLocaleKey,
+          marketLayer: !!selectedMarketId,
+          values: translationsData,
         },
-        { method: "POST", action: "/app/products" }
-      );
+      });
     }
-  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder, optionValueOrder, yieldLoadToSave]);
+  }, [hasChanges, awaitingOptionReload, strings.reloadBeforeSave, strings.fieldsGone, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder, optionValueOrder, stringsRef]);
 
   const clearAllForLocale = useCallback(() => {
     if (!selectedItem || isPrimaryLocale) return;
@@ -2309,8 +3313,8 @@ export function useProductSubResources({
 
     if (Object.keys(translationsData).length === 0) return;
 
-    // Its OWN request, like every translate and copy: on the shared fetcher it
-    // aborted a Phase-2 load or the save bar's save (and was aborted by them),
+    // Its OWN request, like every translate and copy: on the load fetcher it
+    // would abort a Phase-2 load (and be aborted by the next one),
     // and its answer was then read as theirs.
     //
     // While it is in flight the cleared fields are STAGED EMPTY values in the
@@ -2350,7 +3354,8 @@ export function useProductSubResources({
     void (async () => {
       let data: Awaited<ReturnType<typeof postSubResourceRequest>>;
       try {
-        data = await postSubResourceRequest(fd);
+        // Bounded: a hung clear must not block clear-all / translate-all for good.
+        data = await postSubResourceRequest(fd, CLEAR_ALL_TIMEOUT_MS);
       } finally {
         clearDone();
       }
@@ -2434,6 +3439,9 @@ export function useProductSubResources({
   }, [selectedItem, isPrimaryLocale, currentLanguage, selectedMarketId, optionTranslations, metafieldTranslations, fallbackResourceIds, touchOverlay, stampStaged, answerHandlersRef, currentViewRef, stringsRef]);
 
   const resetChanges = useCallback(() => {
+    // A reset of the view: a save pressed before it can tell, when it answers,
+    // that what is on screen is no longer what it carried.
+    viewEpochRef.current = ++viewEpochCounter;
     // Reset foreign locale translations
     setOptionTranslations({});
     setMetafieldTranslations({});
@@ -2461,13 +3469,21 @@ export function useProductSubResources({
     // Note: translatingFieldIds in global store is cleared per-resource,
     // no need to clear here — the operation will finish naturally.
 
-    // Force reload from DB/Shopify on next render
-    loadedForRef.current = "";
+    // Re-read the view that is showing IN PLACE (the refresh effect), instead of
+    // emptying the load key. An emptied key made the NEXT unrelated reload (the
+    // answer of a save of another product, a background refresh) run the load
+    // effect's full reset and wipe whatever the merchant had typed after the
+    // discard - with no message - and left the foreign fields blank in between.
+    setRefreshVersion((v) => v + 1);
+    armRereadOnNextItem();
   }, []);
 
-  /** Force re-load on next render (called after revalidation delivers fresh DB data) */
+  /**
+   * An explicit Reload: re-read in place now AND once more when the fresh item
+   * arrives (the Reload button gives up waiting for the loader after a while).
+   * Never by emptying the load key.
+   */
   const resetForReload = useCallback(() => {
-    loadedForRef.current = "";
     // Fresh data is about to be applied: staged values must not shadow it
     // (unconfirmed-purge resources excepted, their translations are still live;
     // and a translate answer from the last moments, which the reload may have
@@ -2478,6 +3494,10 @@ export function useProductSubResources({
     );
     pruneOverlayStamps(overlayStampsRef.current, localSubResourceOverlayRef.current);
     touchOverlay();
+    // Re-read in place (never by emptying the load key, see `resetChanges`): the
+    // refresh does nothing while something is unsaved, which is the merchant's.
+    setRefreshVersion((v) => v + 1);
+    armRereadOnNextItem();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- overlayResetKeepIds reads refs only
   }, [touchOverlay]);
 
@@ -2724,6 +3744,50 @@ export function useProductSubResources({
     });
   }, [selectedItem, primaryLocale, enabledLanguages, revalidator, optionTranslationBlockedIds, showInfoBox, strings.copied, strings.copyFailedLocales, strings.upgradeRequired]);
 
+  // ---- what the card reports about saves, derived at render ------------------
+  // The saves live in a module-scope queue; `saveTrackVersion` re-renders the
+  // hook whenever its entries change.
+  // A save of THIS product is out or waiting: the Save button is busy and does
+  // not send it twice (also when the merchant comes back to a product whose save
+  // is still on its way). A save of ANOTHER product does not block this one.
+  const savesForThisItem = saveEntries.some((e) => e.itemId === (itemId ?? null));
+  // A Phase-2 load owns the (load-only) fetcher.
+  // Busy for the product the load was asked for, not for the one the merchant moved to.
+  const loadBusy = fetcher.state !== "idle" && (pendingLoadRef.current ? pendingLoadRef.current.itemId === itemId : true);
+  // Changes no save carries yet: what a save of this very view already holds is
+  // not "unsaved" (switching away loses nothing, its answer is tagged), only
+  // edits typed after it went out are.
+  const currentSaveKind: QueuedSave["kind"] = isPrimaryLocale ? "primary" : "foreign";
+  const currentViewKey = saveViewKey(isPrimaryLocale, itemId ?? "", currentLanguage, selectedMarketId);
+  const lastCarrier = hasChanges
+    ? [...saveEntries].reverse().find((e) => e.kind === currentSaveKind && e.viewKey === currentViewKey)
+    : undefined;
+  const hasUnsentChanges = !hasChanges
+    ? false
+    : !lastCarrier
+      ? true
+      : lastCarrier.fingerprint !==
+        (isPrimaryLocale
+          ? primaryFingerprint({
+              metafieldEdits: primaryMetafieldEdits,
+              optionEdits: primaryOptionEdits,
+              valuesToAdd: optionValuesToAdd,
+              linkedToAdd: optionLinkedValuesToAdd,
+              valuesToDelete: optionValuesToDelete,
+              optionsToCreate,
+              optionsToDelete,
+              optionOrder,
+              valueOrder: optionValueOrder,
+            })
+          : foreignFingerprint({
+              item: selectedItem,
+              dirtyOptions: dirtyOptionIds,
+              dirtyValues: dirtyOptionValueIds,
+              dirtyMetafields: dirtyMetafieldIds,
+              optionTranslations,
+              metafieldTranslations,
+            }));
+
   return {
     state: {
       optionTranslations,
@@ -2737,6 +3801,7 @@ export function useProductSubResources({
       optionValueOrder,
       savedNonce,
       optionTranslationBlockedIds,
+      metafieldTranslationBlocked: sourceMoving,
       primaryMetafieldEdits,
       translatingFieldIds,
       fallbackResourceIds,
@@ -2744,14 +3809,15 @@ export function useProductSubResources({
       localOverlay: localSubResourceOverlayRef.current,
       overlayVersion,
       isLoading,
-      isSaving: fetcher.state !== "idle",
+      isSaving: savesForThisItem || loadBusy,
+      hasUnsentChanges,
     },
     handlers: {
       handleOptionNameChange,
       handleOptionValueChange,
       handleMetafieldChange,
       handlePrimaryOptionNameChange,
-      handlePrimaryOptionValuesChange,
+      handlePrimaryOptionValueChange,
       handleAddOptionValue,
       handleAddLinkedOptionValue,
       handleRemoveLinkedOptionValue,

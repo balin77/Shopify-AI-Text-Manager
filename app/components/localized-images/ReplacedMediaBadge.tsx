@@ -64,6 +64,7 @@ export function ReplacedMediaBadge({
   };
   return (
     <span
+      className="app-touch-exempt app-media-badge-hit"
       role={interactive ? "button" : "img"}
       aria-label={label}
       aria-pressed={interactive ? showingOriginal : undefined}
@@ -88,7 +89,7 @@ export function ReplacedMediaBadge({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        overflow: "hidden",
+        // No overflow:hidden: it would clip the ::after hit area (the icon is scaled inside the circle anyway).
         cursor: interactive ? "pointer" : "default",
         pointerEvents: interactive ? "auto" : "none",
         boxShadow: "0 1px 2px rgba(0,0,0,0.3)",

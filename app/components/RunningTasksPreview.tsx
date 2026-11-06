@@ -7,6 +7,7 @@ import {
   fieldTypeLabel,
   taskSubjectLabel,
 } from "../services/tasks/task-labels.shared";
+import { appFetch } from "../utils/app-fetch";
 
 interface RunningTaskPreview {
   id: string;
@@ -41,7 +42,7 @@ export function RunningTasksPreview({ count }: { count: number }) {
     inflightRef.current = true;
     setLoading(true);
     try {
-      const res = await fetch("/api/running-tasks-list");
+      const res = await appFetch("/api/running-tasks-list");
       if (res.ok) {
         const data = await res.json();
         // Guard against a fetch resolving after the component unmounted — the

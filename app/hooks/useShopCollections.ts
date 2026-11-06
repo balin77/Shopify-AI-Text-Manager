@@ -24,6 +24,7 @@
 
 import { useEffect, useState } from "react";
 import type { CollectionOption } from "~/routes/api.product-taxonomy";
+import { appFetch } from "../utils/app-fetch";
 
 export type ShopCollectionsLoaded =
   | { ok: true; collections: CollectionOption[]; truncated: boolean }
@@ -40,7 +41,7 @@ let startedAt = 0;
 export function loadShopCollections(now: number = Date.now()): Promise<ShopCollectionsLoaded> {
   if (inFlight && now - startedAt < FRESH_FOR_MS) return inFlight;
   startedAt = now;
-  const request = fetch("/api/product-taxonomy?kind=collections")
+  const request = appFetch("/api/product-taxonomy?kind=collections")
     .then((r) => r.json())
     .then((data): ShopCollectionsLoaded =>
       data?.success

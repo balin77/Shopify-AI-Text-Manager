@@ -44,7 +44,8 @@
 {%- if product != blank -%}
 
 {%- comment -%}
-  R3-H1: `| json` escapes JSON syntax but NOT `<`, so an attacker-influenced
+  R3-H1: `| json` escapes JSON syntax; whether Shopify's `json` also escapes
+  `<` is NOT measured, so this block assumes it does not: an attacker-influenced
   variant.title containing `</script><script>…` would break out of this
   JSON island and inject script regardless of the JS-side _esc(). Every
   free-text value interpolated into the island MUST additionally neutralise
@@ -357,7 +358,7 @@
       var data = JSON.parse(el.textContent);
       var id = null;
       try { id = new URL(window.location.href).searchParams.get('variant'); } catch (e) {}
-      if (!id) id = {{ product.selected_or_first_available_variant.id | json }};
+      if (!id) id = {{ product.selected_or_first_available_variant.id | json | replace: '<', '\u003c' }};
       if (id == null) return;
       var imgs = data[String(id)];
       if (!(imgs && imgs.length)) return;
@@ -398,14 +399,14 @@
 <cp-embed-gallery
   id="cp-embed-gallery-{{ block.id }}"
   class="cp-embed-gallery"
-  style="--cp-thumb-size: {{ block.settings.thumbnail_size }}px; display: none;"
+  style="--cp-thumb-size: {{ block.settings.thumbnail_size | default: 80 | plus: 0 }}px; display: none;"
   data-block-id="{{ block.id }}"
-  data-native-selector="{{ block.settings.native_gallery_selector }}"
-  data-scope-selector="{{ block.settings.scope_selector }}"
-  data-extra-hide="{{ block.settings.extra_hide_selector }}"
-  data-thumb-size="{{ block.settings.thumbnail_size }}"
+  data-native-selector="{{ block.settings.native_gallery_selector | escape }}"
+  data-scope-selector="{{ block.settings.scope_selector | escape }}"
+  data-extra-hide="{{ block.settings.extra_hide_selector | escape }}"
+  data-thumb-size="{{ block.settings.thumbnail_size | escape }}"
   data-show-thumbs="{% if block.settings.enable_thumbnails %}1{% endif %}"
-  data-thumb-pos="{{ block.settings.thumbnail_position | default: 'bottom' }}"
+  data-thumb-pos="{{ block.settings.thumbnail_position | default: 'bottom' | escape }}"
   data-inherit-theme="{% if block.settings.inherit_theme_settings == false %}0{% else %}1{% endif %}"
   data-model-viewer-src="{{ 'model-viewer.min.js' | asset_url }}"
 >

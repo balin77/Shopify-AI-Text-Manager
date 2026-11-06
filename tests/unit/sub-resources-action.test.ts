@@ -102,6 +102,7 @@ import {
   handleSavePrimarySubResources,
   handleTranslateSubResources,
   handleTranslateSubResourceToAllLocales,
+  MAX_LOAD_SUB_RESOURCE_IDS,
 } from '../../app/actions/content/sub-resources.action';
 
 const SHOP = 'test.myshopify.com';
@@ -120,7 +121,13 @@ interface WorldConfig {
   reread?: (variables: any) => any;
   /** Answer to the loadTranslations read-back (getTranslations). */
   readBack?: (variables: any) => any;
+  /** Answer to metafieldsSet; default = echo every input (realistic). */
+  metafieldsSet?: (variables: any) => any;
+  /** Answer to metafieldsDelete; default = echo every identifier. */
+  metafieldsDelete?: (variables: any) => any;
   locales?: Array<{ locale: string; primary: boolean; published: boolean }>;
+  /** Answer to the live slot check (contentPilotSlotMetafields); default = no metafield under any key. */
+  slotRead?: (variables: any) => any;
 }
 
 function installAdmin(config: WorldConfig = {}) {
@@ -183,9 +190,35 @@ function installAdmin(config: WorldConfig = {}) {
         data: { translatableResource: { resourceId: variables.resourceId, translatableContent: rows.map((r) => ({ ...r, value: 'src', locale: 'de' })) } },
       });
     }
+    if (query.includes('contentPilotSlotMetafields')) {
+      calls.push({ kind: 'slotRead', variables });
+      if (config.slotRead) return answer(config.slotRead(variables));
+      const product: Record<string, unknown> = { id: variables.id };
+      for (const name of Object.keys(variables)) {
+        const m = /^ns(\d+)$/.exec(name);
+        if (m) product[`m${m[1]}`] = null;
+      }
+      return answer({ data: { product } });
+    }
     if (query.includes('metafieldsSet')) {
       calls.push({ kind: 'metafieldsSet', variables });
-      return answer({ data: { metafieldsSet: { userErrors: [], metafields: [] } } });
+      if (config.metafieldsSet) return answer(config.metafieldsSet(variables));
+      return answer({
+        data: {
+          metafieldsSet: {
+            userErrors: [],
+            metafields: (variables.metafields as any[]).map((m, i) => ({
+              id: `gid://shopify/Metafield/echo-${i}`,
+              namespace: m.namespace, key: m.key, value: m.value, type: m.type, owner: { id: m.ownerId },
+            })),
+          },
+        },
+      });
+    }
+    if (query.includes('metafieldsDelete')) {
+      calls.push({ kind: 'metafieldsDelete', variables });
+      if (config.metafieldsDelete) return answer(config.metafieldsDelete(variables));
+      return answer({ data: { metafieldsDelete: { userErrors: [], deletedMetafields: variables.metafields } } });
     }
     if (query.includes('getMarkets')) return answer({ errors: [{ message: 'no markets in this test' }] });
     return answer({ data: {} });
@@ -206,8 +239,25 @@ function makeDb() {
       create: vi.fn().mockResolvedValue({ id: 'task-1' }),
       update: vi.fn().mockResolvedValue({}),
     },
-    productMetafield: { update: vi.fn().mockResolvedValue({}), findMany: vi.fn().mockResolvedValue([]) },
-    productOption: { findUnique: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(2) },
+    productMetafield: {
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      upsert: vi.fn().mockResolvedValue({}),
+      // The shop-ownership look-up before a mirror upsert: no row yet by default.
+      findUnique: vi.fn().mockResolvedValue(null),
+      // The cached rows the primary save builds its metafieldsSet input from;
+      // honours the `id: { in }` filter so each test sees only what it asked for.
+      // Asked by namespace/key (the cleared-slot bookkeeping after a confirmed
+      // delete), it answers the one real row of that key.
+      findMany: vi.fn(async (args: any) => {
+        const ids: string[] | undefined = args?.where?.id?.in;
+        if (!ids && args?.where?.key) {
+          return [{ id: `gid://shopify/Metafield/${String(args.where.key).slice(1)}`, value: 'old' }];
+        }
+        return (ids ?? []).map((id) => ({ id, namespace: 'custom', key: `k${id.split('/').pop()}`, type: 'single_line_text_field' }));
+      }),
+    },
+    productOption: { findFirst: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(2) },
     product: { findFirst: vi.fn().mockResolvedValue({ title: 'Shirt' }) },
   } as any;
 }
@@ -310,6 +360,27 @@ describe('handleSaveSubResourceTranslations', () => {
     expect(result.failedResources).toEqual([VALUE]);
     expect(result.savedResources).toEqual([]);
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('a foreign failure carries only SHOPIFY\'s text; without one, a code - and a caught error\'s text is not shown', async () => {
+    const refused = installAdmin({
+      register: () => ({ data: { translationsRegister: { userErrors: [{ message: 'Name can\'t be blank' }], translations: [] } } }),
+    });
+    const a = body(await save(makeDb(), refused.admin, { [OPTION]: { name: 'Couleur' } }, { [OPTION]: 'ProductOption' }));
+    expect(a.failureReasons).toEqual({ [OPTION]: 'Name can\'t be blank' });
+    expect(a.failureCodes).toBeUndefined();
+
+    const silent = installAdmin({ register: () => ({ data: { translationsRegister: { userErrors: [], translations: [] } } }) });
+    const b = body(await save(makeDb(), silent.admin, { [OPTION]: { name: 'Couleur' } }, { [OPTION]: 'ProductOption' }));
+    expect(b.failureReasons).toBeUndefined();
+    expect(b.failureCodes).toEqual({ [OPTION]: 'notConfirmed' });
+
+    const boom = installAdmin();
+    boom.admin.graphql.mockRejectedValue(new Error('secret internal detail shpat_abc'));
+    const c = body(await save(makeDb(), boom.admin, { [OPTION]: { name: 'Couleur' } }, { [OPTION]: 'ProductOption' }));
+    expect(c.failureReasons).toBeUndefined();
+    expect(JSON.stringify(c)).not.toContain('secret internal detail');
+    expect(c.failureCodes).toEqual({ [OPTION]: 'error' });
   });
 
   it('a market-scoped clear removes only that market\'s override', async () => {
@@ -540,6 +611,34 @@ describe('handleTranslateSubResources', () => {
     expect(lastTaskUpdate(db).status).toBe('completed');
   });
 
+  it('REFUSES a metafield whose CACHED type is not single-line text (nothing translated, nothing written)', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    db.productMetafield.findMany.mockImplementation(async (args: any) =>
+      (args?.where?.id?.in ?? []).map((id: string) => ({ id, type: 'multi_line_text_field' })),
+    );
+    const called = vi.fn();
+    ai.translateBatchValues = async (values) => { called(); return values.map(() => 'x'); };
+    const result = body(await handleTranslateSubResources(
+      makeCtx(w.admin, db),
+      form({ targetLocale: 'fr', primaryLocale: 'de', sourceData: JSON.stringify(sourceData) }),
+    ));
+    expect(called).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ success: false, errorCode: 'metafieldTypeNotTranslatable', refusedMetafields: [METAFIELD] });
+    expect(w.of('register')).toHaveLength(0);
+  });
+
+  it('a metafield the cache does not know is refused too (unknown = unsafe)', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    db.productMetafield.findMany.mockResolvedValue([]);
+    const result = body(await handleTranslateSubResources(
+      makeCtx(w.admin, db),
+      form({ targetLocale: 'fr', primaryLocale: 'de', sourceData: JSON.stringify(sourceData) }),
+    ));
+    expect(result.errorCode).toBe('metafieldTypeNotTranslatable');
+  });
+
   it('a refused resource also reports failedLocales (the client names the locale)', async () => {
     const w = installAdmin({
       register: () => ({ data: { translationsRegister: { userErrors: [{ message: 'no' }], translations: [] } } }),
@@ -601,6 +700,23 @@ describe('handleTranslateSubResourceToAllLocales', () => {
     expect(db.contentTranslation.upsert.mock.calls.map((c: any[]) => c[0].create.locale)).toEqual(['fr']);
   });
 
+  it('REFUSES a list metafield before any AI call', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    db.productMetafield.findMany.mockImplementation(async (args: any) =>
+      (args?.where?.id?.in ?? []).map((id: string) => ({ id, type: 'list.single_line_text_field' })),
+    );
+    const called = vi.fn();
+    ai.translateBatchValuesToLocales = async () => { called(); return {}; };
+    const result = body(await handleTranslateSubResourceToAllLocales(
+      makeCtx(w.admin, db),
+      form({ primaryLocale: 'de', sourceData: JSON.stringify(sourceData) }),
+    ));
+    expect(called).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ success: false, errorCode: 'metafieldTypeNotTranslatable' });
+    expect(w.of('register')).toHaveLength(0);
+  });
+
   it('an unechoed write in a locale is a failed locale too', async () => {
     const w = installAdmin({
       register: () => ({ data: { translationsRegister: { userErrors: [], translations: [] } } }),
@@ -633,6 +749,122 @@ describe('handleSavePrimarySubResources — the primary-change purges', () => {
         metafieldChanges: JSON.stringify(metafieldChanges),
       }),
     );
+
+  it('a save that waited for the one before it and whose client is GONE writes nothing', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const gone = new AbortController();
+    gone.abort();
+    const result = body(
+      await handleSavePrimarySubResources(
+        { ...makeCtx(w.admin, db), signal: gone.signal } as any,
+        form({ productId: PRODUCT, optionsChanges: JSON.stringify({ [OPTION]: { name: 'Farbe' } }), metafieldChanges: '{}' }),
+      ),
+    );
+    expect(result.notConfirmed).toBe(true);
+    expect(w.of('metafieldsSet')).toHaveLength(0);
+    expect(db.productMetafield.updateMany).not.toHaveBeenCalled();
+  });
+
+  describe('says WHY a metafield failed (reason codes, Shopify text for a refused delete)', () => {
+    it('a refused delete carries Shopify\'s own message', async () => {
+      const w = installAdmin({
+        metafieldsDelete: () => ({ data: { metafieldsDelete: { userErrors: [{ message: 'Definition is pinned' }], deletedMetafields: [] } } }),
+      });
+      const result = body(await save(makeDb(), w.admin, {}, { [METAFIELD]: '' }));
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.metafieldDeleteRefusal).toBe('Definition is pinned');
+    });
+
+    it('a delete with no readable message, or one Shopify did not echo, carries a code', async () => {
+      const refused = installAdmin({ metafieldsDelete: () => ({ data: { metafieldsDelete: null } }) });
+      expect(body(await save(makeDb(), refused.admin, {}, { [METAFIELD]: '' })).optionWarnings).toContain('metafieldDeleteFailed');
+      const unechoed = installAdmin({ metafieldsDelete: () => ({ data: { metafieldsDelete: { userErrors: [], deletedMetafields: [] } } }) });
+      expect(body(await save(makeDb(), unechoed.admin, {}, { [METAFIELD]: '' })).optionWarnings).toContain('metafieldDeleteNotConfirmed');
+    });
+
+    it('a delete or a write that THROWS carries a code', async () => {
+      const del = installAdmin();
+      const delInner = del.admin.graphql.getMockImplementation()!;
+      del.admin.graphql.mockImplementation(async (q: string, o?: any) => {
+        if (q.includes('metafieldsDelete')) throw new Error('socket hang up');
+        return delInner(q, o);
+      });
+      const a = body(await save(makeDb(), del.admin, {}, { [METAFIELD]: '' }));
+      expect(a.failedMetafields).toEqual([METAFIELD]);
+      expect(a.optionWarnings).toContain('metafieldDeleteFailed');
+
+      const set = installAdmin();
+      const setInner = set.admin.graphql.getMockImplementation()!;
+      set.admin.graphql.mockImplementation(async (q: string, o?: any) => {
+        if (q.includes('metafieldsSet')) throw new Error('socket hang up');
+        return setInner(q, o);
+      });
+      const b = body(await save(makeDb(), set.admin, {}, { [METAFIELD]: 'x' }));
+      expect(b.failedMetafields).toEqual([METAFIELD]);
+      expect(b.optionWarnings).toContain('metafieldWriteFailed');
+      expect(JSON.stringify(b)).not.toContain('socket hang up');
+    });
+
+    it('a refused option write passes Shopify\'s message on, deduped', async () => {
+      const { applyOptionChange } = await import('~/services/product-options.server');
+      vi.mocked(applyOptionChange).mockImplementation((async (_a: any, _d: any, _s: any, params: any) => {
+        params.refusal.message = 'Option name is too long';
+        return 'optionsFailed';
+      }) as any);
+      try {
+        const result = body(await save(makeDb(), installAdmin().admin, { [OPTION]: { name: 'Farbe' }, [`${OPTION}9`]: { name: 'Grösse' } }, {}));
+        expect(result.optionWarnings).toContain('optionsFailed');
+        expect(result.optionRefusals).toEqual(['Option name is too long']);
+      } finally {
+        vi.mocked(applyOptionChange).mockImplementation((async () => null) as any);
+      }
+    });
+
+    it('a write Shopify did not echo carries a code', async () => {
+      const w = installAdmin({ metafieldsSet: () => ({ data: { metafieldsSet: { userErrors: [], metafields: [] } } }) });
+      const result = body(await save(makeDb(), w.admin, {}, { [METAFIELD]: 'x' }));
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.optionWarnings).toContain('metafieldNotConfirmed');
+    });
+
+    it('a metafield the cache does not know carries a code', async () => {
+      const w = installAdmin();
+      const db = makeDb();
+      db.productMetafield.findMany = vi.fn().mockResolvedValue([]);
+      const result = body(await save(db, w.admin, {}, { [METAFIELD]: 'x' }));
+      expect(result.optionWarnings).toContain('metafieldNotFound');
+    });
+  });
+
+  it('two saves of ONE product run one after the other on the server', async () => {
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const w = installAdmin({
+      metafieldsSet: (v) => {
+        order.push(`set:${v.metafields[0].value}`);
+        return { data: { metafieldsSet: { userErrors: [], metafields: v.metafields.map((m: any) => ({ ...m, id: 'gid://shopify/Metafield/13', owner: { id: m.ownerId } })) } } };
+      },
+    });
+    const db = makeDb();
+    const gate = new Promise<void>((r) => (releaseFirst = r));
+    const inner = w.admin.graphql.getMockImplementation()!;
+    let first = true;
+    w.admin.graphql.mockImplementation(async (q: string, o?: any) => {
+      if (q.includes('metafieldsSet') && first) {
+        first = false;
+        await gate; // the first save is still working
+      }
+      return inner(q, o);
+    });
+    const a = save(db, w.admin, {}, { [METAFIELD]: 'first' });
+    const b = save(db, w.admin, {}, { [METAFIELD]: 'second' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(order).toEqual([]); // neither has written; the second is waiting, not racing
+    releaseFirst();
+    await Promise.all([a, b]);
+    expect(order).toEqual(['set:first', 'set:second']);
+  });
 
   it('removes the option NAME translations in every foreign locale (one call) and deletes the global local rows', async () => {
     const w = installAdmin({ remove: (v) => echoRemoved(v.translationKeys, v.locales) });
@@ -787,6 +1019,562 @@ describe('handleSavePrimarySubResources — the primary-change purges', () => {
 });
 
 // ---------------------------------------------------------------------------
+describe('handleSavePrimarySubResources — the primary metafield write', () => {
+  const save = (db: any, admin: any, metafieldChanges: any) =>
+    handleSavePrimarySubResources(
+      makeCtx(admin, db),
+      form({ productId: PRODUCT, optionsChanges: '{}', metafieldChanges: JSON.stringify(metafieldChanges) }),
+    );
+  const MF2 = 'gid://shopify/Metafield/14';
+
+  it('sends MetafieldsSetInput built from the cached row: ownerId/namespace/key/type/value, NO id', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: 'new' }));
+
+    const sets = w.of('metafieldsSet');
+    expect(sets).toHaveLength(1);
+    expect(sets[0].variables.metafields).toEqual([
+      { ownerId: PRODUCT, namespace: 'custom', key: 'k13', type: 'single_line_text_field', value: 'new' },
+    ]);
+    expect(sets[0].variables.metafields[0]).not.toHaveProperty('id');
+    expect(result.savedMetafields).toEqual([METAFIELD]);
+    expect(result.failedMetafields).toEqual([]);
+  });
+
+  it('mirrors the ECHOED value (Shopify may normalise it), shop-scoped', async () => {
+    const w = installAdmin({
+      metafieldsSet: (v) => ({
+        data: { metafieldsSet: { userErrors: [], metafields: v.metafields.map((m: any) => ({ ...m, id: METAFIELD, value: 'normalised', owner: { id: m.ownerId } })) } },
+      }),
+    });
+    const db = makeDb();
+    await save(db, w.admin, { [METAFIELD]: 'new' });
+    expect(db.productMetafield.updateMany).toHaveBeenCalledWith({
+      where: { id: METAFIELD, product: { shop: SHOP } },
+      data: { value: 'normalised', type: 'single_line_text_field' },
+    });
+  });
+
+  it('a field Shopify did not echo is FAILED, not mirrored, and its translations are not purged', async () => {
+    const w = installAdmin({
+      metafieldsSet: (v) => ({
+        data: { metafieldsSet: { userErrors: [], metafields: [{ namespace: 'custom', key: 'k14', value: 'b', type: 'single_line_text_field', owner: { id: PRODUCT } }] } },
+      }),
+    });
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: 'a', [MF2]: 'b' }));
+
+    expect(result.savedMetafields).toEqual([MF2]);
+    expect(result.failedMetafields).toEqual([METAFIELD]);
+    expect(db.productMetafield.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.productMetafield.updateMany.mock.calls[0][0].where.id).toBe(MF2);
+    expect(w.of('remove').map((c) => c.variables.resourceId)).toEqual([MF2]);
+  });
+
+  it('userErrors fail the whole (atomic) call and mirror nothing', async () => {
+    const w = installAdmin({
+      metafieldsSet: () => ({ data: { metafieldsSet: { userErrors: [{ field: ['metafields', '0', 'value'], message: 'bad' }], metafields: [] } } }),
+    });
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: 'a', [MF2]: 'b' }));
+    expect(result.savedMetafields).toEqual([]);
+    expect(result.failedMetafields.sort()).toEqual([METAFIELD, MF2].sort());
+    expect(db.productMetafield.updateMany).not.toHaveBeenCalled();
+    expect(w.of('remove')).toHaveLength(0);
+  });
+
+  it('a schema-level refusal (admin.graphql throws) fails every field and mirrors nothing', async () => {
+    const w = installAdmin();
+    const original = w.admin.graphql.getMockImplementation()!;
+    w.admin.graphql.mockImplementation(async (q: string, o?: any) => {
+      if (q.includes('metafieldsSet')) throw new Error('GraphqlQueryError: unknown field');
+      return original(q, o);
+    });
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: 'a' }));
+    expect(result.failedMetafields).toEqual([METAFIELD]);
+    expect(result.savedMetafields).toEqual([]);
+    expect(db.productMetafield.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('an id with no cached row of THIS product (shop) is failed without a Shopify call', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    db.productMetafield.findMany.mockResolvedValueOnce([]);
+    const result = body(await save(db, w.admin, { [METAFIELD]: 'a' }));
+    expect(db.productMetafield.findMany.mock.calls[0][0].where).toMatchObject({
+      id: { in: [METAFIELD] }, productId: PRODUCT, product: { shop: SHOP },
+    });
+    expect(w.of('metafieldsSet')).toHaveLength(0);
+    expect(result.failedMetafields).toEqual([METAFIELD]);
+  });
+
+  describe('an ORDINARY edit that Shopify refuses (O6)', () => {
+    const refuse = (userErrors: unknown[]) =>
+      installAdmin({ metafieldsSet: () => ({ data: { metafieldsSet: { metafields: [], userErrors } } }) });
+
+    it('keeps the typed text as a draft with Shopify\'s own reason, and not as a generic revert', async () => {
+      const w = refuse([{ field: ['metafields', '0', 'value'], message: 'Value must be an integer.', code: 'INVALID_VALUE' }]);
+      const db = makeDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'abc' }));
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.unverifiedMetafields).toEqual([METAFIELD]);
+      expect(result.metafieldRefusals).toEqual({ [METAFIELD]: 'Value must be an integer.' });
+      expect(result.optionWarnings ?? []).not.toContain('metafieldSlotUnverified');
+    });
+
+    it('maps the error to ITS position in the batch: the refused one keeps its draft, the batch-mate reverts as before', async () => {
+      const w = refuse([{ field: ['metafields', '1', 'value'], message: 'Too long.', code: 'TOO_LONG' }]);
+      const db = makeDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'ok', [MF2]: 'x'.repeat(10) }));
+      expect(result.failedMetafields.sort()).toEqual([METAFIELD, MF2].sort());
+      expect(result.metafieldRefusals).toEqual({ [MF2]: 'Too long.' });
+      expect(result.unverifiedMetafields).toEqual([MF2]);
+    });
+
+    it('fails SAFE: a non-numeric or missing path gives the generic revert, never a wrong mapping', async () => {
+      for (const field of [['metafields', 'x', 'value'], null, 'metafields', ['metafields']]) {
+        const w = refuse([{ field, message: 'Nope.', code: 'INVALID_VALUE' }]);
+        const result = body(await save(makeDb(), w.admin, { [METAFIELD]: 'abc' }));
+        expect(result.failedMetafields).toEqual([METAFIELD]);
+        expect(result.metafieldRefusals).toBeUndefined();
+        expect(result.unverifiedMetafields).toBeUndefined();
+      }
+    });
+
+    it('a malformed index ("", null, missing, negative, "1.5") is never attributed to entry 0', async () => {
+      for (const idx of ['', null, undefined, '-1', '1.5', ' 0']) {
+        const w = refuse([{ field: ['metafields', idx, 'value'], message: 'Nope.', code: 'INVALID_VALUE' }]);
+        const result = body(await save(makeDb(), w.admin, { [METAFIELD]: 'abc' }));
+        expect(result.metafieldRefusals, JSON.stringify(idx)).toBeUndefined();
+        expect(result.unverifiedMetafields, JSON.stringify(idx)).toBeUndefined();
+      }
+    });
+
+    it('an index in a SECOND batch is relative to THAT batch', async () => {
+      const ids = Array.from({ length: 26 }, (_, i) => `gid://shopify/Metafield/${100 + i}`);
+      let call = 0;
+      const w = installAdmin({
+        metafieldsSet: (v) => {
+          call++;
+          if (call === 1) {
+            return { data: { metafieldsSet: { userErrors: [], metafields: v.metafields.map((m: any, i: number) => ({ ...m, id: `gid://shopify/Metafield/ok-${i}`, owner: { id: m.ownerId } })) } } };
+          }
+          // second batch holds ONE entry (the 26th): position 0 of that batch
+          return { data: { metafieldsSet: { metafields: [], userErrors: [{ field: ['metafields', '0', 'value'], message: 'Too long.', code: 'TOO_LONG' }] } } };
+        },
+      });
+      const result = body(await save(makeDb(), w.admin, Object.fromEntries(ids.map((id) => [id, 'v']))));
+      expect(w.of('metafieldsSet')).toHaveLength(2);
+      expect(result.failedMetafields).toEqual([ids[25]]);
+      expect(result.metafieldRefusals).toEqual({ [ids[25]]: 'Too long.' });
+    });
+
+    it('a non-value code (INTERNAL_ERROR) is not presented as a refusal of the text', async () => {
+      const w = refuse([{ field: ['metafields', '0', 'value'], message: 'boom', code: 'INTERNAL_ERROR' }]);
+      const result = body(await save(makeDb(), w.admin, { [METAFIELD]: 'abc' }));
+      expect(result.metafieldRefusals).toBeUndefined();
+    });
+  });
+
+  it('APP_NOT_AUTHORIZED and CAPABILITY_VIOLATION are refusals too: Shopify\'s message, never "save again"', async () => {
+    for (const code of ['APP_NOT_AUTHORIZED', 'CAPABILITY_VIOLATION']) {
+      const w = installAdmin({
+        metafieldsSet: () => ({ data: { metafieldsSet: { metafields: [], userErrors: [{ field: ['metafields', '0', 'value'], message: `${code} text`, code }] } } }),
+      });
+      const result = body(await save(makeDb(), w.admin, { [METAFIELD]: 'abc' }));
+      expect(result.metafieldRefusals).toEqual({ [METAFIELD]: `${code} text` });
+      expect(result.permissionRefusedMetafields).toEqual([METAFIELD]);
+      expect(result.optionWarnings ?? []).not.toContain('metafieldSlotUnverified');
+    }
+  });
+
+  it('an empty value goes through metafieldsDelete (echo-confirmed), KEEPS the row as a cleared slot and drops its translations', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: '' }));
+
+    expect(w.of('metafieldsSet')).toHaveLength(0);
+    expect(w.of('metafieldsDelete')[0].variables.metafields).toEqual([{ ownerId: PRODUCT, namespace: 'custom', key: 'k13' }]);
+    expect(result.removedMetafieldIds).toEqual([METAFIELD]);
+    expect(result.failedMetafields).toEqual([]);
+    // The row stays (value "") so the card still shows the field; nothing is
+    // deleted from the cache table.
+    expect(db.productMetafield.updateMany).toHaveBeenCalledWith({
+      where: { id: METAFIELD, product: { shop: SHOP } },
+      data: { value: '' },
+    });
+    expect(db.productMetafield.deleteMany).not.toHaveBeenCalled();
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalledWith({
+      where: { shop: SHOP, resourceId: { in: [METAFIELD] }, resourceType: 'Metafield' },
+    });
+    // Nothing left to purge on Shopify.
+    expect(w.of('remove')).toHaveLength(0);
+  });
+
+  describe('a CLEARED SLOT (value "") is re-created by typing a value', () => {
+    const NEW = 'gid://shopify/Metafield/99';
+    const recreating = () =>
+      installAdmin({
+        metafieldsSet: (v) => ({
+          data: { metafieldsSet: { userErrors: [], metafields: v.metafields.map((m: any) => ({ ...m, id: NEW, owner: { id: m.ownerId } })) } },
+        }),
+      });
+    const slotDb = () => {
+      const db = makeDb();
+      db.productMetafield.findMany.mockImplementation(async (args: any) =>
+        (args?.where?.id?.in ?? []).map((id: string) => ({
+          id, namespace: 'custom', key: 'k13', type: 'single_line_text_field', value: '',
+        })),
+      );
+      return db;
+    };
+
+    it('metafieldsSet by owner/namespace/key/type; the row takes the ECHOED GID and the slot goes', async () => {
+      const w = recreating();
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+
+      expect(w.of('metafieldsSet')[0].variables.metafields).toEqual([
+        // A refilled slot is CREATE-ONLY: compareDigest null = "must not exist".
+        { ownerId: PRODUCT, namespace: 'custom', key: 'k13', type: 'single_line_text_field', value: 'Baumwolle', compareDigest: null },
+      ]);
+      expect(db.productMetafield.upsert).toHaveBeenCalledWith({
+        where: { id: NEW },
+        create: { id: NEW, productId: PRODUCT, namespace: 'custom', key: 'k13', value: 'Baumwolle', type: 'single_line_text_field' },
+        update: { value: 'Baumwolle', type: 'single_line_text_field' },
+      });
+      expect(db.productMetafield.deleteMany).toHaveBeenCalledWith({
+        where: { productId: PRODUCT, product: { shop: SHOP }, namespace: 'custom', key: 'k13', value: '', id: { not: NEW } },
+      });
+      // The dead GID is never written under.
+      expect(db.productMetafield.updateMany).not.toHaveBeenCalled();
+      expect(result.savedMetafields).toEqual([METAFIELD]);
+      expect(result.recreatedMetafields).toEqual({ [METAFIELD]: NEW });
+      // A brand-new metafield has no translation to purge.
+      expect(w.of('remove')).toHaveLength(0);
+    });
+
+    it('with auto-translate on, the re-translation addresses the NEW GID', async () => {
+      policy.autoTranslateExternalChanges = true;
+      vi.mocked(reconcileAfterPrimarySave).mockClear();
+      const w = recreating();
+      const db = slotDb();
+      await save(db, w.admin, { [METAFIELD]: 'Baumwolle' });
+
+      const changed = vi.mocked(reconcileAfterPrimarySave).mock.calls[0][0].changed;
+      expect(changed).toEqual([
+        { resourceId: NEW, resourceType: 'Metafield', key: 'value', retranslatable: true },
+      ]);
+    });
+
+    it('asks Shopify LIVE for the namespace/key before re-creating (ASCII document, values in variables)', async () => {
+      const w = recreating();
+      const db = slotDb();
+      await save(db, w.admin, { [METAFIELD]: 'Baumwolle' });
+      const read = w.of('slotRead');
+      expect(read).toHaveLength(1);
+      expect(read[0].variables).toEqual({ id: PRODUCT, ns0: 'custom', key0: 'k13' });
+      const query = w.admin.graphql.mock.calls.find((c: any[]) => String(c[0]).includes('contentPilotSlotMetafields'))![0];
+      expect(/^[\x00-\x7F]*$/.test(query)).toBe(true);
+    });
+
+    it('a REAL metafield of that key on Shopify is NOT overwritten: the slot gives way to it and the field is reported', async () => {
+      const LIVE = 'gid://shopify/Metafield/77';
+      const w = installAdmin({
+        slotRead: (v) => ({
+          data: { product: { id: v.id, m0: { id: LIVE, namespace: 'custom', key: 'k13', value: 'Leinen', type: 'single_line_text_field' } } },
+        }),
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+
+      expect(w.of('metafieldsSet')).toHaveLength(0);
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.savedMetafields).toEqual([]);
+      expect(result.optionWarnings).toContain('metafieldExistsMeanwhile');
+      expect(db.productMetafield.upsert).toHaveBeenCalledWith({
+        where: { id: LIVE },
+        create: { id: LIVE, productId: PRODUCT, namespace: 'custom', key: 'k13', value: 'Leinen', type: 'single_line_text_field' },
+        update: { value: 'Leinen', type: 'single_line_text_field' },
+      });
+      expect(db.productMetafield.deleteMany).toHaveBeenCalledWith({
+        where: { productId: PRODUCT, product: { shop: SHOP }, namespace: 'custom', key: 'k13', value: '', id: { not: LIVE } },
+      });
+      expect(result.recreatedMetafields).toBeUndefined();
+    });
+
+    it('a value that appears between the live read and the write is not overwritten: the create-only call is refused and the slot gives way', async () => {
+      const LIVE = 'gid://shopify/Metafield/77';
+      let reads = 0;
+      const w = installAdmin({
+        // First read: still absent. Second read (after the refusal): the merchant set it meanwhile.
+        slotRead: (v) => ({
+          data: {
+            product: {
+              id: v.id,
+              m0: ++reads === 1 ? null : { id: LIVE, namespace: 'custom', key: 'k13', value: 'Leinen', type: 'single_line_text_field' },
+            },
+          },
+        }),
+        metafieldsSet: () => ({
+          data: { metafieldsSet: { metafields: [], userErrors: [{ field: ['metafields', '0'], message: 'The metafield has been modified since it was loaded.' }] } },
+        }),
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+
+      expect(w.of('metafieldsSet')[0].variables.metafields[0]).toMatchObject({ compareDigest: null });
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.savedMetafields).toEqual([]);
+      expect(result.optionWarnings).toContain('metafieldExistsMeanwhile');
+      expect(db.productMetafield.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: LIVE } }),
+      );
+    });
+
+    it('a refused create-only call that the re-read cannot explain keeps the typed text as a DRAFT (nothing was written)', async () => {
+      const w = installAdmin({
+        metafieldsSet: () => ({ data: { metafieldsSet: { metafields: [], userErrors: [{ message: 'nope', code: 'STALE_OBJECT' }] } } }),
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.unverifiedMetafields).toEqual([METAFIELD]);
+      expect(result.optionWarnings).toContain('metafieldSlotUnverified');
+      expect(result.optionWarnings ?? []).not.toContain('metafieldExistsMeanwhile');
+    });
+
+    it('a genuinely INVALID value keeps the draft but is reported with Shopify\'s reason, not as "could not check"', async () => {
+      const w = installAdmin({
+        metafieldsSet: () => ({
+          data: { metafieldsSet: { metafields: [], userErrors: [{ field: ['metafields', '0', 'value'], message: 'Value must be an integer.', code: 'INVALID_VALUE' }] } },
+        }),
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'abc' }));
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.unverifiedMetafields).toEqual([METAFIELD]); // typed text survives
+      expect(result.metafieldRefusals).toEqual({ [METAFIELD]: 'Value must be an integer.' });
+      expect(result.optionWarnings ?? []).not.toContain('metafieldSlotUnverified');
+    });
+
+    it('INTERNAL_ERROR and a missing code stay "could not check"; a value code on ANOTHER entry does not leak to this one', async () => {
+      const w = installAdmin({
+        metafieldsSet: () => ({
+          data: { metafieldsSet: { metafields: [], userErrors: [{ field: ['metafields', '0', 'value'], message: 'boom', code: 'INTERNAL_ERROR' }] } },
+        }),
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'x' }));
+      expect(result.metafieldRefusals).toBeUndefined();
+      expect(result.optionWarnings).toContain('metafieldSlotUnverified');
+      expect(result.unverifiedMetafields).toEqual([METAFIELD]);
+    });
+
+    it('when ONE raced slot fails the atomic slot batch, the other slot keeps its draft', async () => {
+      const LIVE = 'gid://shopify/Metafield/77';
+      let reads = 0;
+      const w = installAdmin({
+        slotRead: (v) => {
+          reads++;
+          const product: Record<string, unknown> = { id: v.id };
+          // First read: both absent. Re-read: slot 0 (k13) now exists, slot 1 (k14) does not.
+          product.m0 = reads === 1 ? null : { id: LIVE, namespace: 'custom', key: 'k13', value: 'Leinen', type: 'single_line_text_field' };
+          if ('ns1' in v) product.m1 = null;
+          return { data: { product } };
+        },
+        metafieldsSet: () => ({ data: { metafieldsSet: { metafields: [], userErrors: [{ message: 'stale', code: 'STALE_OBJECT' }] } } }),
+      });
+      const db = slotDb();
+      db.productMetafield.findMany.mockImplementation(async (args: any) =>
+        (args?.where?.id?.in ?? []).map((id: string) => ({
+          id, namespace: 'custom', key: `k${id.split('/').pop()}`, type: 'single_line_text_field', value: '',
+        })),
+      );
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'A', [MF2]: 'B' }));
+      expect(result.failedMetafields.sort()).toEqual([METAFIELD, MF2].sort());
+      expect(result.optionWarnings).toContain('metafieldExistsMeanwhile');
+      expect(result.unverifiedMetafields).toEqual([MF2]);
+    });
+
+    it('a THROWN slot refill keeps its draft too', async () => {
+      const w = installAdmin();
+      const original = w.admin.graphql.getMockImplementation()!;
+      w.admin.graphql.mockImplementation(async (q: string, o?: any) => {
+        if (q.includes('mutation metafieldsSet')) throw new Error('GraphqlQueryError');
+        return original(q, o);
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.unverifiedMetafields).toEqual([METAFIELD]);
+    });
+
+    it('the guarded slot refill travels apart from ordinary edits, so a refusal cannot fail them', async () => {
+      const w = installAdmin({
+        metafieldsSet: (v) => ({
+          data: {
+            metafieldsSet: v.metafields.some((m: any) => m.compareDigest === null)
+              ? { metafields: [], userErrors: [{ message: 'stale' }] }
+              : { userErrors: [], metafields: v.metafields.map((m: any, i: number) => ({ ...m, id: `gid://shopify/Metafield/ok-${i}`, owner: { id: m.ownerId } })) },
+          },
+        }),
+      });
+      const db = slotDb();
+      db.productMetafield.findMany.mockImplementation(async (args: any) =>
+        (args?.where?.id?.in ?? []).map((id: string) => ({
+          id, namespace: 'custom', key: `k${id.split('/').pop()}`, type: 'single_line_text_field', value: id === METAFIELD ? '' : 'old',
+        })),
+      );
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'neu', [MF2]: 'edit' }));
+
+      expect(w.of('metafieldsSet')).toHaveLength(2);
+      expect(result.savedMetafields).toEqual([MF2]);
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+    });
+
+    it('a cache row under the echoed GID that belongs to ANOTHER shop is never overwritten', async () => {
+      const w = recreating();
+      const db = slotDb();
+      db.productMetafield.findUnique.mockResolvedValue({ id: NEW, product: { shop: 'other.myshopify.com' } });
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+      expect(db.productMetafield.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: NEW } }));
+      expect(db.productMetafield.upsert).not.toHaveBeenCalled();
+      expect(db.productMetafield.deleteMany).not.toHaveBeenCalled();
+      // The write is live on Shopify, so it still counts as saved.
+      expect(result.savedMetafields).toEqual([METAFIELD]);
+    });
+
+    it('the live metafield mirrored for an exists-meanwhile slot is shop-checked too', async () => {
+      const LIVE = 'gid://shopify/Metafield/77';
+      const w = installAdmin({
+        slotRead: (v) => ({
+          data: { product: { id: v.id, m0: { id: LIVE, namespace: 'custom', key: 'k13', value: 'Leinen', type: 'single_line_text_field' } } },
+        }),
+      });
+      const db = slotDb();
+      db.productMetafield.findUnique.mockResolvedValue({ id: LIVE, product: { shop: 'other.myshopify.com' } });
+      await save(db, w.admin, { [METAFIELD]: 'Baumwolle' });
+      expect(db.productMetafield.upsert).not.toHaveBeenCalled();
+    });
+
+    it('a live read that FAILS refuses the write (nothing sent, nothing mirrored)', async () => {
+      const w = installAdmin({ slotRead: () => ({ errors: [{ message: 'Throttled' }] }) });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+      expect(w.of('metafieldsSet')).toHaveLength(0);
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(result.optionWarnings ?? []).not.toContain('metafieldExistsMeanwhile');
+      // The reason travels as its own code, and the field as a kept draft.
+      expect(result.optionWarnings).toContain('metafieldSlotUnverified');
+      expect(result.unverifiedMetafields).toEqual([METAFIELD]);
+      expect(db.productMetafield.upsert).not.toHaveBeenCalled();
+    });
+
+    it('a live read that THROWS refuses the write too', async () => {
+      const w = installAdmin();
+      const original = w.admin.graphql.getMockImplementation()!;
+      w.admin.graphql.mockImplementation(async (q: string, o?: any) => {
+        if (q.includes('contentPilotSlotMetafields')) throw new Error('GraphqlQueryError');
+        return original(q, o);
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'Baumwolle' }));
+      expect(w.of('metafieldsSet')).toHaveLength(0);
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+    });
+
+    it('a slot saved empty again sends nothing and is reported removed', async () => {
+      const w = installAdmin();
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: '' }));
+      expect(w.of('metafieldsDelete')).toHaveLength(0);
+      expect(w.of('metafieldsSet')).toHaveLength(0);
+      expect(result.removedMetafieldIds).toEqual([METAFIELD]);
+      expect(result.failedMetafields).toEqual([]);
+    });
+
+    it('a re-created metafield whose echo carries no id is FAILED and nothing is mirrored', async () => {
+      const w = installAdmin({
+        metafieldsSet: (v) => ({
+          data: { metafieldsSet: { userErrors: [], metafields: v.metafields.map((m: any) => ({ ...m, id: undefined, owner: { id: m.ownerId } })) } },
+        }),
+      });
+      const db = slotDb();
+      const result = body(await save(db, w.admin, { [METAFIELD]: 'x' }));
+      expect(result.failedMetafields).toEqual([METAFIELD]);
+      expect(db.productMetafield.upsert).not.toHaveBeenCalled();
+      expect(db.productMetafield.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a LIST metafield', () => {
+    const listDb = () => {
+      const db = makeDb();
+      db.productMetafield.findMany.mockImplementation(async (args: any) =>
+        (args?.where?.id?.in ?? []).map((id: string) => ({
+          id, namespace: 'custom', key: 'k13', type: 'list.single_line_text_field', value: '["a"]',
+        })),
+      );
+      return db;
+    };
+
+    it('a JSON array of valid entries is written as is', async () => {
+      const w = installAdmin();
+      const result = body(await save(listDb(), w.admin, { [METAFIELD]: '["Rot","Blau"]' }));
+      expect(w.of('metafieldsSet')[0].variables.metafields[0].value).toBe('["Rot","Blau"]');
+      expect(result.savedMetafields).toEqual([METAFIELD]);
+    });
+
+    it.each([['not json'], ['[]'], ['["a",""]'], ['["a\nb"]'], ['[{"x":1}]']])(
+      'refuses %s before any Shopify call, named as metafieldListInvalid',
+      async (value) => {
+        const w = installAdmin();
+        const result = body(await save(listDb(), w.admin, { [METAFIELD]: value }));
+        expect(w.of('metafieldsSet')).toHaveLength(0);
+        expect(result.failedMetafields).toEqual([METAFIELD]);
+        expect(result.optionWarnings).toContain('metafieldListInvalid');
+      },
+    );
+  });
+
+  it('a whitespace-only value is REFUSED (named), never read as a clear: no delete, no set, the row stays', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: '   ' }));
+    expect(w.of('metafieldsDelete')).toHaveLength(0);
+    expect(w.of('metafieldsSet')).toHaveLength(0);
+    expect(result.failedMetafields).toEqual([METAFIELD]);
+    expect(result.optionWarnings).toContain('metafieldValueBlank');
+    expect(result.removedMetafieldIds).toBeUndefined();
+    expect(db.productMetafield.deleteMany).not.toHaveBeenCalled();
+    expect(w.of('remove')).toHaveLength(0);
+  });
+
+  it('an unechoed delete is failed and keeps the row', async () => {
+    const w = installAdmin({ metafieldsDelete: () => ({ data: { metafieldsDelete: { userErrors: [], deletedMetafields: [null] } } }) });
+    const db = makeDb();
+    const result = body(await save(db, w.admin, { [METAFIELD]: '' }));
+    expect(result.failedMetafields).toEqual([METAFIELD]);
+    expect(result.removedMetafieldIds).toBeUndefined();
+    expect(db.productMetafield.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('batches more than 25 metafields into calls of at most 25', async () => {
+    policy.purgeUnreconciledSurfaces = false;
+    const w = installAdmin();
+    const db = makeDb();
+    const changes = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`gid://shopify/Metafield/${100 + i}`, `v${i}`]));
+    const result = body(await save(db, w.admin, changes));
+    const sets = w.of('metafieldsSet');
+    expect(sets.map((c) => c.variables.metafields.length)).toEqual([25, 5]);
+    expect(result.savedMetafields).toHaveLength(30);
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe('handleLoadSubResourceTranslations — read-back backfill', () => {
   it('mirrors the translations Shopify holds for a resource with no local row, WITH the digest of the same read', async () => {
     const w = installAdmin({
@@ -817,6 +1605,69 @@ describe('handleLoadSubResourceTranslations — read-back backfill', () => {
     expect(created.value).toMatchObject({ shop: SHOP, resourceId: METAFIELD, resourceType: 'Metafield', value: 'Rouge', locale: 'fr', digest: 'dg-read' });
     // An OUTDATED row was written against an older source: no digest, or it would hide that it is stale.
     expect(created.name.digest).toBeNull();
+  });
+});
+
+describe('tenant isolation: every cache read/write is scoped to the session shop', () => {
+  it('load: the DB preload is filtered by the session shop', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    await handleLoadSubResourceTranslations(makeCtx(w.admin, db), form({ locale: 'fr', resourceIds: JSON.stringify([METAFIELD]) }));
+    expect(db.contentTranslation.findMany.mock.calls[0][0].where).toMatchObject({
+      shop: SHOP, resourceId: { in: [METAFIELD] }, locale: 'fr', marketId: '',
+    });
+  });
+
+  it('load: more ids than the cap is refused with 400 before any read', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const ids = Array.from({ length: MAX_LOAD_SUB_RESOURCE_IDS + 1 }, (_, i) => `gid://shopify/Metafield/${i + 1}`);
+    const r: any = await handleLoadSubResourceTranslations(makeCtx(w.admin, db), form({ locale: 'fr', resourceIds: JSON.stringify(ids) }));
+    expect(r?.init?.status).toBe(400);
+    expect(body(r)).toMatchObject({ success: false, actionType: 'loadSubResourceTranslations' });
+    expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
+  });
+
+  it('load: a non-array resourceIds payload is refused with 400', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    const r: any = await handleLoadSubResourceTranslations(makeCtx(w.admin, db), form({ locale: 'fr', resourceIds: JSON.stringify({ a: METAFIELD }) }));
+    expect(r?.init?.status).toBe(400);
+    expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
+  });
+
+  it('primary save: the metafield mirror and the type lookup are scoped through the product shop', async () => {
+    // The type lookup runs on the auto-translate (repair) path only.
+    policy.autoTranslateExternalChanges = true;
+    policy.purgeOnPrimaryChange = false;
+    const w = installAdmin();
+    const db = makeDb();
+    await handleSavePrimarySubResources(
+      makeCtx(w.admin, db),
+      form({ productId: PRODUCT, optionsChanges: '{}', metafieldChanges: JSON.stringify({ [METAFIELD]: 'new' }) }),
+    );
+    expect(db.productMetafield.updateMany).toHaveBeenCalledWith({
+      where: { id: METAFIELD, product: { shop: SHOP } },
+      data: { value: 'new', type: 'single_line_text_field' },
+    });
+    expect(db.productMetafield.findMany.mock.calls[0][0].where).toMatchObject({ productId: PRODUCT, product: { shop: SHOP } });
+  });
+
+  it('primary save: deleting an option reads its values and cleans translations within the session shop only', async () => {
+    const w = installAdmin();
+    const db = makeDb();
+    db.productOption.findFirst.mockResolvedValue({ values: JSON.stringify([{ id: VALUE, name: 'Rot' }]) });
+    await handleSavePrimarySubResources(
+      makeCtx(w.admin, db),
+      form({ productId: PRODUCT, optionsChanges: '{}', metafieldChanges: '{}', optionsToDelete: JSON.stringify([OPTION]) }),
+    );
+    expect(db.productOption.findFirst.mock.calls[0][0].where).toEqual({ id: OPTION, product: { shop: SHOP } });
+    expect(db.productOption.count.mock.calls[0][0].where).toEqual({ productId: PRODUCT, product: { shop: SHOP } });
+    const cleanup = db.contentTranslation.deleteMany.mock.calls.map((c: any[]) => c[0].where);
+    expect(cleanup).toEqual(expect.arrayContaining([
+      expect.objectContaining({ shop: SHOP, resourceId: { in: [OPTION] }, resourceType: 'ProductOption' }),
+      expect.objectContaining({ shop: SHOP, resourceId: { in: [VALUE] }, resourceType: 'ProductOptionValue' }),
+    ]));
   });
 });
 

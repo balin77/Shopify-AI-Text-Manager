@@ -1,6 +1,9 @@
 import { useState, useCallback, useRef } from "react";
 import type { StagedItem, VariantWithGallery, MediaKind } from "../components/image-manager/types";
 import type { SettlingMediaEntry } from "../components/image-manager/settling-media";
+import { appFetch } from "../utils/app-fetch";
+import { useI18n } from "../contexts/I18nContext";
+import type { MainMove, MainRefusal, RemovedMainEmission, VariantGalleryEmission } from "../services/variant-main-image.shared";
 
 /** Resource URL + the kind it was uploaded as. The kind is needed at save
  *  time so productCreateMedia.mediaContentType maps correctly — without it
@@ -14,19 +17,22 @@ export interface PendingProductNewMedia {
   previewUrl?: string;
 }
 
-export interface VariantGalleryUpdate {
-  variantId: string;
-  fileGids: string[];
-  // true = variant already has a main image; skip setting mediaId, all fileGids go to gallery metafield
-  galleryOnly?: boolean;
-}
+/** One variant's pending gallery plus the EXPLICIT intent about its main image (see variant-main-image.shared.ts). */
+export type VariantGalleryUpdate = VariantGalleryEmission;
 
 export interface MediaOrderUpdate {
   mediaId: string;
   position: number;
 }
 
+/** The outcome of a gallery save: an `error` (nothing was saved, or the save failed) or a `warning` (it was saved; part of it was left alone). */
+export interface GalleryApplyResult {
+  error: string | null;
+  warning: string | null;
+}
+
 export function useVariantImageManager() {
+  const { t } = useI18n();
   const [bulkItems, setBulkItems] = useState<StagedItem[]>([]);
   const [selectedBulkIds, setSelectedBulkIds] = useState<Set<string>>(new Set());
   const [activeAction, setActiveAction] = useState<"copy" | "move" | null>(null);
@@ -44,7 +50,10 @@ export function useVariantImageManager() {
   // of hasPendingImageChanges — these are persisted; the Save button must not
   // light up again for them.
   const [settlingMedia, setSettlingMedia] = useState<SettlingMediaEntry[]>([]);
-  const [pendingClearVariantMainImages, setPendingClearVariantMainImages] = useState<string[]>([]);
+  // Main images the merchant removed WITHOUT a pending gallery edit, with the GID that was removed.
+  const [pendingClearVariantMainImages, setPendingClearVariantMainImages] = useState<RemovedMainEmission[]>([]);
+  // Main images moved from one variant to another (the statement that ties the two variants' changes together).
+  const [pendingMainMoves, setPendingMainMoves] = useState<MainMove[]>([]);
   // Per-variant YouTube / Vimeo URLs that the merchant has added via the URL
   // input inside each VariantGallerySection. variantId → canonical URLs.
   // Empty array is meaningful: it means "the merchant cleared this variant's
@@ -100,6 +109,16 @@ export function useVariantImageManager() {
     carryOverGids: Record<string, string>;
   }>(null);
 
+  // Whether `variantsForBulk` is CURRENT (the manager reports it: false while a re-read of the product is
+  // in flight or failed, when the list may still hold the pre-save gallery). A save that merges new files
+  // into a variant's gallery needs it: the merge would drop what the stale list does not know.
+  const [variantsCurrent, setVariantsCurrent] = useState(true);
+  const variantsCurrentRef = useRef(true);
+  const handleVariantsCurrentChange = useCallback((current: boolean) => {
+    variantsCurrentRef.current = current;
+    setVariantsCurrent(current);
+  }, []);
+
   const handleVariantsLoaded = useCallback((variants: VariantWithGallery[]) => {
     setVariantsForBulk(variants);
     const deferred = postSaveDeferredClearRef.current;
@@ -115,6 +134,7 @@ export function useVariantImageManager() {
       setPendingMediaOrder([]);
       setPendingProductNewMedia([]);
       setPendingClearVariantMainImages([]);
+      setPendingMainMoves([]);
       setPendingExternalVideos({});
       // Merge the still-processing staging URLs with the variant's freshly-
       // fetched saved metafield URLs. Without the merge, pendingVariant3dModels
@@ -188,26 +208,34 @@ export function useVariantImageManager() {
   }, []);
 
   const handlePendingChange = useCallback(
-    (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[], productNewMedia?: PendingProductNewMedia[], clearVariantMainImages?: string[]) => {
+    (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[], productNewMedia?: PendingProductNewMedia[], clearVariantMainImages?: RemovedMainEmission[], mainMoves?: MainMove[]) => {
       setPendingVariantGalleries(galleries);
       setPendingMediaOrder(mediaOrder);
       if (productNewMedia) setPendingProductNewMedia(productNewMedia);
       if (clearVariantMainImages !== undefined) setPendingClearVariantMainImages(clearVariantMainImages);
+      if (mainMoves !== undefined) setPendingMainMoves(mainMoves);
     },
     []
   );
 
-  const handleApply = useCallback(async (productId: string): Promise<string | null> => {
+  // Media a FAILED save already created (staging URL -> GID, kind): the next save converts those
+  // references to the GIDs and does not upload them again.
+  const createdByFailedSaveRef = useRef<Record<string, { mediaId: string; kind: MediaKind }>>({});
+
+  const handleApply = useCallback(async (productId: string): Promise<GalleryApplyResult> => {
     setIsApplying(true);
     try {
+      const retained = createdByFailedSaveRef.current;
       const readyItems = bulkItems.filter(i => i.status === "ready");
-      const allNewMedia = [
+      const allNewMediaRaw = [
         // Forward each item's media kind to the backend so productCreateMedia
         // gets the right mediaContentType (IMAGE / VIDEO / MODEL_3D). Older
         // items without `kind` fall back to "image" server-side.
         ...readyItems.map(i => ({ resourceUrl: i.resourceUrl, kind: i.kind ?? "image" as const })),
         ...pendingProductNewMedia.map(m => ({ resourceUrl: m.resourceUrl, kind: m.kind })),
       ];
+      const allNewMedia = allNewMediaRaw.filter(m => !retained[m.resourceUrl]);
+      const toGid = (ref: string): string => retained[ref]?.mediaId ?? ref;
 
       // Merge auto-assigned bulk items into pendingVariantGalleries.
       // fileGids structure expected by the API:
@@ -222,31 +250,34 @@ export function useVariantImageManager() {
         newImagesByVariant.set(item.targetVariantId, group);
       }
 
-      const mergedVariantGalleries = [...pendingVariantGalleries];
+      // A variant these uploads are assigned to must be KNOWN here (its stored gallery and main image come
+      // from the variants read). Without it (a read refused by the rate limiter, a product switched too fast)
+      // the gallery below would be rebuilt from nothing: the new files would REPLACE the stored gallery.
+      // Refused before anything is created or written.
+      for (const variantId of newImagesByVariant.keys()) {
+        if (!variantsCurrentRef.current || !variantsForBulk.some(v => v.id === variantId)) {
+          return { error: t.imageManager.variantsNotLoadedSave, warning: null };
+        }
+      }
+
+      // A bulk upload never changes a main image: a variant with a main image (or one whose
+      // native image cannot be named here) only gets the new files in its gallery; a variant
+      // with no native image at all gets its first OWN image promoted on this real edit.
+      const mergedVariantGalleries: VariantGalleryUpdate[] = pendingVariantGalleries.map(g => ({ ...g }));
+      // (a failed save's created media are referenced by GID from here on, see `created` above)
       for (const [variantId, newUrls] of newImagesByVariant) {
         const baseVariant = variantsForBulk.find(v => v.id === variantId);
         const mainGid = baseVariant?.mainImageGid;
+        const nativeUnresolved = !mainGid && !!baseVariant?.defaultImageUrl;
         const galleryGids = baseVariant?.galleryFileGids ?? [];
         const existing = mergedVariantGalleries.find(vg => vg.variantId === variantId);
-
-        if (mainGid) {
-          // Variant already has a main image → all new uploads go to gallery only, mediaId unchanged.
-          if (existing) {
-            // pendingVariantGalleries entry already has mainGid at [0]; new URLs land after it → gallery.
-            existing.fileGids = [...existing.fileGids, ...newUrls];
-          } else {
-            mergedVariantGalleries.push({ variantId, fileGids: [...galleryGids, ...newUrls], galleryOnly: true });
-          }
+        if (existing) {
+          existing.fileGids = [...existing.fileGids, ...newUrls];
+        } else if (mainGid || nativeUnresolved) {
+          // The stored gallery may still hold the main image (older saves): it is not written back.
+          mergedVariantGalleries.push({ variantId, fileGids: [...galleryGids.filter(g => g !== mainGid), ...newUrls], galleryOnly: true });
         } else {
-          // Variant has no main image → first new upload becomes the variant image, rest go to gallery.
-          if (existing) {
-            existing.fileGids = [...existing.fileGids, ...newUrls];
-          } else {
-            const fileGids = newUrls.length > 0
-              ? [newUrls[0], ...galleryGids, ...newUrls.slice(1)]
-              : [...galleryGids];
-            mergedVariantGalleries.push({ variantId, fileGids });
-          }
+          mergedVariantGalleries.push({ variantId, fileGids: [...galleryGids, ...newUrls], promoteIfEmpty: true });
         }
       }
 
@@ -265,12 +296,27 @@ export function useVariantImageManager() {
         variantId,
         urls,
       }));
+      // File entries of a retried save that were created by a failed one are written by GID.
+      const orderWithGids = (orderJson: string): string => {
+        if (!orderJson) return orderJson;
+        try {
+          const parsed = JSON.parse(orderJson) as Array<{ kind: string; value: string }>;
+          return JSON.stringify(parsed.map(e => (e.kind === "file" ? { ...e, value: toGid(e.value) } : e)));
+        } catch { return orderJson; }
+      };
       const variantGalleryOrder = Object.entries(pendingGalleryOrder).map(([variantId, orderJson]) => ({
         variantId,
-        orderJson,
+        orderJson: orderWithGids(orderJson),
       }));
 
-      const res = await fetch("/api/update-variant-galleries", {
+      for (const g of mergedVariantGalleries) {
+        g.fileGids = g.fileGids.map(toGid);
+        if (g.mainGid) g.mainGid = toGid(g.mainGid);
+      }
+      const knownModelGids = { ...pendingKnownModelGids };
+      for (const [resourceUrl, c] of Object.entries(retained)) if (c.kind === "model") knownModelGids[resourceUrl] = c.mediaId;
+
+      const res = await appFetch("/api/update-variant-galleries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -278,24 +324,59 @@ export function useVariantImageManager() {
           newMedia: allNewMedia,
           variantGalleries: mergedVariantGalleries,
           mediaOrder: pendingMediaOrder,
-          clearVariantMainImages: pendingClearVariantMainImages,
+          removedMainImages: pendingClearVariantMainImages,
+          mainMoves: pendingMainMoves,
           variantExternalVideos,
           variant3dModels,
           variant3dPreviews,
           // Carry-over from prior processing drops: lets the backend poll
           // pre-existing Model3d GIDs directly without re-running
           // productCreateMedia on the same staging URL.
-          knownModelGids: pendingKnownModelGids,
+          knownModelGids,
           variantGalleryOrder,
+          // media a failed attempt already created: the retry references them by GID, the route must still
+          // treat them as created (a removal does not promote them)
+          retainedCreatedGids: Object.values(retained).map(v => v.mediaId),
         }),
       });
       const data = await res.json();
+      // What the route refused for a variant (the main image changed elsewhere, the image could
+      // not be attached, ...), in the merchant's words.
+      const variantTitle = (id: string) => variantsForBulk.find(v => v.id === id)?.title ?? "";
+      const createdAny = Array.isArray(data.createdMedia) && data.createdMedia.length > 0;
+      const refusalText = (list: unknown): string[] => {
+        if (!Array.isArray(list)) return [];
+        const texts: Record<MainRefusal, string> = {
+          mainFileGone: t.imageManager.mainFileGone,
+          mainChangedElsewhere: t.imageManager.mainChangedElsewhere,
+          lookupFailed: createdAny ? t.imageManager.mainLookupFailedAfterUpload : t.imageManager.mainLookupFailed,
+          attachFailed: t.imageManager.mainAttachFailed,
+          attachNotConfirmed: t.imageManager.mainAttachNotConfirmed,
+          notAnImage: t.imageManager.mainNotAnImage,
+          variantNotFound: t.imageManager.mainVariantGone,
+          moveCounterpartRefused: t.imageManager.mainMoveNotSaved,
+        };
+        return (list as Array<{ variantId?: string; code?: MainRefusal }>)
+          .filter(r => r && typeof r.variantId === "string" && r.code && texts[r.code])
+          .map(r => texts[r.code as MainRefusal].replace("{variant}", variantTitle(r.variantId as string)))
+          .filter((text, i, all) => all.indexOf(text) === i);
+      };
       if (!data.success) {
         // The route answers `errors` (a list) for a refused write, but a transport or
         // auth failure carries `error` (one string) or nothing readable at all.
-        if (Array.isArray(data.errors)) return (data.errors as string[]).join(", ");
-        return typeof data.error === "string" && data.error ? data.error : `HTTP ${res.status}`;
+        // Media this save already created stay on the product: the retry must not upload them again.
+        if (Array.isArray(data.createdMedia)) {
+          for (const c of data.createdMedia as Array<{ resourceUrl: string; mediaId: string; kind?: MediaKind }>) {
+            if (c?.resourceUrl && c.mediaId) createdByFailedSaveRef.current[c.resourceUrl] = { mediaId: c.mediaId, kind: c.kind ?? "image" };
+          }
+        }
+        if (data.errorCode === "mainMoveInvalid") return { error: t.imageManager.mainMoveInvalid, warning: null };
+        const refused = refusalText(data.refusals);
+        if (refused.length > 0) return { error: refused.join(" "), warning: null };
+        if (Array.isArray(data.errors)) return { error: (data.errors as string[]).join(", "), warning: null };
+        return { error: typeof data.error === "string" && data.error ? data.error : `HTTP ${res.status}`, warning: null };
       }
+      createdByFailedSaveRef.current = {};
       // Server may have rejected a subset of external-video URLs (client and
       // server validation can drift on edge cases — whitespace, trailing
       // slashes, browser-corrected URLs). Loud-log them so a divergence
@@ -394,7 +475,10 @@ export function useVariantImageManager() {
         if (!previewByResourceUrl.get(i.resourceUrl)) previewByResourceUrl.set(i.resourceUrl, i.previewUrl || undefined);
       }
       type CreatedMedia = { resourceUrl: string; mediaId: string; kind: MediaKind };
-      const created: CreatedMedia[] = Array.isArray(data.createdMedia) ? data.createdMedia : [];
+      // Media an earlier FAILED save created and this save only referenced by GID are settling too.
+      const fromFailed: CreatedMedia[] = Object.entries(retained).map(([resourceUrl, v]) => ({ resourceUrl, mediaId: v.mediaId, kind: v.kind }));
+      const fromAnswer: CreatedMedia[] = Array.isArray(data.createdMedia) ? data.createdMedia : [];
+      const created: CreatedMedia[] = [...fromAnswer, ...fromFailed.filter(f => !fromAnswer.some(a => a.mediaId === f.mediaId))];
       if (created.length > 0) {
         setSettlingMedia(prev => {
           // Keep only entries still belonging to this product; an earlier
@@ -423,11 +507,13 @@ export function useVariantImageManager() {
       // shopifyMediaMap + refreshedProductImages so the visual transition
       // is seamless.
       setVariantReloadCounter(c => c + 1);
-      return null;
+      // The rest was saved; a variant the fresh state contradicted was left alone and is named.
+      const leftAlone = refusalText(data.refusedVariants);
+      return { error: null, warning: leftAlone.length > 0 ? leftAlone.join(" ") : null };
     } finally {
       setIsApplying(false);
     }
-  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages, pendingExternalVideos, pendingVariant3dModels, pendingVariant3dPreviews, pendingKnownModelGids, pendingGalleryOrder]);
+  }, [t, bulkItems, variantsForBulk, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages, pendingMainMoves, pendingExternalVideos, pendingVariant3dModels, pendingVariant3dPreviews, pendingKnownModelGids, pendingGalleryOrder]);
 
   /** Called by the Image Manager once every settling media node has shown up
    *  in the fetched media map (or the bounded wait gave up). */
@@ -456,17 +542,21 @@ export function useVariantImageManager() {
     setPendingMediaOrder([]);
     setPendingProductNewMedia([]);
     setPendingClearVariantMainImages([]);
+    setPendingMainMoves([]);
     setPendingExternalVideos({});
     setPendingVariant3dModels({});
     setPendingVariant3dPreviews({});
     setPendingKnownModelGids({});
     setPendingGalleryOrder({});
+    createdByFailedSaveRef.current = {};
     // hasAltTextEdits is owned by the image manager (its alt drafts): Discard and a product switch reset it there.
     // Clear data derived from the previous product so the bulk panels never match
     // against stale variants/selection during the load window of the new product.
     // missingMainImageProductIds is intentionally NOT reset — it is cross-product
     // sidebar state; clearing it would drop markers for all other products.
     setVariantsForBulk([]);
+    variantsCurrentRef.current = true;
+    setVariantsCurrent(true);
     setSelectedGalleryGids([]);
     setResetCounter(c => c + 1);
   }, []);
@@ -512,6 +602,8 @@ export function useVariantImageManager() {
     pendingGalleryOrder,
     setPendingGalleryOrder,
     handleVariantsLoaded,
+    handleVariantsCurrentChange,
+    variantsCurrent,
     handleGallerySelectionGidsChange,
     handleMissingMainImageChange,
     handleBulkItemsChange,

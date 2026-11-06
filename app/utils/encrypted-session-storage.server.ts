@@ -116,11 +116,19 @@ export class EncryptedPrismaSessionStorage implements SessionStorage {
       try {
         session.refreshToken = decryptToken(session.refreshToken) ?? session.refreshToken;
       } catch (error) {
+        // NOT silently cleared any more. With expiring offline tokens the
+        // refresh token is the ONLY way to keep the shop's background work
+        // alive past the access token's ~1h: a session handed back without it
+        // looks valid now and dies, unexplained, within the hour — in a
+        // webhook or a scheduler nobody is watching. Treated as missing
+        // instead, exactly like an undecryptable access token: an embedded
+        // request re-runs token exchange (a fresh pair), a background caller
+        // reports "no session" for this shop rather than a 401 later.
         logger.error(
-          "[EncryptedSessionStorage] Failed to decrypt refreshToken, clearing it:",
+          `[EncryptedSessionStorage] Failed to decrypt refreshToken for session '${id}' — treating the session as missing to force re-auth (check ENCRYPTION_KEY):`,
           error instanceof Error ? error.message : "Unknown error",
         );
-        session.refreshToken = undefined;
+        return undefined;
       }
     }
 
@@ -192,10 +200,14 @@ export class EncryptedPrismaSessionStorage implements SessionStorage {
         try {
           session.refreshToken = decryptToken(session.refreshToken) ?? session.refreshToken;
         } catch (error) {
+          // Never hand ciphertext onward as a refresh token: cleared, and said
+          // loudly. (loadSession, the path the library refreshes through,
+          // treats the whole session as missing instead.)
           logger.error(
-            "[EncryptedSessionStorage] Failed to decrypt refreshToken in findSessionsByShop:",
+            `[EncryptedSessionStorage] Failed to decrypt refreshToken in findSessionsByShop for session '${session.id}' — cleared; the shop must re-authenticate (check ENCRYPTION_KEY):`,
             error instanceof Error ? error.message : "Unknown error",
           );
+          session.refreshToken = undefined;
         }
       }
 

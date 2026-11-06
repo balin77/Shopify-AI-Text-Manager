@@ -170,6 +170,29 @@ describe("accepting an AI suggestion saves the field without a save bar", () => 
     expect(h.editor.current.state.hasChanges).toBe(true);
   });
 
+  // The refusal is read through two branches of the save-answer handling (the `error` text, the `errorKey`),
+  // and each must word it with the SAME specific sentence - not merely show some error string.
+  const REFUSAL_SENTENCE = "The other half of the SEO text (title or description) could not be read from Shopify, so nothing was saved. Your text is kept - please try again.";
+  it.each([
+    ["products", "metaDescription", { error: "seoOtherHalfUnreadable", errorKey: "seoOtherHalfUnreadable" }],
+    ["products", "seoTitle", { error: "seoOtherHalfUnreadable" }],
+    ["collections", "metaDescription", { errorKey: "seoOtherHalfUnreadable" }],
+  ] as const)(
+    "%s %s: refusal %j -> the specific try-again sentence, the accepted text stays a draft",
+    async (kind, field, refusal) => {
+      const h = mount(kind);
+      await tick(50);
+      await accept(h, "de", field, "Neu von der KI");
+
+      await h.respond({ success: false, actionType: "updateContent", ...refusal });
+      await tick(50);
+      expect(h.editor.current.state.editableValues[field]).toBe("Neu von der KI");
+      expect(h.editor.current.state.hasChanges).toBe(true);
+      const critical = h.showInfoBox.mock.calls.filter(([, tone]) => tone === "critical").map(([m]) => String(m));
+      expect(critical).toEqual([REFUSAL_SENTENCE]);
+    },
+  );
+
   it("typing over the accepted text while it is being saved is a draft again", async () => {
     const h = mount("products");
     await tick(50);

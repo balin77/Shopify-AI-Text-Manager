@@ -15,6 +15,7 @@
  * cached on window so subsequent calls reuse the import.
  */
 import { uploadToStagedTarget } from "./staged-upload.client";
+import { appFetch } from "./app-fetch";
 
 const MODEL_VIEWER_SCRIPT_URL = "/model-viewer.min.js";
 
@@ -195,7 +196,7 @@ export async function snapshotAndPersist(
   const previewFileName =
     opts.previewFileName ?? file.name.replace(/\.glb$/i, "") + "-preview.jpg";
 
-  const stagedRes = await fetch("/api/staged-upload", {
+  const stagedRes = await appFetch("/api/staged-upload", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -217,7 +218,7 @@ export async function snapshotAndPersist(
     previewFileName,
   );
 
-  const createRes = await fetch("/api/create-shopify-file", {
+  const createRes = await appFetch("/api/create-shopify-file", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

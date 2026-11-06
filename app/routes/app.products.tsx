@@ -14,6 +14,7 @@
 import { makeContentRouteAction } from "~/utils/content-route-action.server";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation, useSearchParams } from "react-router";
 import { confirmNavigation } from "../hooks/useSaveBar";
+import { shouldConfirmSubResourceSwitch } from "../services/editor/sub-resource-pending.shared";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { useProductSubResources } from "../hooks/useProductSubResources";
@@ -32,10 +33,12 @@ import { logger } from "~/utils/logger.server";
 import { wasRecentlySaved } from "~/utils/translation-timing";
 import { isDefaultTitleOption } from "~/utils/shopify-product.utils";
 import { countsAsSalesChannel } from "~/services/commerce-sync.shared";
+import { hasUnsavedPrimaryMetafieldEdits, splitClearedMetafieldSlots } from "~/services/product-metafields.shared";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import type { FetcherData } from "~/types/content-editor.types";
 import { LocalizedMediaProvider } from "~/components/localized-images/LocalizedMediaContext";
+import { appFetch } from "../utils/app-fetch";
 
 // ============================================================================
 // LOADER - Paginated upsert sync + load from database
@@ -244,14 +247,24 @@ export const loader = createContentLoader({
         const isLinked = !!opt.linkedMetafieldKey || values.some(v => v.linked);
         return { id: opt.id, name: opt.name, position: opt.position, values, isLinked, linkedMetafieldKey: opt.linkedMetafieldKey || undefined };
       }) || [],
-      metafields: p.metafields?.filter((mf: any) =>
-        // Shared predicate — the bulk editor's metafield columns use the SAME
-        // filter (isEditableProductMetafield), so both surfaces show the same
-        // fields (Plan §4.1).
-        isEditableProductMetafield(mf, enabledMetafieldKeys)
-      ).map((mf: any) => ({
-        id: mf.id, namespace: mf.namespace, key: mf.key, value: mf.value, type: mf.type,
-      })) || [],
+      // Real metafields and CLEARED SLOTS travel apart: a slot (`value: ""`,
+      // product-metafields.shared.ts) is a metafield deleted on Shopify whose
+      // row is kept so the card can show the field empty and re-create it.
+      // Everything translation-shaped reads `metafields` only — a slot's id is
+      // a deleted resource — and only the primary card reads both.
+      ...(() => {
+        type CardMetafield = { id: string; namespace: string; key: string; value: string; type: string };
+        const editable: CardMetafield[] = (p.metafields ?? [])
+          // Shared predicate — the bulk editor's metafield columns use the SAME
+          // filter (isEditableProductMetafield), so both surfaces show the same
+          // fields (Plan §4.1).
+          .filter((mf: any) => isEditableProductMetafield(mf, enabledMetafieldKeys))
+          .map((mf: any) => ({
+            id: mf.id as string, namespace: mf.namespace as string, key: mf.key as string,
+            value: (mf.value ?? "") as string, type: mf.type as string,
+          }));
+        return splitClearedMetafieldSlots<CardMetafield>(editable);
+      })(),
       // Sub-resource translations loaded via same DB pipeline as main translations
       subResourceTranslations: (() => {
         // Carry marketId per row so the client can layer market → global (see
@@ -473,6 +486,9 @@ export default function ProductsPage() {
 
   // Image Manager state (Pro/Max only - always call hook, gated in UI)
   const imageManagerState = useVariantImageManager();
+  // The image manager's full view (it takes the editor's content area; the text fields stay mounted but
+  // hidden). It stays open when another product is selected: the view is a mode of the editor.
+  const [imageManagerFullView, setImageManagerFullView] = useState(false);
   // The image manager's alt-text DRAFTS: the save bar's Save sends them (flush)
   // and its Discard takes them back; the manager fills this ref.
   const altDraftApiRef = useRef<AltDraftApi | null>(null);
@@ -546,6 +562,7 @@ export default function ProductsPage() {
       translatePartialLocales: t.content.translatePartialLocales,
       optionNameEmpty: t.products.optionNameEmpty,
       optionValuesEmpty: t.products.optionValuesEmpty,
+      refusedNothingSaved: t.products.refusedNothingSaved,
       metafieldValuesEmpty: t.products.metafieldValuesEmpty,
       // One per failure code the option write paths return. Keyed by code so
       // the server can stay in codes and this app can stay in three languages.
@@ -554,6 +571,41 @@ export default function ProductsPage() {
       optionWarning_optionNameEmpty: t.products.optionWarningNameEmpty,
       optionWarning_optionValueEmpty: t.products.optionWarningValueEmpty,
       optionWarning_optionLastOne: t.products.optionWarningLastOne,
+      optionWarning_metafieldValueBlank: t.products.metafieldWarningValueBlank,
+      optionWarning_metafieldListInvalid: t.products.metafieldListInvalid,
+      optionWarning_metafieldExistsMeanwhile: t.products.metafieldWarningExistsMeanwhile,
+      optionWarning_metafieldSlotUnverified: t.products.metafieldWarningSlotUnverified,
+      optionWarning_metafieldNotFound: t.products.metafieldWarningNotFound,
+      optionWarning_metafieldNotConfirmed: t.products.metafieldWarningNotConfirmed,
+      optionWarning_metafieldWriteFailed: t.products.metafieldWarningWriteFailed,
+      optionWarning_metafieldDeleteFailed: t.products.metafieldWarningDeleteFailed,
+      optionWarning_metafieldDeleteNotConfirmed: t.products.metafieldWarningDeleteNotConfirmed,
+      metafieldDeleteRefused: t.products.metafieldDeleteRefused,
+      optionRefusedByShopify: t.products.optionRefusedByShopify,
+      failureReason_notConfirmed: t.products.failureReasonNotConfirmed,
+      failureReason_removalNotConfirmed: t.products.failureReasonRemovalNotConfirmed,
+      failureReason_error: t.products.failureReasonError,
+      metafieldValueRefused: t.products.metafieldValueRefused,
+      metafieldPermissionRefused: t.products.metafieldPermissionRefused,
+      savedOtherProduct: t.products.savedOtherProduct,
+      savePartialOtherProduct: t.products.savePartialOtherProduct,
+      saveFailedOtherProduct: t.products.saveFailedOtherProduct,
+      saveNotConfirmed: t.products.saveNotConfirmed,
+      reloadBeforeSave: t.products.reloadBeforeSave,
+      saveNotConfirmedDetached: t.products.saveNotConfirmedDetached,
+      saveMaybePartial: t.products.saveMaybePartial,
+      fieldsGone: t.products.fieldsGone,
+      alreadyAdded: t.products.alreadyAdded,
+      pendingRowsLost: t.products.pendingRowsLost,
+      errorSessionExpired: (t as unknown as { errors?: Record<string, string> }).errors?.sessionExpired,
+      errorReauthorizeRequired: (t as unknown as { errors?: Record<string, string> }).errors?.reauthorizeRequired,
+      metafieldRefusedElsewhere: t.products.metafieldRefusedElsewhere,
+      metafieldPermissionElsewhere: t.products.metafieldPermissionElsewhere,
+      previousProductLabel: t.products.previousProductLabel,
+      metafieldTypeNotTranslatable: t.products.metafieldTypeNotTranslatable,
+      metafieldListInvalid: t.products.metafieldListInvalid,
+      saveFirstSource: t.common.saveFirstSource,
+      sourceReloading: t.common.sourceReloading,
     },
   });
 
@@ -626,7 +678,7 @@ export default function ProductsPage() {
     }
     const delays = [10000, 15000, 30000, 45000, 60000, 60000, 60000, 60000];
     try {
-      const r = await fetch("/api/refresh-3d-previews", {
+      const r = await appFetch("/api/refresh-3d-previews", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId, pendingModels }),
@@ -758,8 +810,16 @@ export default function ProductsPage() {
   // already left out of that run (`optionTranslationBlockedIds`).
   const hasPrimaryTranslateAllDrafts =
     editor.state.currentLanguage === primaryLocale &&
-    (Object.keys(subResources.state.primaryMetafieldEdits).length > 0 ||
+    (hasUnsavedPrimaryMetafieldEdits(
+      subResources.state.primaryMetafieldEdits,
+      editor.selectedItem?.metafields,
+      editor.selectedItem?.clearedMetafields,
+    ) ||
       (showImageManager && imageManagerState.hasAltTextEdits));
+  // A landed primary save whose reload is still out: the item still carries
+  // the metafield text from BEFORE it. Blocks too, but is no unsaved change.
+  const primaryTranslateAllReloadPending =
+    editor.state.currentLanguage === primaryLocale && subResources.state.metafieldTranslationBlocked;
   const wrappedSubResourceState = useMemo(() => ({
     ...subResources.state,
     hasChanges: subResources.state.hasChanges || hasPendingImageChanges,
@@ -774,7 +834,8 @@ export default function ProductsPage() {
     // waiting for a new image): the Save shows busy until they are answered.
     isSaving: subResources.state.isSaving || imageManagerState.isApplying || imageManagerState.isDeletingImages || imageManagerState.isSavingAltTexts,
     translateAllSaveFirst: hasPrimaryTranslateAllDrafts,
-  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying, imageManagerState.isDeletingImages, imageManagerState.isSavingAltTexts, hasPrimaryTranslateAllDrafts]);
+    translateAllReloadPending: primaryTranslateAllReloadPending,
+  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying, imageManagerState.isDeletingImages, imageManagerState.isSavingAltTexts, hasPrimaryTranslateAllDrafts, primaryTranslateAllReloadPending]);
 
   const wrappedSubResourceHandlers = useMemo(() => ({
     ...subResources.handlers,
@@ -782,7 +843,11 @@ export default function ProductsPage() {
       // A product-image delete is in flight: saving now could clear variant
       // main images for media that survives a failed delete.
       if (imageManagerStateRef.current.isDeletingImages) return;
-      subResources.handlers.saveSubResources();
+      // Refused (the saved values are still being reloaded, or the card's own
+      // validation refused the press): the gallery and alt saves below must not
+      // run and report "saved" over the card's message.
+      const subResult = subResources.handlers.saveSubResources();
+      if (subResult === "waiting" || subResult === "refused") return subResult;
       // The gallery half starts FIRST: the alt text of an image this Save is
       // only uploading has no media id yet, so the manager carries it over and
       // sends it once the gallery save has created the image (or reports it as
@@ -790,12 +855,15 @@ export default function ProductsPage() {
       let galleryApply: Promise<boolean> | undefined;
       if (hasPendingGalleryChanges && editor.selectedItem) {
         const productId = editor.selectedItem.id;
-        galleryApply = imageManagerState.handleApply(productId).then(err => {
+        galleryApply = imageManagerState.handleApply(productId).then(({ error: err, warning }) => {
           if (err) {
             showInfoBox(`${t.products.gallerySaveError} ${err}`, "critical");
             return false;
           }
-          showInfoBox(t.products.gallerySaveSuccess, "success");
+          // Saved; a variant that was left alone is named, and the save still counts as done (the
+          // alt drafts of new media are sent, the preview backfill and the reload run).
+          if (warning) showInfoBox(`${t.products.gallerySaveSuccess} ${warning}`, "warning");
+          else showInfoBox(t.products.gallerySaveSuccess, "success");
           // Kick off background polling for 3D model previews. Shopify
           // takes minutes to generate the .glb thumbnail server-side —
           // the save route only waits ~25s (enough for source URL), the
@@ -867,6 +935,19 @@ export default function ProductsPage() {
     return true;
   };
 
+  // A "clear all" must not be overtaken by a save of the same product that is
+  // still out or waiting in the save queue (the clear goes out at once on its own
+  // request, the queued save later: it would write the cleared text back).
+  const refuseClearWhileSubResourcesSave = (): boolean => {
+    const itemId = editor.state.selectedItemId;
+    if (!itemId || !subResources.handlers.isSaveInFlight(itemId, editor.state.currentLanguage)) return false;
+    showInfoBox(
+      String(t.common?.clearWhileSaving || "Still saving – please wait a moment and then clear again."),
+      "info",
+    );
+    return true;
+  };
+
   // A "translate all" must not race the card's own saves either (its "clear
   // all", the options & metafields save): refused like the editor's own.
   const refuseTranslateWhileSubResourcesSave = (locale: string): boolean => {
@@ -893,6 +974,10 @@ export default function ProductsPage() {
           );
           return;
         }
+        if (primaryTranslateAllReloadPending) {
+          showInfoBox(String(t.common?.sourceReloading || "One moment — the saved text is reloading."), "info");
+          return;
+        }
         // Refused (a save it would race is still out): neither half runs.
         if (refuseTranslateWhileSubResourcesSave("*")) return;
         if (editor.handlers.handleTranslateAll() === false) return;
@@ -907,13 +992,13 @@ export default function ProductsPage() {
       // all" of the language they are being written into waits for them, like
       // the editor's own fields do (useFieldHandlers).
       handleClearAllForLocaleClick: () => {
-        if (refuseClearWhileSubResourcesTranslate()) return;
+        if (refuseClearWhileSubResourcesTranslate() || refuseClearWhileSubResourcesSave()) return;
         editor.handlers.handleClearAllForLocaleClick();
       },
       // Checked again on confirm (a run may have started while the dialog was
       // open); a refusal clears neither half.
       handleClearAllForLocaleConfirm: () => {
-        if (refuseClearWhileSubResourcesTranslate()) {
+        if (refuseClearWhileSubResourcesTranslate() || refuseClearWhileSubResourcesSave()) {
           editor.handlers.handleClearAllCancel();
           return false;
         }
@@ -933,13 +1018,20 @@ export default function ProductsPage() {
       // UNSENT alt drafts ask -- the same rule for both switches.
       handleLanguageChange: async (locale: string) => {
         if (refuseSwitchWhileSaving()) return;
-        if (showImageManager && imageManagerState.hasAltTextEdits && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges) {
+        if (shouldConfirmSubResourceSwitch(subResources.state.hasUnsentChanges, editor.state.hasChanges) ||
+            (showImageManager && imageManagerState.hasAltTextEdits && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges)) {
           await confirmNavigation();
         }
         editor.handlers.handleLanguageChange(locale);
       },
       handleMarketChange: async (marketId: string) => {
         if (marketId !== editor.state.selectedMarketId && refuseSwitchWhileSaving()) return;
+        // Unsent options / metafields drafts are dropped by a market switch (the
+        // card resets on it), so they ask, once and only for a real switch.
+        if (marketId !== editor.state.selectedMarketId &&
+            shouldConfirmSubResourceSwitch(subResources.state.hasUnsentChanges, editor.state.hasChanges)) {
+          await confirmNavigation();
+        }
         // Primary alt texts are global: a market change in the primary
         // language keeps them, so it has nothing to ask about.
         if (showImageManager && imageManagerState.hasAltTextEdits && !!editor.state.currentLanguage && editor.state.currentLanguage !== primaryLocale && altDraftApiRef.current?.hasUnsentDrafts() && !editor.state.hasChanges && marketId !== editor.state.selectedMarketId) {
@@ -953,7 +1045,8 @@ export default function ProductsPage() {
       // silently drop them.
       handleItemSelect: async (itemId: string) => {
         if (refuseSwitchWhileSaving()) return;
-        if ((hasPendingImageChanges || localizedDraftsPendingRef.current) && !editor.state.hasChanges) {
+        if (shouldConfirmSubResourceSwitch(subResources.state.hasUnsentChanges, editor.state.hasChanges) ||
+            ((hasPendingImageChanges || localizedDraftsPendingRef.current) && !editor.state.hasChanges)) {
           await confirmNavigation();
         }
         editor.handlers.handleItemSelect(itemId);
@@ -1065,7 +1158,10 @@ export default function ProductsPage() {
     if (pendingTranslationSyncRefreshRef.current) {
       pendingTranslationSyncRefreshRef.current = false;
       editor.helpers.triggerDataRefresh();
-      subResources.handlers.resetForReload();
+      // `refreshTranslations`: re-reads in place and does nothing while anything
+      // is unsaved. (`resetForReload` re-reads in place too now, but it also
+      // prunes the overlay and arms a second read for an item still on its way.)
+      subResources.handlers.refreshTranslations();
     }
   }, [products]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally fires when products changes after sync
 
@@ -1074,11 +1170,11 @@ export default function ProductsPage() {
   // `itemId::locale::market`, none of which a revalidation changes, so without
   // this the refreshed sub-resource translations are fetched and never shown.
   //
-  // `refreshTranslations`, NOT `resetForReload`: the reset only empties the
-  // load key, and the bump lands one commit AFTER the fresh item — the load
-  // effect has already run and returned, so nothing was re-read, while the
-  // empty key made the NEXT revalidation run the load effect's full reset and
-  // throw away unsaved option edits.
+  // `refreshTranslations`: the bump lands one commit AFTER the fresh item, which
+  // is what a re-read needs, and it never throws away unsaved edits. (The old
+  // `resetForReload` emptied the load key, so the NEXT revalidation ran the
+  // load effect's full reset and wiped what the merchant had typed meanwhile;
+  // it re-reads in place now, but is meant for an explicit Reload / Discard.)
   useEffect(() => {
     if (editor.helpers.backgroundRefreshVersion === 0) return;
     subResources.handlers.refreshTranslations();
@@ -1242,13 +1338,15 @@ export default function ProductsPage() {
             imageManagerSettings: imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 },
             variantsForBulk: imageManagerState.variantsForBulk,
             onVariantsLoaded: imageManagerState.handleVariantsLoaded,
+            variantsCurrent: imageManagerState.variantsCurrent,
             selectedGalleryGids: imageManagerState.selectedGalleryGids,
             onConfirm: async () => {
-              const err = await imageManagerState.handleApply(editor.selectedItem?.id ?? "");
+              const { error: err, warning } = await imageManagerState.handleApply(editor.selectedItem?.id ?? "");
               if (err) {
                 showInfoBox(`${t.products.gallerySaveError} ${err}`, "critical");
               } else {
-                showInfoBox(t.products.gallerySaveSuccess, "success");
+                if (warning) showInfoBox(`${t.products.gallerySaveSuccess} ${warning}`, "warning");
+                else showInfoBox(t.products.gallerySaveSuccess, "success");
                 revalidator.revalidate();
               }
               return err;
@@ -1261,6 +1359,7 @@ export default function ProductsPage() {
             },
             onSaveResponse: editor.helpers.trackRetranslationTasks,
           } : undefined}
+          imageManagerFullView={imageManagerFullView && showImageManager}
           imageGalleryReplacement={showImageManager && editor.selectedItem ? (
             <VariantImageManager
               productId={editor.selectedItem.id}
@@ -1295,12 +1394,15 @@ export default function ProductsPage() {
               seedThreeDPreviewUrls={imageManagerState.pendingVariant3dPreviews}
               onGalleryOrderChange={imageManagerState.setPendingGalleryOrder}
               onVariantsLoaded={imageManagerState.handleVariantsLoaded}
+              onVariantsCurrentChange={imageManagerState.handleVariantsCurrentChange}
               // Media Shopify created on the last save but is still
               // processing. Keeps the tile (and the media count) stable
               // between the save and the moment the CDN URL appears.
               settlingMedia={imageManagerState.settlingMedia}
               onSettlingMediaResolved={imageManagerState.handleSettlingMediaResolved}
               resetKey={imageManagerState.resetCounter}
+              fullView={imageManagerFullView}
+              onFullViewChange={setImageManagerFullView}
               currentLanguage={editor.state.currentLanguage}
               selectedMarketId={editor.state.selectedMarketId}
               primaryLocale={primaryLocale}

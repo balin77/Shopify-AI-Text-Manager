@@ -274,7 +274,7 @@ export async function incrementalSync(
         where: { shop: ctx.session.shop, id: { in: removed } },
       });
       await ctx.db.contentTranslation.deleteMany({
-        where: { resourceType: options.resourceType, resourceId: { in: removed } },
+        where: { shop: ctx.session.shop, resourceType: options.resourceType, resourceId: { in: removed } },
       });
     }
   }

@@ -31,6 +31,9 @@ import crypto from "crypto";
 import { PLAN_WEBP_CONCURRENCY, DEFAULT_WEBP_CONCURRENCY } from "./app/config/webp-concurrency.js";
 import { refundImageOperations } from "./image-op-refund.js";
 import { rekeyLocalizedMediaAfterConversion } from "./localized-media-rekey.js";
+import { isAllowedWebpSourceUrl, webpSourceHostForMessage } from "./app/config/webp-source-url.js";
+import { adminGraphqlUrl } from "./app/config/admin-api-version.js";
+import { resolveShopAccessToken } from "./app/utils/shop-access-token.js";
 import {
   WEBP_FAILURE_LIST_MAX,
   WEBP_FAILURE_MESSAGE_MAX,
@@ -38,6 +41,10 @@ import {
   WEBP_NON_TERMINAL_STATUS,
   WEBP_PARENT_ORPHAN_GRACE_MS,
   WEBP_PARENT_TASK_TYPE,
+  WEBP_ITEM_HEARTBEAT_MS,
+  WEBP_HEARTBEAT_MAX_MS,
+  WEBP_EXPIRED_IN_QUEUE_ERROR,
+  isWebpItemExpiredInQueue,
   parseTaskResult,
   webpBatchStatus,
   webpParentTaskId,
@@ -92,11 +99,16 @@ const SHOPIFY_FETCH_TIMEOUT_MS = 30000;
 // against ever being recounted. A merchant was told images failed that in fact
 // converted, and got a month's quota back for them.
 //
-// A work item that really is wedged is still caught, by the stuck-task reaper
-// (10 min without a write) and, if the process dies with it, by the boot
-// recovery — both of which read the row this leaves behind rather than racing
-// the steps that own it.
+// A work item that really is wedged is still caught: once its heartbeat has
+// stopped (WEBP_HEARTBEAT_MAX_MS, 75 min) the stuck-task reaper closes the row
+// after 10 min of silence, and if the process dies with it the recovery of the
+// next one (boot or the stuck monitor) classifies it — both read the row this
+// leaves behind rather than racing the steps that own it.
 const WEBP_TASK_TIMEOUT_MS = 4 * 60 * 1000;
+
+// The statuses a work item can be CLAIMED from: the waiting ones, i.e. exactly
+// what the poll selects (`running` is deliberately absent).
+const WEBP_CLAIMABLE_STATUS = WEBP_NON_TERMINAL_STATUS.filter((status) => status !== "running");
 
 /**
  * The processor gave up WAITING for an item; the item itself is still running.
@@ -166,7 +178,60 @@ async function fetchNewMediaUrl(shopifyApiUrl, headers, mediaId) {
   }
 }
 
-async function downloadImageAsBuffer(url) {
+/** Most redirects a source download follows — each hop is re-checked. */
+const DOWNLOAD_MAX_REDIRECTS = 3;
+
+/**
+ * A download refused by the source-URL allowlist, or one that cannot succeed
+ * by retrying (a non-retryable HTTP status, a bad redirect). Never retried.
+ */
+class WebPDownloadRefused extends Error {}
+
+/**
+ * ONE request of a download, following redirects BY HAND so every hop is
+ * checked against the allowlist (`app/config/webp-source-url.js`) before it is
+ * requested. `redirect: "follow"` would let an allowlisted URL bounce the
+ * worker to any address at all — the guard on the first URL alone is no guard.
+ * Messages name the HOST only: they land in `Task.error`, and a refused
+ * address may be an internal one.
+ */
+async function fetchSourceOnce(url, fetchFn, signal) {
+  let current = url;
+  for (let hop = 0; hop <= DOWNLOAD_MAX_REDIRECTS; hop++) {
+    if (!isAllowedWebpSourceUrl(current)) {
+      throw new WebPDownloadRefused(
+        `Image source not allowed (host ${webpSourceHostForMessage(current)}); only the Shopify CDN is accepted`,
+      );
+    }
+    const response = await fetchFn(current, { signal, redirect: "manual" });
+    if (response.status >= 300 && response.status < 400) {
+      // Release the redirect's body so its connection is not held open.
+      try {
+        await response.body?.cancel?.();
+      } catch {
+        // already consumed or not cancelable — nothing to release
+      }
+      const location = response.headers?.get?.("location");
+      if (!location) {
+        throw new WebPDownloadRefused(`Failed to download image: redirect ${response.status} without a location`);
+      }
+      try {
+        current = new URL(location, current).toString();
+      } catch {
+        throw new WebPDownloadRefused(`Failed to download image: redirect ${response.status} to an invalid location`);
+      }
+      continue;
+    }
+    return response;
+  }
+  throw new WebPDownloadRefused(`Failed to download image: more than ${DOWNLOAD_MAX_REDIRECTS} redirects`);
+}
+
+/**
+ * Download a conversion source. Exported (with injectable fetch/sleep) for the
+ * allowlist tests; the worker calls it with the defaults.
+ */
+export async function downloadImageAsBuffer(url, { fetchFn = fetch, sleepFn = sleep } = {}) {
   for (let attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++) {
     const isLastAttempt = attempt === DOWNLOAD_MAX_ATTEMPTS;
     const controller = new AbortController();
@@ -174,17 +239,20 @@ async function downloadImageAsBuffer(url) {
 
     let retryReason;
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetchSourceOnce(url, fetchFn, controller.signal);
       if (response.ok) return Buffer.from(await response.arrayBuffer());
 
       if (RETRYABLE_STATUS.has(response.status) && !isLastAttempt) {
         retryReason = `HTTP ${response.status}`;
       } else {
-        throw new Error(`Failed to download image: ${response.status} ${url}`);
+        throw new WebPDownloadRefused(
+          `Failed to download image: HTTP ${response.status} from ${webpSourceHostForMessage(url)}`,
+        );
       }
     } catch (err) {
-      // Network error or timeout — retry until last attempt; HTTP errors above re-throw directly.
-      if (isLastAttempt || err.message?.startsWith("Failed to download image:")) throw err;
+      // Network error or timeout — retry until last attempt; refusals and
+      // non-retryable HTTP errors re-throw directly.
+      if (isLastAttempt || err instanceof WebPDownloadRefused) throw err;
       retryReason = err.name === "AbortError" ? `timeout after ${DOWNLOAD_TIMEOUT_MS}ms` : err.message;
     } finally {
       clearTimeout(timeout);
@@ -192,10 +260,10 @@ async function downloadImageAsBuffer(url) {
 
     const delay = DOWNLOAD_BASE_DELAY_MS * 2 ** (attempt - 1) + Math.floor(Math.random() * 250);
     console.warn(`[WebPProcessor] Download attempt ${attempt}/${DOWNLOAD_MAX_ATTEMPTS} failed (${retryReason}) for ${url} — retrying in ${delay}ms`);
-    await sleep(delay);
+    await sleepFn(delay);
   }
   // Unreachable: loop either returns or throws.
-  throw new Error(`Failed to download image after ${DOWNLOAD_MAX_ATTEMPTS} attempts: ${url}`);
+  throw new Error(`Failed to download image after ${DOWNLOAD_MAX_ATTEMPTS} attempts`);
 }
 
 async function convertToWebP(sourceBuffer, originalUrl, quality = 85) {
@@ -227,6 +295,16 @@ const GLOBAL_MAX_CONCURRENT = 8;
 export class WebPProcessorService {
   static instance = null;
   isRunning = false;
+  /** Work items whose steps are still running (for `drain()` at shutdown). */
+  inFlightItems = new Set();
+  /** Ids of the work items whose steps this process is running (for the boot/monitor recovery). */
+  inFlightIds = new Set();
+  /** A poll is running right now (its `processPendingTasks` has not returned). */
+  pollInFlight = false;
+  /** A wake-up arrived while a poll was in flight: poll again as soon as it ends. */
+  pollAgain = false;
+  /** The timer of the next regular tick (exactly one is ever scheduled). */
+  nextTick = null;
 
   static getInstance() {
     if (!WebPProcessorService.instance) {
@@ -238,24 +316,96 @@ export class WebPProcessorService {
   start() {
     if (this.isRunning) return;
     this.isRunning = true;
+    // The convert route (inside the React Router bundle, which cannot import
+    // this root module) nudges the worker through this hook right after it has
+    // created the task rows, so a conversion starts at once instead of waiting
+    // for the next 10s tick. Same pattern as `globalThis.__getShopAccessToken`.
+    globalThis.__wakeWebpProcessor = () => this.wake();
+    // The recovery (task-recovery.service.js) must never reset a row THIS
+    // process is converting, however silent the row has become (a database
+    // outage longer than the stale window makes the heartbeat fail quietly).
+    // Not removed by stop(): conversions in flight at shutdown are still ours.
+    globalThis.__webpInFlightTaskIds = () => new Set(this.inFlightIds);
     this.poll();
     console.log("[WebPProcessor] Service started, polling every", POLL_INTERVAL_MS / 1000, "seconds");
   }
 
   stop() {
     this.isRunning = false;
+    if (this.nextTick) clearTimeout(this.nextTick);
+    this.nextTick = null;
+    this.pollAgain = false;
+    if (globalThis.__wakeWebpProcessor) delete globalThis.__wakeWebpProcessor;
+  }
+
+  /**
+   * Shutdown courtesy: after `stop()`, give the conversions already in flight a
+   * few seconds to land before the process exits. Never rejects, never waits
+   * longer than `timeoutMs`.
+   *
+   * Judged worth the six lines, and no more than that: server.js force-exits
+   * 10s after the signal, so this cannot save a long conversion — it saves the
+   * short ones (a small image is download + sharp + four Shopify calls) from
+   * being cut off between "new media created" and "original deleted", which is
+   * the state the boot recovery can only flag for manual review. A conversion
+   * that outlives it is covered by the heartbeat/stale rule instead (a row
+   * whose owner is gone goes silent and the recovery classifies it).
+   */
+  async drain(timeoutMs = 4000) {
+    if (this.inFlightItems.size === 0) return;
+    let timer;
+    await Promise.race([
+      Promise.allSettled([...this.inFlightItems]),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+
+  /**
+   * Poll NOW rather than at the next tick. Never runs two polls at once: while
+   * one is in flight the wake-up is remembered and the poll runs again the
+   * moment the current one ends (its rows may have been created after that
+   * poll's queries ran). Never throws.
+   */
+  wake() {
+    if (!this.isRunning) return;
+    if (this.pollInFlight) {
+      this.pollAgain = true;
+      return;
+    }
+    this.poll().catch(() => {});
   }
 
   async poll() {
     if (!this.isRunning) return;
+    if (this.pollInFlight) {
+      // A tick and a wake-up can meet; the second one is folded into the first.
+      this.pollAgain = true;
+      return;
+    }
+    if (this.nextTick) clearTimeout(this.nextTick);
+    this.nextTick = null;
+    this.pollInFlight = true;
 
     try {
       await this.processPendingTasks();
     } catch (err) {
       console.error("[WebPProcessor] Poll error:", err);
+    } finally {
+      this.pollInFlight = false;
     }
 
-    setTimeout(() => this.poll(), POLL_INTERVAL_MS);
+    if (!this.isRunning) return;
+    if (this.pollAgain) {
+      this.pollAgain = false;
+      // Next macrotask, not a recursive call: keeps the stack flat and gives
+      // `stop()` a chance to land in between.
+      this.nextTick = setTimeout(() => this.poll(), 0);
+      return;
+    }
+    this.nextTick = setTimeout(() => this.poll(), POLL_INTERVAL_MS);
   }
 
   async processPendingTasks() {
@@ -507,11 +657,12 @@ export class WebPProcessorService {
    * It has no lifetime cap of its own, deliberately. Its reach is bounded by
    * the loop it sits in — one beat per affected variant, and the variant cache
    * stops at 100 (`hasMoreVariants`) — so the worst case is a work item held
-   * open for the length of the work it is actually doing, roughly an hour if
-   * every one of those calls burns its full 30s ceiling. That costs one of the
-   * shop's concurrency slots and delays its batch; capping it instead would
-   * put the reaper back on a LIVE conversion, refund an image that is about to
-   * succeed and report it failed. Slow is the cheaper of the two.
+   * open for the length of the work it is actually doing: about 59 minutes in
+   * the worst case (100 x 30s = 50 min here, about 6 min of download, convert
+   * and upload before, about 2.5 min of Shopify calls after). The interval
+   * heartbeat in `_processTaskItem` IS capped (WEBP_HEARTBEAT_MAX_MS, 75 min),
+   * above that, so a genuinely wedged step eventually goes silent and the
+   * stuck-task reaper closes the row instead of it holding a slot forever.
    */
   async touchWorkItem(taskId) {
     await db.task
@@ -558,24 +709,75 @@ export class WebPProcessorService {
   }
 
   async _processTaskItem(task) {
+    // A conversion replaces the merchant's original on Shopify, so it may only
+    // START close to the moment they asked for it. An item that waited past
+    // WEBP_QUEUE_MAX_AGE_MS (app/config/webp-tasks.js) is failed with a code
+    // and refunded through the ordinary `failTask`, never run. Checked before
+    // anything else and before the row is marked `running`: nothing has touched
+    // Shopify for it, so the refund is owed and the batch settles from it.
+    if (isWebpItemExpiredInQueue(task.createdAt)) {
+      console.warn(
+        `[WebPProcessor] Task ${task.id} waited in the queue since ${new Date(task.createdAt).toISOString()} — expired, not started`,
+      );
+      await this.failTask(task, WEBP_EXPIRED_IN_QUEUE_ERROR, WEBP_CLAIMABLE_STATUS);
+      return;
+    }
+
     let taskData;
     try {
       taskData = JSON.parse(task.result || "{}");
     } catch {
-      await this.failTask(task, "Invalid task data");
+      await this.failTask(task, "Invalid task data", WEBP_CLAIMABLE_STATUS);
       return;
     }
 
     const { sourceUrl, productId } = taskData;
     if (!sourceUrl || !productId) {
-      await this.failTask(task, "Missing sourceUrl or productId");
+      await this.failTask(task, "Missing sourceUrl or productId", WEBP_CLAIMABLE_STATUS);
       return;
     }
+
+    // Heartbeat for the WHOLE life of the steps, not just of the wait: the
+    // abandon branch below stops waiting after WEBP_TASK_TIMEOUT_MS but the
+    // steps run on, and they must keep looking alive to the recovery of a newer
+    // container (WEBP_RUNNING_STALE_MS) and to the reaper. Progress writes
+    // alone are too sparse for that — a download can be silent for two minutes.
+    const steps = this._runWebpSteps(task, taskData);
+    // Capped (WEBP_HEARTBEAT_MAX_MS): a step that never settles must go silent
+    // at some point, or nothing could close its row and it would hold the
+    // shop's concurrency slot for as long as the process lives. What closes it
+    // is the STUCK-TASK REAPER (10 min of silence): it fails the row with
+    // `task_timed_out` and refunds the image. The recovery does not take it —
+    // it skips rows this process still has in flight (`inFlightIds`) — so the
+    // item is never reset to pending and never converted a second time. If the
+    // wedged step wakes up later it finishes its Shopify writes, but the row
+    // keeps the reaper's verdict (the guarded completion write; see the R4-DI9
+    // note in task-recovery.service.js).
+    const heartbeatStart = Date.now();
+    const heartbeat = setInterval(() => {
+      if (Date.now() - heartbeatStart > WEBP_HEARTBEAT_MAX_MS) {
+        clearInterval(heartbeat);
+        console.warn(`[WebPProcessor] Task ${task.id} still running after ${Math.round(WEBP_HEARTBEAT_MAX_MS / 60000)} min — heartbeat stopped, the stuck-task reaper will close the row`);
+        return;
+      }
+      this.touchWorkItem(task.id);
+    }, WEBP_ITEM_HEARTBEAT_MS);
+    heartbeat.unref?.();
+    const stopHeartbeat = () => clearInterval(heartbeat);
+    steps.then(stopHeartbeat, stopHeartbeat);
+    // Tracked for drain() at shutdown; settles when the steps do, whatever the wait did.
+    const tracked = steps.then(() => {}, () => {});
+    this.inFlightItems.add(tracked);
+    this.inFlightIds.add(task.id);
+    tracked.then(() => {
+      this.inFlightItems.delete(tracked);
+      this.inFlightIds.delete(task.id);
+    });
 
     let timeoutTimer;
     try {
       await Promise.race([
-        this._runWebpSteps(task, taskData),
+        steps,
         new Promise((_, reject) => {
           timeoutTimer = setTimeout(
             () => reject(new WebPItemAbandoned(`WebP task still running after ${WEBP_TASK_TIMEOUT_MS}ms`)),
@@ -605,12 +807,25 @@ export class WebPProcessorService {
 
   async _runWebpSteps(task, taskData) {
     const { sourceUrl, mediaId, productImageId, productId, altText: taskAltText } = taskData;
+    // Until the claim has landed the row is not ours: an error before it (the
+    // claim statement itself throwing) must not close a row another worker may
+    // have claimed, so such a failure is guarded on the waiting statuses.
+    let claimedByUs = false;
     try {
-      // Mark as running
-      await db.task.update({
-        where: { id: task.id },
+      // CLAIM the item: an atomic pending/queued -> running. The poll read this
+      // row as waiting some milliseconds (or, in a deploy overlap, a whole other
+      // container) ago; an unguarded update would let two workers both "win" it
+      // and run the destructive sequence twice. `count: 0` means somebody else
+      // holds it, it was reaped or the merchant cancelled it — not ours to run.
+      const claimed = await db.task.updateMany({
+        where: { id: task.id, status: { in: WEBP_CLAIMABLE_STATUS } },
         data: { status: "running", progress: 10 },
       });
+      if (claimed.count === 0) {
+        console.warn(`[WebPProcessor] Task ${task.id} is no longer waiting (claimed elsewhere, reaped or cancelled) — skipping`);
+        return;
+      }
+      claimedByUs = true;
 
       // 1. Download original image
       const sourceBuffer = await downloadImageAsBuffer(sourceUrl);
@@ -620,22 +835,15 @@ export class WebPProcessorService {
       const { buffer, filename } = await convertToWebP(sourceBuffer, sourceUrl);
       await db.task.update({ where: { id: task.id }, data: { progress: 50 } });
 
-      // 3. Get Shopify session for this shop
-      const session = await db.session.findFirst({
-        where: { shop: task.shop, isOnline: false },
-        orderBy: { lastActivityAt: "desc" },
-      });
-
-      if (!session?.accessToken) {
-        await this.failTask(task, "No valid session found for shop");
+      // 3. Get the shop's OFFLINE token — through the app (refreshed when it is
+      // an expiring token) when the bundle has registered its hook, otherwise
+      // read directly as before (app/utils/shop-access-token.js).
+      const resolved = await resolveShopAccessToken(task.shop, { db, decryptToken, logPrefix: "[WebPProcessor]" });
+      if (!resolved.token) {
+        await this.failTask(task, resolved.reason);
         return;
       }
-
-      const accessToken = decryptToken(session.accessToken);
-      if (!accessToken) {
-        await this.failTask(task, "Failed to decrypt session access token");
-        return;
-      }
+      const accessToken = resolved.token;
 
       // Use altText passed from the client; fall back to DB lookup if not present
       let originalAltText = taskAltText ?? null;
@@ -647,7 +855,7 @@ export class WebPProcessorService {
         originalAltText = productImage?.altText || null;
       }
 
-      const shopifyApiUrl = `https://${task.shop}/admin/api/2025-04/graphql.json`;
+      const shopifyApiUrl = adminGraphqlUrl(task.shop);
       const headers = {
         "X-Shopify-Access-Token": accessToken,
         "Content-Type": "application/json",
@@ -968,7 +1176,7 @@ export class WebPProcessorService {
       console.log(`[WebPProcessor] Task ${task.id} completed: ${sourceUrl} → ${resolvedUrl ?? "(URL pending)"}`);
     } catch (err) {
       console.error(`[WebPProcessor] Task ${task.id} failed:`, err);
-      await this.failTask(task, describeError(err));
+      await this.failTask(task, describeError(err), claimedByUs ? undefined : WEBP_CLAIMABLE_STATUS);
     }
   }
 
@@ -1020,7 +1228,7 @@ export class WebPProcessorService {
    * fail on its own, and a failed row whose refund was skipped because a
    * SELECT blinked is the one direction the arithmetic may not err in.
    */
-  async failTask(task, error) {
+  async failTask(task, error, onlyFromStatuses = WEBP_NON_TERMINAL_STATUS) {
     const { id: taskId, shop } = task ?? {};
     if (!taskId || !shop) {
       // Loudly, never quietly: an id with no shop beside it would close the row
@@ -1044,7 +1252,13 @@ export class WebPProcessorService {
         // asked for. Only a pre-split row of the parent type is reachable this
         // way at all: `app.tasks.tsx` hides `imageWebpConversionItem`, and the
         // parent row a merchant can cancel spent nothing of its own.
-        where: { id: taskId, status: { in: WEBP_NON_TERMINAL_STATUS } },
+        //
+        // `onlyFromStatuses` narrows that further for exits BEFORE the claim
+        // (expired in the queue, unreadable job data, a claim that threw): the
+        // row is not ours yet, and `running` there means another worker took it
+        // since the poll read it — failing it would refund an image that is
+        // being converted.
+        where: { id: taskId, status: { in: onlyFromStatuses } },
         data: { status: "failed", completedAt: new Date(), error },
       });
 
@@ -1074,7 +1288,7 @@ export class WebPProcessorService {
         //
         // The row carrying OUR error is the evidence. Every other verdict
         // names itself (the reaper's `task_timed_out`, the boot recovery's
-        // "Server restarted at progress …"), and a SECOND failTask for this
+        // "Worker stopped at progress …"), and a SECOND failTask for this
         // row cannot reach this branch at all: its first statement would have
         // answered zero without throwing.
         const after = await db.task

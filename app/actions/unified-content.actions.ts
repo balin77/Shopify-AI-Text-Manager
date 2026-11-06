@@ -87,10 +87,12 @@ interface UnifiedContentActionsConfig {
   db: PrismaClient;
   aiSettings: AISettings | null;
   aiInstructions: AIInstructions | null;
+  /** The request's abort signal (see ContentActionHandlerContext.signal). */
+  signal?: AbortSignal;
 }
 
 export async function handleUnifiedContentActions(config: UnifiedContentActionsConfig) {
-  const { admin, session, formData, contentConfig, db, aiSettings, aiInstructions } = config;
+  const { admin, session, formData, contentConfig, db, aiSettings, aiInstructions, signal } = config;
 
   const action = getFormString(formData, "action");
   const itemId = getFormString(formData, "itemId") || getFormString(formData, "productId");
@@ -165,6 +167,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     aiSettings,
     aiInstructions,
     itemId: itemId || "",
+    signal,
     seoTitleMaxChars,
     seoLimits,
     translationMode,

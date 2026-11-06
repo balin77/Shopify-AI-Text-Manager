@@ -270,6 +270,7 @@ export function ImageGalleryField({
           >
             {previewImage && (
               <img
+                className="app-touch-exempt-img"
                 src={(!isFreePlan ? previewTile?.src : null) ?? previewImage.url}
                 alt={altTexts[selectedImageIndex] || previewImage.altText || t.featuredImage || "Image"}
                 title={(!isFreePlan ? previewTile?.title : null) ?? extractFilename(previewImage.url)}
@@ -380,6 +381,7 @@ export function ImageGalleryField({
                     }}
                   >
                     <img
+                      className="app-touch-exempt-img"
                       src={tile?.src ?? image.url}
                       alt={altTexts[index] || image.altText || `${t.image || "Image"} ${index + 1}`}
                       style={{

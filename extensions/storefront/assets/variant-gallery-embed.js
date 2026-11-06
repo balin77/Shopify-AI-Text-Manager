@@ -501,8 +501,8 @@ class CpEmbedGallery extends HTMLElement {
       : (isFirst ? 'loading="eager" fetchpriority="high"' : 'loading="lazy" fetchpriority="auto"');
     return `<img
           class="cp-gallery__main-image${active ? ' is-active' : ''}"
-          src="${img.src_800}"
-          srcset="${img.src_400} 400w, ${img.src_800} 800w, ${img.src_1200} 1200w"
+          src="${this._esc(img.src_800)}"
+          srcset="${this._esc(img.src_400)} 400w, ${this._esc(img.src_800)} 800w, ${this._esc(img.src_1200)} 1200w"
           sizes="(min-width: 1024px) 50vw, 100vw"
           alt="${this._esc(img.alt)}"
           ${loadAttrs}
@@ -877,10 +877,10 @@ class CpEmbedGallery extends HTMLElement {
         data-index="${i}"
         data-type="${this._esc(t)}"
         data-overlay="${overlay}"
-        data-w="${item.w || ''}"
-        data-h="${item.h || ''}"
+        data-w="${this._esc(item.w || '')}"
+        data-h="${this._esc(item.h || '')}"
       >
-        <img src="${item.thumb}" alt="${this._esc(item.alt)} ${i + 1}" loading="lazy" width="160" height="160">
+        <img src="${this._esc(item.thumb)}" alt="${this._esc(item.alt)} ${i + 1}" loading="lazy" width="160" height="160">
       </button>`;
     }).join('');
 

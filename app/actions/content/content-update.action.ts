@@ -21,6 +21,7 @@ import {
   wasEverLive,
 } from "~/services/seo/handle-redirect.shared";
 import type { HandleRedirectNoteCode } from "~/services/seo/handle-redirect.server";
+import { savesNamePassengers, withoutPassengers } from "~/services/editor/passenger-fields.shared";
 
 /** What the client needs to phrase the redirect outcome in its own language. */
 interface HandleRedirectNote {
@@ -34,12 +35,22 @@ interface HandleRedirectNote {
 
 export async function handleUpdateContent(
   ctx: ContentActionHandlerContext,
-  formData: FormData,
+  submittedForm: FormData,
 ): Promise<DataResponse> {
   const { admin, session, contentConfig, db, itemId, shopifyContentService } = ctx;
 
-  const locale = getFormString(formData, "locale");
-  const primaryLocale = getFormString(formData, "primaryLocale");
+  const locale = getFormString(submittedForm, "locale");
+  const primaryLocale = getFormString(submittedForm, "primaryLocale");
+  // A primary save carries every field of the form; the ones the merchant did not change are
+  // PASSENGERS and are not written (passenger-fields.shared.ts): a stale copy of the old text
+  // can never overwrite what Shopify holds by now. Everything below works on the form without them.
+  const { form: formData } =
+    locale === primaryLocale && savesNamePassengers(contentConfig.resourceType, false)
+      ? withoutPassengers(
+          submittedForm,
+          new Set(contentConfig.fieldDefinitions.filter((f) => !!f.translationKey).map((f) => f.key)),
+        )
+      : { form: submittedForm };
   const changedFieldsDebug = getFormString(formData, "changedFields");
   // Market scope for market-specific ("Translate & Adapt") translations.
   // Primary-locale saves are always global — Shopify forbids market-specific
@@ -204,9 +215,15 @@ export async function handleUpdateContent(
       // work that is not urgent.
       if (result.created && redirectResource === "blog" && previousHandle) {
         const nextBlogHandle = storedHandle || submittedHandle;
-        void import("~/services/seo/blog-article-redirects.server")
-          .then(({ redirectBlogArticles }) =>
-            redirectBlogArticles(admin, db, session.shop, {
+        // Detached: with expiring offline tokens the request's client may die
+        // mid-run (hundreds of calls), so it gets the refreshing one; flag
+        // off, the request's client exactly as before (offline-admin.server.ts).
+        void Promise.all([
+          import("~/services/seo/blog-article-redirects.server"),
+          import("~/utils/offline-admin.server"),
+        ])
+          .then(([{ redirectBlogArticles }, { backgroundAdmin }]) =>
+            redirectBlogArticles(backgroundAdmin(session.shop, admin), db, session.shop, {
               blogId: itemId,
               previousBlogHandle: previousHandle,
               nextBlogHandle,
@@ -561,6 +578,9 @@ export async function handleUpdateContent(
     if (
       contentConfig.resourceType === "Collection" &&
       isPrimarySave &&
+      // A refused save (e.g. the other SEO half could not be read) leaves the collection as it was:
+      // its rules are not written either.
+      (result as { success?: boolean })?.success !== false &&
       changedAttributeFields?.includes("collectionRules")
     ) {
       const { applyCollectionRuleChange } = await import("~/services/collection-rules.server");

@@ -12,8 +12,10 @@
  *      (URL itself is dead — no Shopify call needed).
  *   2. Reconcile pass: for products that had a WebP conversion in the last
  *      30 days (highest-risk pool), fetch the live media list from Shopify
- *      and delete rows whose mediaId is not in the response. Rate-limited
- *      to one Shopify call every ~500ms per shop.
+ *      and delete rows whose mediaId is not in the response. The media list
+ *      is paged to its END (`fetchProductMediaIds`); a failed or truncated
+ *      read skips that product and deletes nothing. Rate-limited to one
+ *      product every ~500ms per shop.
  *
  * Runs once at server startup and then every 24 hours.
  */
@@ -21,6 +23,8 @@
 import { PrismaClient } from "@prisma/client";
 import crypto from "crypto";
 import { WEBP_ITEM_TASK_TYPE, WEBP_PARENT_TASK_TYPE } from "./app/config/webp-tasks.js";
+import { adminGraphqlUrl } from "./app/config/admin-api-version.js";
+import { resolveShopAccessToken } from "./app/utils/shop-access-token.js";
 
 const prisma = globalThis.__db ?? new PrismaClient();
 if (!globalThis.__db) globalThis.__db = prisma;
@@ -69,30 +73,70 @@ async function fetchWithTimeout(url, options) {
   }
 }
 
-async function fetchProductMediaIds(shop, accessToken, productGid) {
-  const res = await fetchWithTimeout(`https://${shop}/admin/api/2025-04/graphql.json`, {
-    method: "POST",
-    headers: {
-      "X-Shopify-Access-Token": accessToken,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      query: `query($id: ID!) {
-        product(id: $id) {
-          media(first: 250) { edges { node { ... on MediaImage { id } } } }
-        }
-      }`,
-      variables: { id: productGid },
-    }),
-  });
-  if (!res.ok) throw new Error(`Shopify HTTP ${res.status}`);
-  const data = await res.json();
-  if (data.errors) throw new Error(`Shopify errors: ${JSON.stringify(data.errors)}`);
-  const product = data.data?.product;
-  if (!product) return null; // product no longer exists on Shopify
-  return (product.media?.edges ?? [])
-    .map(e => e.node?.id)
-    .filter(Boolean);
+// Shopify caps one connection page at 250. A product past that has more
+// media than one page, and the reconcile pass deletes every cached row whose
+// mediaId is NOT in the list — so a list that stopped after the first page
+// would delete the rows (and, by cascade, their ProductImageAltTranslation
+// rows) of every medium past it. The list is therefore paged to its end, and
+// anything short of a complete read THROWS, which the caller counts as
+// "skipped" and deletes nothing for.
+const MEDIA_PAGE_SIZE = 250;
+const MAX_MEDIA_PAGES = 40; // 10 000 media; past that the read is treated as truncated
+
+/**
+ * Every MediaImage id of a product, read to the end of the connection.
+ *
+ * @returns {Promise<string[] | null>} null when the product no longer exists
+ *   on Shopify; throws on any failed, malformed or truncated read.
+ */
+export async function fetchProductMediaIds(shop, accessToken, productGid, options = {}) {
+  const fetchImpl = options.fetchImpl ?? fetchWithTimeout;
+  const maxPages = options.maxPages ?? MAX_MEDIA_PAGES;
+  const ids = [];
+  let after = null;
+  for (let page = 0; page < maxPages; page++) {
+    const res = await fetchImpl(adminGraphqlUrl(shop), {
+      method: "POST",
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query: `query($id: ID!, $first: Int!, $after: String) {
+          product(id: $id) {
+            media(first: $first, after: $after) {
+              edges { node { ... on MediaImage { id } } }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }`,
+        variables: { id: productGid, first: MEDIA_PAGE_SIZE, after },
+      }),
+    });
+    if (!res.ok) throw new Error(`Shopify HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.errors) throw new Error(`Shopify errors: ${JSON.stringify(data.errors)}`);
+    const product = data.data?.product;
+    if (!product) {
+      // Only the FIRST page may report the product as gone. A later page
+      // answering null is a read that broke midway, not a deletion.
+      if (page === 0) return null;
+      throw new Error("product vanished while paging its media");
+    }
+    const media = product.media;
+    const pageInfo = media?.pageInfo;
+    if (!media || !Array.isArray(media.edges) || !pageInfo || typeof pageInfo.hasNextPage !== "boolean") {
+      throw new Error("media connection came back without edges/pageInfo");
+    }
+    for (const edge of media.edges) {
+      const id = edge?.node?.id;
+      if (id) ids.push(id);
+    }
+    if (!pageInfo.hasNextPage) return ids;
+    if (!pageInfo.endCursor) throw new Error("media connection has a next page but no cursor");
+    after = pageInfo.endCursor;
+  }
+  throw new Error(`media list truncated after ${maxPages} page(s)`);
 }
 
 export class StaleImageCleanupService {
@@ -189,28 +233,16 @@ export class StaleImageCleanupService {
     }
 
     for (const [shop, productIds] of byShop) {
-      const session = await prisma.session.findFirst({
-        where: { shop, isOnline: false },
-        orderBy: { lastActivityAt: "desc" },
-      });
-      if (!session?.accessToken) {
-        console.warn(`[StaleImageCleanup] No session for shop ${shop} — skipping ${productIds.length} product(s)`);
+      // Through the app (refreshed when it is an expiring token) when the
+      // bundle has registered its hook, a direct read otherwise
+      // (app/utils/shop-access-token.js).
+      const resolved = await resolveShopAccessToken(shop, { db: prisma, decryptToken, logPrefix: "[StaleImageCleanup]" });
+      if (!resolved.token) {
+        console.warn(`[StaleImageCleanup] ${resolved.reason} (${shop}) — skipping ${productIds.length} product(s)`);
         skipped += productIds.length;
         continue;
       }
-
-      let accessToken;
-      try {
-        accessToken = decryptToken(session.accessToken);
-      } catch (err) {
-        console.warn(`[StaleImageCleanup] Token decrypt failed for ${shop} — skipping:`, err.message);
-        skipped += productIds.length;
-        continue;
-      }
-      if (!accessToken) {
-        skipped += productIds.length;
-        continue;
-      }
+      const accessToken = resolved.token;
 
       for (const productId of productIds) {
         try {

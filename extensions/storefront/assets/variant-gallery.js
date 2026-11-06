@@ -143,13 +143,13 @@ class CpVariantGallery extends HTMLElement {
           class="cp-gallery__thumb${i === 0 ? ' is-active' : ''}"
           type="button"
           aria-label="Image ${i + 1}"
-          data-src-sm="${img.src_400}"
-          data-src-md="${img.src_800}"
-          data-src-lg="${img.src_1200}"
-          data-w="${img.w || ''}"
-          data-h="${img.h || ''}"
+          data-src-sm="${this._esc(img.src_400)}"
+          data-src-md="${this._esc(img.src_800)}"
+          data-src-lg="${this._esc(img.src_1200)}"
+          data-w="${this._esc(img.w || '')}"
+          data-h="${this._esc(img.h || '')}"
         >
-          <img src="${img.thumb}" alt="${this._esc(img.alt)} ${i + 1}" loading="lazy" width="160" height="160">
+          <img src="${this._esc(img.thumb)}" alt="${this._esc(img.alt)} ${i + 1}" loading="lazy" width="160" height="160">
         </button>`).join('');
       thumbsHtml = `<div class="cp-gallery__thumbs">${items}</div>`;
     }
@@ -170,8 +170,8 @@ class CpVariantGallery extends HTMLElement {
     const h = Number(img && img.h) > 0 ? Number(img.h) : '';
     return `<img
           class="cp-gallery__main-image"
-          src="${img.src_800}"
-          srcset="${img.src_400} 400w, ${img.src_800} 800w, ${img.src_1200} 1200w"
+          src="${this._esc(img.src_800)}"
+          srcset="${this._esc(img.src_400)} 400w, ${this._esc(img.src_800)} 800w, ${this._esc(img.src_1200)} 1200w"
           sizes="(min-width: 1024px) 50vw, 100vw"
           alt="${this._esc(img.alt)}"
           loading="eager"

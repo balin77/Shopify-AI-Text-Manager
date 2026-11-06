@@ -338,7 +338,7 @@ export function LocalizedMediaPlainExtras() {
                       borderRadius: 8,
                     }}
                   >
-                    {src && <img src={`${src}${src.includes("?") ? "&" : "?"}width=160`} alt={m.alt ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                    {src && <img className="app-touch-exempt-img" src={`${src}${src.includes("?") ? "&" : "?"}width=160`} alt={m.alt ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
                     <span aria-hidden style={{ position: "absolute", right: 4, bottom: 2, fontSize: 12, color: "#fff", textShadow: "0 0 3px #000" }}>▶</span>
                   </button>
                   {tile && (
