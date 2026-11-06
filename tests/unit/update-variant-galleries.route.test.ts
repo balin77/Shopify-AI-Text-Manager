@@ -38,6 +38,12 @@ let onAttach: (() => void) | null;
 let attachFailFor: string | null;
 let attachLagFor: string | null;
 let createdCounter: number;
+// Requested media indices Shopify refuses to create (no slot in the answer), the filename each created medium reports,
+// whether the filename re-read fails, and a rename rule (Shopify appending a suffix to an existing name).
+let refuseCreateIdx: number[];
+let createdNames: Record<string, string | null>;
+let createdFilesFail: boolean;
+let renameCreated: ((filename: string) => string) | null;
 // How many variants the product has: defaults to the number of scripted variants; undefined answer = not answered.
 let variantCountOverride: number | null | undefined;
 let variantCountMode: "count" | "fallback" | "none";
@@ -130,12 +136,24 @@ vi.mock("~/shopify.server", () => ({
           }
           if (name === "productCreateMedia") {
             const media = opts?.variables?.media ?? [];
-            const created = media.map(() => {
+            const created = media.flatMap((m: { originalSource: string }, i: number) => {
+              if (refuseCreateIdx.includes(i)) return [];
               const id = img(100 + ++createdCounter);
               productMedia[id] = "IMAGE";
-              return { id };
+              const base = decodeURIComponent((m.originalSource.split("?")[0].split("/").pop() ?? ""));
+              createdNames[id] = renameCreated ? renameCreated(base) : base;
+              return [{ id }];
             });
             return reply({ data: { productCreateMedia: { media: created, mediaUserErrors: createMediaErrors } } });
+          }
+          if (name === "createdMediaFiles") {
+            if (createdFilesFail) {
+              const e: any = new Error("GraphQL query failed");
+              e.body = { errors: [{ message: "Throttled", extensions: { code: "THROTTLED" } }] };
+              throw e;
+            }
+            const ids: string[] = opts?.variables?.ids ?? [];
+            return reply({ data: { nodes: ids.map((id) => ({ id, image: createdNames[id] ? { url: `https://cdn.shopify.com/s/files/1/0/${createdNames[id]}?v=1` } : null })) } });
           }
           if (name === "productVariantsBulkUpdate") {
             if (bulkErrors.length === 0) {
@@ -212,6 +230,10 @@ beforeEach(() => {
   attachFailFor = null;
   attachLagFor = null;
   createdCounter = 0;
+  refuseCreateIdx = [];
+  createdNames = {};
+  createdFilesFail = false;
+  renameCreated = null;
   variantCountOverride = undefined;
   variantCountMode = "count";
   updateMany.mockReset();
@@ -1344,5 +1366,80 @@ describe("sixth review: server side", () => {
       variantGalleryOrder: [{ variantId: V1, orderJson: "" }, { variantId: V2, orderJson: "" }],
     });
     expect(ok.success).toBe(true);
+  });
+});
+
+describe("a productCreateMedia answer with FEWER media than requested is matched by filename", () => {
+  const up = (name: string) => ({ resourceUrl: `https://staged.example/tmp/9/products/${name}`, kind: "image" });
+
+  it("the refused file is simply retried; the created ones are mapped by filename, whatever the answer's order", async () => {
+    refuseCreateIdx = [0]; // a.jpg refused: the answer lists b.jpg and c.jpg only
+    const res = await post({ newMedia: [up("a.jpg"), up("b.jpg"), up("c.jpg")] });
+    expect(res.success).toBe(false);
+    expect(res.createdMedia.map((c: any) => c.resourceUrl.split("/").pop()).sort()).toEqual(["b.jpg", "c.jpg"]);
+    expect(res.uncertainMedia).toBeUndefined();
+    expect(bulkCount()).toBe(0);
+    // b.jpg is mapped to the medium that actually reports b.jpg
+    const b = res.createdMedia.find((c: any) => c.resourceUrl.endsWith("/b.jpg"));
+    expect(createdNames[b.mediaId]).toBe("b.jpg");
+  });
+
+  it("Shopify renamed a duplicate (stem + suffix): still mapped", async () => {
+    refuseCreateIdx = [0];
+    renameCreated = (f) => f.replace(/^b\./, "b_1a2b3c.");
+    const res = await post({ newMedia: [up("a.jpg"), up("b.jpg"), up("c.jpg")] });
+    const b = res.createdMedia.find((c: any) => c.resourceUrl.endsWith("/b.jpg"));
+    expect(b).toBeTruthy();
+    expect(createdNames[b.mediaId]).toBe("b_1a2b3c.jpg");
+    expect(res.uncertainMedia).toBeUndefined();
+  });
+
+  it("the same stem twice is AMBIGUOUS: not mapped, named as uncertain", async () => {
+    refuseCreateIdx = [0];
+    // two uploads from different folders, same filename
+    const res = await post({ newMedia: [up("a.jpg"), { resourceUrl: "https://staged.example/tmp/8/products/c.jpg", kind: "image" }, up("c.jpg")] });
+    expect(res.success).toBe(false);
+    expect(res.createdMedia).toEqual([]);
+    expect(res.uncertainMedia.map((u: any) => u.resourceUrl).sort()).toEqual([
+      "https://staged.example/tmp/8/products/c.jpg",
+      "https://staged.example/tmp/9/products/a.jpg",
+      "https://staged.example/tmp/9/products/c.jpg",
+    ].sort());
+  });
+
+  it("a failed re-read maps nothing and reports every upload as uncertain (no blind re-upload)", async () => {
+    refuseCreateIdx = [0];
+    createdFilesFail = true;
+    const res = await post({ newMedia: [up("a.jpg"), up("b.jpg"), up("c.jpg")] });
+    expect(res.success).toBe(false);
+    expect(res.createdMedia).toEqual([]);
+    expect(res.uncertainMedia).toHaveLength(3);
+  });
+
+  it("nothing created at all: no re-read, nothing uncertain (a retry uploads everything, nothing exists)", async () => {
+    refuseCreateIdx = [0, 1];
+    const res = await post({ newMedia: [up("a.jpg"), up("b.jpg")] });
+    expect(res.success).toBe(false);
+    expect(res.uncertainMedia).toBeUndefined();
+    expect(names().includes("createdMediaFiles")).toBe(false);
+  });
+
+  it("equal counts (the normal path) cost no extra call", async () => {
+    const res = await post({ newMedia: [up("a.jpg"), up("b.jpg")], variantGalleries: [{ variantId: V1, fileGids: [img(2)], galleryOnly: true }] });
+    expect(res.success).toBe(true);
+    expect(names().includes("createdMediaFiles")).toBe(false);
+  });
+
+  it("a retry that references the mapped media by GID and omits the uncertain ones creates nothing twice", async () => {
+    refuseCreateIdx = [0];
+    const first = await post({ newMedia: [up("a.jpg"), up("b.jpg"), up("c.jpg")] });
+    expect(first.createdMedia).toHaveLength(2);
+    // the client resends only the refused file, the others by GID
+    calls = [];
+    refuseCreateIdx = [];
+    const retry = await post({ newMedia: [up("a.jpg")], variantGalleries: [{ variantId: V1, fileGids: [first.createdMedia[0].mediaId], galleryOnly: true }] });
+    expect(retry.success).toBe(true);
+    const created = calls.find((c) => c.name === "productCreateMedia")!.variables.media;
+    expect(created).toHaveLength(1);
   });
 });

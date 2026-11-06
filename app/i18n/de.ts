@@ -1986,6 +1986,7 @@ export const de = {
     mediaClearMainFailed: "Die Bilder wurden gelöscht, aber das Hauptbild einer Variante konnte nicht entfernt werden. Bitte die Variante in Shopify prüfen.",
     mainChangedElsewhere: "Das Hauptbild der Variante «{variant}» wurde inzwischen anderswo geändert. Deine Änderung daran und die übrigen ungespeicherten Änderungen dieser Variante wurden deshalb nicht gespeichert. Lade das Produkt neu und wiederhole sie bei Bedarf.",
     mainLookupFailed: "Der aktuelle Stand der Varianten konnte bei Shopify nicht gelesen werden. Es wurde nichts hochgeladen und für die Varianten nichts gespeichert. Bitte versuche es erneut.",
+    mediaUncertain: "Diese Dateien sind vielleicht schon in der Produktgalerie: {files}. Sie wurden nicht noch einmal hochgeladen, und die App konnte nicht zuordnen, welches Bild welches ist. Bitte prüfen Sie die Galerie und fügen Sie fehlende Bilder hinzu.",
     mainLookupFailedAfterUpload: "Der aktuelle Stand der Varianten konnte bei Shopify nicht gelesen werden, deshalb wurde für die Varianten nichts gespeichert. Schon hochgeladene Bilder bleiben am Produkt. Bitte speichere erneut.",
     mainFileGone: "Das als Hauptbild gewählte Bild existiert nicht mehr (Variante «{variant}»). Ihre ungespeicherten Änderungen wurden nicht gespeichert. Lade das Produkt neu.",
     mainAttachNotConfirmed: "Das Bild wurde dem Produkt hinzugefügt, ist bei Shopify aber noch nicht sichtbar. Für die Variante «{variant}» wurde nichts gespeichert, deine Änderung bleibt erhalten. Bitte speichere in einem Moment erneut.",
