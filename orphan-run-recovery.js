@@ -59,12 +59,15 @@ export const INTERRUPTED_SNAPSHOT_ERROR = "interrupted";
 export const HEARTBEAT_TASK_TYPES = ["seoCrawl"];
 
 /**
- * Detached runners that do NOT heartbeat (a bulk AI job may be silent for
- * minutes between two provider calls), so the periodic reaper must keep its
- * generous 45-minute rule for them, but whose runner still cannot outlive its
- * process. They are failed ONLY at boot (rule 2 above, `olderThan: null`):
- * without that a restart in the middle of a run left the Task "running" for
- * ~45-50 minutes and single-flight refused a new run for all that time.
+ * Detached runners that write a liveness heartbeat from a TIMER (every 15 s,
+ * independent of their progress, because a bulk AI job may make no progress
+ * for minutes between two provider calls) and cannot outlive their process.
+ * At boot they are failed only once silent for BOOT_SILENCE_MS (a live run in
+ * another container during a deploy keeps beating), and the periodic reaper
+ * fails them after the heartbeat stall threshold with `task_interrupted`
+ * instead of the 45-minute rule. Without that a restart in the middle of a
+ * run left the Task "running" for ~45-50 minutes and single-flight refused a
+ * new run for all that time.
  * Keep this list to types whose run is a fire-and-forget promise in the web
  * process and whose rerun is safe.
  */
