@@ -256,6 +256,7 @@ export const guideDe: GuideCopy = {
           heading: "Vorschlag annehmen",
           paragraphs: [
             "Das Ergebnis erscheint zuerst als Vorschlag über dem Feld. „Übernehmen“ setzt ihn ins Feld und speichert genau dieses eine Feld sofort — andere Felder, in denen Sie noch ungespeicherte Änderungen haben, bleiben davon unberührt. „Ablehnen“ lässt alles, wie es war. Mit „Übernehmen & übersetzen“ wird der akzeptierte Text gespeichert und gleich in alle Sprachen übertragen.",
+            "In einer Fremdsprache startet die Übersetzung in die anderen Sprachen erst, wenn Shopify das Speichern des angenommenen Textes bestätigt hat. Wird das Speichern abgelehnt oder nicht bestätigt, wird nichts übersetzt, und eine Meldung sagt es.",
           ],
         },
       ],

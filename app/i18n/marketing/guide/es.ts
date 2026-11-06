@@ -253,6 +253,7 @@ export const guideEs: GuideCopy = {
           heading: "Aceptar una sugerencia",
           paragraphs: [
             "El resultado aparece primero como sugerencia encima del campo. «Aceptar» lo pone en el campo y guarda al instante exactamente ese campo — los demás campos con cambios sin guardar no se tocan. «Rechazar» lo deja todo como estaba. «Aceptar y traducir» guarda el texto aceptado y lo lleva directamente a todos los idiomas.",
+            "En un idioma extranjero, la traducción a los demás idiomas empieza solo cuando Shopify ha confirmado que se guardó el texto aceptado. Si el guardado se rechaza o no se confirma, no se traduce nada y un mensaje lo indica.",
           ],
         },
       ],

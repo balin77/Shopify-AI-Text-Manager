@@ -253,6 +253,7 @@ export const guideEn: GuideCopy = {
           heading: "Accepting a suggestion",
           paragraphs: [
             "The result first appears as a suggestion above the field. “Accept” puts it into the field and saves exactly that one field straight away — other fields where you still have unsaved changes are left alone. “Decline” leaves everything as it was. “Accept & translate” saves the accepted text and carries it straight into every language.",
+            "In a foreign language, the translation into the other languages starts only once Shopify has confirmed that the accepted text was saved. If saving is refused or not confirmed, nothing is translated and a message says so.",
           ],
         },
       ],

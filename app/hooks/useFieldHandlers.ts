@@ -9,6 +9,7 @@
 import type { PartialSave } from "./useUiDataLoader";
 import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
 import { isAttributeField, isTranslatableFieldDefinition } from "../services/content-attributes.shared";
+import { FOREIGN_STEP1_DEADLINE_MS, type ForeignStep1Flow, type Step1Result } from "../services/editor/foreign-step1.shared";
 import { buildLocaleDeletedKey, buildStageMark, dropLocaleMarks } from "../services/editor/deleted-translation-marks.shared";
 import { useCallback, useRef, useState } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
@@ -121,7 +122,7 @@ export interface FieldHandlerProps {
   pendingCopyFieldItemIdRef: { current: string | null };
   pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string; step1Partial?: object } | null };
   acceptedPrimaryValueRef: { current: { fieldKey: string; value: string } | null };
-  foreignStep1Ref: { current: Map<object, { saved: boolean | null; step2: object | null; undo?: () => void; done?: boolean }> };
+  foreignStep1Ref: { current: Map<object, ForeignStep1Flow> };
   foreignAcceptPrimaryStepRef: { current: Map<object, { itemId: string; fieldKey: string; staged: string; step1: object }> };
   initialLoadSuccessfulRef: { current: boolean };
   retryCountRef: { current: number };
@@ -1643,6 +1644,19 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
       return;
     }
 
+    // The AI call starts only after step 1 (the text in `L`) is CONFIRMED: the server stores every other foreign
+    // language it translates at once, so a refused / unconfirmed step 1 must not be followed by translations of a
+    // text that does not exist in `L`. Refusal, an unconfirmed field and no answer before the deadline all end the
+    // flow with NOTHING translated (and said so).
+    const startTranslation = () => {
+    if (selectedItemIdRef.current !== requestItemId) { flowDone(); return; }
+    // A run of the item started while step 1 was out: the translation would race it.
+    if (isOwnSaveBlocked?.(requestItemId, primaryLocale)) {
+      flowDone();
+      sayTranslateToOthersSkipped?.();
+      setIsAcceptAndTranslateFlow(false);
+      return;
+    }
     debugLog.acceptAndTranslate(' Foreign locale: single batch translate (primary + others), source = ' + L);
     submitAIAction(
       {
@@ -1683,14 +1697,9 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         // changedFields → existing foreign translations are preserved).
         // Read-only rubrics never translate/save/overlay the main language.
         const primaryTranslated = primaryReadOnly ? "" : (translations[primaryLocale] || "").trim();
-        // Step 1 (the text in this language) was REFUSED before the translation came back: the main-language
-        // text would be written from a foreign text that was never saved, so step 2 is not sent at all.
-        const step1Refused = foreignStep1Ref.current.get(step1Partial)?.saved === false;
-        if (!primaryTranslated || step1Refused) flowDone();
-        const skipNote = primaryTranslated && step1Refused
-          ? ` ${String(t.content?.foreignAcceptPrimaryStepNotSent || "The translation into the main language was not sent, because the text in this language was not saved.")}`
-          : "";
-        if (primaryTranslated && !step1Refused) {
+        // Step 1 is CONFIRMED by construction (the AI call started only after it), so step 2 follows.
+        if (!primaryTranslated) flowDone();
+        if (primaryTranslated) {
           // Overlay the new primary value so the main language shows it
           // IMMEDIATELY when the user switches to it — independent of when the
           // primary base save commits or whether the loader reads stale data.
@@ -1751,16 +1760,16 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
             String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
               .replace("{successCount}", String(Object.keys(translations).length))
               .replace("{totalCount}", String(Object.keys(translations).length + failedLocales.length))
-              .replace("{failedLocales}", failedLocales.join(", ")) + skipNote,
+              .replace("{failedLocales}", failedLocales.join(", ")),
             "warning"
           );
         } else {
           showInfoBox(
             (t.common?.fieldTranslatedToLanguages
               ?.replace("{fieldType}", fieldLabel)
-              .replace("{count}", String(Object.keys(othersTranslations).length + (primaryTranslated && !step1Refused ? 1 : 0)))
-              || `${fieldLabel} translated`) + skipNote,
-            skipNote ? "warning" : "success"
+              .replace("{count}", String(Object.keys(othersTranslations).length + (primaryTranslated ? 1 : 0)))
+              || `${fieldLabel} translated`),
+            "success"
           );
         }
 
@@ -1778,6 +1787,32 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         if (selectedItemIdRef.current !== requestItemId) return;
       }
     );
+    };
+
+    // Wait for step 1's answer. `onSettled` is called exactly once by the answer handlers (saved / refused /
+    // unconfirmed); the deadline covers an answer that never comes (a send that threw, an abort).
+    const waitingFlow = foreignStep1Ref.current.get(step1Partial);
+    if (!waitingFlow) return;
+    let deadline: ReturnType<typeof setTimeout> | null = null;
+    const settle = (result: Step1Result | "timeout") => {
+      if (deadline) { clearTimeout(deadline); deadline = null; }
+      waitingFlow.onSettled = undefined;
+      if (result === "saved") { startTranslation(); return; }
+      flowDone();
+      // A refusal says so itself (its own message names the reason and appends that nothing was translated).
+      if (result === "refused") return;
+      if (selectedItemIdRef.current !== requestItemId) return;
+      showInfoBox(
+        String(t.content?.foreignAcceptNothingTranslatedUnconfirmed
+          || "Nothing was translated, because Shopify did not confirm that the text in this language was saved."),
+        "warning",
+      );
+    };
+    waitingFlow.onSettled = settle;
+    deadline = setTimeout(() => {
+      if (!waitingFlow.onSettled) return;
+      settle("timeout");
+    }, FOREIGN_STEP1_DEADLINE_MS);
     return;
   }
 

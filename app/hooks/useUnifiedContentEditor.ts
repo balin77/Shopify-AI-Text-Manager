@@ -59,6 +59,7 @@ import { restrictAltBaseline, buildOwnSaveForm, isUnsavedPrimarySource, altValue
 import { sanitizeSlug } from "../utils/slug.utils";
 import { forgetOwnedKeys, recordConfirmedValues, pruneOwners, type FormMeta, type OverlayOwners, type OverlayConfirmed } from "../services/editor/primary-overlay-ownership.shared";
 import { settleOwnSave, settleUnsentSave, backstopOwnSaves, hasOwnSaveInFlight, isStaleAcceptStep, type OwnSaveInFlight } from "../services/editor/own-save-in-flight.shared";
+import { step1AnswerResult, type ForeignStep1Flow } from "../services/editor/foreign-step1.shared";
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import { appFetch, appFetchJson } from "../utils/app-fetch";
@@ -98,6 +99,8 @@ interface AcceptOutcome {
   step1Saved: boolean | null;
   /** Step 1 was refused and step 2, already queued behind it, was dropped unsent. */
   step2Dropped: boolean;
+  /** The refused request was step 1 and the translation into the other languages was still waiting for it: nothing is translated. */
+  translateNotStarted?: boolean;
 }
 const NO_ACCEPT_OUTCOME: AcceptOutcome = { stepTwoRefused: false, step1Saved: null, step2Dropped: false };
 
@@ -1182,6 +1185,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    */
   const stepTwoRefusalText = (data: unknown, outcome: AcceptOutcome, otherwise: string): string => {
     const content = t.content as Record<string, string> | undefined;
+    if (outcome.translateNotStarted) {
+      const nothing = String(content?.foreignAcceptNothingTranslated || "Nothing was translated, because the text in this language was not saved.");
+      return `${otherwise} ${nothing}`.trim();
+    }
     if (outcome.step2Dropped) {
       const notSent = String(content?.foreignAcceptPrimaryStepNotSent || "The translation into the main language was not sent, because the text in this language was not saved.");
       return `${otherwise} ${notSent}`.trim();
@@ -2228,7 +2235,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
    * partial-save object), with how it ended and the step 2 that followed it. A Map, because two flows of different
    * fields may overlap; each is keyed by its own requests.
    */
-  const foreignStep1Ref = useRef<Map<object, { saved: boolean | null; step2: object | null; undo?: () => void; done?: boolean }>>(new Map());
+  const foreignStep1Ref = useRef<Map<object, ForeignStep1Flow>>(new Map());
   /** The step 2 of those flows, keyed by ITS request identity: the staged overlay it can give back. */
   const foreignAcceptPrimaryStepRef = useRef<Map<object, { itemId: string; fieldKey: string; staged: string; step1: object }>>(new Map());
 
@@ -2273,6 +2280,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (flow) {
       flow.saved = false;
       flow.undo?.();
+      // The translation into the other languages waits for step 1: it never starts.
+      if (flow.onSettled) {
+        const settled = flow.onSettled;
+        flow.onSettled = undefined;
+        outcome.translateNotStarted = true;
+        settled("refused");
+      }
       if (flow.step2) {
         const queuedAt = saveQueueRef.current.findIndex((entry) => entry.partial === flow.step2);
         if (queuedAt >= 0) {
@@ -3515,7 +3529,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // an earlier save answering first must not drop the rollback of a later refusal.
       const answeredFlow = partial ? foreignStep1Ref.current.get(partial) : undefined;
       if (answeredFlow) {
-        answeredFlow.saved = true;
+        // Confirmed only if Shopify echoed the carried field: an unconfirmed one stays a draft (its own rules) and
+        // the translation into the other languages is NOT started from a text that is not stored.
+        const step1Result = step1AnswerResult(Object.keys(partial?.values ?? {}), unconfirmedClearedFieldSet(fetcher.data));
+        answeredFlow.saved = step1Result === "saved";
+        if (answeredFlow.onSettled) {
+          const settled = answeredFlow.onSettled;
+          answeredFlow.onSettled = undefined;
+          settled(step1Result);
+        }
         if (answeredFlow.done && partial) foreignStep1Ref.current.delete(partial);
       }
       const answeredStep = partial ? foreignAcceptPrimaryStepRef.current.get(partial) : undefined;
