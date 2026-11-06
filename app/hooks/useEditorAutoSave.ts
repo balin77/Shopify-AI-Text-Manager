@@ -105,7 +105,7 @@ interface UseEditorAutoSaveProps {
   /** Called when an OWN save (an AI/copy button's) is refused because a run
    *  writes into its language: it is not held -- a held own save would make
    *  every switch refuse for the whole run -- and its value stays a draft. */
-  onOwnSaveRefusedRef?: React.MutableRefObject<() => void>;
+  onOwnSaveRefusedRef?: React.MutableRefObject<(partial?: object) => void>;
 }
 
 interface UseEditorAutoSaveReturn {
@@ -210,7 +210,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       // keeps the value as a draft for the Save button.
       if (nothingInFlight) isSavePendingRef.current = false;
       ownSaveRunBackstop.hits++;
-      onOwnSaveRefusedRef?.current();
+      onOwnSaveRefusedRef?.current(partial);
       return;
     }
     if (blockedByRun && nothingInFlight) {

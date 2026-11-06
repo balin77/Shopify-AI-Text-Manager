@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render } from "@testing-library/react";
+import { useState } from "react";
 import { createMemoryRouter, RouterProvider, useFetcher, useLoaderData } from "react-router";
 
 vi.mock("~/contexts/TaskCountContext", () => ({ useTaskCount: () => ({ refresh: vi.fn() }) }));
@@ -30,6 +31,7 @@ import { clearAllForResource } from "~/hooks/useAIOperationsStore";
 import { setFieldSuggestion, setAltTextSuggestion, __resetSuggestionStore } from "~/hooks/useAISuggestionStore";
 
 const ID = "gid://shopify/Product/1";
+const ID2 = "gid://shopify/Product/2";
 const tick = (ms = 0) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 type Row = { key: string; locale: string; value: string };
 
@@ -62,8 +64,12 @@ function mount() {
     if (url.startsWith("/api/running-field-tasks")) return json({ tasks: [] });
     return realFetch(input, init);
   });
+  const initialId = { current: ID };
+  const bump: { current: () => void } = { current: () => {} };
   function Page() {
     const { items } = useLoaderData() as { items: unknown[] };
+    const [, setTick] = useState(0);
+    bump.current = () => setTick((n) => n + 1);
     const fetcher = useFetcher();
     editor.current = useUnifiedContentEditor({
       config: PRODUCTS_CONFIG, items,
@@ -72,7 +78,7 @@ function mount() {
         { locale: "fr", primary: false, published: true },
         { locale: "es", primary: false, published: true },
       ],
-      primaryLocale: "de", fetcher, showInfoBox, t: {}, initialItemId: ID,
+      primaryLocale: "de", fetcher, showInfoBox, t: {}, initialItemId: initialId.current,
     } as any);
     return null;
   }
@@ -82,7 +88,7 @@ function mount() {
       path: "/",
       element: <Page />,
       loader: async () => ({
-        items: [{
+        items: [{ ...store, id: ID2, title: "Zweites Produkt", handle: "zweites", translations: [], images: [], seo: { title: "S2", description: "M2" } }, {
           ...store,
           translations: store.translations.map((r: Row) => ({ ...r })),
           seo: { ...store.seo },
@@ -92,7 +98,7 @@ function mount() {
       action: async ({ request }) => serve("route")(Object.fromEntries((await request.formData()) as any) as Record<string, string>),
     },
   ]);
-  render(<RouterProvider router={router} />);
+  const rendered = render(<RouterProvider router={router} />);
   const respond = async (action: string, body: any) => {
     const index = pending.findIndex((p) => p.form.action === action);
     if (index < 0) throw new Error(`no pending ${action} (have: ${pending.map((p) => p.form.action).join(",")})`);
@@ -100,7 +106,9 @@ function mount() {
     await act(async () => { entry.resolve(body); });
   };
   const savesPosted = () => posted.filter((p) => p.action === "updateContent");
-  return { editor, posted, pending, respond, showInfoBox, savesPosted };
+  const unmount = () => rendered.unmount();
+  const selectItemFromOutside = async (id: string) => { initialId.current = id; await act(async () => { bump.current(); }); };
+  return { editor, posted, pending, respond, showInfoBox, savesPosted, unmount, selectItemFromOutside };
 }
 
 const switchTo = async (h: ReturnType<typeof mount>, locale: string) => {
@@ -641,6 +649,42 @@ describe("a REFUSED accept-and-translate save takes back everything the flow arm
     expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toHaveLength(1);
   });
 
+  it("(S4) the editor unmounts while step 1 is out: the deadline never shows a box afterwards", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    h.showInfoBox.mockClear();
+    h.unmount();
+    await new Promise((r) => setTimeout(r, 750));
+    expect(h.showInfoBox.mock.calls.some(([m]) => String(m).includes("Nothing was translated"))).toBe(false);
+  });
+
+  it("(S5) step 1 answered after the merchant's item changed (abandoned save): the waiting translation stands down, no false box at the deadline", async () => {
+    const h = mount();
+    await tick(50);
+    await switchTo(h, "fr");
+    setFieldSuggestion(scope("fr"), "seoTitle", "SEO fr");
+    await tick(10);
+    await act(async () => { h.editor.current.handlers.handleAcceptAndTranslate("seoTitle"); });
+    await tick(20);
+    await h.selectItemFromOutside(ID2);
+    await tick(30);
+    expect(h.editor.current.state.selectedItemId ?? h.editor.current.state.selectedItem?.id).toBe(ID2);
+    // and back on the original item, where a deadline box would otherwise be shown
+    await h.selectItemFromOutside(ID);
+    await tick(30);
+    h.showInfoBox.mockClear();
+    await h.respond("updateContent", { success: true, actionType: "updateContent" });
+    await tick(60);
+    expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
+    await tick(700);
+    expect(h.showInfoBox.mock.calls.some(([m]) => String(m).includes("Nothing was translated"))).toBe(false);
+  });
+
   it("(S3) step 1 never answers: past the deadline nothing is translated, and a late answer starts nothing", async () => {
     const h = mount();
     await tick(50);
@@ -651,7 +695,7 @@ describe("a REFUSED accept-and-translate save takes back everything the flow arm
     await tick(20);
     h.showInfoBox.mockClear();
     await tick(700);
-    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("Nothing was translated"), "warning");
+    expect(h.showInfoBox).toHaveBeenCalledWith(expect.stringContaining("no answer arrived in time"), "warning");
     await h.respond("updateContent", { success: true, actionType: "updateContent" });
     await tick(60);
     expect(h.posted.filter((p) => p.action === "translateFieldToAllLocales")).toEqual([]);
