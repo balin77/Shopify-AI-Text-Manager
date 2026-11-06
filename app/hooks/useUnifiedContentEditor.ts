@@ -63,7 +63,7 @@ import { step1AnswerResult, type ForeignStep1Flow } from "../services/editor/for
 import { unconfirmedClearedFieldSet, unconfirmedClearedOnlyKeys, keepFailedAltsDirty, unconfirmedFieldsMessage, hasPurgeUnconfirmedWarning, purgeWarningConcernsOtherFields } from "../services/editor/unconfirmed-cleared.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import { appFetch, appFetchJson } from "../utils/app-fetch";
-import { isMarkedDeleted, buildLocaleDeletedKey, dropLocaleMarks } from "../services/editor/deleted-translation-marks.shared";
+import { isMarkedDeleted, buildLocaleDeletedKey, dropLocaleMarks, dropStageMarksOfLayer } from "../services/editor/deleted-translation-marks.shared";
 import { CONTENT_EDITOR_ACTION_ENDPOINT, contentEditorActionPage, setContentEditorPage } from "../services/editor/content-action-endpoint.shared";
 import {
   markOperationActive,
@@ -1061,7 +1061,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         list = list.filter((k) => k !== key);
         meta?.carryOnly.delete(key);
         const field = effectiveFieldDefinitionsRef.current.find((f) => f.key === key);
-        if (field?.translationKey) deletedTranslationKeysRef.current.delete(field.translationKey);
+        if (field?.translationKey) {
+          deletedTranslationKeysRef.current.delete(field.translationKey);
+          dropStageMarksOfLayer(deletedTranslationKeysRef.current, field.translationKey, "");
+        }
         entry.formData.set("changedFields", JSON.stringify(list));
         // No longer announced, still WRITTEN: the merchant typed it back, and the refused save may have
         // written something else (a refusal is not always "nothing stored").
@@ -2395,7 +2398,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // happen, and its values are not "saved" -- only the draft remains.
       const fields = sentFieldsFromForm(entry.formData.entries());
       const changedKeys = changedTranslationKeysOf(fields, effectiveFieldDefinitionsRef.current);
-      for (const tKey of changedKeys) deletedTranslationKeysRef.current.delete(tKey);
+      for (const tKey of changedKeys) {
+        deletedTranslationKeysRef.current.delete(tKey);
+        dropStageMarksOfLayer(deletedTranslationKeysRef.current, tKey, "");
+      }
       let changed: unknown = [];
       try { changed = JSON.parse(fields.changedFields ?? "[]"); } catch { /* none */ }
       if (Array.isArray(changed)) {

@@ -20,7 +20,7 @@ import {
   type MetaobjectEntryLike,
 } from "../services/metaobject-fields.shared";
 import { debugLog } from "../utils/debug";
-import { buildLocaleDeletedKey, buildPurgeMarketKey, buildStageMark, dropMarksAfterSave, isMarkedDeleted } from "../services/editor/deleted-translation-marks.shared";
+import { buildLocaleDeletedKey, buildPurgeMarketKey, buildStageMark, dropMarksAfterSave, dropStageMarksOfLayer, isMarkedDeleted, isStageMark, layerMarkOfStage } from "../services/editor/deleted-translation-marks.shared";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import { RULES_UNREADABLE } from "../config/collection-rules.shared";
 import type {
@@ -952,6 +952,7 @@ export function useUiDataLoader(
         for (const fieldDef of fieldDefinitions) {
           if (!fieldMap?.[fieldDef.key]) continue;
           const delKey = buildDeletedKey(fieldDef.translationKey, "");
+          dropStageMarksOfLayer(deletedTranslationKeysRef.current, fieldDef.translationKey, "");
           if (deletedTranslationKeysRef.current.delete(delKey)) {
             debugLog.transition(`  cleared deletedKey: ${delKey}`);
           }
@@ -1049,6 +1050,7 @@ export function useUiDataLoader(
       for (const fieldDef of fieldDefinitions) {
         if (!translations[fieldDef.key]) continue;
         const delKey = buildDeletedKey(fieldDef.translationKey, "");
+        dropStageMarksOfLayer(deletedTranslationKeysRef.current, fieldDef.translationKey, "");
         if (deletedTranslationKeysRef.current.delete(delKey)) {
           debugLog.transition(`  cleared deletedKey: ${delKey}`);
         }
@@ -1262,6 +1264,7 @@ export function useUiDataLoader(
       //    still holds that state).
       if (deletedTranslationKeysRef.current.has(translationKey)) {
         deletedTranslationKeysRef.current.delete(translationKey);
+        dropStageMarksOfLayer(deletedTranslationKeysRef.current, translationKey, "");
         clearedDeletedByCopyRef.current.add(translationKey);
       } else {
         clearedDeletedByCopyRef.current.delete(translationKey);
@@ -1490,7 +1493,10 @@ export function useUiDataLoader(
     // A clear whose removal is still on its way keeps its marks: the server
     // has not caught up with it, and the re-read would show what it removes.
     for (const mark of [...deletedTranslationKeysRef.current]) {
-      if (!keepMarks?.has(mark)) deletedTranslationKeysRef.current.delete(mark);
+      // A stage mark stays with its layer mark: the locale it exempts must not read empty while the layer mark
+      // (a primary save still out) is kept.
+      const keptWithLayer = isStageMark(mark) && !!keepMarks?.has(layerMarkOfStage(mark));
+      if (!keepMarks?.has(mark) && !keptWithLayer) deletedTranslationKeysRef.current.delete(mark);
     }
     clearedDeletedByCopyRef.current.clear();
     clearedLocaleMarksByCopyRef.current.clear();

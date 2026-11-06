@@ -70,6 +70,26 @@ export function isStageMark(mark: string): boolean {
   return mark.startsWith(STAGE_PREFIX);
 }
 
+/** The LAYER mark a stage mark exempts a locale from (`key` or `key@@market`). */
+export function layerMarkOfStage(stageMark: string): string {
+  const body = stageMark.slice(STAGE_PREFIX.length);
+  const at = body.lastIndexOf(LOCALE_MARK_SEP);
+  return at < 0 ? body : body.slice(0, at);
+}
+
+/**
+ * Wherever a LAYER mark of (key, market) is deleted, the stage marks that
+ * exempted a locale from it go too: left behind they would outlive the mark
+ * they belong to (and a later layer mark of the same key would be exempted for
+ * a locale nobody translated into).
+ */
+export function dropStageMarksOfLayer(marks: Set<string>, translationKey: string, marketId: string): void {
+  const layer = layerMark(translationKey, marketId);
+  for (const mark of [...marks]) {
+    if (isStageMark(mark) && layerMarkOfStage(mark) === layer) marks.delete(mark);
+  }
+}
+
 /** The mark of ONE locale's cleared value of `translationKey` in a layer. */
 export function buildLocaleDeletedKey(translationKey: string, marketId: string, locale: string): string {
   return `${layerMark(translationKey, marketId)}${LOCALE_MARK_SEP}${locale}`;
