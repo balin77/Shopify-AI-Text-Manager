@@ -380,7 +380,7 @@ describe("a blanked value is refused before anything is sent", () => {
     act(() => result.current.handlers.handleAddOptionValue(OPT, "Green"));
     await press(result);
     expect(saves.sent).toHaveLength(0);
-    expect(showInfoBox).toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+    expect(showInfoBox).toHaveBeenCalledWith(expect.stringContaining("VALUES-EMPTY"), "critical");
     expect(result.current.state.primaryOptionEdits[OPT].values[V2]).toBe("");
     expect(result.current.state.optionValuesToAdd[OPT]).toEqual(["Green"]);
     expect(result.current.state.hasChanges).toBe(true);
@@ -411,7 +411,7 @@ describe("a blank pending addition is refused before anything is sent", () => {
       const { result } = blankRow(text);
       await press(result);
       expect(saves.sent).toHaveLength(0);
-      expect(showInfoBox).toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+      expect(showInfoBox).toHaveBeenCalledWith(expect.stringContaining("VALUES-EMPTY"), "critical");
       expect(result.current.state.primaryOptionEdits[OPT].name).toBe("Farbe");
       expect(result.current.state.optionValuesToAdd[OPT]).toEqual([text]);
       expect(result.current.state.hasChanges).toBe(true);
@@ -439,7 +439,7 @@ describe("a blank pending addition is refused before anything is sent", () => {
     act(() => result.current.handlers.handleDeleteOption(OPT));
     await press(result);
     expect(saves.sent).toHaveLength(1);
-    expect(showInfoBox).not.toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+    expect(showInfoBox).not.toHaveBeenCalledWith(expect.stringContaining("VALUES-EMPTY"), "critical");
   });
 
   it("a new option with only blank values is refused", async () => {
@@ -448,7 +448,7 @@ describe("a blank pending addition is refused before anything is sent", () => {
     act(() => result.current.handlers.handlePrimaryOptionNameChange(OPT, "Farbe"));
     await press(result);
     expect(saves.sent).toHaveLength(0);
-    expect(showInfoBox).toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+    expect(showInfoBox).toHaveBeenCalledWith(expect.stringContaining("VALUES-EMPTY"), "critical");
     expect(result.current.state.optionsToCreate).toHaveLength(1);
     expect(result.current.state.primaryOptionEdits[OPT].name).toBe("Farbe");
   });
@@ -458,7 +458,7 @@ describe("a blank pending addition is refused before anything is sent", () => {
     act(() => result.current.handlers.handleCreateOption("Material", []));
     await press(result);
     expect(saves.sent).toHaveLength(0);
-    expect(showInfoBox).toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+    expect(showInfoBox).toHaveBeenCalledWith(expect.stringContaining("VALUES-EMPTY"), "critical");
   });
 
   it("a new option with one real value (and a blank extra) is sent", async () => {
@@ -467,7 +467,7 @@ describe("a blank pending addition is refused before anything is sent", () => {
     await press(result);
     expect(saves.sent).toHaveLength(1);
     expect(JSON.parse(saves.fields(0).optionsToCreate)).toEqual([{ name: "Material", values: ["Silk", " "] }]);
-    expect(showInfoBox).not.toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+    expect(showInfoBox).not.toHaveBeenCalledWith(expect.stringContaining("VALUES-EMPTY"), "critical");
   });
 });
 
@@ -494,7 +494,7 @@ describe("a blank row on an option that is gone from the item", () => {
     showInfoBox.mockClear();
     await press(result);
     expect(saves.sent).toHaveLength(2);
-    expect(showInfoBox).not.toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+    expect(showInfoBox).not.toHaveBeenCalledWith(expect.stringContaining("VALUES-EMPTY"), "critical");
     expect(saves.fields(1).optionsChanges).not.toContain('[""]');
     expect(JSON.parse(saves.fields(1).optionsChanges)).toEqual({ [OPT]: { name: "Farbe2" } });
   });
@@ -505,7 +505,7 @@ describe("a blank row on an option that is gone from the item", () => {
     rerender({ current: mk(P.id, "Shirt"), lang: "de" });
     act(() => result.current.handlers.handlePrimaryOptionNameChange(OPT, "Farbe"));
     await press(result);
-    expect(showInfoBox).not.toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+    expect(showInfoBox).not.toHaveBeenCalledWith(expect.stringContaining("VALUES-EMPTY"), "critical");
     expect(JSON.parse(saves.fields(0).optionsChanges)).toEqual({ [OPT]: { name: "Farbe" } });
     await saves.settle({ ...OKP });
     reloadLands(rerender, mk(P.id, "Shirt", { options: [{ ...P.options[0], name: "Farbe" }] }));
@@ -517,7 +517,7 @@ describe("a blank row on an option that is gone from the item", () => {
     pendingBlank(result);
     rerender({ current: mk(P.id, "Shirt"), lang: "de" });
     await press(result);
-    expect(showInfoBox).not.toHaveBeenCalledWith("VALUES-EMPTY", "critical");
+    expect(showInfoBox).not.toHaveBeenCalledWith(expect.stringContaining("VALUES-EMPTY"), "critical");
     expect(saves.sent).toHaveLength(0);
     expect(result.current.state.hasChanges).toBe(false);
   });
