@@ -2856,7 +2856,7 @@ export function useProductSubResources({
   }, [isPrimaryLocale, buildSourceData, selectedItem, primaryLocale, translateAllFieldIds, runTranslateRequest, trackTranslateAllRun]);
 
   // Unified save handler - automatically detects primary vs foreign locale
-  const refusedText = (message: string) => `${message} ${strings.refusedNothingSaved || "Nothing was saved."}`;
+  const refusedText = (message: string) => `${message} ${stringsRef.current.refusedNothingSaved || "Nothing was saved."}`;
   const saveSubResources = useCallback(() => {
     if (!hasChanges || !selectedItem) {
       return;

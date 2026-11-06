@@ -121,3 +121,23 @@ describe("callers stop the whole page save on 'refused', like on 'waiting'", () 
     expect(src).toMatch(/subResult === "waiting" \|\| subResult === "refused"/);
   });
 });
+
+describe("the appended sentence follows the CURRENT strings (language change), not the first render's", () => {
+  it("a re-render with other strings changes the refusal sentence", async () => {
+    let current = "NOTHING-SAVED-A";
+    const { result, rerender } = renderHook(() =>
+      useProductSubResources({
+        selectedItem: item,
+        currentLanguage: "de",
+        primaryLocale: "de",
+        showInfoBox,
+        strings: { refusedNothingSaved: current },
+      } as never),
+    );
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "   "));
+    current = "NOTHING-SAVED-B";
+    rerender();
+    await press(result);
+    expect(showInfoBox).toHaveBeenLastCalledWith(expect.stringContaining("NOTHING-SAVED-B"), "critical");
+  });
+});
