@@ -18,6 +18,7 @@ import {
   BOOT_RECOVERY_TASK_TYPES,
   BOOT_ORPHAN_TASK_TYPES,
   BOOT_SILENCE_MS,
+  INTERRUPTED_TASK_ERROR,
   HEARTBEAT_STALL_MS,
   recoverOrphanedRuns,
   reconcileOrphanCrawlSnapshots,
@@ -26,7 +27,8 @@ import {
 // Reuse the global PrismaClient shared with the Remix app (db.server.ts)
 // instead of creating a separate instance with its own connection pool.
 // Rows created after this instant belong to THIS process (boot recovery must not fail them).
-const PROCESS_STARTED_AT = new Date();
+// Stamped by server.js before listen() (the earliest point the web process owns); a standalone caller falls back to now.
+const PROCESS_STARTED_AT = globalThis.__processStartedAt instanceof Date ? globalThis.__processStartedAt : new Date();
 const prisma = globalThis.__db ?? new PrismaClient();
 if (!globalThis.__db) globalThis.__db = prisma;
 
@@ -446,7 +448,7 @@ export class TaskRecoveryService {
 
     // Reap one selector in bounded batches so a single statement can never
     // flip an unbounded number of rows (R4-H2 batch cap).
-    const reapBatched = async (where) => {
+    const reapBatched = async (where, errorCode = 'task_timed_out') => {
       for (;;) {
         const rows = await prisma.task.findMany({
           where,
@@ -459,7 +461,7 @@ export class TaskRecoveryService {
           // Machine code, not prose: this runs outside any request, so there
           // is no merchant locale here. The UI translates it via
           // app/utils/task-error-text.ts (`taskTimedOut`).
-          error: 'task_timed_out',
+          error: errorCode,
           completedAt: new Date(),
         };
 
@@ -506,11 +508,14 @@ export class TaskRecoveryService {
     // process is gone rather than of a long-running job. Reaped here rather
     // than in pass 1 because a 45-minute wait IS the hang for a task whose
     // single-flight blocks the merchant from starting a new one.
+    // A stalled HEARTBEAT is evidence of a dead process, not of a slow job: the row is failed as INTERRUPTED
+    // ("the app was restarted, start it again"), the same code boot recovery writes, never as "timed out" (which
+    // sends the merchant looking for a fault of their own). That holds for the crawl too.
     await reapBatched({
       type: { in: [...HEARTBEAT_TASK_TYPES, ...BOOT_ORPHAN_TASK_TYPES] },
       status: { in: NON_TERMINAL },
       updatedAt: { lt: heartbeatCutoff },
-    });
+    }, INTERRUPTED_TASK_ERROR);
 
     // Pass 1: legitimately-long types — only stuck after the LONG cutoff.
     await reapBatched({

@@ -11,6 +11,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   failOrphanedRuns,
   reconcileOrphanCrawlSnapshots,
@@ -232,5 +234,50 @@ describe("boot-only orphan types (bulkEditorTranslate)", () => {
     const bulk = where.OR.find((c: any) => c.type.in.includes("bulkEditorTranslate"));
     expect(bulk.updatedAt.lt.getTime()).toBeLessThanOrEqual(t0 - BOOT_SILENCE_MS + 1000);
     expect(bulk.updatedAt.lt.getTime()).toBeGreaterThan(t0 - BOOT_SILENCE_MS - 5000);
+  });
+});
+
+describe("the periodic reaper fails a stalled heartbeat run as INTERRUPTED, not as timed out", () => {
+  it("pass 0 (heartbeat + boot types) writes task_interrupted; the other passes keep task_timed_out", async () => {
+    const g = globalThis as any;
+    const prevDb = g.__db;
+    g.__db = prisma;
+    taskFindMany.mockImplementation(async (args: any) => {
+      const types = args.where?.type?.in ?? [];
+      if (types.includes("bulkEditorTranslate") && types.includes("seoCrawl")) {
+        return taskFindMany.mock.calls.filter((c) => c[0].where?.type?.in?.includes("bulkEditorTranslate")).length === 1
+          ? [{ id: "t1", shop: "a.myshopify.com", type: "bulkEditorTranslate", total: 1 }]
+          : [];
+      }
+      if (types.includes("seoBulkFix")) {
+        return taskFindMany.mock.calls.filter((c) => c[0].where?.type?.in?.includes("seoBulkFix")).length === 1
+          ? [{ id: "t2", shop: "a.myshopify.com", type: "seoBulkFix", total: 1 }]
+          : [];
+      }
+      return [];
+    });
+    taskUpdateMany.mockResolvedValue({ count: 1 });
+    try {
+      const { TaskRecoveryService } = await import("../../task-recovery.service.js");
+      await new TaskRecoveryService().markStuckTasksAsFailed();
+    } finally {
+      g.__db = prevDb;
+    }
+    const byIds = (id: string) => taskUpdateMany.mock.calls.find((c) => c[0].where?.id?.in?.includes(id))?.[0].data;
+    expect(byIds("t1").error).toBe(INTERRUPTED_TASK_ERROR);
+    expect(byIds("t2").error).toBe("task_timed_out");
+  });
+});
+
+describe("server.js stamps the process start before listen()", () => {
+  it("sets globalThis.__processStartedAt after the adapter import and before app.listen", () => {
+    const src = readFileSync(resolve(__dirname, "../../server.js"), "utf8");
+    const adapter = src.indexOf('import { webApiAdapterInitialized } from "@shopify/shopify-api/adapters/web-api"');
+    const stamp = src.indexOf("globalThis.__processStartedAt = new Date()");
+    const listen = src.indexOf("app.listen(");
+    expect(adapter).toBeGreaterThan(-1);
+    expect(stamp).toBeGreaterThan(adapter);
+    expect(listen).toBeGreaterThan(stamp);
+    expect(src.indexOf("sentryNode.init(")).toBeGreaterThan(adapter);
   });
 });

@@ -44,6 +44,10 @@
 import { webApiAdapterInitialized } from "@shopify/shopify-api/adapters/web-api";
 void webApiAdapterInitialized;
 
+// When THIS process started: boot recovery (task-recovery.service.js) only fails runs created before it. Stamped here,
+// the first statement of the module body after the (hoisted) imports, i.e. before listen() and before any request.
+globalThis.__processStartedAt = new Date();
+
 import { createRequestHandler } from "@react-router/express";
 import compression from "compression";
 import express from "express";
