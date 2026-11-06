@@ -9,10 +9,10 @@
 import type { PartialSave } from "./useUiDataLoader";
 import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
 import { isAttributeField, isTranslatableFieldDefinition } from "../services/content-attributes.shared";
-import { buildLocaleDeletedKey, dropLocaleMarks } from "../services/editor/deleted-translation-marks.shared";
+import { buildLocaleDeletedKey, buildStageMark, dropLocaleMarks } from "../services/editor/deleted-translation-marks.shared";
 import { useCallback, useRef, useState } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
-import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
+import { getItemFieldValue, buildLocaleKey } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
 import { writeLastSelectedId } from "../utils/last-selected-item";
 import { writeLastContentLocale } from "../utils/last-content-locale";
@@ -260,7 +260,6 @@ interface CopyFieldRollback {
   fieldKey: string;
   translationKey: string;
   localeKey: string;
-  deletedKey: string;
   /** This locale's own "cleared" mark, which the copy drops too. */
   localeDeletedKey: string;
   hadLocaleDeletedMarker: boolean;
@@ -268,7 +267,6 @@ interface CopyFieldRollback {
   marketId: string;
   value: string;
   prevOverlay: string | undefined;
-  hadDeletedMarker: boolean;
   prevBaseline: string | undefined;
   prevOriginalLoaded: string | undefined;
   prevEditable: string | undefined;
@@ -1548,10 +1546,10 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     // accepted field is not flagged "dirty" — everything here saves automatically,
     // so the Save button must stay inactive.
     const overlayLocaleKey = buildLocaleKey(L, "");
-    // The deleted marks step 1 is about to clear (layer mark and this locale's mark), to put back on undo.
-    const layerMark = translationKey;
+    // The deleted mark step 1 is about to clear (this locale's own mark), to put back on undo. A LAYER mark
+    // is never cleared by it (a stage mark exempts this locale), so nothing to put back there.
+    const stageMark = buildStageMark(translationKey, "", L);
     const localeMark = buildLocaleDeletedKey(translationKey, "", L);
-    const hadLayerMark = deletedTranslationKeysRef.current.has(layerMark);
     const hadLocaleMark = deletedTranslationKeysRef.current.has(localeMark);
     const prevOriginal = originalLoadedValuesRef.current[fieldKey];
     const prevBaseline = baselineValuesRef.current[fieldKey];
@@ -1586,10 +1584,10 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
       const entry = localTranslationsRef.current[translationKey];
       if (entry && entry[overlayLocaleKey] === suggestion) {
         // The text was never stored: the entry goes. What step 1 replaced may have been a CONFIRMED foreign value
-        // (see KNOWN_ISSUES), which is not put back. The deleted marks step 1 cleared come back, so a field the
-        // merchant had cleared still reads as cleared.
+        // (see KNOWN_ISSUES), which is not put back. The deleted mark step 1 cleared comes back, so a field the
+        // merchant had cleared still reads as cleared; the stage mark goes with the staged text.
         delete entry[overlayLocaleKey];
-        if (hadLayerMark) deletedTranslationKeysRef.current.add(layerMark);
+        deletedTranslationKeysRef.current.delete(stageMark);
         if (hadLocaleMark) deletedTranslationKeysRef.current.add(localeMark);
       }
       const put = (ref: { current: Record<string, string> }, prev: string | undefined) => {
@@ -2419,21 +2417,18 @@ const handleCopyField = (fieldKey: string): void => {
   {
     const copyMarketId = selectedMarketIdRef.current;
     const copyLocaleKey = buildLocaleKey(currentLanguage, copyMarketId);
-    const copyDeletedKey = buildDeletedKey(field.translationKey, copyMarketId);
     const copyLocaleDeletedKey = buildLocaleDeletedKey(field.translationKey, copyMarketId, currentLanguage);
     copyFieldRollbackRef.current = {
       itemId: selectedItemId,
       fieldKey,
       translationKey: field.translationKey,
       localeKey: copyLocaleKey,
-      deletedKey: copyDeletedKey,
       localeDeletedKey: copyLocaleDeletedKey,
       hadLocaleDeletedMarker: deletedTranslationKeysRef.current.has(copyLocaleDeletedKey),
       locale: currentLanguage,
       marketId: copyMarketId,
       value: primaryValue,
       prevOverlay: localTranslationsRef.current[field.translationKey]?.[copyLocaleKey],
-      hadDeletedMarker: deletedTranslationKeysRef.current.has(copyDeletedKey),
       prevBaseline: baselineValuesRef.current[fieldKey],
       prevOriginalLoaded: originalLoadedValuesRef.current[fieldKey],
       prevEditable: editableValuesRef.current[fieldKey],
@@ -2495,7 +2490,8 @@ const rollbackCopyField = (opts?: { keepVisible?: boolean }): void => {
     if (rec.prevOverlay === undefined) delete overlay[rec.localeKey];
     else overlay[rec.localeKey] = rec.prevOverlay;
   }
-  if (rec.hadDeletedMarker) deletedTranslationKeysRef.current.add(rec.deletedKey);
+  // The copy never clears a LAYER mark (a stage mark exempts this locale from it): only that exemption goes.
+  deletedTranslationKeysRef.current.delete(buildStageMark(rec.translationKey, rec.marketId, rec.locale));
   if (rec.hadLocaleDeletedMarker) deletedTranslationKeysRef.current.add(rec.localeDeletedKey);
 
   // Everything below is what the merchant SEES: only while that is still the

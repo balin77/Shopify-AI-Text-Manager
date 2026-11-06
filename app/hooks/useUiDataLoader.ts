@@ -20,7 +20,7 @@ import {
   type MetaobjectEntryLike,
 } from "../services/metaobject-fields.shared";
 import { debugLog } from "../utils/debug";
-import { buildLocaleDeletedKey, buildPurgeMarketKey, dropMarksAfterSave, isMarkedDeleted } from "../services/editor/deleted-translation-marks.shared";
+import { buildLocaleDeletedKey, buildPurgeMarketKey, buildStageMark, dropMarksAfterSave, isMarkedDeleted } from "../services/editor/deleted-translation-marks.shared";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import { RULES_UNREADABLE } from "../config/collection-rules.shared";
 import type {
@@ -868,10 +868,14 @@ export function useUiDataLoader(
       const localeKey = buildLocaleKey(targetLocale, marketId);
       const delKey = buildDeletedKey(translationKey, marketId);
 
-      // 1. Clear deleted key
+      // 1. A LAYER mark (a primary save's purge, every locale) STAYS: other
+      //    locales still read the key as purged until that save answers. The
+      //    locale just written is exempted from it by a STAGE mark, so its
+      //    freshly staged value wins there (resolve order) and is cleared
+      //    together with the layer marks. Only this locale's own clear mark goes.
       if (deletedTranslationKeysRef.current.has(delKey)) {
-        deletedTranslationKeysRef.current.delete(delKey);
-        debugLog.transition(`  cleared deletedKey: ${delKey}`);
+        deletedTranslationKeysRef.current.add(buildStageMark(translationKey, marketId, targetLocale));
+        debugLog.transition(`  layer mark ${delKey} kept, ${targetLocale} exempted by a stage mark`);
       }
       deletedTranslationKeysRef.current.delete(buildLocaleDeletedKey(translationKey, marketId, targetLocale));
 

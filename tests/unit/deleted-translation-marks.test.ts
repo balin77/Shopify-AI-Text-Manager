@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildLocaleDeletedKey,
+  buildStageMark,
   dropLocaleMarks,
   dropMarksAfterSave,
   isMarkedDeleted,
@@ -29,6 +30,35 @@ describe("deleted marks", () => {
     const marks = new Set(["title##it", "body_html##it", "title##fr"]);
     dropLocaleMarks(marks, "it", "", new Set(["body_html##it"]));
     expect([...marks].sort()).toEqual(["body_html##it", "title##fr"]);
+  });
+});
+
+describe("stage marks (a translated locale exempted from a layer mark)", () => {
+  it("exempt ONLY their locale from the layer mark; a locale mark of it still applies", () => {
+    const marks = new Set(["title", buildStageMark("title", "", "fr")]);
+    expect(isMarkedDeleted(marks, "title", "", "fr")).toBe(false);
+    expect(isMarkedDeleted(marks, "title", "", "es")).toBe(true);
+    marks.add(buildLocaleDeletedKey("title", "", "fr"));
+    expect(isMarkedDeleted(marks, "title", "", "fr")).toBe(true);
+  });
+
+  it("are per market and per key", () => {
+    const marks = new Set(["title@@m1", buildStageMark("title", "m1", "fr")]);
+    expect(isMarkedDeleted(marks, "title", "m1", "fr")).toBe(false);
+    expect(isMarkedDeleted(marks, "title", "m1", "es")).toBe(true);
+    expect(isMarkedDeleted(new Set(["body_html", buildStageMark("title", "", "fr")]), "body_html", "", "fr")).toBe(true);
+  });
+
+  it("go with the layer marks on any save, and survive a locale/market/discard drop", () => {
+    const stage = buildStageMark("title", "", "fr");
+    const marks = new Set(["title", stage]);
+    dropLocaleMarks(marks, "fr", "", null);
+    expect(marks.has(stage)).toBe(true);
+    dropMarksAfterSave(marks, { locale: "fr", marketId: "" });
+    expect([...marks]).toEqual([]);
+    const again = new Set(["title", stage]);
+    dropMarksAfterSave(again, null);
+    expect([...again]).toEqual([]);
   });
 });
 

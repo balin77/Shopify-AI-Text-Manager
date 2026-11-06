@@ -78,3 +78,50 @@ describe("single-field translate — a partial save", () => {
     expect(result.current.refs.localTranslationsRef.current.title?.en).toBeUndefined();
   });
 });
+
+describe("single-field translate while a primary save's purge is still out (layer mark)", () => {
+  const item = {
+    id: "gid://shopify/Product/1",
+    title: "Vase",
+    translations: { title: { fr: "Vase FR", es: "Vase ES" } },
+  } as never;
+
+  it("keeps the layer mark: other locales stay purged, the translated one shows its new text", () => {
+    const { result } = loader();
+    // A primary save marks the key BEFORE it is submitted.
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+    });
+    expect(result.current.resolve(item, "title", "title", "es").value).toBe("");
+
+    act(() => {
+      result.current.onTranslateFieldComplete("title", "title", "Nuevo", "fr", { title: "" });
+    });
+
+    expect(result.current.refs.deletedTranslationKeysRef.current.has("title")).toBe(true);
+    // Spanish is still purged (it must not fall back to the stale ES row) ...
+    expect(result.current.resolve(item, "title", "title", "es").value).toBe("");
+    // ... and French shows what was just translated, not an empty field.
+    expect(result.current.resolve(item, "title", "title", "fr").value).toBe("Nuevo");
+  });
+
+  it("everything settles when the primary save answers (layer + stage marks go, overlay of the key is wiped)", () => {
+    const { result } = loader();
+    act(() => {
+      result.current.refs.deletedTranslationKeysRef.current.add("title");
+      result.current.onTranslateFieldComplete("title", "title", "Nuevo", "fr", { title: "" });
+    });
+    act(() => {
+      result.current.onSaveComplete("de", { title: "Neu" }, [TITLE]);
+    });
+    expect([...result.current.refs.deletedTranslationKeysRef.current]).toEqual([]);
+  });
+
+  it("without a standing layer mark nothing extra is recorded", () => {
+    const { result } = loader();
+    act(() => {
+      result.current.onTranslateFieldComplete("title", "title", "Nuevo", "fr", { title: "" });
+    });
+    expect([...result.current.refs.deletedTranslationKeysRef.current]).toEqual([]);
+  });
+});
