@@ -424,6 +424,9 @@ interface TranslateResultJson {
   }[];
 }
 
+/** How often the run proves it is alive (Task.updatedAt). Well under the boot silence threshold. */
+export const BULK_TRANSLATE_HEARTBEAT_MS = 15_000;
+
 /** Exported as a TEST SEAM only — the handler above is the one caller. */
 export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<void> {
   const { db, shop, admin, settings, jobs, units, rowType, primaryLocale, columnsByType } = args;
@@ -498,6 +501,14 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     if (isRunAbortingAIError(err)) throw err;
     return false;
   };
+  // A bounded-interval HEARTBEAT, independent of the job loop (one AI call may take minutes): boot recovery and
+  // the reaper treat this type as orphaned only after a silence (orphan-run-recovery.js), so a run that is alive
+  // in another container during a deploy overlap is never failed under its own feet.
+  const beat = setInterval(() => {
+    void db.task
+      .updateMany({ where: { id: taskId, status: "running" }, data: { updatedAt: new Date() } })
+      .catch(() => undefined);
+  }, BULK_TRANSLATE_HEARTBEAT_MS);
   try {
     for (const job of jobs) {
       if (managedRefusal) break;
@@ -780,8 +791,10 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
         context: "AI", taskId, refusal: managedRefusal, saved,
       });
     }
-    await db.task.update({
-      where: { id: taskId },
+    // CONDITIONAL on still being "running": a row somebody else already settled (boot recovery of a genuinely
+    // dead run) keeps its terminal state instead of flipping back.
+    await db.task.updateMany({
+      where: { id: taskId, status: "running" },
       data: {
         status: saved === 0 && (failedRows > 0 || managedRefusal) ? "failed" : "completed",
         progress: 100,
@@ -804,11 +817,13 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     const message = errorMessage(err);
     logger.error("[API-AI] Bulk-editor translate: run failed", { context: "AI", taskId, error: message });
     await db.task
-      .update({
-        where: { id: taskId },
+      .updateMany({
+        where: { id: taskId, status: "running" },
         data: { status: "failed", progress: 100, completedAt: new Date(), error: message.substring(0, 1000) },
       })
       .catch(() => undefined);
+  } finally {
+    clearInterval(beat);
   }
 }
 

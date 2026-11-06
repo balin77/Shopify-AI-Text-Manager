@@ -16,6 +16,8 @@ import {
 import {
   HEARTBEAT_TASK_TYPES,
   BOOT_RECOVERY_TASK_TYPES,
+  BOOT_ORPHAN_TASK_TYPES,
+  BOOT_SILENCE_MS,
   HEARTBEAT_STALL_MS,
   recoverOrphanedRuns,
   reconcileOrphanCrawlSnapshots,
@@ -23,6 +25,8 @@ import {
 
 // Reuse the global PrismaClient shared with the Remix app (db.server.ts)
 // instead of creating a separate instance with its own connection pool.
+// Rows created after this instant belong to THIS process (boot recovery must not fail them).
+const PROCESS_STARTED_AT = new Date();
 const prisma = globalThis.__db ?? new PrismaClient();
 if (!globalThis.__db) globalThis.__db = prisma;
 
@@ -251,7 +255,14 @@ export class TaskRecoveryService {
     // Never let this abort the rest of the boot recovery (and with it the
     // monitoring interval that would clean up later): a failure here costs one
     // delayed reap, a thrown one costs the reaper.
-    const result = await recoverOrphanedRuns(prisma, { olderThan: null, types: BOOT_RECOVERY_TASK_TYPES }).catch((error) => {
+    const result = await recoverOrphanedRuns(prisma, {
+      olderThan: null,
+      types: BOOT_RECOVERY_TASK_TYPES,
+      // Only what existed before THIS process started (a run created after listen() is live) ...
+      createdBefore: PROCESS_STARTED_AT,
+      // ... and, for the heartbeating boot types, only what has gone silent (a deploy overlap's live run keeps beating).
+      silentTypes: { types: BOOT_ORPHAN_TASK_TYPES, silentMs: BOOT_SILENCE_MS },
+    }).catch((error) => {
       console.error('[TaskRecovery] Orphaned-run recovery failed:', error);
       return { tasks: 0, snapshots: 0, shops: [] };
     });
@@ -496,21 +507,21 @@ export class TaskRecoveryService {
     // than in pass 1 because a 45-minute wait IS the hang for a task whose
     // single-flight blocks the merchant from starting a new one.
     await reapBatched({
-      type: { in: HEARTBEAT_TASK_TYPES },
+      type: { in: [...HEARTBEAT_TASK_TYPES, ...BOOT_ORPHAN_TASK_TYPES] },
       status: { in: NON_TERMINAL },
       updatedAt: { lt: heartbeatCutoff },
     });
 
     // Pass 1: legitimately-long types — only stuck after the LONG cutoff.
     await reapBatched({
-      type: { in: LONG_RUNNING_TASK_TYPES, notIn: HEARTBEAT_TASK_TYPES },
+      type: { in: LONG_RUNNING_TASK_TYPES, notIn: [...HEARTBEAT_TASK_TYPES, ...BOOT_ORPHAN_TASK_TYPES] },
       status: { in: NON_TERMINAL },
       updatedAt: { lt: longCutoff },
     });
 
     // Pass 2: everything else (incl. imageWebpConversion) — default cutoff.
     await reapBatched({
-      type: { notIn: [...LONG_RUNNING_TASK_TYPES, ...HEARTBEAT_TASK_TYPES] },
+      type: { notIn: [...LONG_RUNNING_TASK_TYPES, ...HEARTBEAT_TASK_TYPES, ...BOOT_ORPHAN_TASK_TYPES] },
       status: { in: NON_TERMINAL },
       updatedAt: { lt: defaultCutoff },
     });

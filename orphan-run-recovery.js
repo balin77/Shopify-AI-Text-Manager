@@ -70,6 +70,14 @@ export const HEARTBEAT_TASK_TYPES = ["seoCrawl"];
  */
 export const BOOT_ORPHAN_TASK_TYPES = ["bulkEditorTranslate"];
 
+/**
+ * Boot recovery fails a BOOT type only after this silence. The runner heartbeats every 15 s
+ * (bulk-editor-translate.handler.ts), so a run that is alive in ANOTHER container during a zero-downtime deploy
+ * overlap (railway.json drainingSeconds) is never failed by the new one; a run killed with its process falls
+ * silent and is failed here when the silence has passed, else by the periodic reaper (heartbeat stall).
+ */
+export const BOOT_SILENCE_MS = 90_000;
+
 /** What boot recovery fails: heartbeat types plus the boot-only ones. */
 export const BOOT_RECOVERY_TASK_TYPES = [...HEARTBEAT_TASK_TYPES, ...BOOT_ORPHAN_TASK_TYPES];
 
@@ -113,17 +121,31 @@ const NON_TERMINAL = ["running", "pending", "queued"];
  */
 /**
  * @param {any} prisma
- * @param {{ olderThan?: Date | null, types?: string[], shops?: string[] | null }} [options]
+ * @param {{ olderThan?: Date | null, types?: string[], shops?: string[] | null, createdBefore?: Date | null, silentTypes?: { types: string[], silentMs: number } | null }} [options]
  * @returns {Promise<{ count: number, shops: string[] }>}
  */
 export async function failOrphanedRuns(prisma, options = {}) {
-  const { olderThan = null, types = HEARTBEAT_TASK_TYPES, shops = null } = options;
+  const { olderThan = null, types = HEARTBEAT_TASK_TYPES, shops = null, createdBefore = null, silentTypes = null } = options;
   // An EMPTY list means "no shops", never "every shop": a caller that computed
   // its scope and came up empty must sweep nothing. Reading it as unscoped is
   // how a multi-tenant guard fails open.
   if (shops && shops.length === 0) return { count: 0, shops: [] };
   const where = { type: { in: types }, status: "running" };
   if (olderThan) where.updatedAt = { lt: olderThan };
+  // Only rows that existed BEFORE this process started: a request served in the seconds after listen() may
+  // already have created a live run, and it is not an orphan.
+  if (createdBefore) where.createdAt = { lt: createdBefore };
+  // Types that must also have been SILENT for `silentMs` (they heartbeat; see BOOT_SILENCE_MS): the rest of
+  // `types` is failed regardless of silence, exactly as before.
+  if (silentTypes && silentTypes.types.length > 0) {
+    const plain = types.filter((t) => !silentTypes.types.includes(t));
+    const silentCutoff = new Date(Date.now() - silentTypes.silentMs);
+    const clauses = [];
+    if (plain.length > 0) clauses.push({ type: { in: plain } });
+    clauses.push({ type: { in: silentTypes.types }, updatedAt: { lt: silentCutoff } });
+    delete where.type;
+    where.OR = clauses;
+  }
   if (shops) where.shop = { in: shops };
 
   const rows = await prisma.task.findMany({ where, select: { id: true, shop: true, type: true } });
@@ -216,7 +238,7 @@ export async function reconcileOrphanCrawlSnapshots(prisma, shops = null) {
  */
 /**
  * @param {any} prisma
- * @param {{ olderThan?: Date | null, types?: string[], shops?: string[] | null }} [options]
+ * @param {{ olderThan?: Date | null, types?: string[], shops?: string[] | null, createdBefore?: Date | null, silentTypes?: { types: string[], silentMs: number } | null }} [options]
  * @returns {Promise<{ tasks: number, snapshots: number, shops: string[] }>}
  */
 export async function recoverOrphanedRuns(prisma, options = {}) {

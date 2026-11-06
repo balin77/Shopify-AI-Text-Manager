@@ -15,7 +15,7 @@ const applyBulkDiff = vi.fn();
 vi.mock("~/services/bulk-editor/apply.server", () => ({ applyBulkDiff: (...a: unknown[]) => applyBulkDiff(...a) }));
 vi.mock("~/utils/logger.server", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
-import { runBulkEditorTranslate, type TranslateJob } from "~/routes/api-ai-handlers/bulk-editor-translate.handler";
+import { runBulkEditorTranslate, BULK_TRANSLATE_HEARTBEAT_MS, type TranslateJob } from "~/routes/api-ai-handlers/bulk-editor-translate.handler";
 import { ManagedAiRefusedError } from "../../src/services/ai.service";
 
 const titleColumn = {
@@ -36,7 +36,7 @@ const job = (rowId: string): TranslateJob => ({
 });
 
 function makeDb() {
-  return { task: { update: vi.fn(async () => ({})) }, groupedFieldTranslation: {} } as any;
+  return { task: { update: vi.fn(async () => ({})), updateMany: vi.fn(async () => ({ count: 1 })) }, groupedFieldTranslation: {} } as any;
 }
 
 const run = (db: any, jobs: TranslateJob[]) =>
@@ -56,7 +56,7 @@ const run = (db: any, jobs: TranslateJob[]) =>
   });
 
 const finalUpdate = (db: any) => {
-  const calls = db.task.update.mock.calls.map((c: any[]) => c[0].data);
+  const calls = db.task.updateMany.mock.calls.map((c: any[]) => c[0].data);
   return calls.filter((d: any) => d.completedAt)[0];
 };
 
@@ -133,5 +133,56 @@ describe("bulk-editor translate: managed refusal mid-run", () => {
     await run(db, [job("r1"), job("r2")]);
     expect(applyBulkDiff).not.toHaveBeenCalled();
     expect(finalUpdate(db).status).toBe("failed");
+  });
+});
+
+
+describe("bulk-editor translate: liveness and monotonic finalizers", () => {
+  beforeEach(() => {
+    translateShortFieldsBatch.mockReset();
+    applyBulkDiff.mockReset();
+    applyBulkDiff.mockResolvedValue({ saved: 1, failures: [] });
+  });
+
+  it("the terminal update is CONDITIONAL on the row still running (a row somebody settled never flips back)", async () => {
+    translateShortFieldsBatch.mockResolvedValue({ en: { title: "Hello" } });
+    const db = makeDb();
+    await run(db, [job("r1")]);
+    const finals = db.task.updateMany.mock.calls.filter((c: any[]) => c[0].data.completedAt);
+    expect(finals).toHaveLength(1);
+    expect(finals[0][0].where).toEqual({ id: "task-1", status: "running" });
+    // and nothing writes a terminal state through an unconditional update
+    expect(db.task.update.mock.calls.some((c: any[]) => c[0].data.completedAt)).toBe(false);
+  });
+
+  it("a crashed run is also failed conditionally", async () => {
+    translateShortFieldsBatch.mockRejectedValue(new Error("provider exploded"));
+    applyBulkDiff.mockRejectedValue(new Error("write exploded"));
+    const db = makeDb();
+    await run(db, [job("r1")]);
+    const finals = db.task.updateMany.mock.calls.filter((c: any[]) => c[0].data.completedAt);
+    expect(finals.length).toBeGreaterThan(0);
+    for (const c of finals) expect(c[0].where.status).toBe("running");
+  });
+
+  it("beats while an AI call is out (Task.updatedAt) and stops beating afterwards", async () => {
+    vi.useFakeTimers();
+    try {
+      let release: (v: unknown) => void = () => {};
+      translateShortFieldsBatch.mockImplementation(() => new Promise((r) => { release = r; }));
+      const db = makeDb();
+      const running = run(db, [job("r1")]);
+      await vi.advanceTimersByTimeAsync(BULK_TRANSLATE_HEARTBEAT_MS * 3 + 10);
+      const beats = () => db.task.updateMany.mock.calls.filter((c: any[]) => c[0].data.updatedAt && !c[0].data.completedAt);
+      expect(beats().length).toBeGreaterThanOrEqual(3);
+      expect(beats()[0][0].where).toEqual({ id: "task-1", status: "running" });
+      release({ en: { title: "Hello" } });
+      await running;
+      const after = beats().length;
+      await vi.advanceTimersByTimeAsync(BULK_TRANSLATE_HEARTBEAT_MS * 4);
+      expect(beats().length).toBe(after);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

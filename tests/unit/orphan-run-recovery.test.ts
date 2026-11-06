@@ -18,6 +18,7 @@ import {
   HEARTBEAT_TASK_TYPES,
   BOOT_ORPHAN_TASK_TYPES,
   BOOT_RECOVERY_TASK_TYPES,
+  BOOT_SILENCE_MS,
   HEARTBEAT_STALL_MS,
   INTERRUPTED_TASK_ERROR,
   INTERRUPTED_SNAPSHOT_ERROR,
@@ -194,9 +195,42 @@ describe("boot-only orphan types (bulkEditorTranslate)", () => {
     }
 
     const where = taskFindMany.mock.calls[0][0].where;
-    expect(where.type.in).toContain("bulkEditorTranslate");
+    expect(JSON.stringify(where)).toContain("bulkEditorTranslate");
+    // the bulk type is failed only once silent (it heartbeats), never by age at boot
+    expect(where.OR.find((c: any) => c.type.in.includes("bulkEditorTranslate")).updatedAt.lt).toBeInstanceOf(Date);
     expect(where.status).toBe("running");
-    expect(where.updatedAt).toBeUndefined();
     expect(taskUpdateMany.mock.calls[0][0].data.error).toBe(INTERRUPTED_TASK_ERROR);
+  });
+
+  it("boot recovery only takes rows created BEFORE this process started (a live run of this process is no orphan)", async () => {
+    const g = globalThis as any;
+    const prevDb = g.__db;
+    g.__db = prisma;
+    try {
+      const { TaskRecoveryService } = await import("../../task-recovery.service.js");
+      const before = Date.now();
+      await new TaskRecoveryService().recoverOrphanedDetachedRuns();
+      const where = taskFindMany.mock.calls[0][0].where;
+      expect(where.createdAt.lt).toBeInstanceOf(Date);
+      expect(where.createdAt.lt.getTime()).toBeLessThanOrEqual(before);
+    } finally {
+      g.__db = prevDb;
+    }
+  });
+
+  it("a heartbeating boot type is failed only after it went SILENT (a deploy overlap's live run keeps beating); a crawl is failed regardless", async () => {
+    const t0 = Date.now();
+    await failOrphanedRuns(prisma, {
+      olderThan: null,
+      types: BOOT_RECOVERY_TASK_TYPES,
+      silentTypes: { types: BOOT_ORPHAN_TASK_TYPES, silentMs: BOOT_SILENCE_MS },
+    });
+    const where = taskFindMany.mock.calls[0][0].where;
+    expect(where.type).toBeUndefined();
+    const crawl = where.OR.find((c: any) => c.type.in.includes("seoCrawl"));
+    expect(crawl.updatedAt).toBeUndefined();
+    const bulk = where.OR.find((c: any) => c.type.in.includes("bulkEditorTranslate"));
+    expect(bulk.updatedAt.lt.getTime()).toBeLessThanOrEqual(t0 - BOOT_SILENCE_MS + 1000);
+    expect(bulk.updatedAt.lt.getTime()).toBeGreaterThan(t0 - BOOT_SILENCE_MS - 5000);
   });
 });
