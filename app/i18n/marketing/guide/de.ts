@@ -1126,6 +1126,7 @@ export const guideDe: GuideCopy = {
           heading: "Optionen übersetzen",
           paragraphs: [
             "Unter jeder Option im Varianten-Bereich — auch im zugeklappten Zustand — übersetzt „Übersetzen“ den Optionsnamen und seine Werte in alle Sprachen; „In alle Sprachen übertragen“ übernimmt sie unverändert. Bei einer geöffneten Option stehen die beiden Buttons zwischen „Löschen“ und „Fertig“. Ist eine Option blau unterlegt, fehlt ihr in mindestens einer Sprache noch eine Übersetzung. Haben Sie eine Option geändert, speichern Sie zuerst: Bis die Änderung gespeichert ist, bleiben die Buttons gesperrt, damit nicht der alte Text übersetzt wird.",
+            "Ist eine Eingabe bei den Optionen oder Metafeldern ungültig (leerer Optionsname oder -wert, leere Zeile, ungültiges Metafeld), erscheint eine rote Meldung und beim Speichern wird nichts gespeichert, auch nicht Bilder, Alt-Texte oder Texte. Korrigieren oder verwerfen Sie zuerst die markierte Eingabe und speichern Sie dann erneut.",
           ],
         },
         {

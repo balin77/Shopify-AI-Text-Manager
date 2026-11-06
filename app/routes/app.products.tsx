@@ -841,9 +841,11 @@ export default function ProductsPage() {
       // A product-image delete is in flight: saving now could clear variant
       // main images for media that survives a failed delete.
       if (imageManagerStateRef.current.isDeletingImages) return;
-      // Refused (the saved values are still being reloaded): the gallery and alt
-      // saves below must not run and report "saved" over the card's message.
-      if (subResources.handlers.saveSubResources() === "waiting") return "waiting";
+      // Refused (the saved values are still being reloaded, or the card's own
+      // validation refused the press): the gallery and alt saves below must not
+      // run and report "saved" over the card's message.
+      const subResult = subResources.handlers.saveSubResources();
+      if (subResult === "waiting" || subResult === "refused") return subResult;
       // The gallery half starts FIRST: the alt text of an image this Save is
       // only uploading has no media id yet, so the manager carries it over and
       // sends it once the gallery save has created the image (or reports it as

@@ -1113,6 +1113,7 @@ export const guideEs: GuideCopy = {
           heading: "Traducir opciones",
           paragraphs: [
             "Debajo de cada opción en la sección de variantes — también cuando está plegada — «Traducir» traduce el nombre de la opción y sus valores a todos los idiomas, y «Copiar a todos los idiomas» los copia sin cambios. En una opción abierta, los dos botones están entre «Eliminar» y «Hecho». Una opción con fondo azul aún no tiene traducción en al menos un idioma. Si has cambiado una opción, guarda primero: los botones permanecen bloqueados hasta que el cambio se guarda, para que nunca se traduzca el texto anterior.",
+            "Si una entrada de las opciones o metacampos no es válida (nombre o valor de opción vacío, fila en blanco, metacampo no válido), aparece un mensaje rojo y al guardar no se guarda nada, tampoco imágenes, textos alternativos ni textos. Corrige o descarta primero la entrada marcada y guarda de nuevo.",
           ],
         },
         {

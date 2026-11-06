@@ -659,10 +659,13 @@ export interface SubResourceHandlers {
   translateAllSubResourcesToAllLocales: () => void;
   /**
    * Press Save. Returns "waiting" when the press was REFUSED because the values
-   * a landed save wrote are still being reloaded (nothing was sent): the caller
-   * must not go on to run the page's other saves and show a green "saved".
+   * a landed save wrote are still being reloaded, and "refused" when the card's
+   * own validation refused it (empty option name/value, blank row, invalid
+   * metafield; a red message was shown). Nothing was sent in either case: the
+   * caller must not go on to run the page's other saves and show a green "saved"
+   * that would cover the message.
    */
-  saveSubResources: () => void | "waiting";
+  saveSubResources: () => void | "waiting" | "refused";
   /**
    * The sub-resource half of the editor's "clear all" in a FOREIGN locale:
    * removes every option name, option value and metafield translation of the
@@ -2897,7 +2900,7 @@ export function useProductSubResources({
             } else {
               alert("Option name cannot be empty");
             }
-            return;
+            return "refused";
           }
           // A value the merchant renamed and then DELETED must not be sent as
           // both a rename and a delete: Shopify rejects the contradiction, and
@@ -2920,7 +2923,7 @@ export function useProductSubResources({
             } else {
               alert("Option values cannot be empty");
             }
-            return;
+            return "refused";
           }
 
           optionsChanges[optionId] = {};
@@ -2952,7 +2955,7 @@ export function useProductSubResources({
         } else {
           alert("Option values cannot be empty");
         }
-        return;
+        return "refused";
       }
       for (const [optionId, added] of Object.entries(optionValuesToAdd)) {
         if (added.length === 0 || optionsToDelete.includes(optionId)) continue;
@@ -2973,7 +2976,7 @@ export function useProductSubResources({
           } else {
             alert("Option values cannot be empty");
           }
-          return;
+          return "refused";
         }
         optionsChanges[optionId] = { ...(optionsChanges[optionId] ?? {}), valuesToAdd: added };
       }
@@ -3020,7 +3023,7 @@ export function useProductSubResources({
               : strings.metafieldListInvalid ||
                 "A list field contains entries that do not match its type. Correct the marked lines.";
           if (showInfoBox) showInfoBox(message, "critical");
-          return;
+          return "refused";
         }
         // "" = clear: the server deletes the metafield and keeps the field.
         metafieldChanges[metafieldId] = change.value;

@@ -1776,9 +1776,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   // duplicate productCreateMedia for the same staging URL).
                   if (state.isSavingCurrentItem || subResourceState?.isSaving || commerceSave.saving) return;
                   // The card's Save first: when it REFUSES the press (the values of
-                  // a landed save are still being reloaded) nothing else is saved
-                  // either, so no green "saved" can cover its "press again".
-                  if (subResourceHandlers?.saveSubResources?.() === "waiting") return;
+                  // a landed save are still being reloaded, or its own validation
+                  // refused an empty option name / value or an invalid metafield)
+                  // nothing else is saved either, so no green "saved" can cover
+                  // its message.
+                  const subResult = subResourceHandlers?.saveSubResources?.();
+                  if (subResult === "waiting" || subResult === "refused") return;
                   handlers.handleSave();
                   // Third writer, same button. Its failures surface INSIDE the
                   // panel (a refused stock write names the number that moved),

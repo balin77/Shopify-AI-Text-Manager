@@ -1113,6 +1113,7 @@ export const guideEn: GuideCopy = {
           heading: "Translating options",
           paragraphs: [
             "Below every option in the variants section — even when it is collapsed — “Translate” translates the option name and its values into every language, and “Copy to all languages” copies them unchanged. On an open option, the two buttons sit between “Delete” and “Done”. An option with a blue background is still missing a translation in at least one language. If you changed an option, save first: the buttons stay locked until the change is saved, so the old text is never translated.",
+            "If an entry in the options or metafields is invalid (empty option name or value, blank row, invalid metafield), a red message appears and Save stores nothing at all — no images, alt texts or texts either. Correct or discard the marked entry first, then save again.",
           ],
         },
         {

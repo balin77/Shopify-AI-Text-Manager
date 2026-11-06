@@ -23,7 +23,7 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 
 ## Bekannt: Speichern und Sperren
 
-- Eine Ablehnung stoppt nur die Karte, nicht Haupt-, Galerie- oder Alt-Speicherungen. Danach kann trotzdem eine grüne Meldung erscheinen.
+- Lehnt der SERVER die Speicherung der Optionen- und Metafelder-Karte ab (Ablehnung einer Option, eines Metafelds), kommt die Antwort über die eigene Warteschlange der Karte. Antwortet die Hauptspeicherung (Inhalt, Galerie, Alt-Texte) danach, ersetzt deren grüne Meldung die rote im einen Meldungsfeld (es hält nur die letzte; die Glocke behält beide). Die Prüfungen der Karte im Browser (leerer Optionsname oder -wert, leere Zeile, ungültiges Metafeld) stoppen dagegen die ganze Seitenspeicherung (`"refused"`). Behebung wäre ein Meldungs-Mindestton für die Dauer einer Speicherung.
 - Ein erneutes Senden löscht Übersetzungen nochmals, wenn der Wert innerhalb von 10 Minuten neu getippt wird und vom gespeicherten abweicht.
 - Die Sperre kann bei vielen Speicherungen länger halten, weil der gemeinsame 20-Sekunden-Timer neu startet.
 - Nach einem sehr langsamen Reload (über 20 Sekunden) kann eine Übersetzung noch den alten Text verwenden.
