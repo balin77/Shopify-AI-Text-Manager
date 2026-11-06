@@ -691,6 +691,7 @@ export const guideEs: GuideCopy = {
           heading: "Qué ocurre",
           paragraphs: [
             "Solo se rellenan las traducciones vacías; una traducción existente nunca se sobrescribe. La app vuelve a comprobar justo antes de escribir qué falta realmente. Los handles traducidos son opcionales y se normalizan a una forma de URL válida.",
+            "Si la app se reinicia durante la ejecución (por ejemplo, por una actualización), después aparece una advertencia de que la ejecución se interrumpió. Lo que aún no estaba guardado no se escribió; vuelve a iniciar «Completar las traducciones que faltan» y solo se rellenará lo que siga faltando.",
           ],
         },
       ],

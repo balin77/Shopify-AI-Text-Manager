@@ -15,6 +15,7 @@ import {
 } from "./app/config/webp-tasks.js";
 import {
   HEARTBEAT_TASK_TYPES,
+  BOOT_RECOVERY_TASK_TYPES,
   HEARTBEAT_STALL_MS,
   recoverOrphanedRuns,
   reconcileOrphanCrawlSnapshots,
@@ -236,7 +237,8 @@ export class TaskRecoveryService {
   }
 
   /**
-   * Boot-time half of the orphan rule: fail heartbeat-type runs regardless of
+   * Boot-time half of the orphan rule: fail heartbeat-type runs (and the boot-only
+   * detached types, e.g. bulkEditorTranslate) regardless of
    * age and close the crawl snapshots behind them.
    *
    * Multi-instance caveat (same class as the R4-C2 note in server.js): with
@@ -249,7 +251,7 @@ export class TaskRecoveryService {
     // Never let this abort the rest of the boot recovery (and with it the
     // monitoring interval that would clean up later): a failure here costs one
     // delayed reap, a thrown one costs the reaper.
-    const result = await recoverOrphanedRuns(prisma, { olderThan: null }).catch((error) => {
+    const result = await recoverOrphanedRuns(prisma, { olderThan: null, types: BOOT_RECOVERY_TASK_TYPES }).catch((error) => {
       console.error('[TaskRecovery] Orphaned-run recovery failed:', error);
       return { tasks: 0, snapshots: 0, shops: [] };
     });

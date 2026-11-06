@@ -59,6 +59,21 @@ export const INTERRUPTED_SNAPSHOT_ERROR = "interrupted";
 export const HEARTBEAT_TASK_TYPES = ["seoCrawl"];
 
 /**
+ * Detached runners that do NOT heartbeat (a bulk AI job may be silent for
+ * minutes between two provider calls), so the periodic reaper must keep its
+ * generous 45-minute rule for them, but whose runner still cannot outlive its
+ * process. They are failed ONLY at boot (rule 2 above, `olderThan: null`):
+ * without that a restart in the middle of a run left the Task "running" for
+ * ~45-50 minutes and single-flight refused a new run for all that time.
+ * Keep this list to types whose run is a fire-and-forget promise in the web
+ * process and whose rerun is safe.
+ */
+export const BOOT_ORPHAN_TASK_TYPES = ["bulkEditorTranslate"];
+
+/** What boot recovery fails: heartbeat types plus the boot-only ones. */
+export const BOOT_RECOVERY_TASK_TYPES = [...HEARTBEAT_TASK_TYPES, ...BOOT_ORPHAN_TASK_TYPES];
+
+/**
  * Longest silence a heartbeat-type run may have before it counts as orphaned.
  *
  * The crawl's own ceiling inside the fetch loop is 10s

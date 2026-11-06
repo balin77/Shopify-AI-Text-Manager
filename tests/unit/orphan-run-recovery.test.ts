@@ -16,6 +16,8 @@ import {
   reconcileOrphanCrawlSnapshots,
   recoverOrphanedRuns,
   HEARTBEAT_TASK_TYPES,
+  BOOT_ORPHAN_TASK_TYPES,
+  BOOT_RECOVERY_TASK_TYPES,
   HEARTBEAT_STALL_MS,
   INTERRUPTED_TASK_ERROR,
   INTERRUPTED_SNAPSHOT_ERROR,
@@ -161,5 +163,40 @@ describe("recoverOrphanedRuns", () => {
     // Unscoped on purpose: a snapshot can outlive a task the 45-minute reaper
     // already failed without ever closing the snapshot.
     expect(snapshotFindMany.mock.calls[0][0].where.shop).toBeUndefined();
+  });
+});
+
+describe("boot-only orphan types (bulkEditorTranslate)", () => {
+  it("lists the bulk translate run for boot recovery but NOT as a heartbeat type", () => {
+    expect(BOOT_ORPHAN_TASK_TYPES).toContain("bulkEditorTranslate");
+    // The periodic reaper keeps its 45-minute rule for it: a bulk AI job may be
+    // silent for minutes between two provider calls.
+    expect(HEARTBEAT_TASK_TYPES).not.toContain("bulkEditorTranslate");
+    expect(BOOT_RECOVERY_TASK_TYPES).toEqual(
+      expect.arrayContaining([...HEARTBEAT_TASK_TYPES, ...BOOT_ORPHAN_TASK_TYPES]),
+    );
+  });
+
+  it("boot recovery fails a running bulkEditorTranslate row of any age with the interrupted code", async () => {
+    taskFindMany.mockResolvedValue([{ id: "t9", shop: "a.myshopify.com", type: "bulkEditorTranslate" }]);
+    taskUpdateMany.mockResolvedValue({ count: 1 });
+
+    const g = globalThis as any;
+    const prevDb = g.__db;
+    g.__db = prisma;
+    try {
+      const { TaskRecoveryService } = await import("../../task-recovery.service.js");
+      const svc = new TaskRecoveryService();
+      const res = await svc.recoverOrphanedDetachedRuns();
+      expect(res.tasks).toBe(1);
+    } finally {
+      g.__db = prevDb;
+    }
+
+    const where = taskFindMany.mock.calls[0][0].where;
+    expect(where.type.in).toContain("bulkEditorTranslate");
+    expect(where.status).toBe("running");
+    expect(where.updatedAt).toBeUndefined();
+    expect(taskUpdateMany.mock.calls[0][0].data.error).toBe(INTERRUPTED_TASK_ERROR);
   });
 });

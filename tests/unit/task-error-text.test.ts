@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { taskErrorText } from "~/utils/task-error-text";
+import { isInterruptedTaskError, taskErrorText } from "~/utils/task-error-text";
 import { translateErrorMessage } from "~/utils/editor-error-messages";
 import { de } from "~/i18n/de";
 import { en } from "~/i18n/en";
@@ -248,5 +248,15 @@ describe("seoOtherHalfUnreadable: a refused one-sided SEO save is worded, never 
     expect(text).toMatch(pattern);
     expect(text).not.toContain("seoOtherHalfUnreadable");
     expect(translateErrorMessage("seoOtherHalfUnreadable", t as never)).toBe(text);
+  });
+});
+
+describe("isInterruptedTaskError", () => {
+  it("recognises only the orphan recovery code (shown as a warning, not an error)", () => {
+    expect(isInterruptedTaskError("task_interrupted")).toBe(true);
+    expect(isInterruptedTaskError("task_timed_out")).toBe(false);
+    expect(isInterruptedTaskError("rows_failed:3")).toBe(false);
+    expect(isInterruptedTaskError(null)).toBe(false);
+    expect(isInterruptedTaskError(undefined)).toBe(false);
   });
 });

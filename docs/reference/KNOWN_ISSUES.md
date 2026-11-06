@@ -130,7 +130,6 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 
 ## Bekannt: Server und Betrieb
 
-- Eine Bulk-Übersetzung kann beim Neustart abbrechen, der Task zeigt dann bis zu 10 Minuten «läuft». Der Fix würde etwa einen halben Tag dauern.
 - Ob ein Abbruch durch den Railway-Proxy weitergereicht wird, ist nicht geprüft.
 - Nach einem Datenbankausfall von über 10 Minuten kann eine laufende Konvertierung fälschlich geschlossen werden.
 - Die 90-Tage-Annahme beim Keep-alive sollte Mitte Januar 2027 geprüft werden.

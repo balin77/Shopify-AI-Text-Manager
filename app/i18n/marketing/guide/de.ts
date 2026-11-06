@@ -698,6 +698,7 @@ export const guideDe: GuideCopy = {
           heading: "Was dabei passiert",
           paragraphs: [
             "Es werden ausschliesslich leere Übersetzungen gefüllt; eine bestehende Übersetzung wird nie überschrieben. Die App prüft vor dem Schreiben erneut, was wirklich fehlt. Übersetzte Handles sind optional und werden in eine gültige URL-Form gebracht.",
+            "Wird die App während des Laufs neu gestartet (zum Beispiel bei einem Update), erscheint danach eine Warnung, dass der Lauf unterbrochen wurde. Was dabei noch nicht gespeichert war, wurde nicht geschrieben; starten Sie „Fehlende Übersetzungen ergänzen“ einfach erneut, es werden nur noch fehlende Übersetzungen gefüllt.",
           ],
         },
       ],

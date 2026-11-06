@@ -28,6 +28,15 @@
  * English sentence is a FLAG argument (`1`), so it is translated with the rest
  * instead of being English appended to German.
  */
+/**
+ * True for the machine code the orphan recovery writes (`task_interrupted`).
+ * Pages show it as a WARNING, not a red error: nothing is wrong with the
+ * merchant's shop or input, the app was restarted under the run.
+ */
+export function isInterruptedTaskError(error: string | null | undefined): boolean {
+  return typeof error === "string" && error.split(":")[0] === "task_interrupted";
+}
+
 /** `BlockSource` (crawl.service.ts) → its explanatory text in `seo.crawlPage`.
  *  Shared with the crawl page so both render the same attribution. */
 export const BLOCK_SOURCE_TEXT_KEY: Record<string, string> = {

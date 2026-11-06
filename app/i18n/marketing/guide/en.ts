@@ -691,6 +691,7 @@ export const guideEn: GuideCopy = {
           heading: "What happens",
           paragraphs: [
             "Only empty translations are filled; an existing translation is never overwritten. The app re-checks what is really missing right before writing. Translated handles are optional and are normalised into a valid URL form.",
+            "If the app is restarted while the run is going (for example by an update), a warning afterwards says the run was interrupted. Anything not yet saved at that point was not written; simply start “Add missing translations” again — only what is still missing is filled.",
           ],
         },
       ],
