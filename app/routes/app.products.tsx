@@ -595,6 +595,7 @@ export default function ProductsPage() {
       saveMaybePartial: t.products.saveMaybePartial,
       fieldsGone: t.products.fieldsGone,
       alreadyAdded: t.products.alreadyAdded,
+      pendingRowsLost: t.products.pendingRowsLost,
       errorSessionExpired: (t as unknown as { errors?: Record<string, string> }).errors?.sessionExpired,
       errorReauthorizeRequired: (t as unknown as { errors?: Record<string, string> }).errors?.reauthorizeRequired,
       metafieldRefusedElsewhere: t.products.metafieldRefusedElsewhere,

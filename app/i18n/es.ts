@@ -64,6 +64,7 @@ export const es: Translation = {
     saveMaybePartial: "Puede que una parte ya se haya guardado: el producto se está recargando; revisa los valores antes de volver a guardar.",
     fieldsGone: "Los campos que cambiaste ya no existen en este producto, así que no se guardó nada. La vista se recargó.",
     alreadyAdded: "Ya estaba añadido, no se añade de nuevo: {names}",
+    pendingRowsLost: "Estos valores nuevos no se pudieron conservar porque la opción no se encontró tras recargar: {names}. Vuelve a introducirlos.",
     metafieldRefusedElsewhere: "Shopify no aceptó el valor de un metacampo: {message}",
     metafieldPermissionElsewhere: "Shopify no permite que esta app escriba este metacampo: {message}",
     previousProductLabel: "el producto anterior",

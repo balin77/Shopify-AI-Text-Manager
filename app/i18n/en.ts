@@ -68,6 +68,7 @@ export const en: Translation = {
     saveMaybePartial: "Part of it may have been saved – the product is being reloaded, check the values before you save again.",
     fieldsGone: "The fields you changed no longer exist on this product, so nothing was saved. The view was reloaded.",
     alreadyAdded: "Already added, so not added again: {names}",
+    pendingRowsLost: "These new values could not be kept because the option was not found after reloading: {names}. Please enter them again.",
     metafieldRefusedElsewhere: "Shopify did not accept the value for a metafield: {message}",
     metafieldPermissionElsewhere: "Shopify does not allow this app to write this metafield: {message}",
     previousProductLabel: "the previous product",

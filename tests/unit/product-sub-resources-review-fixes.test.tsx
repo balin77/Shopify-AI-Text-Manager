@@ -35,6 +35,7 @@ const STRINGS = {
   saveNotConfirmed: "No answer for {title}.",
   reloadBeforeSave: "RELOADING",
   alreadyAdded: "Already added: {names}",
+  pendingRowsLost: "LOST: {names}",
   optionsSavedSuccess: "SAVED-OK",
   metafieldDeleteRefused: "Not removed: {message}",
   optionRefusedByShopify: "Shopify said: {message}",
@@ -274,6 +275,20 @@ describe("reconcile after an unknown outcome (F3, F4, F5)", () => {
     rerender({ current: landed, lang: "de" });
     expect(result.current.state.optionsToCreate).toEqual([]);
     expect(result.current.state.optionsToDelete).toEqual([]);
+  });
+
+  it("typed rows of an option missing from the fresh read are NAMED in a warning, not kept and not dropped silently", async () => {
+    const { result, rerender } = render();
+    act(() => result.current.handlers.handleAddOptionValue(OPT, "Green"));
+    act(() => result.current.handlers.handleAddOptionValue(OPT, "Pink"));
+    await press(result);
+    await saves.settle({ ...UNKNOWN });
+    showInfoBox.mockClear();
+    // The reload answers without the option at all.
+    rerender({ current: mk(P.id, "Shirt", { options: [] }), lang: "de" });
+    expect(showInfoBox).toHaveBeenCalledWith(expect.stringContaining("LOST: Green, Pink"), "warning");
+    // Not kept: invisible rows would be sent for an option that is not there.
+    expect(result.current.state.optionValuesToAdd[OPT] ?? []).toEqual([]);
   });
 
   it("F5: a value queued for deletion does not count as already added", async () => {

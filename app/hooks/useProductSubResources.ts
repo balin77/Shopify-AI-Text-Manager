@@ -754,6 +754,7 @@ interface UseProductSubResourcesStrings {
   fieldsGone?: string;
   /** After an unknown outcome the reload showed these were added already ({names}). */
   alreadyAdded?: string;
+  pendingRowsLost?: string;
   /** The server's code strings the editor translates (t.errors.*). */
   errorSessionExpired?: string;
   errorReauthorizeRequired?: string;
@@ -2279,11 +2280,18 @@ export function useProductSubResources({
     const norm = (value: string) => value.trim().toLowerCase();
     const options = selectedItem.options ?? [];
     const dropped: string[] = [];
+    // Typed rows of an option the fresh item no longer has: they cannot be kept
+    // (invisible and sent for an option that is not on the item), so they are
+    // NAMED in a warning instead of vanishing silently.
+    const lost: string[] = [];
     const valuesToAdd: Record<string, string[]> = {};
     for (const [optionId, list] of Object.entries(now.valuesToAdd)) {
       // An option the fresh item no longer has shows no rows and takes no
       // additions: its pending rows go (they would be invisible and unsendable).
-      if (!options.some((o) => o.id === optionId)) continue;
+      if (!options.some((o) => o.id === optionId)) {
+        for (const name of list) if (name.trim() !== "") lost.push(name.trim());
+        continue;
+      }
       // A match the merchant has queued for DELETION does not count: it is
       // still there (the save did not land) and goes on being removed.
       const going = new Set(now.valuesToDelete[optionId] ?? []);
@@ -2352,11 +2360,22 @@ export function useProductSubResources({
         (edits?.dirtyOptionValueIds?.size ?? 0) > 0 ||
         (edits?.dirtyMetafieldIds?.size ?? 0) > 0,
     );
-    if (dropped.length > 0) {
-      showInfoBox?.(
-        (strings.alreadyAdded || "Already added, so not added again: {names}").replace("{names}", () => dropped.join(", ")),
-        "info",
-      );
+    if (dropped.length > 0 || lost.length > 0) {
+      // One box holds one message: both sentences go into it, the warning one
+      // decides the tone.
+      const parts: string[] = [];
+      if (dropped.length > 0) {
+        parts.push((strings.alreadyAdded || "Already added, so not added again: {names}").replace("{names}", () => dropped.join(", ")));
+      }
+      if (lost.length > 0) {
+        parts.push(
+          (
+            strings.pendingRowsLost ||
+            "These new values could not be kept because the option was not found after reloading: {names}. Please enter them again."
+          ).replace("{names}", () => lost.join(", ")),
+        );
+      }
+      showInfoBox?.(parts.join(" "), lost.length > 0 ? "warning" : "info");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the lock's release alone; reads the render it runs in
   }, [awaitingOptionReload]);

@@ -27,7 +27,6 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Ein erneutes Senden löscht Übersetzungen nochmals, wenn der Wert innerhalb von 10 Minuten neu getippt wird und vom gespeicherten abweicht.
 - Die Sperre kann bei vielen Speicherungen länger halten, weil der gemeinsame 20-Sekunden-Timer neu startet.
 - Nach einem sehr langsamen Reload (über 20 Sekunden) kann eine Übersetzung noch den alten Text verwenden.
-- Eine ausgefüllte, noch nicht gespeicherte Zeile kann selten still verloren gehen: Ausgang unbekannt, Option kurz weg, Schreibvorgang nicht angekommen. Vorschlag: nachträglicher Hinweis.
 - Eine leere Zeile bei einer gelöschten Option kann die Leiste kurz wieder einblenden (nur kosmetisch).
 - Beim Produktwechsel kommt die Rückfrage selten doppelt.
 - Bulk-Editor und andere `METAFIELDS_SET`-Aufrufe laufen ausserhalb der Sperre. Nach 5 Minuten Wartezeit läuft eine Speicherung neben der haltenden.
