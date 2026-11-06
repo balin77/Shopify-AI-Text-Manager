@@ -2291,7 +2291,10 @@ export function useProductSubResources({
       // An option the fresh item no longer has shows no rows and takes no
       // additions: its pending rows go (they would be invisible and unsendable).
       if (!options.some((o) => o.id === optionId)) {
-        for (const name of list) if (name.trim() !== "") lost.push(name.trim());
+        // An option the merchant deliberately deleted (queued now, or carried by the save) is not "lost":
+        // its rows went with it on purpose.
+        const deliberately = now.optionsToDelete.includes(optionId) || unknown.carried.optionsToDelete.includes(optionId);
+        if (!deliberately) for (const name of list) if (name.trim() !== "") lost.push(name.trim());
         continue;
       }
       // A match the merchant has queued for DELETION does not count: it is
@@ -2373,7 +2376,7 @@ export function useProductSubResources({
         parts.push(
           (
             strings.pendingRowsLost ||
-            "These new values could not be kept because the option was not found after reloading: {names}. Please enter them again."
+            "These new values could not be kept because their option no longer exists: {names}."
           ).replace("{names}", () => lost.join(", ")),
         );
       }

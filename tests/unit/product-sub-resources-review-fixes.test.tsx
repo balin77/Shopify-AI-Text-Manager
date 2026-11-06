@@ -291,6 +291,17 @@ describe("reconcile after an unknown outcome (F3, F4, F5)", () => {
     expect(result.current.state.optionValuesToAdd[OPT] ?? []).toEqual([]);
   });
 
+  it("typed rows of an option the merchant DELETED on purpose are not reported as lost", async () => {
+    const { result, rerender } = render();
+    act(() => result.current.handlers.handleAddOptionValue(OPT, "Green"));
+    act(() => result.current.handlers.handleDeleteOption(OPT));
+    await press(result);
+    await saves.settle({ ...UNKNOWN });
+    showInfoBox.mockClear();
+    rerender({ current: mk(P.id, "Shirt", { options: [] }), lang: "de" });
+    expect(showInfoBox.mock.calls.some(([text]) => String(text).includes("LOST"))).toBe(false);
+  });
+
   it("F5: a value queued for deletion does not count as already added", async () => {
     const { result, rerender } = render();
     act(() => result.current.handlers.handleRemoveOptionValue(OPT, V2));

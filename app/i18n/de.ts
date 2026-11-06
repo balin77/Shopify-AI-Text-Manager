@@ -63,7 +63,7 @@ export const de = {
     saveMaybePartial: "Ein Teil kann bereits gespeichert worden sein – das Produkt wird neu geladen, prüfe die Werte, bevor du erneut speicherst.",
     fieldsGone: "Die geänderten Felder gibt es an diesem Produkt nicht mehr, deshalb wurde nichts gespeichert. Die Ansicht wurde neu geladen.",
     alreadyAdded: "Schon vorhanden, wird nicht erneut hinzugefügt: {names}",
-    pendingRowsLost: "Diese neuen Werte konnten nicht behalten werden, weil die Option nach dem Neuladen nicht gefunden wurde: {names}. Bitte geben Sie sie erneut ein.",
+    pendingRowsLost: "Diese neuen Werte konnten nicht behalten werden, weil ihre Option nicht mehr existiert: {names}.",
     metafieldRefusedElsewhere: "Shopify hat den Wert für ein Metafeld nicht akzeptiert: {message}",
     metafieldPermissionElsewhere: "Shopify erlaubt dieser App nicht, dieses Metafeld zu schreiben: {message}",
     previousProductLabel: "das vorherige Produkt",
