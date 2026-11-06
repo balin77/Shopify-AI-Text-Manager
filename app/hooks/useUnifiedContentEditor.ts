@@ -1779,12 +1779,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       }
       // A foreign accept-and-translate still waiting for its step 1 belongs to the item just left: it stands
       // down (its answer is no longer applied here, and a deadline firing later would show a false box).
-      for (const flow of foreignStep1Ref.current.values()) {
+      for (const [waitingPartial, flow] of [...foreignStep1Ref.current]) {
         if (!flow.onSettled) continue;
         const settled = flow.onSettled;
         flow.onSettled = undefined;
         flow.saved = false;
         settled("refused");
+        foreignStep1Ref.current.delete(waitingPartial);
       }
       isSavePendingRef.current = false;
       // Nor will it clear the busy flag: back on the old item it read as
@@ -2252,6 +2253,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     flow.onSettled = undefined;
     if (result !== "saved") flow.saved = false;
     settled(result);
+    // Settled without an answer to come (never sent): nothing is left to remember.
+    if (partial && result !== "saved") foreignStep1Ref.current.delete(partial);
   };
   /** The step 2 of those flows, keyed by ITS request identity: the staged overlay it can give back. */
   const foreignAcceptPrimaryStepRef = useRef<Map<object, { itemId: string; fieldKey: string; staged: string; step1: object }>>(new Map());
