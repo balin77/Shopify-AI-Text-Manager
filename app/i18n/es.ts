@@ -1966,7 +1966,6 @@ export const es: Translation = {
     mediaClearMainFailed: "Las imágenes se eliminaron, pero no se pudo quitar la imagen principal de una variante. Revisa la variante en Shopify.",
     mainChangedElsewhere: "La imagen principal de la variante «{variant}» se cambió mientras tanto en otro lugar, por eso ni tu cambio ni los demás cambios sin guardar de esa variante se guardaron. Recarga el producto y repítelo si hace falta.",
     mainLookupFailed: "No se pudo leer el estado actual de las variantes en Shopify. No se subió nada y no se guardó nada para las variantes. Inténtalo de nuevo.",
-    mediaUncertain: "Estos archivos puede que ya estén en la galería del producto: {files}. No se volvieron a subir y la app no pudo saber qué imagen es cuál. Revisa la galería y añade las que falten.",
     mainLookupFailedAfterUpload: "No se pudo leer el estado actual de las variantes en Shopify, por eso no se guardó nada para las variantes. Las imágenes ya subidas se quedan en el producto. Guarda de nuevo.",
     mainFileGone: "La imagen elegida como imagen principal ya no existe (variante «{variant}»). Sus cambios sin guardar no se guardaron. Recarga el producto.",
     mainAttachNotConfirmed: "La imagen se añadió al producto, pero Shopify aún no la muestra. No se guardó nada para la variante «{variant}» y tu cambio se conserva. Guarda de nuevo en un momento.",

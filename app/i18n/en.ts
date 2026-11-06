@@ -1986,7 +1986,6 @@ export const en: Translation = {
     mediaClearMainFailed: "The images were deleted, but a variant's main image could not be cleared. Please check the variant in Shopify.",
     mainChangedElsewhere: "The main image of the variant \"{variant}\" was changed elsewhere in the meantime, so your change to it and the variant's other unsaved changes were not saved. Reload the product and repeat it if needed.",
     mainLookupFailed: "The current state of the variants could not be read from Shopify. Nothing was uploaded and nothing was saved for the variants. Please try again.",
-    mediaUncertain: "These files may already be in the product gallery: {files}. They were not uploaded again, and the app could not tell which image is which. Please check the gallery and add any that are missing.",
     mainLookupFailedAfterUpload: "The current state of the variants could not be read from Shopify, so nothing was saved for the variants. Images that were already uploaded stay on the product. Please save again.",
     mainFileGone: "The image chosen as main image no longer exists (variant \"{variant}\"). Its unsaved changes were not saved. Reload the product.",
     mainAttachNotConfirmed: "The image was added to the product but Shopify does not show it yet. Nothing was saved for the variant \"{variant}\" and your change is kept. Please save again in a moment.",

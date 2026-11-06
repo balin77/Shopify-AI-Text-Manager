@@ -88,37 +88,6 @@ describe("H2: media a failed save created are not uploaded again", () => {
   });
 });
 
-describe("uncertain uploads of a failed save (could not be tied to a created medium)", () => {
-  const A = "https://staged/tmp/1/a.jpg";
-  const B = "https://staged/tmp/1/b.jpg";
-  it("are named in the error, never uploaded or referenced again, and named again as a warning on the retry that goes through", async () => {
-    let n = 0;
-    answer = () =>
-      ++n === 1
-        ? { success: false, errors: ["createMedia: expected 2 created media, got 1"], refusals: [], createdMedia: [], uncertainMedia: [{ resourceUrl: A, kind: "image" }] }
-        : { success: true, createdMedia: [] };
-    const { result } = renderHook(() => useVariantImageManager());
-    act(() =>
-      result.current.handlePendingChange(
-        [{ variantId: V1, fileGids: [A, B], promoteIfEmpty: true }],
-        [],
-        [{ resourceUrl: A, kind: "image" }, { resourceUrl: B, kind: "image" }],
-      ),
-    );
-    let first: any;
-    await act(async () => { first = await result.current.handleApply("gid://shopify/Product/1"); });
-    expect(first.error).toContain("a.jpg");
-    let second: any;
-    await act(async () => { second = await result.current.handleApply("gid://shopify/Product/1"); });
-    expect(calls[0].newMedia.map((m: any) => m.resourceUrl)).toEqual([A, B]);
-    // the uncertain file is neither uploaded nor referenced again; the other one still is
-    expect(calls[1].newMedia.map((m: any) => m.resourceUrl)).toEqual([B]);
-    expect(calls[1].variantGalleries[0].fileGids).toEqual([B]);
-    expect(second.error).toBeNull();
-    expect(second.warning).toContain("a.jpg");
-  });
-});
-
 describe("the gold border: no main url means no border, not the first tile", () => {
   const wrap = (mainUrl: string | null | undefined) =>
     render(

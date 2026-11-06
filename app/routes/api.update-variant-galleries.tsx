@@ -4,7 +4,6 @@ import { db } from "../db.server";
 import { isValidExternalVideoUrl, isValid3dModelUrl, kindToMediaContentType } from "../utils/mediaKind";
 import type { MediaKind } from "../components/image-manager/types";
 import { invalidateVariantDefsCache } from "./api.product-variants";
-import { filenameOfUrl, matchUploadsToCreatedMedia, type CreatedMediumFile } from "../services/created-media-match.shared";
 import {
   planVariantWrite,
   applyMainOnlyRule,
@@ -258,42 +257,6 @@ async function attachFileToProduct(graphql: AdminGraphql, productId: string, fil
   }
 }
 
-/**
- * What filenames the just-created media report, to tie them to the uploads (see created-media-match.shared.ts).
- * One read of those ids only. A medium that is still processing reports no filename yet (image/sources are
- * empty), which the match treats as "cannot tell". Null = the read failed (logged): nothing can be mapped.
- * MOCK-ONLY shape: not measured on a shop.
- */
-async function readCreatedMediaFiles(graphql: AdminGraphql, ids: readonly string[]): Promise<CreatedMediumFile[] | null> {
-  const out: CreatedMediumFile[] = [];
-  for (let i = 0; i < ids.length; i += VARIANT_CHUNK) {
-    const data = await runLookupQuery(
-      graphql,
-      "created media",
-      `query createdMediaFiles($ids: [ID!]!) {
-        nodes(ids: $ids) {
-          ... on MediaImage { id image { url } }
-          ... on Video { id sources { url } }
-          ... on Model3d { id sources { url } }
-          ... on ExternalVideo { id originUrl }
-        }
-      }`,
-      { ids: ids.slice(i, i + VARIANT_CHUNK) },
-    );
-    if (!data) return null;
-    const nodes: any[] = data.nodes ?? [];
-    const byId = new Map<string, any>();
-    for (const n of nodes) if (n?.id) byId.set(n.id, n);
-    for (const id of ids.slice(i, i + VARIANT_CHUNK)) {
-      const n = byId.get(id);
-      const url: string | null = n?.image?.url ?? n?.sources?.[0]?.url ?? null;
-      const origin: string | null = typeof n?.originUrl === "string" ? n.originUrl : null;
-      out.push({ id, filename: origin ? origin.toLowerCase() : filenameOfUrl(url) });
-    }
-  }
-  return out;
-}
-
 const REFUSAL_TEXT: Record<MainRefusal, string> = {
   mainChangedElsewhere: "the variant's main image was changed elsewhere in the meantime",
   lookupFailed: "the variant's current state could not be read from Shopify",
@@ -438,15 +401,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
     // Media created before the failure are reported with it, so a second Save converts the staged
     // references to these GIDs instead of uploading every new medium again.
-    return json({ success: false, errors, completedSteps, refusals, createdMedia: createdMediaList(), ...(uncertainUploads.length > 0 ? { uncertainMedia: uncertainMediaList() } : {}), ...(errorCode ? { errorCode } : {}) }, { status: 422 });
+    return json({ success: false, errors, completedSteps, refusals, createdMedia: createdMediaList(), ...(errorCode ? { errorCode } : {}) }, { status: 422 });
   };
-  // Uploads that may already exist on the product but could not be tied to a created medium (see
-  // created-media-match.shared.ts): reported with the failure so the client neither maps nor re-uploads them.
-  const uncertainUploads: string[] = [];
-  const uncertainMediaList = () =>
-    newMedia
-      .filter(m => uncertainUploads.includes(m.resourceUrl))
-      .map(m => ({ resourceUrl: m.resourceUrl, kind: (m.kind ?? "image") as MediaKind }));
   const createdMediaList = () =>
     newMedia
       .map(m => ({ resourceUrl: m.resourceUrl, mediaId: resourceUrlToGid[m.resourceUrl] ?? null, kind: (m.kind ?? "image") as MediaKind }))
@@ -537,29 +493,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (createdMedia.length > 0) completedSteps.push("productCreateMedia");
 
     // The resourceUrl→GID map below relies on response order matching input order.
-    // If the counts differ we cannot trust positional mapping: a refused file leaves no slot. The created
-    // media are matched to the uploads by FILENAME instead (unique both ways, see created-media-match.shared.ts);
-    // what cannot be tied is reported as uncertain and never re-uploaded blindly. Either way the save aborts
-    // before any variant write, so a variant metafield is never pointed at the wrong image.
+    // If the counts differ we cannot trust positional mapping — bail before any
+    // variant metafield write so we never point a metafield at the wrong image.
     if (createdMedia.length !== newMedia.length) {
       errors.push(
         `createMedia: expected ${newMedia.length} created media, got ${createdMedia.length} — ` +
         `aborting to avoid mapping variant galleries to the wrong images`
       );
-      if (createdMedia.length > 0) {
-        const files = await readCreatedMediaFiles(admin.graphql as unknown as AdminGraphql, createdMedia.map(m => m.id));
-        if (files) {
-          const match = matchUploadsToCreatedMedia(newMedia, files);
-          Object.assign(resourceUrlToGid, match.mapped);
-          uncertainUploads.push(...match.uncertain);
-        } else {
-          // The re-read failed: nothing can be mapped, and every upload may be one of the created media.
-          uncertainUploads.push(...newMedia.map(m => m.resourceUrl));
-        }
-      }
     }
     // With equal counts the positional mapping holds even beside mediaUserErrors: what was created is
-    // reported with the failure, so a retry does not upload it again.
+    // reported with the failure, so a retry does not upload it again. With different counts nothing is
+    // mapped (the order of the answer cannot be trusted); those media may be duplicated by a retry.
     if (errors.length > 0) {
       if (createdMedia.length === newMedia.length) {
         newMedia.forEach((m, i) => { if (createdMedia[i]?.id) resourceUrlToGid[m.resourceUrl] = createdMedia[i].id; });

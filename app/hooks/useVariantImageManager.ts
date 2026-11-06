@@ -221,33 +221,18 @@ export function useVariantImageManager() {
   // Media a FAILED save already created (staging URL -> GID, kind): the next save converts those
   // references to the GIDs and does not upload them again.
   const createdByFailedSaveRef = useRef<Record<string, { mediaId: string; kind: MediaKind }>>({});
-  // Uploads a failed save could not tie to a created medium (the route's `uncertainMedia`): they may already exist on
-  // the product, so the next save neither uploads them again nor references them. The merchant is told to check.
-  const uncertainByFailedSaveRef = useRef<Record<string, { kind: MediaKind }>>({});
-  const uncertainNames = (list: Record<string, unknown>): string =>
-    Object.keys(list)
-      .map((u) => {
-        const last = u.split("#")[0].split("?")[0].split("/").pop() ?? u;
-        try { return decodeURIComponent(last); } catch { return last; }
-      })
-      .join(", ");
 
   const handleApply = useCallback(async (productId: string): Promise<GalleryApplyResult> => {
     setIsApplying(true);
     try {
       const retained = createdByFailedSaveRef.current;
-      const uncertain = uncertainByFailedSaveRef.current;
-      const isUncertain = (ref: string) => !!uncertain[ref];
-      const uncertainNote = Object.keys(uncertain).length > 0
-        ? t.imageManager.mediaUncertain.replace("{files}", uncertainNames(uncertain))
-        : "";
-      const readyItems = bulkItems.filter(i => i.status === "ready" && !isUncertain(i.resourceUrl));
+      const readyItems = bulkItems.filter(i => i.status === "ready");
       const allNewMediaRaw = [
         // Forward each item's media kind to the backend so productCreateMedia
         // gets the right mediaContentType (IMAGE / VIDEO / MODEL_3D). Older
         // items without `kind` fall back to "image" server-side.
         ...readyItems.map(i => ({ resourceUrl: i.resourceUrl, kind: i.kind ?? "image" as const })),
-        ...pendingProductNewMedia.filter(m => !isUncertain(m.resourceUrl)).map(m => ({ resourceUrl: m.resourceUrl, kind: m.kind })),
+        ...pendingProductNewMedia.map(m => ({ resourceUrl: m.resourceUrl, kind: m.kind })),
       ];
       const allNewMedia = allNewMediaRaw.filter(m => !retained[m.resourceUrl]);
       const toGid = (ref: string): string => retained[ref]?.mediaId ?? ref;
@@ -316,7 +301,7 @@ export function useVariantImageManager() {
         if (!orderJson) return orderJson;
         try {
           const parsed = JSON.parse(orderJson) as Array<{ kind: string; value: string }>;
-          return JSON.stringify(parsed.filter(e => !(e.kind === "file" && isUncertain(e.value))).map(e => (e.kind === "file" ? { ...e, value: toGid(e.value) } : e)));
+          return JSON.stringify(parsed.map(e => (e.kind === "file" ? { ...e, value: toGid(e.value) } : e)));
         } catch { return orderJson; }
       };
       const variantGalleryOrder = Object.entries(pendingGalleryOrder).map(([variantId, orderJson]) => ({
@@ -325,11 +310,8 @@ export function useVariantImageManager() {
       }));
 
       for (const g of mergedVariantGalleries) {
-        g.fileGids = g.fileGids.filter(ref => !isUncertain(ref)).map(toGid);
-        if (g.mainGid) {
-          if (isUncertain(g.mainGid)) delete g.mainGid;
-          else g.mainGid = toGid(g.mainGid);
-        }
+        g.fileGids = g.fileGids.map(toGid);
+        if (g.mainGid) g.mainGid = toGid(g.mainGid);
       }
       const knownModelGids = { ...pendingKnownModelGids };
       for (const [resourceUrl, c] of Object.entries(retained)) if (c.kind === "model") knownModelGids[resourceUrl] = c.mediaId;
@@ -341,7 +323,7 @@ export function useVariantImageManager() {
           productId,
           newMedia: allNewMedia,
           variantGalleries: mergedVariantGalleries,
-          mediaOrder: pendingMediaOrder.filter(o => !isUncertain(o.mediaId)),
+          mediaOrder: pendingMediaOrder,
           removedMainImages: pendingClearVariantMainImages,
           mainMoves: pendingMainMoves,
           variantExternalVideos,
@@ -388,17 +370,6 @@ export function useVariantImageManager() {
             if (c?.resourceUrl && c.mediaId) createdByFailedSaveRef.current[c.resourceUrl] = { mediaId: c.mediaId, kind: c.kind ?? "image" };
           }
         }
-        // Uploads that may already exist: remembered, named to the merchant, never uploaded again.
-        if (Array.isArray(data.uncertainMedia)) {
-          for (const c of data.uncertainMedia as Array<{ resourceUrl: string; kind?: MediaKind }>) {
-            if (c?.resourceUrl) uncertainByFailedSaveRef.current[c.resourceUrl] = { kind: c.kind ?? "image" };
-          }
-          if (data.uncertainMedia.length > 0) {
-            const note = t.imageManager.mediaUncertain.replace("{files}", uncertainNames(uncertainByFailedSaveRef.current));
-            const base = Array.isArray(data.errors) ? (data.errors as string[]).join(", ") : "";
-            return { error: `${base} ${note}`.trim(), warning: null };
-          }
-        }
         if (data.errorCode === "mainMoveInvalid") return { error: t.imageManager.mainMoveInvalid, warning: null };
         const refused = refusalText(data.refusals);
         if (refused.length > 0) return { error: refused.join(" "), warning: null };
@@ -406,7 +377,6 @@ export function useVariantImageManager() {
         return { error: typeof data.error === "string" && data.error ? data.error : `HTTP ${res.status}`, warning: null };
       }
       createdByFailedSaveRef.current = {};
-      uncertainByFailedSaveRef.current = {};
       // Server may have rejected a subset of external-video URLs (client and
       // server validation can drift on edge cases — whitespace, trailing
       // slashes, browser-corrected URLs). Loud-log them so a divergence
@@ -539,8 +509,7 @@ export function useVariantImageManager() {
       setVariantReloadCounter(c => c + 1);
       // The rest was saved; a variant the fresh state contradicted was left alone and is named.
       const leftAlone = refusalText(data.refusedVariants);
-      const warnings = [...leftAlone, ...(uncertainNote ? [uncertainNote] : [])];
-      return { error: null, warning: warnings.length > 0 ? warnings.join(" ") : null };
+      return { error: null, warning: leftAlone.length > 0 ? leftAlone.join(" ") : null };
     } finally {
       setIsApplying(false);
     }
@@ -580,7 +549,6 @@ export function useVariantImageManager() {
     setPendingKnownModelGids({});
     setPendingGalleryOrder({});
     createdByFailedSaveRef.current = {};
-    uncertainByFailedSaveRef.current = {};
     // hasAltTextEdits is owned by the image manager (its alt drafts): Discard and a product switch reset it there.
     // Clear data derived from the previous product so the bulk panels never match
     // against stale variants/selection during the load window of the new product.
