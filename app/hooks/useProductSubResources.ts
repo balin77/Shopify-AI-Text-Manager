@@ -724,6 +724,8 @@ interface UseProductSubResourcesStrings {
   metafieldValuesEmpty?: string;
   /** A list metafield with entries its element type refuses (the save is not sent). */
   metafieldListInvalid?: string;
+  /** Appended to the red message of a refused press: nothing at all was saved (also not images, alt texts, texts). */
+  refusedNothingSaved?: string;
   /** A primary translate refused because its source field has an unsaved edit. */
   saveFirstSource?: string;
   /** A translate refused because a landed primary save's reload is still out. */
@@ -2851,6 +2853,7 @@ export function useProductSubResources({
   }, [isPrimaryLocale, buildSourceData, selectedItem, primaryLocale, translateAllFieldIds, runTranslateRequest, trackTranslateAllRun]);
 
   // Unified save handler - automatically detects primary vs foreign locale
+  const refusedText = (message: string) => `${message} ${strings.refusedNothingSaved || "Nothing was saved."}`;
   const saveSubResources = useCallback(() => {
     if (!hasChanges || !selectedItem) {
       return;
@@ -2915,7 +2918,7 @@ export function useProductSubResources({
           // VALIDATION: Prevent empty option names and values
           if (hasNameChange && (edit.name ?? "").trim() === "") {
             if (showInfoBox) {
-              showInfoBox(strings.optionNameEmpty || "Option name cannot be empty", "critical");
+              showInfoBox(refusedText(strings.optionNameEmpty || "Option name cannot be empty"), "critical");
             } else {
               alert("Option name cannot be empty");
             }
@@ -2938,7 +2941,7 @@ export function useProductSubResources({
           // would fail the whole option and the client would drop its edits.
           if (hasValuesChange && survivingEdits.some((v) => v.name.trim() === "")) {
             if (showInfoBox) {
-              showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical");
+              showInfoBox(refusedText(strings.optionValuesEmpty || "Option values cannot be empty"), "critical");
             } else {
               alert("Option values cannot be empty");
             }
@@ -2970,7 +2973,7 @@ export function useProductSubResources({
       // (`optionValueEmpty`, nothing created): refused here too.
       if (optionsToCreate.some((o) => !o.values.some((v) => v.trim() !== ""))) {
         if (showInfoBox) {
-          showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical");
+          showInfoBox(refusedText(strings.optionValuesEmpty || "Option values cannot be empty"), "critical");
         } else {
           alert("Option values cannot be empty");
         }
@@ -2991,7 +2994,7 @@ export function useProductSubResources({
         }
         if (added.some((name) => name.trim() === "")) {
           if (showInfoBox) {
-            showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical");
+            showInfoBox(refusedText(strings.optionValuesEmpty || "Option values cannot be empty"), "critical");
           } else {
             alert("Option values cannot be empty");
           }
@@ -3041,7 +3044,7 @@ export function useProductSubResources({
                 "A metafield cannot consist of spaces only. Empty the field completely to remove the value."
               : strings.metafieldListInvalid ||
                 "A list field contains entries that do not match its type. Correct the marked lines.";
-          if (showInfoBox) showInfoBox(message, "critical");
+          if (showInfoBox) showInfoBox(refusedText(message), "critical");
           return "refused";
         }
         // "" = clear: the server deletes the metafield and keeps the field.

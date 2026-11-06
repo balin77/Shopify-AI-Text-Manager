@@ -243,6 +243,7 @@ export const en: Translation = {
     translateSubResourcesFailed: "{count} field(s) could not be saved in Shopify.",
     subResourceNotTranslatable: "This field cannot be translated in Shopify.",
     optionNameEmpty: "Option name cannot be empty",
+    refusedNothingSaved: "Nothing was saved, not even images, alt texts or texts. Correct the entry or discard it, then save again.",
     optionValuesEmpty: "Option values cannot be empty",
     metafieldValuesEmpty: "Metafield values cannot be empty",
   },

@@ -562,6 +562,7 @@ export default function ProductsPage() {
       translatePartialLocales: t.content.translatePartialLocales,
       optionNameEmpty: t.products.optionNameEmpty,
       optionValuesEmpty: t.products.optionValuesEmpty,
+      refusedNothingSaved: t.products.refusedNothingSaved,
       metafieldValuesEmpty: t.products.metafieldValuesEmpty,
       // One per failure code the option write paths return. Keyed by code so
       // the server can stay in codes and this app can stay in three languages.

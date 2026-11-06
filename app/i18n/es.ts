@@ -239,6 +239,7 @@ export const es: Translation = {
     translateSubResourcesFailed: "No se pudo guardar {count} campo(s) en Shopify.",
     subResourceNotTranslatable: "Este campo no se puede traducir en Shopify.",
     optionNameEmpty: "El nombre de la opción no puede estar vacío",
+    refusedNothingSaved: "No se guardó nada, tampoco imágenes, textos alternativos ni textos. Corrige la entrada o descártala y guarda de nuevo.",
     optionValuesEmpty: "Los valores de la opción no pueden estar vacíos",
     metafieldValuesEmpty: "Los valores de los metadatos no pueden estar vacíos",
   },

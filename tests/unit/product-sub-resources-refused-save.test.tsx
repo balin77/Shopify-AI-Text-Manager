@@ -41,7 +41,7 @@ function setup() {
       currentLanguage: "de",
       primaryLocale: "de",
       showInfoBox,
-      strings: {},
+      strings: { refusedNothingSaved: "NOTHING-SAVED" },
     } as never),
   );
 }
@@ -66,7 +66,7 @@ describe("saveSubResources returns 'refused' for its own validation", () => {
     act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "   "));
     expect(await press(result)).toBe("refused");
     expect(saves.sent).toHaveLength(0);
-    expect(showInfoBox).toHaveBeenCalledWith(expect.any(String), "critical");
+    expect(showInfoBox).toHaveBeenCalledWith(expect.stringContaining("NOTHING-SAVED"), "critical");
   });
 
   it("blank value of an existing option", async () => {
@@ -74,7 +74,7 @@ describe("saveSubResources returns 'refused' for its own validation", () => {
     act(() => result.current.handlers.handlePrimaryOptionValueChange(OPTION, VALUE, ""));
     expect(await press(result)).toBe("refused");
     expect(saves.sent).toHaveLength(0);
-    expect(showInfoBox).toHaveBeenCalledWith(expect.any(String), "critical");
+    expect(showInfoBox).toHaveBeenCalledWith(expect.stringContaining("NOTHING-SAVED"), "critical");
   });
 
   it("new option whose values are all blank", async () => {
@@ -97,7 +97,7 @@ describe("saveSubResources returns 'refused' for its own validation", () => {
     act(() => result.current.handlers.handlePrimaryMetafieldChange(META, "   "));
     expect(await press(result)).toBe("refused");
     expect(saves.sent).toHaveLength(0);
-    expect(showInfoBox).toHaveBeenCalledWith(expect.any(String), "critical");
+    expect(showInfoBox).toHaveBeenCalledWith(expect.stringContaining("NOTHING-SAVED"), "critical");
   });
 
   it("a valid edit is still sent and does not answer 'refused'", async () => {

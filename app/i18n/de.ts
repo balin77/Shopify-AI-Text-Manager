@@ -238,6 +238,7 @@ export const de = {
     translateSubResourcesFailed: "{count} Feld(er) konnte(n) in Shopify nicht gespeichert werden.",
     subResourceNotTranslatable: "Dieses Feld kann in Shopify nicht übersetzt werden.",
     optionNameEmpty: "Optionsname darf nicht leer sein",
+    refusedNothingSaved: "Es wurde nichts gespeichert, auch keine Bilder, Alt-Texte oder Texte. Korrigiere die Eingabe oder verwirf sie und speichere dann erneut.",
     optionValuesEmpty: "Optionswerte dürfen nicht leer sein",
     metafieldValuesEmpty: "Metafeld-Werte dürfen nicht leer sein",
   },
