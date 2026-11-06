@@ -1139,6 +1139,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const server = serverValueOf(key, itemId);
     // A key this save did not change takes what the read holds (an untouched field moved elsewhere is not
     // ours), unless the read shows a value of the key's ours-or-older set (a lagging read of our own text).
+    // Deliberate: a lagging read can therefore show an old text that does not count as a change. That is a
+    // display residual only (the field is a passenger and is not written), listed in KNOWN_ISSUES.md.
     if (!changedBySave) {
       if (server === undefined || dataLoader.refs.preSaveSeenRef.current[`${itemId}|${primaryLocale}||${key}`]?.has(server)) return sent;
       return server;
