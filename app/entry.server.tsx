@@ -4,6 +4,7 @@ import { createReadableStreamFromReadable } from "@react-router/node";
 import { ServerRouter, isRouteErrorResponse } from "react-router";
 import { renderToPipeableStream } from "react-dom/server";
 import { addDocumentResponseHeaders } from "./shopify.server";
+import { applyDocumentSecurityHeaders } from "~/utils/admin-auth.server";
 import { syncScheduler } from "./services/sync-scheduler.service";
 import { ShopReaperService } from "../src/services/shop-reaper.service";
 import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
@@ -249,16 +250,13 @@ export default async function handleRequest(
     headers: Object.fromEntries(request.headers.entries())
   });
 
-  addDocumentResponseHeaders(request, responseHeaders);
-
-  // Security headers
-  responseHeaders.set("X-Content-Type-Options", "nosniff");
-  responseHeaders.set("X-Frame-Options", "SAMEORIGIN");
-  responseHeaders.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  responseHeaders.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  if (process.env.NODE_ENV === "production") {
-    responseHeaders.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
-  }
+  // /admin keeps its own (anti-framing) headers; see applyDocumentSecurityHeaders.
+  applyDocumentSecurityHeaders(
+    request,
+    responseHeaders,
+    addDocumentResponseHeaders,
+    process.env.NODE_ENV === "production",
+  );
 
   return new Promise((resolve, reject) => {
     let shellRendered = false;

@@ -49,6 +49,7 @@ import {
   isAdminAuthenticated,
   serializeAdminSession,
   ADMIN_SESSION_MAX_AGE_MS,
+  applyDocumentSecurityHeaders,
 } from "../../app/utils/admin-auth.server";
 
 const PW = "a-sufficiently-long-password";
@@ -218,5 +219,124 @@ describe("GDPR area on demand", () => {
     } as never);
     expect((expired as unknown as { init: { status: number } }).init.status).toBe(401);
     expect(JSON.stringify((expired as unknown as { data: unknown }).data)).not.toContain("customer@example.com");
+  });
+});
+
+describe("document headers (entry path)", () => {
+  // Stand-in for Shopify's helper: frames allowed for the ?shop= store.
+  const embedded = (r: Request, h: Headers) => {
+    const shop = new URL(r.url).searchParams.get("shop");
+    h.set("Content-Security-Policy", `frame-ancestors https://${shop} https://admin.shopify.com;`);
+  };
+
+  it("keeps the admin headers on /admin and /admin.data even with ?shop=", () => {
+    for (const path of ["/admin?shop=evil.myshopify.com", "/admin.data?shop=evil.myshopify.com"]) {
+      const h = new Headers(route.headers());
+      applyDocumentSecurityHeaders(req(path), h, embedded, true);
+      expect(h.get("X-Frame-Options")).toBe("DENY");
+      expect(h.get("Content-Security-Policy")).toBe("frame-ancestors 'none'");
+      expect(h.get("Referrer-Policy")).toBe("no-referrer");
+      expect(h.get("X-Content-Type-Options")).toBe("nosniff");
+    }
+  });
+
+  it("still applies the embedded-app headers to other routes, including look-alike paths", () => {
+    for (const path of ["/app?shop=a.myshopify.com", "/admin/x?shop=a.myshopify.com", "/administrator"]) {
+      const h = new Headers();
+      applyDocumentSecurityHeaders(req(path), h, embedded, false);
+      expect(h.get("X-Frame-Options")).toBe("SAMEORIGIN");
+      expect(h.get("Content-Security-Policy")).toContain("admin.shopify.com");
+    }
+  });
+});
+
+describe("route headers() through React Router's request handler", () => {
+  async function handle(path: string, init: RequestInit = {}) {
+    const { createRequestHandler } = await import("react-router");
+    const Noop = () => null;
+    const build = {
+      entry: {
+        module: {
+          default: (_r: Request, status: number, headers: Headers) =>
+            new Response("<html></html>", { status, headers }),
+        },
+      },
+      routes: {
+        root: { id: "root", path: "", module: { default: Noop } },
+        "routes/admin": {
+          id: "routes/admin",
+          parentId: "root",
+          path: "admin",
+          module: {
+            default: Noop,
+            loader: route.loader,
+            action: route.action,
+            headers: route.headers,
+            ErrorBoundary: route.ErrorBoundary,
+          },
+        },
+      },
+      assets: { routes: {}, entry: { imports: [], module: "" }, url: "", version: "" },
+      future: {},
+      ssr: true,
+      isSpaMode: false,
+      publicPath: "/",
+      assetsBuildDirectory: "build/client",
+      basename: "/",
+      routeDiscovery: { mode: "initial" },
+    };
+    return createRequestHandler(build as never, "production")(req(path, init));
+  }
+
+  it("delivers no-store and the security headers on the page and on the audit data response", async () => {
+    const c = await sessionCookie();
+    const page = await handle("/admin", { headers: { Cookie: c, "Sec-Fetch-Dest": "document" } });
+    expect(page.headers.get("Cache-Control")).toBe("no-store");
+    expect(page.headers.get("X-Frame-Options")).toBe("DENY");
+    const audit = await handle("/admin.data?audit=a1", { headers: { Cookie: c } });
+    expect(audit.headers.get("Cache-Control")).toBe("no-store");
+    expect(audit.headers.get("X-Frame-Options")).toBe("DENY");
+    expect(audit.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'none'");
+  });
+
+  it("passes Retry-After of a locked-out login through", async () => {
+    const { adminLoginLimiter } = await import("../../app/utils/admin-login-limiter.server");
+    for (let i = 0; i < 50; i++) adminLoginLimiter.recordFailure("6.6.6.6");
+    const form = new FormData();
+    form.set("intent", "login");
+    form.set("password", "x");
+    const res = await handle("/admin", {
+      method: "POST",
+      body: form,
+      headers: { "x-forwarded-for": "6.6.6.6" },
+    });
+    expect(res.headers.get("Retry-After")).toBeTruthy();
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("exports an ErrorBoundary", () => {
+    expect(typeof route.ErrorBoundary).toBe("function");
+  });
+});
+
+describe("locked states and audit document request", () => {
+  it("stays locked without SHOPIFY_API_SECRET", async () => {
+    const c = await sessionCookie();
+    delete process.env.SHOPIFY_API_SECRET;
+    expect(deriveAdminCookieSecret()).toBeNull();
+    expect(await isAdminAuthenticated(req("/admin", { headers: { Cookie: c } }))).toBe(false);
+    const res = await route.loader({ request: req("/admin"), params: {}, context: {} } as never);
+    expect((res as unknown as { data: unknown }).data).toMatchObject({ authed: false, noSecret: true });
+  });
+
+  it("redirects a document request to ?audit= back to /admin, without detail", async () => {
+    const c = await sessionCookie();
+    const res = (await route.loader({
+      request: req("/admin?audit=a1", { headers: { Cookie: c, "Sec-Fetch-Dest": "document" } }),
+      params: {},
+      context: {},
+    } as never)) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/admin");
   });
 });

@@ -45,7 +45,42 @@ const baseHeaders = (extra: Record<string, string> = {}) => ({
   ...extra,
 });
 
-export const headers = () => ({ ...ADMIN_SECURITY_HEADERS });
+// React Router builds document and .data headers ONLY from this return value
+// (Set-Cookie is merged on top), so everything that must reach the client
+// has to be named here.
+export const headers = ({
+  loaderHeaders,
+  actionHeaders,
+  errorHeaders,
+}: {
+  loaderHeaders?: Headers;
+  actionHeaders?: Headers;
+  errorHeaders?: Headers;
+} = {}) => {
+  const out: Record<string, string> = { ...ADMIN_SECURITY_HEADERS, 'Cache-Control': 'no-store' };
+  const retryAfter =
+    actionHeaders?.get('Retry-After') ??
+    loaderHeaders?.get('Retry-After') ??
+    errorHeaders?.get('Retry-After');
+  if (retryAfter) out['Retry-After'] = retryAfter;
+  return out;
+};
+
+export function ErrorBoundary() {
+  return (
+    <div style={{ fontFamily: 'sans-serif', padding: 24 }}>
+      <h1 style={{ fontSize: 20 }}>ContentPilot — Admin</h1>
+      <p>Es ist ein Fehler aufgetreten.</p>
+    </div>
+  );
+}
+
+/** True for a browser navigation, false for the router's own data fetches. */
+function isDocumentRequest(request: Request): boolean {
+  const dest = request.headers.get('Sec-Fetch-Dest');
+  if (dest) return dest === 'document' || dest === 'iframe';
+  return (request.headers.get('Accept') ?? '').includes('text/html');
+}
 
 interface ShopRow {
   shop: string;
@@ -84,7 +119,7 @@ interface AuditDetail {
 }
 
 type LoaderData =
-  | { authed: false; configured: boolean; tooShort: boolean; minLength: number }
+  | { authed: false; configured: boolean; tooShort: boolean; noSecret: boolean; minLength: number }
   | { authed: true; rows: ShopRow[]; audits: AuditRow[] };
 
 async function loadAuditRows(): Promise<AuditRow[]> {
@@ -192,6 +227,11 @@ async function loadShopRows(): Promise<ShopRow[]> {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  // The on-demand detail is answered to the page's fetcher only; a direct
+  // visit (link, reload) goes back to the plain page.
+  if (new URL(request.url).searchParams.has('audit') && isDocumentRequest(request)) {
+    return redirect('/admin', { headers: baseHeaders() });
+  }
   if (!(await isAdminAuthenticated(request))) {
     if (new URL(request.url).searchParams.has('audit')) {
       return json({ error: 'Nicht angemeldet.' }, { status: 401, headers: baseHeaders() });
@@ -201,6 +241,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         authed: false,
         configured: adminPassword() !== null,
         tooShort: adminPasswordState() === 'too-short',
+        noSecret: adminPasswordState() === 'no-secret',
         minLength: ADMIN_PASSWORD_MIN_LENGTH,
       },
       { headers: baseHeaders() },
@@ -231,7 +272,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           error:
             adminPasswordState() === 'too-short'
               ? `Admin-Seite gesperrt: ADMIN_PASSWORD hat weniger als ${ADMIN_PASSWORD_MIN_LENGTH} Zeichen.`
-              : 'Admin-Seite gesperrt: ADMIN_PASSWORD ist nicht gesetzt.',
+              : adminPasswordState() === 'no-secret'
+                ? 'Admin-Seite gesperrt: SHOPIFY_API_SECRET ist nicht gesetzt.'
+                : 'Admin-Seite gesperrt: ADMIN_PASSWORD ist nicht gesetzt.',
         },
         { status: 503, headers: baseHeaders() },
       );
@@ -333,7 +376,7 @@ const PAGE: React.CSSProperties = {
   color: '#202223',
 };
 
-function LoginView({ configured, tooShort, minLength }: { configured: boolean; tooShort: boolean; minLength: number }) {
+function LoginView({ configured, tooShort, noSecret, minLength }: { configured: boolean; tooShort: boolean; noSecret: boolean; minLength: number }) {
   const actionData = useActionData<typeof action>();
   return (
     <div style={{ ...PAGE, maxWidth: 380 }}>
@@ -348,7 +391,11 @@ function LoginView({ configured, tooShort, minLength }: { configured: boolean; t
             fontSize: 13,
           }}
         >
-          {tooShort ? (
+          {noSecret ? (
+            <>
+              Gesperrt: <code>SHOPIFY_API_SECRET</code> ist nicht gesetzt.
+            </>
+          ) : tooShort ? (
             <>
               Gesperrt: <code>ADMIN_PASSWORD</code> hat weniger als{' '}
               {minLength} Zeichen.
@@ -596,7 +643,7 @@ export default function AdminPage() {
   const actionData = useActionData<typeof action>();
 
   if (!data.authed) {
-    return <LoginView configured={data.configured} tooShort={data.tooShort} minLength={data.minLength} />;
+    return <LoginView configured={data.configured} tooShort={data.tooShort} noSecret={data.noSecret} minLength={data.minLength} />;
   }
 
   const { rows, audits } = data;

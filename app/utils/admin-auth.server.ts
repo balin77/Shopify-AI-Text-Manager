@@ -14,12 +14,15 @@ import { createHash, timingSafeEqual } from "node:crypto";
 export const ADMIN_PASSWORD_MIN_LENGTH = 16;
 export const ADMIN_SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 
-export type AdminPasswordState = "unset" | "too-short" | "ok";
+export type AdminPasswordState = "unset" | "too-short" | "no-secret" | "ok";
 
 export function adminPasswordState(): AdminPasswordState {
   const p = process.env.ADMIN_PASSWORD;
   if (!p || p.length === 0) return "unset";
   if (p.length < ADMIN_PASSWORD_MIN_LENGTH) return "too-short";
+  // Without the app secret the derived cookie secret would rest on the
+  // password alone, so the page stays locked instead.
+  if (!process.env.SHOPIFY_API_SECRET) return "no-secret";
   return "ok";
 }
 
@@ -33,7 +36,7 @@ export function deriveAdminCookieSecret(): string | null {
   const pw = adminPassword();
   if (!pw) return null;
   return createHash("sha256")
-    .update((process.env.SHOPIFY_API_SECRET ?? "") + "\0admin-cookie\0" + pw, "utf-8")
+    .update((process.env.SHOPIFY_API_SECRET as string) + "\0admin-cookie\0" + pw, "utf-8")
     .digest("hex");
 }
 
@@ -92,3 +95,32 @@ export const ADMIN_SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "X-Robots-Tag": "noindex, nofollow",
   "Referrer-Policy": "no-referrer",
 };
+
+/** The admin page and its single-fetch data endpoint. Exact match only. */
+export function isAdminPath(pathname: string): boolean {
+  return pathname === "/admin" || pathname === "/admin.data";
+}
+
+/**
+ * Document headers of the app. The embedded-app additions (frame-ancestors for
+ * the shop, SAMEORIGIN, strict-origin referrer) must never touch /admin, whose
+ * route headers forbid framing. `addEmbeddedHeaders` is Shopify's helper.
+ */
+export function applyDocumentSecurityHeaders(
+  request: Request,
+  responseHeaders: Headers,
+  addEmbeddedHeaders: (request: Request, headers: Headers) => void,
+  production: boolean,
+): void {
+  const admin = isAdminPath(new URL(request.url).pathname);
+  if (!admin) {
+    addEmbeddedHeaders(request, responseHeaders);
+    responseHeaders.set("X-Frame-Options", "SAMEORIGIN");
+    responseHeaders.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  }
+  responseHeaders.set("X-Content-Type-Options", "nosniff");
+  responseHeaders.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (production) {
+    responseHeaders.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
+  }
+}
