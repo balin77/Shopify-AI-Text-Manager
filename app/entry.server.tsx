@@ -256,6 +256,9 @@ export default async function handleRequest(
     responseHeaders,
     addDocumentResponseHeaders,
     process.env.NODE_ENV === "production",
+    reactRouterContext.staticHandlerContext?.matches?.some(
+      (m: { route: { id: string } }) => m.route.id === "routes/admin",
+    ) ?? false,
   );
 
   return new Promise((resolve, reject) => {

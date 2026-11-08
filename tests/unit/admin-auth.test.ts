@@ -230,7 +230,7 @@ describe("document headers (entry path)", () => {
   };
 
   it("keeps the admin headers on /admin and /admin.data even with ?shop=", () => {
-    for (const path of ["/admin?shop=evil.myshopify.com", "/admin.data?shop=evil.myshopify.com"]) {
+    for (const path of ["/admin?shop=evil.myshopify.com", "/Admin?shop=evil.myshopify.com", "/admin/?shop=evil.myshopify.com", "/ADMIN/?shop=evil.myshopify.com"]) {
       const h = new Headers(route.headers());
       applyDocumentSecurityHeaders(req(path), h, embedded, true);
       expect(h.get("X-Frame-Options")).toBe("DENY");
@@ -238,6 +238,15 @@ describe("document headers (entry path)", () => {
       expect(h.get("Referrer-Policy")).toBe("no-referrer");
       expect(h.get("X-Content-Type-Options")).toBe("nosniff");
     }
+  });
+
+  it("sets the admin headers itself, and follows the matched route over the path", () => {
+    const h = new Headers();
+    applyDocumentSecurityHeaders(req("/something-else?shop=a.myshopify.com"), h, embedded, false, true);
+    expect(h.get("X-Frame-Options")).toBe("DENY");
+    expect(h.get("Content-Security-Policy")).toBe("frame-ancestors 'none'");
+    expect(h.get("Cache-Control")).toBe("no-store");
+    expect(h.get("X-Robots-Tag")).toBe("noindex, nofollow");
   });
 
   it("still applies the embedded-app headers to other routes, including look-alike paths", () => {
@@ -301,7 +310,9 @@ describe("route headers() through React Router's request handler", () => {
 
   it("passes Retry-After of a locked-out login through", async () => {
     const { adminLoginLimiter } = await import("../../app/utils/admin-login-limiter.server");
-    for (let i = 0; i < 50; i++) adminLoginLimiter.recordFailure("6.6.6.6");
+    const spy = vi
+      .spyOn(adminLoginLimiter, "check")
+      .mockReturnValue({ allowed: false, retryAfterSec: 120 });
     const form = new FormData();
     form.set("intent", "login");
     form.set("password", "x");
@@ -310,8 +321,18 @@ describe("route headers() through React Router's request handler", () => {
       body: form,
       headers: { "x-forwarded-for": "6.6.6.6" },
     });
-    expect(res.headers.get("Retry-After")).toBeTruthy();
+    expect(res.headers.get("Retry-After")).toBe("120");
     expect(res.headers.get("Cache-Control")).toBe("no-store");
+
+    // The same refusal as a .data action POST (what the login form sends).
+    const data = await handle("/admin.data", {
+      method: "POST",
+      body: form,
+      headers: { "x-forwarded-for": "6.6.6.6" },
+    });
+    expect(data.headers.get("Retry-After")).toBe("120");
+    expect(data.headers.get("Cache-Control")).toBe("no-store");
+    spy.mockRestore();
   });
 
   it("exports an ErrorBoundary", () => {

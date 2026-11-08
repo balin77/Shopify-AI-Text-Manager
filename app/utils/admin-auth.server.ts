@@ -96,24 +96,36 @@ export const ADMIN_SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "Referrer-Policy": "no-referrer",
 };
 
-/** The admin page and its single-fetch data endpoint. Exact match only. */
+/**
+ * The admin page, normalised the way React Router matches it: case-insensitive,
+ * trailing slashes ignored. Data requests (/admin.data) never reach the
+ * document handler, so they are deliberately not listed.
+ */
 export function isAdminPath(pathname: string): boolean {
-  return pathname === "/admin" || pathname === "/admin.data";
+  return pathname.toLowerCase().replace(/\/+$/, "") === "/admin";
 }
 
 /**
  * Document headers of the app. The embedded-app additions (frame-ancestors for
  * the shop, SAMEORIGIN, strict-origin referrer) must never touch /admin, whose
  * route headers forbid framing. `addEmbeddedHeaders` is Shopify's helper.
+ * `matchedAdmin` says the router matched the admin route (authoritative); the
+ * normalised path is the fallback.
  */
 export function applyDocumentSecurityHeaders(
   request: Request,
   responseHeaders: Headers,
   addEmbeddedHeaders: (request: Request, headers: Headers) => void,
   production: boolean,
+  matchedAdmin = false,
 ): void {
-  const admin = isAdminPath(new URL(request.url).pathname);
-  if (!admin) {
+  const admin = matchedAdmin || isAdminPath(new URL(request.url).pathname);
+  if (admin) {
+    // Also set here, so an /admin document that fails in root's loader or
+    // boundary (where the route's headers() is not consulted) stays unframeable.
+    for (const [k, v] of Object.entries(ADMIN_SECURITY_HEADERS)) responseHeaders.set(k, v);
+    responseHeaders.set("Cache-Control", "no-store");
+  } else {
     addEmbeddedHeaders(request, responseHeaders);
     responseHeaders.set("X-Frame-Options", "SAMEORIGIN");
     responseHeaders.set("Referrer-Policy", "strict-origin-when-cross-origin");
