@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs } from "react-router";
-import { authenticateWebhookTolerant } from "~/utils/webhook-auth.server";
+import { verifyWebhookRequest } from "~/utils/webhook-auth.server";
 import { db } from "~/db.server";
 import { syncScheduler } from "~/services/sync-scheduler.service";
 import { logger } from "~/utils/logger.server";
@@ -15,11 +15,12 @@ import { forgetOfflineTokenMigration, invalidateOfflineAdmin } from "~/utils/off
  * Full data deletion (products, translations, etc.) is handled by the
  * SHOP_REDACT webhook, which Shopify sends 48 hours after uninstall.
  *
- * Authenticated with the tolerant wrapper: the cleanup below needs no session,
- * and the library's token refresh fails once Shopify has revoked the tokens.
+ * Verified by signature only (verifyWebhookRequest): the cleanup below needs
+ * no session, and the library's token refresh fails once Shopify has revoked
+ * the tokens.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop } = await authenticateWebhookTolerant(request);
+  const { shop } = await verifyWebhookRequest(request);
 
   logger.info(`[APP_UNINSTALLED] Received for shop: ${shop}`);
 

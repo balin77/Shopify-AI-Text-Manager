@@ -242,6 +242,10 @@ function getMigrationApi(): ReturnType<typeof shopifyApi> {
  * Independent webhook signature check (HMAC), for webhook-auth.server.ts. The
  * react-router wrapper does not expose its api instance, so this reuses the
  * minimal one above; signature validation only needs the API secret.
+ * NOTE: that lazy instance therefore also serves webhook HMAC validation. It
+ * fails CLOSED: a misconfigured secret or construction error makes every
+ * validation throw/fail, so the webhook routes refuse (they never skip the
+ * check) - the cost is a visible failure, not an open door.
  */
 export function validateWebhookRequest(
   args: Parameters<ReturnType<typeof shopifyApi>["webhooks"]["validate"]>[0],

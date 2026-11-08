@@ -11,8 +11,8 @@ const h = vi.hoisted(() => ({
   order: [] as string[],
 }));
 
-vi.mock("~/shopify.server", () => ({
-  authenticate: { webhook: vi.fn(async () => ({ shop: "gone.myshopify.com" })) },
+vi.mock("~/utils/webhook-auth.server", () => ({
+  verifyWebhookRequest: vi.fn(async () => ({ shop: "gone.myshopify.com" })),
 }));
 vi.mock("~/db.server", () => ({
   db: {

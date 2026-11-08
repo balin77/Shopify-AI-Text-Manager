@@ -5,14 +5,13 @@
  * customers/redact, shop/redact) to this single endpoint as configured
  * in shopify.app.toml via compliance_topics.
  *
- * Uses Shopify's authenticate.webhook() for HMAC verification through
- * authenticateWebhookTolerant, which returns 401 for invalid HMAC signatures
- * and still processes a validly signed request when only the session refresh
- * fails (tokens are already revoked after an uninstall).
+ * Verified by signature only through verifyWebhookRequest (405 non-POST, 401
+ * invalid HMAC, 400 other validation failures): these handlers need no session,
+ * and a token refresh would fail after an uninstall and is pointless otherwise.
  */
 
 import type { ActionFunctionArgs } from "react-router";
-import { authenticateWebhookTolerant } from "~/utils/webhook-auth.server";
+import { verifyWebhookRequest } from "~/utils/webhook-auth.server";
 import {
   exportCustomerData,
   redactCustomerData,
@@ -25,9 +24,8 @@ import {
 import { logger } from "~/utils/logger.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  // authenticate.webhook() verifies HMAC signature automatically.
-  // Throws 401 Response if signature is invalid.
-  const { topic, shop, payload } = await authenticateWebhookTolerant(request);
+  // Verifies the HMAC signature; throws a 401 Response if it is invalid.
+  const { topic, shop, payload } = await verifyWebhookRequest(request);
 
   // R5-G4: correlation id for the append-only audit trail so a redelivered
   // (non-2xx → retried up to ~48h) compliance webhook is linkable to its
