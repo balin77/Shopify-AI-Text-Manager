@@ -238,6 +238,17 @@ function getMigrationApi(): ReturnType<typeof shopifyApi> {
   return migrationApi;
 }
 
+/**
+ * Independent webhook signature check (HMAC), for webhook-auth.server.ts. The
+ * react-router wrapper does not expose its api instance, so this reuses the
+ * minimal one above; signature validation only needs the API secret.
+ */
+export function validateWebhookRequest(
+  args: Parameters<ReturnType<typeof shopifyApi>["webhooks"]["validate"]>[0],
+) {
+  return getMigrationApi().webhooks.validate(args);
+}
+
 configureOfflineAdmin({
   unauthenticatedAdmin: (shop) => shopify.unauthenticated.admin(shop),
   loadOfflineSession: (shop) => shopify.sessionStorage!.loadSession(`offline_${shop}`),
