@@ -902,6 +902,51 @@ describe("refresh_failed negative cache", () => {
     expect(err.permanent).toBe(true);
   });
 
+  it("an expired token that still carries a refresh token is NOT permanent", async () => {
+    configureOfflineAdmin(
+      deps({
+        unauthenticatedAdmin: vi.fn(async () => ({
+          session: session("x", new Date(Date.now() - 1000), "refresh"),
+          admin: {} as never,
+        })),
+      }),
+    );
+    vi.useFakeTimers();
+    const first = getOfflineAdmin(SHOP).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(5_000);
+    const err = await first;
+    expect(err.reason).toBe("refresh_failed");
+    expect(err.permanent).toBe(false);
+  });
+
+  it("a failing storage lookup in the final check stays non-permanent", async () => {
+    vi.useFakeTimers();
+    configureOfflineAdmin(
+      deps({
+        loadOfflineSession: vi.fn(async () => {
+          throw new Error("db down");
+        }),
+        unauthenticatedAdmin: vi.fn(async () => Promise.reject(new Response(undefined, { status: 500 }))),
+      }),
+    );
+    const first = getOfflineAdmin(SHOP).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(5_000);
+    const err = await first;
+    expect(err.reason).toBe("refresh_failed");
+    expect(err.permanent).toBe(false);
+  });
+
+  it("a caller served from the negative cache still sees permanent=false for a transient failure", async () => {
+    vi.useFakeTimers();
+    configureOfflineAdmin(failingDeps());
+    const first = getOfflineAdmin(SHOP).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect((await first).permanent).toBe(false);
+    const cached = await getOfflineAdmin(SHOP).catch((e) => e);
+    expect(cached.reason).toBe("refresh_failed");
+    expect(cached.permanent).toBe(false);
+  });
+
   it("marks no_token as permanent", async () => {
     configureOfflineAdmin(deps({ unauthenticatedAdmin: vi.fn(async () => adminFor("")) }));
     const err = await getOfflineAdmin(SHOP).catch((e) => e);

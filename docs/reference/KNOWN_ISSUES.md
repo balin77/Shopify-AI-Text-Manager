@@ -162,6 +162,8 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 - Die pfadspezifischen Rate-Limits decken noch nicht alle Routen-Varianten ab (eigenes Ticket, Anmeldung bleibt nötig).
 - Eine abgelaufene Session zeigt sich bei Hintergrund-Lesezugriffen nur als allgemeiner Fehler.
 - Die Shutdown-Timer sind fest im Code. Die Zeiten 240 Sekunden und 5 Minuten sind nicht gemessen.
+- Ein Zugangsschlüssel, den Shopify vor seinem natürlichen Ablauf widerruft, wird von der App nicht als tot erkannt: Die Bibliothek macht aus dieser Antwort einen allgemeinen Fehler. Webhooks eines solchen Shops werden deshalb weiterhin bis zur Höchstzahl wiederholt (eine kleinere Fassung der früheren Logflut). Betroffen sind nur Shops mit widerrufenem Zugang; Merchants merken nichts, im Log erscheinen Wiederholungen. Gering. Behebung: den Fehler dieser Antwort genauer unterscheiden, sobald die Antwort von Shopify gemessen ist.
+- Die Webhooks für Produkte, Kollektionen und Abos (`webhooks.products`, `webhooks.collections`, `webhooks.subscription`) prüfen sich noch über die Bibliothek. Diese frischt den Zugangsschlüssel ausserhalb der eigenen Einzelabwicklung der App auf, sodass bei vielen gleichzeitigen Webhooks desselben Shops mehrere Auffrischungen parallel laufen können. Merchants merken nichts; mögliche Folge sind vereinzelte Fehler beim Auffrischen. Gering. Geplant für einen späteren Schritt des Admin-Plans.
 - Der Ort von `WEBP_CLAIMABLE_STATUS` ist offen.
 - Es gibt eine LiquidComplexity-Warnung.
 - Theme-Speichern braucht etwa 4 Sekunden CPU.

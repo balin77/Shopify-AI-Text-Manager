@@ -52,6 +52,24 @@ export interface WebhookRetryJob {
  * SHAPE, not instanceof: the class can exist twice across dynamic-import
  * boundaries.
  */
+function isOfflineAdminUnavailableError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'OFFLINE_ADMIN_UNAVAILABLE'
+  );
+}
+
+/**
+ * Is this failure auth-dead (retrying cannot help)? An offline-admin error is
+ * decided by its `permanent` flag ALONE: its message carries the shop domain,
+ * so the 401 text patterns must not be applied to it (`shop-401.myshopify.com`).
+ */
+function isAuthDeadError(error: unknown, errorMessage: string): boolean {
+  if (isOfflineAdminUnavailableError(error)) return isOfflineAdminUnavailable(error);
+  return /\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage);
+}
+
 function isOfflineAdminUnavailable(error: unknown): boolean {
   return (
     typeof error === 'object' &&
@@ -106,10 +124,7 @@ class WebhookRetryService {
       // and a session refresh only happens when the merchant opens the app.
       // The inline webhook that just failed will be picked up again by the
       // next products/update event after the token is refreshed.
-      if (
-        isOfflineAdminUnavailable(error) ||
-        /\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage)
-      ) {
+      if (isAuthDeadError(error, errorMessage)) {
         logger.warn('Skipping webhook retry — auth error not recoverable by retry', {
           context: 'WebhookRetry',
           shop,
@@ -320,9 +335,7 @@ class WebhookRetryService {
       // request will refresh the session, and ProductSync is idempotent — so
       // the next inline webhook (or a user-triggered open of the app) will
       // resync the latest state anyway.
-      const isAuthError =
-        isOfflineAdminUnavailable(error) ||
-        /\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage);
+      const isAuthError = isAuthDeadError(error, errorMessage);
       if (isAuthError) {
         const purged = await db.webhookRetry.deleteMany({ where: { shop: retry.shop } });
         logger.warn('Webhook retry aborted — auth error, dropping all retries for shop', {

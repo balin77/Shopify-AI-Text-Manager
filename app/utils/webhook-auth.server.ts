@@ -38,7 +38,7 @@ function refuse(status: number, statusText: string, reason: string, request: Req
     context: "WebhookAuth",
     status,
     reason,
-    topic: request.headers.get("x-shopify-topic") ?? undefined,
+    topic: request.headers.get("x-shopify-topic")?.slice(0, 100) ?? undefined,
   });
   throw new Response(undefined, { status, statusText });
 }

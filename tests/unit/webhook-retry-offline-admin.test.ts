@@ -74,6 +74,25 @@ describe("webhook retry: unavailable offline admin is treated like a 401", () =>
     expect(create).toHaveBeenCalledTimes(1);
   });
 
+  it("does not apply the 401 text patterns to an offline-admin error (shop domain like shop-401)", async () => {
+    const err = new OfflineAdminUnavailableError(
+      "shop-401.myshopify.com",
+      "refresh_failed",
+      "Offline token for shop-401.myshopify.com could not be refreshed: HTTP 500",
+    );
+    await webhookRetryService.scheduleRetry("shop-401.myshopify.com", "PRODUCTS_UPDATE", {}, err);
+    expect(create).toHaveBeenCalledTimes(1);
+    webhookRetryService.registerHandler("TEST_TOPIC4", async () => {
+      throw err;
+    });
+    await (webhookRetryService as any).processRetry({
+      id: "r4", shop: "shop-401.myshopify.com", topic: "TEST_TOPIC4", payload: "{}",
+      attempt: 0, maxAttempts: 5, nextRetry: new Date(), lastError: null,
+    });
+    expect(deleteMany).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
   it("still schedules a retry for a plain non-auth error", async () => {
     await webhookRetryService.scheduleRetry("a.myshopify.com", "PRODUCTS_UPDATE", { productId: "1" }, new Error("socket hang up"));
     expect(create).toHaveBeenCalledTimes(1);

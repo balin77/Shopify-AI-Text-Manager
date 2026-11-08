@@ -213,11 +213,17 @@ async function acquireOnce(shop: string): Promise<OfflineAdminContext> {
     // that reads like a revoked install, so it is reported as what it is.
     const expires = ctx.session.expires;
     if (expires && expires.getTime() <= Date.now()) {
+      // Terminal only when there is really nothing to refresh WITH. An expired
+      // session that still carries a refresh token was merely not refreshed
+      // (switch off, other distribution): not evidence that retrying is futile.
+      const noRefreshToken = !ctx.session.refreshToken;
       throw new OfflineAdminUnavailableError(
         shop,
         "refresh_failed",
-        `Offline token for ${shop} has expired and could not be refreshed (no refresh token)`,
-        true,
+        noRefreshToken
+          ? `Offline token for ${shop} has expired and could not be refreshed (no refresh token)`
+          : `Offline token for ${shop} has expired and was not refreshed`,
+        noRefreshToken,
       );
     }
     return ctx;
