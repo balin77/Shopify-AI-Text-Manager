@@ -31,7 +31,11 @@ Seit die Token-Migration am 2026-11-08 tote Zugänge leert, wirft `getOfflineAdm
 
 `authenticate.webhook` der Bibliothek prüft zuerst die Signatur und ruft danach `ensureValidOfflineSession` auf (`node_modules/@shopify/shopify-app-react-router/dist/cjs/server/authenticate/webhooks/authenticate.js`, Zeilen 21–38). Mit `SHOPIFY_EXPIRING_OFFLINE_TOKENS` (in Production seit 2026-11-06 an) frischt das bei einem fast abgelaufenen Token auf. Das betrifft jeden Shop, der die App länger als etwa eine Stunde nicht benutzt hat. Bei einer Deinstallation hat Shopify die Tokens aber schon widerrufen. Das Auffrischen scheitert dann, `app/uninstalled` beziehungsweise `shop/redact` antwortet mit 500, und Shopify gibt nach den Wiederholungen auf. So entsteht neuer veralteter Installationsstatus.
 
-**Prüfen (Owner):** Partner Dashboard → App → Webhook-Zustellungen: Gibt es seit 2026-11-06 500er auf `app/uninstalled` oder `shop/redact`? Wenn ja, wird Schritt 5 aus §6 (toleranter Webhook-Auth-Wrapper) dringend und kommt direkt nach Commit 1.
+**Fix (Commit 2, allein auslieferbar):** der tolerante Webhook-Auth-Wrapper aus §2.3, zunächst nur für `webhooks.app-uninstalled.tsx` und `webhooks.compliance.tsx`. Damit laufen Deinstallation und Redact immer durch, auch wenn das Auffrischen scheitert. Das Sperren eines Shops (§2.2) braucht es dafür noch nicht. Der Fix kommt unabhängig vom Befund im Partner Dashboard, weil er klein ist und einen Datenschutzweg absichert.
+
+Tests: Wirft `authenticate.webhook` einen 500, läuft die Bereinigung trotzdem und antwortet 200. Ein Fehler bei der Signaturprüfung bleibt 401.
+
+**Prüfen (Owner):** Partner Dashboard → App → Webhook-Zustellungen: Gibt es seit 2026-11-06 500er auf `app/uninstalled` oder `shop/redact`? Wenn ja, sind diese Shops mit veraltetem Installationsstatus geblieben, und §2.7 betrifft sie.
 
 ---
 
@@ -158,7 +162,24 @@ Neu: `app/services/shop-connection-sweep.service.ts`, alle 10 min, unabhängig v
 
 ### 3.1 Vorher: Login härten
 
-Bevor die Seite mehr zeigt, muss der Admin-Login gehärtet werden. Die konkreten Punkte liegen beim Owner und stehen bewusst nicht in diesem öffentlichen Repo. Ein Test deckt jeden Punkt ab.
+Bevor die Seite mehr zeigt, muss der Admin-Login gehärtet werden. Soll-Zustand (Auth-Teil von [admin.tsx](../../app/routes/admin.tsx) 33–69 und 230–248, gern ausgelagert nach `app/utils/admin-auth.server.ts`):
+
+- **Eigenes Cookie-Secret:** Das Secret wird aus `SHOPIFY_API_SECRET` und `ADMIN_PASSWORD` abgeleitet, etwa `sha256(SHOPIFY_API_SECRET + "\0admin-cookie\0" + ADMIN_PASSWORD)`. Es ist nie das Passwort selbst. Es braucht keine neue Env-Variable, und ein Passwortwechsel macht weiterhin alle Sitzungen ungültig.
+- **Ablauf auf dem Server:** Das Cookie trägt die Ausstellzeit (`{ iat }`). Der Server lehnt es nach 8 h ab, unabhängig vom Browser.
+- **Mindestlänge:** Ist `ADMIN_PASSWORD` kürzer als 16 Zeichen, bleibt die Seite gesperrt und zeigt einen Hinweis.
+- **Protokoll:** Auch erfolgreiche Anmeldungen werden geloggt, mit Client-IP und ohne Passwort.
+- **Header** über einen `headers`-Export der Route: `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`, `X-Robots-Tag: noindex, nofollow`, `Referrer-Policy: no-referrer`.
+- **Login-Limit:** Der bestehende Limiter ([admin-login-limiter.server.ts](../../app/utils/admin-login-limiter.server.ts)) bleibt vor dem Passwortvergleich.
+- **DSGVO-Bereich auf Abruf:** Kunden-E-Mail und vollständiger Export werden nicht mehr mit jeder Seitenansicht geladen, sondern pro Zeile auf Klick (`GET /admin?audit=<id>` über `useFetcher`). Die Tabelle zeigt nur Typ, Status, Zeit und Shop. Owner-Entscheid in §7.
+- **Optional, Owner-Entscheid:** eine IP-Liste für `/admin` (`ADMIN_ALLOWED_IPS`) oder ein zweiter Faktor (TOTP).
+
+**Tests** (`tests/unit/admin-auth.test.ts`):
+- Ein Cookie, das mit dem nackten Passwort signiert ist, wird abgelehnt.
+- Eine Ausstellzeit älter als 8 h wird abgelehnt.
+- Ein Passwort unter 16 Zeichen hält die Seite gesperrt.
+- Die vier Header sind gesetzt.
+- Eine erfolgreiche Anmeldung wird geloggt.
+- Der Seiteninhalt enthält ohne Klick keine Kunden-E-Mail und keinen Export.
 
 ### 3.2 Neue Daten
 
@@ -332,17 +353,22 @@ Alle neuen Felder liegen auf `ShopInstallState` beziehungsweise `OfflineTokenMig
 
 Jeder Schritt ist für sich prüfbar.
 
-1. **Hotfix §0.1:** `OFFLINE_ADMIN_UNAVAILABLE` behandeln wie einen 401. Sofort auslieferbar.
-2. **Login härten** (§3.1).
-3. **Admin-Loader auslagern**, die N+1-Abfragen durch `groupBy` ersetzen und den Speicherverbrauch in die Detailansicht verschieben, ohne neue Daten. Test: Zahl der Abfragen.
-4. **Eine Schema-Migration für beide Teile:**
+**Dringend, jeweils sofort auslieferbar:**
+
+1. **Hotfix Logflut (§0.1):** `OFFLINE_ADMIN_UNAVAILABLE` behandeln wie einen 401.
+2. **Toleranter Webhook-Auth-Wrapper für Deinstallation und Redact (§0.2).**
+3. **Login härten und DSGVO-Bereich auf Abruf laden (§3.1).** Muss vor jedem Schritt liegen, der `/admin` mehr Daten zeigen lässt.
+
+**Danach:**
+
+4. **Admin-Loader auslagern**, die N+1-Abfragen durch `groupBy` ersetzen und den Speicherverbrauch in die Detailansicht verschieben, ohne neue Daten. Test: Zahl der Abfragen.
+5. **Eine Schema-Migration für beide Teile:**
    - die Felder aus §2.1 auf `ShopInstallState` und `OfflineTokenMigration`;
    - `lastActivityAt`, `lastActionAt`, `lastActionArea` und `lastAuthAt` samt Nachtrag;
    - `ShopUsageDay`, die Indexe und das Löschen in `redactShopData`.
-5. **Toleranter Webhook-Auth-Wrapper** für Deinstallation und Redact (§2.3, erster Teil). Wenn der Owner unter §0.2 500er findet, kommt dieser Schritt direkt nach 1.
 6. **Zustandsmodul und Lesemodell**, noch nicht verdrahtet (§2.1).
 7. **Sperren und die Sperre in `createAdminClientFromShop`** (§2.2).
-8. **Webhook-Routen und Retry-Dienst** mit der Sperre (§2.3).
+8. **Webhook-Routen und Retry-Dienst** mit der Sperre (§2.3). Die Produkt-, Kollektions- und Abo-Webhooks übernehmen den Wrapper aus Schritt 2.
 9. **Writer für Teil B:** `trackActivity` und `lastAuthAt` in `afterAuth` (§3.2).
 10. **Aufheben und Nachholen** (§2.4).
 11. **403-Einordnung, IP-Liste und begrenzte Wiederholung** (§2.5).
