@@ -93,6 +93,18 @@ describe("verifyWebhookRequest (real HMAC validation)", () => {
     expect(await status(verifyWebhookRequest(req({ omit: ["x-shopify-shop-domain"] })))).toBe(400);
   });
 
+  it("answers 400 when the HMAC header is missing", async () => {
+    expect(await status(verifyWebhookRequest(req({ omit: ["x-shopify-hmac-sha256"] })))).toBe(400);
+  });
+
+  it("answers 400 for an empty body even when the signature belongs to another body", async () => {
+    expect(await status(verifyWebhookRequest(req({ body: "", signedBody: BODY })))).toBe(400);
+  });
+
+  it("answers 400 for a correctly signed empty body", async () => {
+    expect(await status(verifyWebhookRequest(req({ body: "" })))).toBe(400);
+  });
+
   it("answers 405 for a non-POST request", async () => {
     expect(await status(verifyWebhookRequest(req({ method: "GET" })))).toBe(405);
   });

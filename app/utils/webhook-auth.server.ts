@@ -13,7 +13,7 @@
  * internal ordering.
  *
  * Refusals mirror the library: non-POST -> 405; invalid HMAC -> 401; any other
- * validation failure (missing headers, unknown shop domain, ...) -> 400; a body
+ * validation failure (a required header missing, e.g. the HMAC, topic or shop domain) -> 400; a body
  * that is not JSON -> 400. Nothing is ever let through without a valid HMAC.
  *
  * A route that needs `admin`/`session` must NOT use this: it goes through
@@ -22,6 +22,7 @@
 
 import { WebhookValidationErrorReason } from "@shopify/shopify-api";
 import { validateWebhookRequest } from "~/shopify.server";
+import { logger } from "~/utils/logger.server";
 
 export interface VerifiedWebhook {
   shop: string;
@@ -30,9 +31,21 @@ export interface VerifiedWebhook {
   payload: Record<string, unknown>;
 }
 
+// One warn line per refusal: reason code and topic header only - never the
+// HMAC, the body or the secret.
+function refuse(status: number, statusText: string, reason: string, request: Request): never {
+  logger.warn("[webhook-auth] Webhook refused", {
+    context: "WebhookAuth",
+    status,
+    reason,
+    topic: request.headers.get("x-shopify-topic") ?? undefined,
+  });
+  throw new Response(undefined, { status, statusText });
+}
+
 export async function verifyWebhookRequest(request: Request): Promise<VerifiedWebhook> {
   if (request.method !== "POST") {
-    throw new Response(undefined, { status: 405, statusText: "Method not allowed" });
+    refuse(405, "Method not allowed", "method_not_allowed", request);
   }
 
   const rawBody = await request.text();
@@ -40,16 +53,16 @@ export async function verifyWebhookRequest(request: Request): Promise<VerifiedWe
 
   if (!check.valid) {
     if (check.reason === WebhookValidationErrorReason.InvalidHmac) {
-      throw new Response(undefined, { status: 401, statusText: "Unauthorized" });
+      refuse(401, "Unauthorized", "invalid_hmac", request);
     }
-    throw new Response(undefined, { status: 400, statusText: "Bad Request" });
+    refuse(400, "Bad Request", String(check.reason), request);
   }
 
   let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(rawBody);
   } catch {
-    throw new Response(undefined, { status: 400, statusText: "Bad Request" });
+    refuse(400, "Bad Request", "body_not_json", request);
   }
 
   return { shop: check.domain, topic: check.topic, webhookId: check.webhookId, payload };

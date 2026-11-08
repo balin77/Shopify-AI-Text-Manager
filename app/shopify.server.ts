@@ -218,7 +218,8 @@ logger.info(`[SHOPIFY.SERVER] Shopify App initialized`);
 
 // The migration call lives on @shopify/shopify-api's `auth`, which the
 // react-router wrapper does not expose. A second, minimal api instance is built
-// LAZILY — only the first time a migration actually runs (both env switches on).
+// LAZILY, on first use: a token migration (both env switches on) OR the first
+// webhook whose signature is validated through validateWebhookRequest below.
 let migrationApi: ReturnType<typeof shopifyApi> | null = null;
 function getMigrationApi(): ReturnType<typeof shopifyApi> {
   if (!migrationApi) {

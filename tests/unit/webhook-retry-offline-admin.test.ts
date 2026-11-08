@@ -14,6 +14,7 @@ vi.mock("../../app/utils/logger.server", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+import { OfflineAdminUnavailableError } from "../../app/utils/offline-admin.server";
 import { webhookRetryService } from "../../app/services/webhook-retry.service";
 
 // Same shape as OfflineAdminUnavailableError, built by hand: the service must
@@ -40,7 +41,7 @@ describe("webhook retry: unavailable offline admin is treated like a 401", () =>
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("schedules no retry row for a really refused refresh", async () => {
+  it("schedules no retry row for a terminal refresh failure (permanent flag)", async () => {
     await webhookRetryService.scheduleRetry("a.myshopify.com", "PRODUCTS_UPDATE", { productId: "1" }, unavailable("refresh_failed", true));
     expect(create).not.toHaveBeenCalled();
   });
@@ -60,6 +61,17 @@ describe("webhook retry: unavailable offline admin is treated like a 401", () =>
     });
     expect(deleteMany).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("works with the real error class: transient refresh_failed retries, terminal ones do not", async () => {
+    const transient = new OfflineAdminUnavailableError("a.myshopify.com", "refresh_failed", "refresh failed: HTTP 500");
+    const terminal = new OfflineAdminUnavailableError("a.myshopify.com", "refresh_failed", "expired, no refresh token", true);
+    const noToken = new OfflineAdminUnavailableError("a.myshopify.com", "no_token", "no token");
+    await webhookRetryService.scheduleRetry("a.myshopify.com", "PRODUCTS_UPDATE", {}, transient);
+    expect(create).toHaveBeenCalledTimes(1);
+    await webhookRetryService.scheduleRetry("a.myshopify.com", "PRODUCTS_UPDATE", {}, terminal);
+    await webhookRetryService.scheduleRetry("a.myshopify.com", "PRODUCTS_UPDATE", {}, noToken);
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("still schedules a retry for a plain non-auth error", async () => {

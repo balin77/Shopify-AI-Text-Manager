@@ -113,20 +113,26 @@ export const REFRESH_FAILED_TTL_MS = 60 * 1000;
 export class OfflineAdminUnavailableError extends Error {
   readonly code = "OFFLINE_ADMIN_UNAVAILABLE";
   /**
-   * True only when waiting/retrying cannot help: the stored session has no
-   * token, or a refresh was REALLY refused by Shopify. `refresh_failed` alone
-   * also covers transient database/pool errors and Shopify 5xx, so callers that
-   * decide whether to retry (webhook-retry.service, by shape) read THIS flag,
-   * never the reason or the code.
+   * True ONLY on terminal evidence that retrying cannot help: the stored
+   * session has no token; an expired token with no refresh token; a refresh
+   * answered 400 `invalid_subject_token` (the one failure the library passes
+   * through un-collapsed); or a stored refresh token whose own expiry has
+   * passed. `refresh_failed` alone is NOT terminal: the library collapses every
+   * other refresh failure (token-endpoint outage, timeout, DB/pool error) into
+   * a bare HTTP 500, so those stay retryable. Callers that decide whether to
+   * retry (webhook-retry.service, by shape) read THIS flag, never the reason or
+   * the code. (The 60 s negative cache below is a fail-fast heuristic and
+   * deliberately does NOT feed this flag.)
    */
   permanent: boolean;
   constructor(
     readonly shop: string,
     readonly reason: "no_session" | "refresh_failed" | "no_token",
     message: string,
+    permanent = false,
   ) {
     super(message);
-    this.permanent = reason === "no_token";
+    this.permanent = permanent || reason === "no_token";
     this.name = "OfflineAdminUnavailableError";
   }
 }
@@ -211,6 +217,7 @@ async function acquireOnce(shop: string): Promise<OfflineAdminContext> {
         shop,
         "refresh_failed",
         `Offline token for ${shop} has expired and could not be refreshed (no refresh token)`,
+        true,
       );
     }
     return ctx;
@@ -230,6 +237,8 @@ async function acquireOnce(shop: string): Promise<OfflineAdminContext> {
       shop,
       "refresh_failed",
       `Offline token for ${shop} could not be refreshed: ${describe(error)}`,
+      // Only the one failure the library surfaces un-collapsed is terminal.
+      isPermanentMigrationError(error),
     );
   }
 }
@@ -296,6 +305,17 @@ async function refreshWasReallyRefused(shop: string): Promise<boolean> {
   }
 }
 
+/** Terminal evidence: the stored refresh token's own expiry is in the past. A failing lookup counts as "no". */
+async function storedRefreshTokenExpired(shop: string): Promise<boolean> {
+  try {
+    const stored = await (await resolveDeps()).loadOfflineSession(shop);
+    const until = stored?.refreshTokenExpires;
+    return !!until && until.getTime() <= Date.now();
+  } catch {
+    return false;
+  }
+}
+
 function startAcquisition(shop: string): Promise<OfflineAdminContext> {
   const failedBefore = refreshFailed.get(shop);
   if (failedBefore) {
@@ -333,16 +353,14 @@ function startAcquisition(shop: string): Promise<OfflineAdminContext> {
         });
         // Only if no invalidation (re-auth, uninstall) landed meanwhile: the
         // failure may predate the event that cleared it.
-        if (
-          second instanceof OfflineAdminUnavailableError &&
-          second.reason === "refresh_failed" &&
-          (await refreshWasReallyRefused(shop))
-        ) {
-          // A refresh Shopify really refused will not succeed by retrying
-          // (webhook retry queue reads this flag); this holds whether or not an
-          // invalidation landed meanwhile, unlike the negative cache below.
-          second.permanent = true;
-          if ((generation.get(shop) ?? 0) === startedGeneration) {
+        if (second instanceof OfflineAdminUnavailableError && second.reason === "refresh_failed") {
+          // Terminal evidence in storage: the refresh token itself has expired.
+          if (!second.permanent && (await storedRefreshTokenExpired(shop))) second.permanent = true;
+          // Fail-fast heuristic only (NOT terminal evidence, see `permanent`).
+          if (
+            (await refreshWasReallyRefused(shop)) &&
+            (generation.get(shop) ?? 0) === startedGeneration
+          ) {
             refreshFailed.set(shop, { at: Date.now(), error: second });
           }
         }

@@ -45,9 +45,9 @@ export interface WebhookRetryJob {
 }
 
 /**
- * An offline-admin failure that retrying cannot fix (no token, or a refresh
- * Shopify really refused): the same situation as a 401. offline-admin marks
- * exactly those with `permanent: true`; a plain `refresh_failed` (database or
+ * An offline-admin failure that retrying cannot fix (no token, an expired
+ * token without a refresh token, a refresh failing with a terminal answer):
+ * the same situation as a 401. offline-admin marks exactly those with `permanent: true`; a plain `refresh_failed` (database or
  * pool blip, Shopify 5xx) does NOT carry it and stays retryable. Checked by
  * SHAPE, not instanceof: the class can exist twice across dynamic-import
  * boundaries.
