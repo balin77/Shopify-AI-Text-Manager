@@ -22,51 +22,30 @@
 
 import { useState } from 'react';
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
-import { data as json, redirect, createCookie } from "react-router";
-import { useLoaderData, useActionData, Form, useNavigation } from "react-router";
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { data as json, redirect } from "react-router";
+import { useLoaderData, useActionData, Form, useNavigation, useFetcher } from "react-router";
 import { db } from '~/db.server';
 import { redactShopData } from '~/services/gdpr.service';
 import { logger } from '~/utils/logger.server';
 import { adminLoginLimiter, clientIpFromRequest } from '~/utils/admin-login-limiter.server';
+import {
+  ADMIN_PASSWORD_MIN_LENGTH,
+  ADMIN_SECURITY_HEADERS,
+  adminPassword,
+  adminPasswordState,
+  constantTimeEqual,
+  isAdminAuthenticated,
+  serializeAdminLogout,
+  serializeAdminSession,
+} from '~/utils/admin-auth.server';
 
-/** Liefert das konfigurierte Admin-Passwort oder null, wenn nicht gesetzt. */
-function adminPassword(): string | null {
-  const p = process.env.ADMIN_PASSWORD;
-  return p && p.length > 0 ? p : null;
-}
+const baseHeaders = (extra: Record<string, string> = {}) => ({
+  ...ADMIN_SECURITY_HEADERS,
+  'Cache-Control': 'no-store',
+  ...extra,
+});
 
-/**
- * Auth-Cookie. Mit ADMIN_PASSWORD signiert → ändert sich das Passwort,
- * werden alle bestehenden Sessions automatisch ungültig.
- */
-function authCookie() {
-  const secret = adminPassword() ?? 'no-admin-password-set';
-  return createCookie('cp_admin', {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'lax',
-    path: '/', // bewusst nicht /admin — Pfad-Scoping führt sonst dazu,
-    // dass das Cookie bei manchen Remix-Data-Requests nicht mitgeschickt wird
-    maxAge: 60 * 60 * 8, // 8 Stunden
-    secrets: [secret],
-  });
-}
-
-function constantTimeEqual(a: string, b: string): boolean {
-  // Compare fixed-length digests, so neither the early length check nor the
-  // comparison itself reveals the expected password's length.
-  const ba = createHash('sha256').update(a, 'utf-8').digest();
-  const bb = createHash('sha256').update(b, 'utf-8').digest();
-  return timingSafeEqual(ba, bb);
-}
-
-/** True, wenn das Request-Cookie eine gültige Admin-Session trägt. */
-async function isAuthenticated(request: Request): Promise<boolean> {
-  if (!adminPassword()) return false;
-  const value = await authCookie().parse(request.headers.get('Cookie'));
-  return value === 'ok';
-}
+export const headers = () => ({ ...ADMIN_SECURITY_HEADERS });
 
 interface ShopRow {
   shop: string;
@@ -88,19 +67,24 @@ interface AuditRow {
   shop: string;
   requestType: string;
   status: string;
-  customerEmail: string | null;
-  error: string | null;
-  // R5-G1: the customers/data_request export must be retrievable by the
-  // shop owner (Shopify obligation). It is persisted in full on the audit
-  // row and surfaced here so the request can actually be fulfilled.
-  dataExported: string | null;
-  webhookId: string | null;
   requestedAt: string;
   completedAt: string;
 }
 
+// Loaded only on click (GET /admin?audit=<id>), never with the page: it holds
+// the customer e-mail and the full data_request export (R5-G1: the export must
+// stay retrievable so the request can be fulfilled).
+interface AuditDetail {
+  id: string;
+  shop: string;
+  customerEmail: string | null;
+  error: string | null;
+  dataExported: string | null;
+  webhookId: string | null;
+}
+
 type LoaderData =
-  | { authed: false; configured: boolean }
+  | { authed: false; configured: boolean; tooShort: boolean; minLength: number }
   | { authed: true; rows: ShopRow[]; audits: AuditRow[] };
 
 async function loadAuditRows(): Promise<AuditRow[]> {
@@ -114,10 +98,6 @@ async function loadAuditRows(): Promise<AuditRow[]> {
       shop: true,
       requestType: true,
       status: true,
-      customerEmail: true,
-      error: true,
-      dataExported: true,
-      webhookId: true,
       requestedAt: true,
       completedAt: true,
     },
@@ -127,13 +107,24 @@ async function loadAuditRows(): Promise<AuditRow[]> {
     shop: l.shop,
     requestType: l.requestType,
     status: l.status,
-    customerEmail: l.customerEmail,
-    error: l.error,
-    dataExported: l.dataExported,
-    webhookId: l.webhookId,
     requestedAt: l.requestedAt.toISOString(),
     completedAt: l.completedAt.toISOString(),
   }));
+}
+
+async function loadAuditDetail(id: string): Promise<AuditDetail | null> {
+  const l = await db.gdprAuditLog.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      shop: true,
+      customerEmail: true,
+      error: true,
+      dataExported: true,
+      webhookId: true,
+    },
+  });
+  return l;
 }
 
 async function loadShopRows(): Promise<ShopRow[]> {
@@ -201,17 +192,30 @@ async function loadShopRows(): Promise<ShopRow[]> {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  if (!(await isAuthenticated(request))) {
+  if (!(await isAdminAuthenticated(request))) {
+    if (new URL(request.url).searchParams.has('audit')) {
+      return json({ error: 'Nicht angemeldet.' }, { status: 401, headers: baseHeaders() });
+    }
     return json<LoaderData>(
-      { authed: false, configured: adminPassword() !== null },
-      { headers: { 'Cache-Control': 'no-store' } },
+      {
+        authed: false,
+        configured: adminPassword() !== null,
+        tooShort: adminPasswordState() === 'too-short',
+        minLength: ADMIN_PASSWORD_MIN_LENGTH,
+      },
+      { headers: baseHeaders() },
     );
   }
+  const auditId = new URL(request.url).searchParams.get('audit');
+  if (auditId !== null) {
+    const detail = auditId ? await loadAuditDetail(auditId) : null;
+    if (!detail) {
+      return json({ error: 'Eintrag nicht gefunden.' }, { status: 404, headers: baseHeaders() });
+    }
+    return json({ detail }, { headers: baseHeaders() });
+  }
   const [rows, audits] = await Promise.all([loadShopRows(), loadAuditRows()]);
-  return json<LoaderData>(
-    { authed: true, rows, audits },
-    { headers: { 'Cache-Control': 'no-store' } },
-  );
+  return json<LoaderData>({ authed: true, rows, audits }, { headers: baseHeaders() });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -223,8 +227,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const expected = adminPassword();
     if (!expected) {
       return json(
-        { error: 'Admin-Seite gesperrt: ADMIN_PASSWORD ist nicht gesetzt.' },
-        { status: 503 },
+        {
+          error:
+            adminPasswordState() === 'too-short'
+              ? `Admin-Seite gesperrt: ADMIN_PASSWORD hat weniger als ${ADMIN_PASSWORD_MIN_LENGTH} Zeichen.`
+              : 'Admin-Seite gesperrt: ADMIN_PASSWORD ist nicht gesetzt.',
+        },
+        { status: 503, headers: baseHeaders() },
       );
     }
     // Brute-force guard (admin-login-limiter.server.ts): failed attempts are
@@ -237,33 +246,32 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const minutes = Math.max(1, Math.ceil(limit.retryAfterSec / 60));
       return json(
         { error: `Zu viele Fehlversuche. Bitte in ${minutes} Minute(n) erneut versuchen.` },
-        { status: 429, headers: { 'Retry-After': String(limit.retryAfterSec) } },
+        { status: 429, headers: baseHeaders({ 'Retry-After': String(limit.retryAfterSec) }) },
       );
     }
     const pw = String(form.get('password') ?? '');
     if (!constantTimeEqual(pw, expected)) {
       adminLoginLimiter.recordFailure(clientIp);
       logger.warn('[ADMIN] Falsches Passwort', { clientIp });
-      return json({ error: 'Falsches Passwort.' }, { status: 401 });
+      return json({ error: 'Falsches Passwort.' }, { status: 401, headers: baseHeaders() });
     }
     adminLoginLimiter.recordSuccess(clientIp);
+    logger.info('[ADMIN] Erfolgreiche Anmeldung', { clientIp });
     return redirect('/admin', {
-      headers: { 'Set-Cookie': await authCookie().serialize('ok') },
+      headers: baseHeaders({ 'Set-Cookie': await serializeAdminSession() }),
     });
   }
 
   // --- Logout --- (immer möglich, auch ohne gültige Session: Cookie weg)
   if (intent === 'logout') {
     return redirect('/admin', {
-      headers: {
-        'Set-Cookie': await authCookie().serialize('', { maxAge: 0 }),
-      },
+      headers: baseHeaders({ 'Set-Cookie': await serializeAdminLogout() }),
     });
   }
 
   // Alle übrigen Aktionen erfordern eine gültige Session.
-  if (!(await isAuthenticated(request))) {
-    return json({ error: 'Nicht angemeldet.' }, { status: 401 });
+  if (!(await isAdminAuthenticated(request))) {
+    return json({ error: 'Nicht angemeldet.' }, { status: 401, headers: baseHeaders() });
   }
 
   // --- Shop-Daten löschen ---
@@ -271,20 +279,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const shop = String(form.get('shop') ?? '');
     const confirm = String(form.get('confirm') ?? '');
     if (!shop) {
-      return json({ error: 'Kein Shop angegeben.' }, { status: 400 });
+      return json({ error: 'Kein Shop angegeben.' }, { status: 400, headers: baseHeaders() });
     }
     if (confirm !== shop) {
       return json(
         {
           error: `Bestätigung stimmt nicht. Tippe exakt "${shop}" ins Bestätigungsfeld.`,
         },
-        { status: 400 },
+        { status: 400, headers: baseHeaders() },
       );
     }
     try {
       logger.warn(`[ADMIN] Manuelles vollständiges Löschen aller Daten für ${shop}`);
       await redactShopData({ shop_id: 0, shop_domain: shop });
-      return json({ ok: `Alle Daten für ${shop} wurden gelöscht.` });
+      return json({ ok: `Alle Daten für ${shop} wurden gelöscht.` }, { headers: baseHeaders() });
     } catch (error) {
       logger.error('[ADMIN] Löschen fehlgeschlagen', {
         shop,
@@ -294,12 +302,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         {
           error: `Löschen fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`,
         },
-        { status: 500 },
+        { status: 500, headers: baseHeaders() },
       );
     }
   }
 
-  return json({ error: 'Unbekannte Aktion.' }, { status: 400 });
+  return json({ error: 'Unbekannte Aktion.' }, { status: 400, headers: baseHeaders() });
 };
 
 const TD: React.CSSProperties = {
@@ -325,7 +333,7 @@ const PAGE: React.CSSProperties = {
   color: '#202223',
 };
 
-function LoginView({ configured }: { configured: boolean }) {
+function LoginView({ configured, tooShort, minLength }: { configured: boolean; tooShort: boolean; minLength: number }) {
   const actionData = useActionData<typeof action>();
   return (
     <div style={{ ...PAGE, maxWidth: 380 }}>
@@ -340,8 +348,17 @@ function LoginView({ configured }: { configured: boolean }) {
             fontSize: 13,
           }}
         >
-          Gesperrt: Umgebungsvariable <code>ADMIN_PASSWORD</code> ist nicht
-          gesetzt.
+          {tooShort ? (
+            <>
+              Gesperrt: <code>ADMIN_PASSWORD</code> hat weniger als{' '}
+              {minLength} Zeichen.
+            </>
+          ) : (
+            <>
+              Gesperrt: Umgebungsvariable <code>ADMIN_PASSWORD</code> ist nicht
+              gesetzt.
+            </>
+          )}
         </div>
       )}
       {configured && (
@@ -487,12 +504,99 @@ function ShopRowView({ row }: { row: ShopRow }) {
   );
 }
 
+function AuditRowView({ audit: a }: { audit: AuditRow }) {
+  const fetcher = useFetcher<{ detail?: AuditDetail; error?: string }>();
+  const detail = fetcher.data?.detail;
+  const loading = fetcher.state !== 'idle';
+  return (
+    <>
+      <tr>
+        <td style={TD}>
+          <strong>{a.shop}</strong>
+        </td>
+        <td style={TD}>{a.requestType}</td>
+        <td style={TD}>
+          <span style={{ color: a.status === 'completed' ? '#108043' : '#bf0711' }}>
+            {a.status}
+          </span>
+        </td>
+        <td style={TD}>{a.requestedAt.replace('T', ' ').slice(0, 19)}</td>
+        <td style={TD}>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => fetcher.load(`/admin?audit=${encodeURIComponent(a.id)}`)}
+            style={{
+              padding: '4px 10px',
+              border: '1px solid #babfc3',
+              background: 'white',
+              borderRadius: 4,
+              cursor: loading ? 'default' : 'pointer',
+              fontSize: 12,
+            }}
+          >
+            {loading ? 'Lade…' : 'Details laden'}
+          </button>
+        </td>
+      </tr>
+      {(detail || fetcher.data?.error) && (
+        <tr>
+          <td style={{ ...TD, whiteSpace: 'normal', background: '#f6f6f7' }} colSpan={5}>
+            {fetcher.data?.error && (
+              <span style={{ color: '#bf0711' }}>{fetcher.data.error}</span>
+            )}
+            {detail && (
+              <div>
+                <div>Kunde: {detail.customerEmail ?? '—'}</div>
+                {detail.error && (
+                  <div style={{ color: '#bf0711' }}>Fehler: {detail.error}</div>
+                )}
+                {detail.dataExported ? (
+                  <details open>
+                    <summary style={{ cursor: 'pointer' }}>
+                      Exportierte Daten
+                      {detail.webhookId ? ` (id ${detail.webhookId.slice(0, 8)}…)` : ''}
+                    </summary>
+                    <a
+                      href={`data:application/json;charset=utf-8,${encodeURIComponent(
+                        detail.dataExported,
+                      )}`}
+                      download={`gdpr-data-request-${detail.shop}-${detail.id}.json`}
+                    >
+                      Download JSON
+                    </a>
+                    <pre
+                      style={{
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                        maxHeight: 240,
+                        overflow: 'auto',
+                        background: '#fff',
+                        padding: 8,
+                        marginTop: 6,
+                      }}
+                    >
+                      {detail.dataExported}
+                    </pre>
+                  </details>
+                ) : (
+                  <div>Keine exportierten Daten.</div>
+                )}
+              </div>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
 export default function AdminPage() {
-  const data = useLoaderData<typeof loader>();
+  const data = useLoaderData() as LoaderData;
   const actionData = useActionData<typeof action>();
 
   if (!data.authed) {
-    return <LoginView configured={data.configured} />;
+    return <LoginView configured={data.configured} tooShort={data.tooShort} minLength={data.minLength} />;
   }
 
   const { rows, audits } = data;
@@ -617,82 +721,19 @@ export default function AdminPage() {
               <th style={TH}>Shop</th>
               <th style={TH}>Typ</th>
               <th style={TH}>Status</th>
-              <th style={TH}>Kunde</th>
               <th style={TH}>Zeitpunkt</th>
-              <th style={TH}>Fehler</th>
-              <th style={TH}>Exportierte Daten</th>
+              <th style={TH}>Details</th>
             </tr>
           </thead>
           <tbody>
             {audits.length === 0 ? (
               <tr>
-                <td style={TD} colSpan={7}>
+                <td style={TD} colSpan={5}>
                   Keine Audit-Einträge.
                 </td>
               </tr>
             ) : (
-              audits.map((a) => (
-                <tr key={a.id}>
-                  <td style={TD}>
-                    <strong>{a.shop}</strong>
-                  </td>
-                  <td style={TD}>{a.requestType}</td>
-                  <td style={TD}>
-                    <span
-                      style={{
-                        color: a.status === 'completed' ? '#108043' : '#bf0711',
-                      }}
-                    >
-                      {a.status}
-                    </span>
-                  </td>
-                  <td style={TD}>{a.customerEmail ?? '—'}</td>
-                  <td style={TD}>{a.requestedAt.replace('T', ' ').slice(0, 19)}</td>
-                  <td
-                    style={{
-                      ...TD,
-                      whiteSpace: 'normal',
-                      maxWidth: 360,
-                      color: '#bf0711',
-                    }}
-                  >
-                    {a.error ?? ''}
-                  </td>
-                  <td style={{ ...TD, whiteSpace: 'normal', maxWidth: 360 }}>
-                    {a.dataExported ? (
-                      <details>
-                        <summary style={{ cursor: 'pointer' }}>
-                          View / download
-                          {a.webhookId ? ` (id ${a.webhookId.slice(0, 8)}…)` : ''}
-                        </summary>
-                        <a
-                          href={`data:application/json;charset=utf-8,${encodeURIComponent(
-                            a.dataExported,
-                          )}`}
-                          download={`gdpr-data-request-${a.shop}-${a.id}.json`}
-                        >
-                          Download JSON
-                        </a>
-                        <pre
-                          style={{
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-all',
-                            maxHeight: 240,
-                            overflow: 'auto',
-                            background: '#f6f6f7',
-                            padding: 8,
-                            marginTop: 6,
-                          }}
-                        >
-                          {a.dataExported}
-                        </pre>
-                      </details>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                </tr>
-              ))
+              audits.map((a) => <AuditRowView key={a.id} audit={a} />)
             )}
           </tbody>
         </table>
