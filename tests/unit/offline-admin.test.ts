@@ -849,6 +849,36 @@ describe("refresh_failed negative cache", () => {
     expect(d.unauthenticatedAdmin).toHaveBeenCalledTimes(2);
   });
 
+  it("marks a really refused refresh as permanent, but not a transient failure", async () => {
+    vi.useFakeTimers();
+    const refused = failingDeps();
+    configureOfflineAdmin(refused);
+    const first = getOfflineAdmin(SHOP).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect((await first).permanent).toBe(true);
+
+    __resetOfflineAdminForTests();
+    // A stored session that is not expiring: the failure is not a refused refresh (e.g. a DB blip).
+    configureOfflineAdmin(
+      deps({
+        loadOfflineSession: vi.fn(async () => session("x")),
+        unauthenticatedAdmin: vi.fn(async () => Promise.reject(new Response(undefined, { status: 500 }))),
+      }),
+    );
+    const second = getOfflineAdmin(SHOP).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(5_000);
+    const err = await second;
+    expect(err.reason).toBe("refresh_failed");
+    expect(err.permanent).toBe(false);
+  });
+
+  it("marks no_token as permanent", async () => {
+    configureOfflineAdmin(deps({ unauthenticatedAdmin: vi.fn(async () => adminFor("")) }));
+    const err = await getOfflineAdmin(SHOP).catch((e) => e);
+    expect(err.reason).toBe("no_token");
+    expect(err.permanent).toBe(true);
+  });
+
   it("is cleared by invalidateOfflineAdmin", async () => {
     vi.useFakeTimers();
     const d = deps({

@@ -45,17 +45,19 @@ export interface WebhookRetryJob {
 }
 
 /**
- * An offline-admin acquisition that cannot succeed by waiting (no session, a
- * refresh that failed for good, a token cleared by the migration). It is the
- * same situation as a 401: retrying with nothing new changes nothing. Checked
- * by SHAPE (`code`), not instanceof: the class can exist twice across
- * dynamic-import boundaries.
+ * An offline-admin failure that retrying cannot fix (no token, or a refresh
+ * Shopify really refused): the same situation as a 401. offline-admin marks
+ * exactly those with `permanent: true`; a plain `refresh_failed` (database or
+ * pool blip, Shopify 5xx) does NOT carry it and stays retryable. Checked by
+ * SHAPE, not instanceof: the class can exist twice across dynamic-import
+ * boundaries.
  */
 function isOfflineAdminUnavailable(error: unknown): boolean {
   return (
     typeof error === 'object' &&
     error !== null &&
-    (error as { code?: unknown }).code === 'OFFLINE_ADMIN_UNAVAILABLE'
+    (error as { code?: unknown }).code === 'OFFLINE_ADMIN_UNAVAILABLE' &&
+    (error as { permanent?: unknown }).permanent === true
   );
 }
 

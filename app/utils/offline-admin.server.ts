@@ -112,12 +112,21 @@ export const REFRESH_FAILED_TTL_MS = 60 * 1000;
 
 export class OfflineAdminUnavailableError extends Error {
   readonly code = "OFFLINE_ADMIN_UNAVAILABLE";
+  /**
+   * True only when waiting/retrying cannot help: the stored session has no
+   * token, or a refresh was REALLY refused by Shopify. `refresh_failed` alone
+   * also covers transient database/pool errors and Shopify 5xx, so callers that
+   * decide whether to retry (webhook-retry.service, by shape) read THIS flag,
+   * never the reason or the code.
+   */
+  permanent: boolean;
   constructor(
     readonly shop: string,
     readonly reason: "no_session" | "refresh_failed" | "no_token",
     message: string,
   ) {
     super(message);
+    this.permanent = reason === "no_token";
     this.name = "OfflineAdminUnavailableError";
   }
 }
@@ -327,10 +336,15 @@ function startAcquisition(shop: string): Promise<OfflineAdminContext> {
         if (
           second instanceof OfflineAdminUnavailableError &&
           second.reason === "refresh_failed" &&
-          (await refreshWasReallyRefused(shop)) &&
-          (generation.get(shop) ?? 0) === startedGeneration
+          (await refreshWasReallyRefused(shop))
         ) {
-          refreshFailed.set(shop, { at: Date.now(), error: second });
+          // A refresh Shopify really refused will not succeed by retrying
+          // (webhook retry queue reads this flag); this holds whether or not an
+          // invalidation landed meanwhile, unlike the negative cache below.
+          second.permanent = true;
+          if ((generation.get(shop) ?? 0) === startedGeneration) {
+            refreshFailed.set(shop, { at: Date.now(), error: second });
+          }
         }
         throw second;
       }
