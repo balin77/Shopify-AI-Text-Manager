@@ -44,6 +44,21 @@ export interface WebhookRetryJob {
   lastError?: string;
 }
 
+/**
+ * An offline-admin acquisition that cannot succeed by waiting (no session, a
+ * refresh that failed for good, a token cleared by the migration). It is the
+ * same situation as a 401: retrying with nothing new changes nothing. Checked
+ * by SHAPE (`code`), not instanceof: the class can exist twice across
+ * dynamic-import boundaries.
+ */
+function isOfflineAdminUnavailable(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'OFFLINE_ADMIN_UNAVAILABLE'
+  );
+}
+
 export type WebhookHandler = (payload: Record<string, unknown>, shop: string) => Promise<void>;
 
 class WebhookRetryService {
@@ -89,7 +104,10 @@ class WebhookRetryService {
       // and a session refresh only happens when the merchant opens the app.
       // The inline webhook that just failed will be picked up again by the
       // next products/update event after the token is refreshed.
-      if (/\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage)) {
+      if (
+        isOfflineAdminUnavailable(error) ||
+        /\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage)
+      ) {
         logger.warn('Skipping webhook retry — auth error not recoverable by retry', {
           context: 'WebhookRetry',
           shop,
@@ -300,7 +318,9 @@ class WebhookRetryService {
       // request will refresh the session, and ProductSync is idempotent — so
       // the next inline webhook (or a user-triggered open of the app) will
       // resync the latest state anyway.
-      const isAuthError = /\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage);
+      const isAuthError =
+        isOfflineAdminUnavailable(error) ||
+        /\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage);
       if (isAuthError) {
         const purged = await db.webhookRetry.deleteMany({ where: { shop: retry.shop } });
         logger.warn('Webhook retry aborted — auth error, dropping all retries for shop', {
