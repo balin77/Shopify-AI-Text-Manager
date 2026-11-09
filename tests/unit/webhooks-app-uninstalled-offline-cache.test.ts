@@ -26,7 +26,7 @@ vi.mock("~/db.server", () => ({
         return { count: 1 };
       }),
     },
-    shopInstallState: { upsert: vi.fn(async () => ({})) },
+    shopInstallState: { upsert: vi.fn(async () => ({})), updateMany: vi.fn(async () => ({ count: 1 })) },
     aISettings: { updateMany: vi.fn(async () => ({ count: 0 })) },
   },
 }));

@@ -240,11 +240,32 @@ class SyncSchedulerService {
           initialSyncCompletedAt: true,
           initialSyncStartedAt: true,
           initialSyncForceRequested: true,
+          resyncRequiredSince: true,
         },
       });
 
       if (st?.initialSyncCompletedAt) {
-        // ---- Incremental path (unchanged) ----
+        // ---- Incremental path ----
+        // Changes missed while the shop was blocked or uninstalled are owed a
+        // catch-up (PLAN_ADMIN_SHOP_OVERVIEW 2.4). BEFORE the inactivity check,
+        // so even a short visit after the new login repairs them; the periodic
+        // reconcile below needs ~30 minutes of uninterrupted activity. Holds a
+        // sync slot like any other Shopify work, never throws, and the helper
+        // refuses a blocked shop and runs at most once per shop at a time.
+        if (st.resyncRequiredSince) {
+          await this.acquireSyncSlot();
+          try {
+            const { runWebhookCatchUp } = await import("./webhook-catchup.server");
+            await runWebhookCatchUp(shop, admin);
+          } catch (err) {
+            logger.warn(`[SyncScheduler] Webhook catch-up failed for ${shop}`, {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          } finally {
+            this.releaseSyncSlot();
+          }
+        }
+
         const active = await isShopActive(shop, this.INACTIVITY_THRESHOLD_MINUTES);
         if (!active) {
           logger.debug(`[SyncScheduler] Shop ${shop} inactive for ${this.INACTIVITY_THRESHOLD_MINUTES}+ minutes - stopping sync`);

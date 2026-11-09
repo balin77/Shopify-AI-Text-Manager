@@ -250,6 +250,19 @@ describe("lifting", () => {
     expect(store.get(SHOP)!.connectionState).toBeNull();
   });
 
+  it("afterAuth lifts the block with ONE UNBLOCKED line naming the dropped count, and keeps the catch-up owed", async () => {
+    const since = new Date(Date.now() - 60_000);
+    store.set(SHOP, row({ resyncRequiredSince: since, droppedWebhookCount: 7 }));
+    await blockShopConnection(SHOP, "no_token", { observedAt: new Date() });
+    logs.info.length = 0;
+    await liftConnectionBlockAfterAuth(SHOP);
+    const unblocked = logs.info.filter((m) => m.includes("UNBLOCKED"));
+    expect(unblocked).toHaveLength(1);
+    expect(unblocked[0]).toContain("droppedWebhooks=7");
+    // the debt stays for the catch-up; only the catch-up (or the initial sync) clears it
+    expect(store.get(SHOP)).toMatchObject({ resyncRequiredSince: since, droppedWebhookCount: 7 });
+  });
+
   it("afterAuth of a shop marked uninstalled lifts with cause reinstall", async () => {
     store.set(SHOP, row({ uninstalledAt: new Date() }));
     await blockShopConnection(SHOP, "no_token", { observedAt: new Date() });

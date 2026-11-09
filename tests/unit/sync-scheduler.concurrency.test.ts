@@ -30,6 +30,8 @@ const h = vi.hoisted(() => {
     isShopActive: vi.fn().mockResolvedValue(true),
     syncAll: vi.fn(),
     reconcile: vi.fn().mockResolvedValue(undefined),
+    catchUp: vi.fn().mockResolvedValue('done'),
+    order: [] as string[],
     migrate: vi.fn().mockResolvedValue('disabled'),
     mayNeed: vi.fn().mockReturnValue(true),
     lastActivity: vi.fn(),
@@ -53,6 +55,9 @@ vi.mock('~/services/background-sync.service', () => ({
   BackgroundSyncService: class {
     syncAll = (...a: unknown[]) => h.syncAll(...a);
   },
+}));
+vi.mock('~/services/webhook-catchup.server', () => ({
+  runWebhookCatchUp: (...a: unknown[]) => h.catchUp(...a),
 }));
 vi.mock('~/services/webhook-reconcile.service', () => ({
   reconcileWebhookBackedTypes: (...a: unknown[]) => h.reconcile(...a),
@@ -120,6 +125,8 @@ beforeEach(async () => {
   // its own, and red again once the suite's composition shifted.
   await import('~/db.server');
   vi.clearAllMocks();
+  h.order.length = 0;
+  h.catchUp.mockResolvedValue('done');
   // Reset the singleton's private scheduling state between tests.
   sched.activeTimers.clear();
   sched.runningSyncs = 0;
@@ -327,3 +334,46 @@ describe('runSyncCycle — token migration trigger', () => {
  *   acquires and releases a slot); a dedicated saturation test would belong to
  *   a concurrency-limit suite, not the R4 identity invariant.
  */
+
+describe('runSyncCycle — catch-up of missed webhooks (plan 2.4)', () => {
+  it('runs the catch-up once, BEFORE the inactivity check, when the shop owes one', async () => {
+    h.sisFindUnique.mockResolvedValue({ initialSyncCompletedAt: new Date(), resyncRequiredSince: new Date() });
+    h.catchUp.mockImplementation(async () => { h.order.push('catchUp'); return 'done'; });
+    h.isShopActive.mockImplementation(async () => { h.order.push('active'); return true; });
+    sched.activeTimers.set(shop, makeEntry());
+    const p = sched.runSyncCycle(shop, admin);
+    await waitForSyncAll();
+    h.resolveSync({ total: 0, duration: 0 });
+    await p;
+    expect(h.catchUp).toHaveBeenCalledTimes(1);
+    expect(h.order.slice(0, 2)).toEqual(['catchUp', 'active']);
+  });
+
+  it('even an INACTIVE shop gets its catch-up (a short visit after the new login)', async () => {
+    h.sisFindUnique.mockResolvedValue({ initialSyncCompletedAt: new Date(), resyncRequiredSince: new Date() });
+    h.isShopActive.mockResolvedValue(false);
+    sched.activeTimers.set(shop, makeEntry());
+    await sched.runSyncCycle(shop, admin);
+    expect(h.catchUp).toHaveBeenCalledTimes(1);
+    expect(h.syncAll).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when no catch-up is owed', async () => {
+    sched.activeTimers.set(shop, makeEntry());
+    const p = sched.runSyncCycle(shop, admin);
+    await waitForSyncAll();
+    h.resolveSync({ total: 0, duration: 0 });
+    await p;
+    expect(h.catchUp).not.toHaveBeenCalled();
+  });
+
+  it('a catch-up that throws does not break the cycle', async () => {
+    h.sisFindUnique.mockResolvedValue({ initialSyncCompletedAt: new Date(), resyncRequiredSince: new Date() });
+    h.catchUp.mockRejectedValue(new Error('boom'));
+    sched.activeTimers.set(shop, makeEntry());
+    const p = sched.runSyncCycle(shop, admin);
+    await waitForSyncAll();
+    h.resolveSync({ total: 0, duration: 0 });
+    await expect(p).resolves.toBeUndefined();
+  });
+});

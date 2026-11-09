@@ -21,6 +21,7 @@ import { ProductSyncService } from "./product-sync.service";
 import { ContentSyncService } from "./content-sync.service";
 import { BackgroundSyncService } from "./background-sync.service";
 import { logger } from "~/utils/logger.server";
+import { readResyncOwed, clearResyncIfUnchanged } from "./webhook-catchup.server";
 import type { SyncPhase, SyncPhaseMarker } from "./sync-phases.shared";
 import { getTranslation, DEFAULT_LOCALE, type Locale } from "~/i18n";
 
@@ -116,6 +117,12 @@ export async function runInitialFullSync(
       stats: { ...stats },
     });
   };
+
+  // What a webhook catch-up owes at the START (blocked-shop drops, uninstall
+  // gap). A full initial sync fetches everything, so it settles that debt --
+  // but compare-and-delete against this read, so a webhook dropped DURING the
+  // run keeps the flag. Null for a shop that owes nothing; never throws.
+  const resyncOwedAtStart = await readResyncOwed(shop);
 
   // Plan limits + localized error messages (identical to the old SSE route).
   const settings = await db.aISettings.findUnique({ where: { shop } });
@@ -585,6 +592,8 @@ export async function runInitialFullSync(
       shop, error: e instanceof Error ? e.message : String(e),
     });
   }
+
+  if (resyncOwedAtStart) await clearResyncIfUnchanged(shop, resyncOwedAtStart);
 
   emit('done', 100, 'Sync complete!');
   return { stats, completed: true };

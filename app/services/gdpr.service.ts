@@ -15,6 +15,7 @@
 import { db } from "../db.server";
 import { decryptPII } from "../utils/encryption.server";
 import { logger } from "~/utils/logger.server";
+import { invalidateConnectionCache } from "../utils/shop-connection-state.server";
 
 /**
  * R5-G2: `BigInt(x)` THROWS on an empty / non-numeric / placeholder value.
@@ -637,6 +638,11 @@ export async function redactShopData(
     });
     logger.debug(`[GDPR] Deleted ${mediaLibrarySyncStateDeleted.count} media library sync state rows`);
   });
+
+  // The connection-state columns went with the ShopInstallState row; drop the
+  // in-process answer too (30 s cache), so a redacted shop is not "blocked" in
+  // memory, and a later reinstall starts clean. After the transaction.
+  invalidateConnectionCache(shop_domain);
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);
 }

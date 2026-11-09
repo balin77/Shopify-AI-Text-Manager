@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { logGDPRRequest, redactShopData } from '~/services/gdpr.service';
+import * as connectionState from '../../app/utils/shop-connection-state.server';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -288,6 +289,22 @@ describe('redactShopData()', () => {
     for (const model of ['primaryDigestBaseline', 'autoTranslateFillBudget', 'autoTranslateRetry', 'shopUsageDay']) {
       expect(calls.find((c) => c.model === model)?.where).toEqual({ shop: SHOP_A });
     }
+  });
+
+  it('drops the in-process connection-block answer AFTER the transaction (plan 2.4)', async () => {
+    const { tx } = makeTxRecorder();
+    const order: string[] = [];
+    mockTransaction.mockImplementation(async (cb: (t: unknown) => Promise<void>) => {
+      await cb(tx);
+      order.push('transaction done');
+    });
+    const spy = vi.spyOn(connectionState, 'invalidateConnectionCache').mockImplementation(() => {
+      order.push('invalidate');
+    });
+    await redactShopData({ shop_id: 1, shop_domain: SHOP_A });
+    expect(spy).toHaveBeenCalledWith(SHOP_A);
+    expect(order).toEqual(['transaction done', 'invalidate']);
+    spy.mockRestore();
   });
 
   it('does NOT delete the deliberately retained GdprAuditLog', async () => {
