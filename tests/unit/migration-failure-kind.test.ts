@@ -61,7 +61,11 @@ function session(token: string, expires?: Date) {
 }
 function deps(exchange: () => Promise<never>, overrides: Partial<OfflineAdminDeps> = {}): OfflineAdminDeps {
   return {
-    unauthenticatedAdmin: vi.fn(async () => ({ session: session("legacy-token"), admin: { graphql: vi.fn() } as never })),
+    // the default probe finds the shop gone (HTTP 404): definitive evidence
+    unauthenticatedAdmin: vi.fn(async () => ({
+      session: session("legacy-token"),
+      admin: { graphql: vi.fn(async () => { throw Object.assign(new Error("gone"), { response: { code: 404 } }); }) } as never,
+    })),
     loadOfflineSession: vi.fn(async () => session("legacy-token")),
     storeSession: vi.fn(async () => true),
     migrateToExpiringToken: vi.fn(exchange as never),
@@ -238,26 +242,29 @@ describe("a 403 that looks like the IP allowlist", () => {
     expect(migrationMayBeNeeded(SHOP)).toBe(true);
   });
 
-  it("three shops with a plain 403 and no success: the third only pauses (suspected)", async () => {
-    configureOfflineAdmin(deps(reject(403)));
-    expect(await run(0)).toBe("failed"); // the first one looks shop-specific
-    expect(record()).toMatchObject({ attempts: 1, failureKind: "forbidden" });
-    for (const other of [OTHER, "third-shop.myshopify.com"]) {
-      h.migrations.push({
-        shop: other, encryptedOldToken: null, status: "pending", attempts: 0, startedAt: new Date(), updatedAt: new Date(), completedAt: null, lastError: null,
+  it("token-endpoint 403s do not feed the Admin API allowlist suspicion: three shops, no pause", async () => {
+    for (const shop of [SHOP, OTHER, "third-shop.myshopify.com"]) {
+      configureOfflineAdmin({
+        ...deps(reject(403)),
+        loadOfflineSession: vi.fn(async () => new Session({ id: `offline_${shop}`, shop, state: "", isOnline: false, accessToken: "legacy-2" })),
       });
+      const p = maybeMigrateToExpiringToken(shop);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await p).toBe("failed");
     }
-    const forShop = (shop: string) => ({
-      ...deps(reject(403)),
-      loadOfflineSession: vi.fn(async () => new Session({ id: `offline_${shop}`, shop, state: "", isOnline: false, accessToken: "legacy-2" })),
-    });
-    configureOfflineAdmin(forShop(OTHER));
-    expect(await maybeMigrateToExpiringToken(OTHER)).toBe("failed"); // 2 shops: still shop-specific
-    configureOfflineAdmin(forShop("third-shop.myshopify.com"));
-    expect(await maybeMigrateToExpiringToken("third-shop.myshopify.com")).toBe("backoff");
-    expect(record("third-shop.myshopify.com")).toMatchObject({ attempts: 0, status: "pending" });
-    expect(isIpAllowlistPaused()).toBe(true);
+    expect(isIpAllowlistPaused()).toBe(false);
+    expect(record()).toMatchObject({ attempts: 1, failureKind: "forbidden" });
     expect(h.block).not.toHaveBeenCalled();
+  });
+
+  it("a migrated pair counts as a success for the allowlist heuristic", async () => {
+    configureOfflineAdmin(deps(async () => ({ session: session("expiring", new Date(Date.now() + 3600_000)) }) as never));
+    expect(await run(0)).toBe("migrated");
+    const { classifyForbidden } = await import("~/utils/shopify-forbidden.server");
+    const f = Object.assign(new Error("no"), { response: { code: 403 } });
+    await classifyForbidden("x1.myshopify.com", f);
+    await classifyForbidden("x2.myshopify.com", f);
+    expect(await classifyForbidden("x3.myshopify.com", f)).toBe("shop_specific");
   });
 });
 
@@ -473,5 +480,100 @@ describe("withheld, deadline and transient edge cases", () => {
     expect(await run(0)).toBe("failed");
     expect(d.migrateToExpiringToken).toHaveBeenCalledTimes(4);
     expect(record()).toMatchObject({ failureKind: "transient", attempts: 4 });
+  });
+});
+
+describe("the pre-finalise probe is three-valued: only definitive evidence finalises", () => {
+  const finalRecord = () =>
+    h.migrations.push({
+      shop: SHOP, status: "failed", attempts: 5, failureKind: "not_found", tokenFingerprint: fingerprintToken("legacy-token"),
+      failureKindSince: new Date(Date.now() - 3 * KIND_FINAL_AFTER_MS), startedAt: new Date(), updatedAt: new Date(0), encryptedOldToken: encryptToken("legacy-token"),
+    });
+  const httpError = (code: number, message = "x") => Object.assign(new Error(message), { response: { code } });
+  const withAdmin = (graphql: () => Promise<unknown>, sess = session("legacy-token")) =>
+    configureOfflineAdmin(deps(reject(404), { unauthenticatedAdmin: vi.fn(async () => ({ session: sess, admin: { graphql } as never })) }));
+  const ok = { json: async () => ({ data: { shop: { id: "gid://shopify/Shop/1" } } }) };
+
+  it.each([
+    ["HTTP 401", async () => { throw httpError(401); }],
+    ["HTTP 404", async () => { throw httpError(404); }],
+    ["a shop-specific 403", async () => { throw httpError(403, "Access denied for shop field"); }],
+    ["the deadline 403", async () => { throw httpError(403, "Non-expiring access tokens are no longer accepted for the Admin API."); }],
+    ["a 200 with data.shop null and no errors", async () => ({ json: async () => ({ data: { shop: null } }) })],
+  ])("DEAD: %s finalises, erases and blocks", async (_n, graphql) => {
+    finalRecord();
+    withAdmin(graphql);
+    await run(0);
+    expect(record()).toMatchObject({ attempts: MIGRATION_MAX_ATTEMPTS, encryptedOldToken: null });
+    expect(h.block).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["answers", async () => ok],
+    ["HTTP 429", async () => { throw httpError(429); }],
+    ["HTTP 500", async () => { throw httpError(500); }],
+    ["HTTP 503", async () => { throw httpError(503); }],
+    ["a network error", async () => { throw new TypeError("fetch failed"); }],
+    ["a timeout", async () => { throw Object.assign(new Error("timeout"), { name: "AbortError" }); }],
+    ["a GraphQL error (THROTTLED)", async () => ({ json: async () => ({ errors: [{ message: "Throttled", extensions: { code: "THROTTLED" } }] }) })],
+    ["a thrown GraphqlQueryError", async () => { throw Object.assign(new Error("Throttled"), { name: "GraphqlQueryError", body: { errors: [{ message: "Throttled" }] } }); }],
+    ["a 200 with no usable body", async () => undefined],
+    ["an allowlist 403", async () => { throw httpError(403, "the IP address is not on the allowlist"); }],
+  ])("WITHHELD: %s changes nothing but the 4 h retry", async (_n, graphql) => {
+    finalRecord();
+    withAdmin(graphql);
+    await run(0);
+    expect(record().attempts).toBe(3); // capped, not counted toward 40
+    expect(record().encryptedOldToken).not.toBeNull(); // not erased
+    expect(h.block).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.error).mock.calls.some((c) => String(c[0]).includes("MIGRATION_GAVE_UP"))).toBe(false);
+  });
+
+  it("a blank stored token (a run working from the persisted ciphertext) cannot authenticate: unknown, the last copy is never erased", async () => {
+    finalRecord();
+    configureOfflineAdmin(deps(reject(404), { unauthenticatedAdmin: vi.fn(async () => ({ session: session(""), admin: {} as never })) }));
+    await run(0);
+    expect(record().encryptedOldToken).not.toBeNull();
+    expect(record().attempts).toBeLessThan(MIGRATION_MAX_ATTEMPTS);
+    expect(h.block).not.toHaveBeenCalled();
+  });
+
+  it("an unreadable database during the probe is unknown too (the probe never throws)", async () => {
+    finalRecord();
+    configureOfflineAdmin(
+      deps(reject(404), { unauthenticatedAdmin: vi.fn(async () => { throw new Error("connection pool exhausted"); }) }),
+    );
+    await run(0);
+    expect(h.block).not.toHaveBeenCalled();
+    expect(record().encryptedOldToken).not.toBeNull();
+  });
+});
+
+describe("a mass seen in the last 24 h withholds only the final verdict", () => {
+  it("the verdict waits (even for a dead probe) while the attempt still runs; after 24 h it proceeds", async () => {
+    // three fresh shops with a 404 trip the detector
+    for (const s of ["m1", "m2", "m3"].map((x) => `${x}.myshopify.com`)) {
+      configureOfflineAdmin({
+        ...deps(reject(404)),
+        loadOfflineSession: vi.fn(async () => new Session({ id: `offline_${s}`, shop: s, state: "", isOnline: false, accessToken: "legacy" })),
+      });
+      const p = maybeMigrateToExpiringToken(s);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await p).toBe("failed");
+    }
+    h.migrations.push({
+      shop: SHOP, status: "failed", attempts: 5, failureKind: "not_found", tokenFingerprint: fingerprintToken("legacy-token"),
+      failureKindSince: new Date(Date.now() - 3 * KIND_FINAL_AFTER_MS), startedAt: new Date(), updatedAt: new Date(0), encryptedOldToken: encryptToken("legacy-token"),
+    });
+    configureOfflineAdmin(deps(reject(404))); // the probe says dead
+    expect(await run(0)).toBe("failed"); // the attempt ran
+    expect(record().attempts).toBe(3);
+    expect(h.block).not.toHaveBeenCalled();
+    // after the 24 h the verdict proceeds normally
+    await vi.advanceTimersByTimeAsync(25 * HOUR);
+    configureOfflineAdmin(deps(reject(404)));
+    await run(0);
+    expect(record().attempts).toBe(MIGRATION_MAX_ATTEMPTS);
+    expect(h.block).toHaveBeenCalledTimes(1);
   });
 });

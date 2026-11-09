@@ -130,6 +130,24 @@ describe("classifyForbidden", () => {
   });
 });
 
+describe("the first allowlist classification logs the raw body, redacted and truncated", () => {
+  it("logs once per kind, masks token-like strings, cuts at 300 characters", async () => {
+    const body = `the IP is blocked shpat_abcdef1234567890 ${"x".repeat(500)}`;
+    vi.mocked(logger.warn).mockClear();
+    await classifyForbidden("a.myshopify.com", forbidden(body));
+    await classifyForbidden("b.myshopify.com", forbidden("the IP is blocked again"));
+    const lines = vi.mocked(logger.warn).mock.calls.map((c) => String(c[0])).filter((l) => l.includes("first 403 classified as ip_allowlist"));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).not.toContain("shpat_");
+    expect(lines[0].length).toBeLessThan(450);
+    // a different kind logs its own first body
+    await classifyForbidden("c.myshopify.com", forbidden("plain"));
+    await classifyForbidden("d.myshopify.com", forbidden("plain"));
+    await classifyForbidden("e.myshopify.com", forbidden("plain"));
+    expect(vi.mocked(logger.warn).mock.calls.filter((c) => String(c[0]).includes("ip_allowlist_suspected"))).toHaveLength(1);
+  });
+});
+
 describe("reportForbidden", () => {
   it("shop_specific and the deadline answer do nothing: no line, no alert, no pause", () => {
     reportForbidden("a.myshopify.com", "shop_specific");

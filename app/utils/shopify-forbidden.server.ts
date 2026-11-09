@@ -53,6 +53,7 @@ export const IP_ALLOWLIST_LOG_INTERVAL_MS = 5 * 60 * 1000;
 export const IP_ALLOWLIST_ALERT_INTERVAL_MS = 60 * 60 * 1000;
 
 /** shop -> when it last got a (non-deadline) 403. */
+const rawBodyLogged = new Set<string>();
 const recentForbidden = new Map<string, number>();
 /** shop -> when a call with its stored access last succeeded. */
 const recentSuccess = new Map<string, number>();
@@ -63,6 +64,7 @@ let lastLoggedAt = 0;
 export function __resetForbiddenForTests(): void {
   recentForbidden.clear();
   recentSuccess.clear();
+  rawBodyLogged.clear();
   pausedUntil = 0;
   lastLoggedAt = 0;
 }
@@ -144,11 +146,38 @@ export async function classifyForbidden(
     // dead for its own reasons answers 403 to everything and says nothing about
     // our address. It is still classified against what the others show.
     if (opts.record !== false) recentForbidden.set(shop, now);
-    if (IP_WORD.test(text) || IP_PHRASE.test(text)) return "ip_allowlist";
-    return suspectsAllowlist(now) ? "ip_allowlist_suspected" : "shop_specific";
+    if (IP_WORD.test(text) || IP_PHRASE.test(text)) {
+      logFirstAllowlistBody(shop, "ip_allowlist", text);
+      return "ip_allowlist";
+    }
+    if (suspectsAllowlist(now)) {
+      logFirstAllowlistBody(shop, "ip_allowlist_suspected", text);
+      return "ip_allowlist_suspected";
+    }
+    return "shop_specific";
   } catch {
     return null;
   }
+}
+
+/** A token-like or long opaque string is masked; the text is cut to 300 characters. */
+function redactBody(text: string): string {
+  return text
+    .replace(/shp[a-z]{2}_[A-Za-z0-9]+/g, "[token]")
+    .replace(/[A-Za-z0-9_-]{32,}/g, "[opaque]")
+    .replace(/\s+/g, " ")
+    .slice(0, 300);
+}
+
+/**
+ * The wording of Shopify's allowlist answer is not measured. The first time a
+ * 403 is classified as an allowlist kind (per kind and process) its raw body is
+ * logged, redacted and truncated, so the real text can be checked afterwards.
+ */
+function logFirstAllowlistBody(shop: string, kind: ForbiddenKind, text: string): void {
+  if (rawBodyLogged.has(kind)) return;
+  rawBodyLogged.add(kind);
+  logger.warn(`[ShopifyIP] first 403 classified as ${kind} on ${shop}; raw body (truncated, redacted): ${redactBody(text) || "(empty)"}`);
 }
 
 /** Is the global pause of the migration and the probe in force? */
