@@ -1,12 +1,11 @@
 -- PLAN_ADMIN_SHOP_OVERVIEW steps 5-6: connection state + durable activity +
 -- per-day usage statistics. ONE migration for both parts of the plan.
 --
--- lock_timeout: the ALTERs below take a brief ACCESS EXCLUSIVE lock. If a long
--- transaction holds the table, fail fast (the deploy retries) instead of
--- queueing behind it and blocking every reader. SET LOCAL: scoped to the
--- implicit transaction of this migration script, so it cannot leak to later
--- migrations on the same connection.
-SET LOCAL lock_timeout = '5s';
+-- No lock_timeout on purpose: nothing retries a failed migration. A timeout
+-- would mark it failed (P3009 on every later deploy), and the runner's db push
+-- fallback would then apply the same ALTERs without a timeout, skip the
+-- backfill and build the indexes without CONCURRENTLY. Waiting briefly for a
+-- short-lived lock on these low-traffic tables is the safer outcome.
 
 -- Additive and safe on a live database:
 --   * every new column is nullable or has a constant default, which PostgreSQL
