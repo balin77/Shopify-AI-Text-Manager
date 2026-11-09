@@ -155,7 +155,14 @@ export async function loadShopRows(): Promise<ShopRow[]> {
 }
 
 /** Rough size of one shop's text content in MB (detail view, on demand). */
-export async function loadShopStorage(shop: string): Promise<ShopStorage> {
+export async function loadShopStorage(shop: string): Promise<ShopStorage | null> {
+  // Unknown to every source the overview lists => not a shop (null, 404).
+  const [s, i, a] = await Promise.all([
+    db.session.findFirst({ where: { shop }, select: { shop: true } }),
+    db.shopInstallState.findFirst({ where: { shop }, select: { shop: true } }),
+    db.aISettings.findFirst({ where: { shop }, select: { shop: true } }),
+  ]);
+  if (!s && !i && !a) return null;
   const sizeRows = await db.$queryRaw<Array<{ bytes: bigint }>>`
     SELECT
       (SELECT COALESCE(SUM(octet_length(COALESCE(title,'')) + octet_length(COALESCE("descriptionHtml",''))),0) FROM "Product" WHERE shop = ${shop})

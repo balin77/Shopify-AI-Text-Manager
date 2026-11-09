@@ -123,7 +123,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (!storageShop) {
       return json({ error: 'Kein Shop angegeben.' }, { status: 400, headers: baseHeaders() });
     }
-    return json({ storage: await loadShopStorage(storageShop) }, { headers: baseHeaders() });
+    // NOTE: the per-shop detail view (plan section 3.5, `?detail=<shop>`) is meant
+    // to absorb this branch, so two detail doors do not stay side by side.
+    const storage = await loadShopStorage(storageShop);
+    if (!storage) {
+      return json({ error: 'Shop nicht gefunden.' }, { status: 404, headers: baseHeaders() });
+    }
+    return json({ storage }, { headers: baseHeaders() });
   }
   const auditId = params.get('audit');
   if (auditId !== null) {
@@ -366,7 +372,7 @@ function ShopRowView({ row }: { row: ShopRow }) {
         <td style={TD}>{row.articles}</td>
         <td style={TD}>{row.pages}</td>
         <td style={TD}>{row.tasks}</td>
-                <td style={TD}>{row.initialSyncCompletedAt ? '✓' : '—'}</td>
+        <td style={TD}>{row.initialSyncCompletedAt ? '✓' : '—'}</td>
         <td style={TD}>
           <button
             type="button"
