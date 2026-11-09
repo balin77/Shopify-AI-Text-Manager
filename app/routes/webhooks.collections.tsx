@@ -6,9 +6,9 @@ import {
   isShopConnectionBlockedError,
   noteDroppedWebhook,
   recordWebhookSeen,
-  ShopConnectionBlockedError,
 } from "~/utils/shop-connection-state.server";
 import { ContentSyncService } from "../services/content-sync.service";
+import { noShopifyAdmin } from "~/utils/webhook-no-admin.server";
 import { logger } from "~/utils/logger.server";
 
 /**
@@ -24,7 +24,7 @@ import { logger } from "~/utils/logger.server";
 export const action = async ({ request }: ActionFunctionArgs) => {
   const verified = await verifyWebhookRequest(request);
   const { shop, payload } = verified;
-  const topic = verified.topic.toUpperCase().replace("/", "_");
+  const topic = verified.topic;
   await recordWebhookSeen(shop, request.headers.get("x-shopify-triggered-at"));
 
   const blocked = await getConnectionBlock(shop);
@@ -102,11 +102,7 @@ async function processWebhookAsync(
     // client, so it also works for a blocked shop.
     let admin: any;
     if (topic === "COLLECTIONS_DELETE") {
-      admin = {
-        graphql: async () => {
-          throw new ShopConnectionBlockedError(shop, { state: "needs_reauth", reason: "webhook_delete_no_admin", since: null });
-        },
-      };
+      admin = noShopifyAdmin();
     } else {
       const { createAdminClientFromShop } = await import("../utils/admin-client.server");
       admin = await createAdminClientFromShop(shop);

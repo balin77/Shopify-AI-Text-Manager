@@ -4,6 +4,8 @@ import { createHmac } from "node:crypto";
 const h = vi.hoisted(() => ({
   libAuth: vi.fn<(r: Request) => Promise<any>>(),
   sync: vi.fn(async () => "free"),
+  block: vi.fn<(s: string) => Promise<any>>(async () => null),
+  offline: vi.fn<(s: string) => Promise<any>>(async () => ({})),
 }));
 
 vi.mock("~/shopify.server", async () => {
@@ -17,7 +19,11 @@ vi.mock("~/shopify.server", async () => {
 });
 vi.mock("~/utils/logger.server", () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock("~/services/billing.server", () => ({ checkAndSyncSubscription: h.sync }));
-vi.mock("~/utils/shop-connection-state.server", () => ({ recordWebhookSeen: vi.fn(async () => undefined) }));
+vi.mock("~/utils/shop-connection-state.server", () => ({
+  recordWebhookSeen: vi.fn(async () => undefined),
+  getConnectionBlock: h.block,
+}));
+vi.mock("~/utils/offline-admin.server", () => ({ getOfflineAdmin: h.offline }));
 
 import { action } from "~/routes/webhooks.subscription";
 import { logger } from "~/utils/logger.server";
@@ -40,7 +46,11 @@ function req(secret = "test-secret") {
 }
 const run = (r: Request) => action({ request: r, params: {}, context: {} } as never) as Promise<Response>;
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  h.block.mockResolvedValue(null);
+  h.offline.mockResolvedValue({});
+});
 
 describe("webhooks.subscription", () => {
   it("happy path: library admin is used and the subscription is synced", async () => {
@@ -54,12 +64,32 @@ describe("webhooks.subscription", () => {
     expect(h.sync).toHaveBeenCalledWith(admin, SHOP);
   });
 
-  it("refresh failure after a valid signature: 200 with a warn, nothing synced", async () => {
+  it("library failure + blocked shop: 200 with a warn, nothing synced", async () => {
     h.libAuth.mockRejectedValue(new Error("refresh failed"));
+    h.block.mockResolvedValue({ state: "needs_reauth", reason: "admin_api_401", since: null });
     const r = await run(req());
     expect(r.status).toBe(200);
     expect(h.sync).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("sync deferred"), expect.objectContaining({ shop: SHOP }));
+  });
+
+  it("library failure + permanently dead offline token: 200", async () => {
+    h.libAuth.mockRejectedValue(new Error("refresh failed"));
+    h.offline.mockRejectedValue(Object.assign(new Error("no token"), { code: "OFFLINE_ADMIN_UNAVAILABLE", permanent: true }));
+    const r = await run(req());
+    expect(r.status).toBe(200);
+    expect(h.sync).not.toHaveBeenCalled();
+  });
+
+  it("library failure that looks transient (our own door works): 500 so Shopify retries", async () => {
+    h.libAuth.mockRejectedValue(new Error("refresh failed"));
+    await expect(run(req())).rejects.toMatchObject({ status: 500 });
+  });
+
+  it("library failure + non-permanent offline-admin error: 500", async () => {
+    h.libAuth.mockRejectedValue(new Error("refresh failed"));
+    h.offline.mockRejectedValue(Object.assign(new Error("outage"), { code: "OFFLINE_ADMIN_UNAVAILABLE", permanent: false }));
+    await expect(run(req())).rejects.toMatchObject({ status: 500 });
   });
 
   it("bad signature: 401, the library is never asked", async () => {

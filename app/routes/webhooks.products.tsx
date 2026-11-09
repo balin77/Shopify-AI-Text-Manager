@@ -6,8 +6,8 @@ import {
   isShopConnectionBlockedError,
   noteDroppedWebhook,
   recordWebhookSeen,
-  ShopConnectionBlockedError,
 } from "~/utils/shop-connection-state.server";
+import { noShopifyAdmin } from "~/utils/webhook-no-admin.server";
 import { logger } from "~/utils/logger.server";
 
 /**
@@ -28,8 +28,8 @@ import { logger } from "~/utils/logger.server";
 export const action = async ({ request }: ActionFunctionArgs) => {
   const verified = await verifyWebhookRequest(request);
   const { shop, payload } = verified;
-  // The library spells topics PRODUCTS_UPDATE, the header products/update.
-  const topic = verified.topic.toUpperCase().replace("/", "_");
+  // verifyWebhookRequest already returns the enum spelling (PRODUCTS_UPDATE).
+  const topic = verified.topic;
   await recordWebhookSeen(shop, request.headers.get("x-shopify-triggered-at"));
 
   const blocked = await getConnectionBlock(shop);
@@ -147,15 +147,6 @@ async function enqueueDeletedProductForIndexNow(db: any, shop: string, productId
   } catch { /* ignore */ }
 }
 
-/** Placeholder client for the DB-only delete path: any Shopify call is a bug and fails loudly. */
-function unusableAdmin(shop: string) {
-  return {
-    graphql: async () => {
-      throw new ShopConnectionBlockedError(shop, { state: "needs_reauth", reason: "webhook_delete_no_admin", since: null });
-    },
-  };
-}
-
 /**
  * Process webhook in the background
  */
@@ -175,7 +166,7 @@ async function processWebhookAsync(
     // so it needs no Admin client: it must work for a blocked shop too.
     let admin: any;
     if (topic === "PRODUCTS_DELETE") {
-      admin = unusableAdmin(shop);
+      admin = noShopifyAdmin();
     } else {
       const { createAdminClientFromShop } = await import("../utils/admin-client.server");
       admin = await createAdminClientFromShop(shop);

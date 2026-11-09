@@ -98,7 +98,19 @@ describe.each([
     expect(h.seen).toHaveBeenCalledWith(SHOP, null);
     expect(h.createAdmin).toHaveBeenCalledWith(SHOP);
     expect(sync).toHaveBeenCalled();
-    expect(h.logCreate).toHaveBeenCalled();
+    expect(h.logCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ shop: SHOP, topic: `${res}/update`, processed: false }) }),
+    );
+  });
+
+  it("healthy shop, processing failure: error row and a retry are scheduled", async () => {
+    sync.mockRejectedValueOnce(new Error("boom"));
+    const r = await run(action, req(`${res}/update`));
+    expect(r.status).toBe(200);
+    await flush();
+    expect(h.logUpdate).toHaveBeenCalledWith({ where: { id: "log1" }, data: { processed: true, error: "boom" } });
+    expect(h.scheduleRetry).toHaveBeenCalledWith(SHOP, `${res.toUpperCase()}_UPDATE`, expect.anything(), expect.any(Error));
+    expect(h.noteDropped).not.toHaveBeenCalled();
   });
 
   it("bad signature: 401 and nothing runs", async () => {
@@ -126,6 +138,9 @@ describe.each([
     expect(r.status).toBe(200);
     await flush();
     expect(del).toHaveBeenCalled();
+    expect(h.logCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ topic: `${res}/delete` }) }),
+    );
     expect(h.createAdmin).not.toHaveBeenCalled();
     expect(h.noteDropped).not.toHaveBeenCalled();
     expect(h.logUpdate).toHaveBeenCalledWith({ where: { id: "log1" }, data: { processed: true } });
