@@ -30,6 +30,12 @@ vi.mock("~/db.server", () => ({
     session: { findMany: vi.fn(async () => []) },
     shopInstallState: { findMany: vi.fn(async () => []) },
     aISettings: { findMany: vi.fn(async () => []) },
+    product: { groupBy: vi.fn(async () => []) },
+    collection: { groupBy: vi.fn(async () => []) },
+    article: { groupBy: vi.fn(async () => []) },
+    page: { groupBy: vi.fn(async () => []) },
+    task: { groupBy: vi.fn(async () => []) },
+    $queryRaw: vi.fn(async () => [{ bytes: BigInt(0) }]),
     gdprAuditLog: {
       // Mimic `select`: only the selected columns come back.
       findMany: vi.fn(async (args: { select: Record<string, boolean> }) =>

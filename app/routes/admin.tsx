@@ -26,6 +26,15 @@ import { data as json, redirect } from "react-router";
 import { useLoaderData, useActionData, Form, useNavigation, useFetcher } from "react-router";
 import { db } from '~/db.server';
 import { redactShopData } from '~/services/gdpr.service';
+import {
+  loadAuditDetail,
+  loadAuditRows,
+  loadShopRows,
+  loadShopStorage,
+  type AuditDetail,
+  type AuditRow,
+  type ShopRow,
+} from '~/services/admin/shop-overview.server';
 import { logger } from '~/utils/logger.server';
 import { adminLoginLimiter, clientIpFromRequest } from '~/utils/admin-login-limiter.server';
 import {
@@ -82,158 +91,20 @@ function isDocumentRequest(request: Request): boolean {
   return (request.headers.get('Accept') ?? '').includes('text/html');
 }
 
-interface ShopRow {
-  shop: string;
-  plan: string;
-  devForcedPlan: string | null;
-  products: number;
-  collections: number;
-  articles: number;
-  pages: number;
-  tasks: number;
-  hasSession: boolean;
-  uninstalledAt: string | null;
-  initialSyncCompletedAt: string | null;
-  storageMB: number;
-}
-
-interface AuditRow {
-  id: string;
-  shop: string;
-  requestType: string;
-  status: string;
-  requestedAt: string;
-  completedAt: string;
-}
-
-// Loaded only on click (GET /admin?audit=<id>), never with the page: it holds
-// the customer e-mail and the full data_request export (R5-G1: the export must
-// stay retrievable so the request can be fulfilled).
-interface AuditDetail {
-  id: string;
-  shop: string;
-  customerEmail: string | null;
-  error: string | null;
-  dataExported: string | null;
-  webhookId: string | null;
-}
-
 type LoaderData =
   | { authed: false; configured: boolean; tooShort: boolean; noSecret: boolean; minLength: number }
   | { authed: true; rows: ShopRow[]; audits: AuditRow[] };
 
-async function loadAuditRows(): Promise<AuditRow[]> {
-  // GdprAuditLog überlebt redactShopData bewusst (3-Jahres-Aufbewahrung).
-  // Hier separat anzeigen, da der Shop sonst nach Löschung nirgends auftaucht.
-  const logs = await db.gdprAuditLog.findMany({
-    orderBy: { requestedAt: 'desc' },
-    take: 200,
-    select: {
-      id: true,
-      shop: true,
-      requestType: true,
-      status: true,
-      requestedAt: true,
-      completedAt: true,
-    },
-  });
-  return logs.map((l) => ({
-    id: l.id,
-    shop: l.shop,
-    requestType: l.requestType,
-    status: l.status,
-    requestedAt: l.requestedAt.toISOString(),
-    completedAt: l.completedAt.toISOString(),
-  }));
-}
-
-async function loadAuditDetail(id: string): Promise<AuditDetail | null> {
-  const l = await db.gdprAuditLog.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      shop: true,
-      customerEmail: true,
-      error: true,
-      dataExported: true,
-      webhookId: true,
-    },
-  });
-  return l;
-}
-
-async function loadShopRows(): Promise<ShopRow[]> {
-  // Shop-Liste aus allen Quellen zusammenführen — ein Shop kann existieren
-  // ohne aktive Session (deinstalliert) oder ohne ShopInstallState (alt).
-  const [sessionShops, installStates, aiSettings] = await Promise.all([
-    db.session.findMany({ distinct: ['shop'], select: { shop: true } }),
-    db.shopInstallState.findMany(),
-    db.aISettings.findMany({
-      select: { shop: true, subscriptionPlan: true, devForcedPlan: true },
-    }),
-  ]);
-
-  const shops = new Set<string>();
-  sessionShops.forEach((s) => shops.add(s.shop));
-  installStates.forEach((s) => shops.add(s.shop));
-  aiSettings.forEach((s) => shops.add(s.shop));
-
-  const sessionShopSet = new Set(sessionShops.map((s) => s.shop));
-  const installByShop = new Map(installStates.map((s) => [s.shop, s]));
-  const aiByShop = new Map(aiSettings.map((s) => [s.shop, s]));
-
-  const rows: ShopRow[] = [];
-  for (const shop of [...shops].sort()) {
-    const [products, collections, articles, pages, tasks, sizeRows] =
-      await Promise.all([
-        db.product.count({ where: { shop } }),
-        db.collection.count({ where: { shop } }),
-        db.article.count({ where: { shop } }),
-        db.page.count({ where: { shop } }),
-        db.task.count({ where: { shop } }),
-        // Grobe Größenschätzung der Textinhalte (Bytes) des Shops.
-        db.$queryRaw<Array<{ bytes: bigint }>>`
-          SELECT
-            (SELECT COALESCE(SUM(octet_length(COALESCE(title,'')) + octet_length(COALESCE("descriptionHtml",''))),0) FROM "Product" WHERE shop = ${shop})
-          + (SELECT COALESCE(SUM(octet_length(COALESCE(title,'')) + octet_length(COALESCE("descriptionHtml",''))),0) FROM "Collection" WHERE shop = ${shop})
-          + (SELECT COALESCE(SUM(octet_length(COALESCE(title,'')) + octet_length(COALESCE(body,''))),0) FROM "Article" WHERE shop = ${shop})
-          + (SELECT COALESCE(SUM(octet_length(COALESCE(title,'')) + octet_length(COALESCE(body,''))),0) FROM "Page" WHERE shop = ${shop})
-          + (SELECT COALESCE(SUM(octet_length(COALESCE(value,''))),0) FROM "ContentTranslation" WHERE shop = ${shop})
-          + (SELECT COALESCE(SUM(octet_length(COALESCE(value,''))),0) FROM "ThemeTranslation" WHERE shop = ${shop})
-          AS bytes`,
-      ]);
-
-    const install = installByShop.get(shop);
-    const ai = aiByShop.get(shop);
-    rows.push({
-      shop,
-      plan: ai?.subscriptionPlan ?? '—',
-      devForcedPlan: ai?.devForcedPlan ?? null,
-      products,
-      collections,
-      articles,
-      pages,
-      tasks,
-      hasSession: sessionShopSet.has(shop),
-      uninstalledAt: install?.uninstalledAt?.toISOString() ?? null,
-      initialSyncCompletedAt:
-        install?.initialSyncCompletedAt?.toISOString() ?? null,
-      storageMB:
-        Math.round((Number(sizeRows[0]?.bytes ?? 0) / (1024 * 1024)) * 1000) /
-        1000,
-    });
-  }
-  return rows;
-}
-
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   // The on-demand detail is answered to the page's fetcher only; a direct
   // visit (link, reload) goes back to the plain page.
-  if (new URL(request.url).searchParams.has('audit') && isDocumentRequest(request)) {
+  const params = new URL(request.url).searchParams;
+  const isDetail = params.has('audit') || params.has('storage');
+  if (isDetail && isDocumentRequest(request)) {
     return redirect('/admin', { headers: baseHeaders() });
   }
   if (!(await isAdminAuthenticated(request))) {
-    if (new URL(request.url).searchParams.has('audit')) {
+    if (isDetail) {
       return json({ error: 'Nicht angemeldet.' }, { status: 401, headers: baseHeaders() });
     }
     return json<LoaderData>(
@@ -247,7 +118,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       { headers: baseHeaders() },
     );
   }
-  const auditId = new URL(request.url).searchParams.get('audit');
+  const storageShop = params.get('storage');
+  if (storageShop !== null) {
+    if (!storageShop) {
+      return json({ error: 'Kein Shop angegeben.' }, { status: 400, headers: baseHeaders() });
+    }
+    return json({ storage: await loadShopStorage(storageShop) }, { headers: baseHeaders() });
+  }
+  const auditId = params.get('audit');
   if (auditId !== null) {
     const detail = auditId ? await loadAuditDetail(auditId) : null;
     if (!detail) {
@@ -457,6 +335,9 @@ function ShopRowView({ row }: { row: ShopRow }) {
   const [open, setOpen] = useState(false);
   const nav = useNavigation();
   const busy = nav.state !== 'idle' && nav.formData?.get('shop') === row.shop;
+  // Storage is detail data: loaded on click through the page's own loader.
+  const storage = useFetcher<{ storage?: { storageMB: number }; error?: string }>();
+  const storageLoading = storage.state !== 'idle';
 
   return (
     <>
@@ -485,9 +366,30 @@ function ShopRowView({ row }: { row: ShopRow }) {
         <td style={TD}>{row.articles}</td>
         <td style={TD}>{row.pages}</td>
         <td style={TD}>{row.tasks}</td>
-        <td style={TD}>{row.storageMB} MB</td>
-        <td style={TD}>{row.initialSyncCompletedAt ? '✓' : '—'}</td>
+                <td style={TD}>{row.initialSyncCompletedAt ? '✓' : '—'}</td>
         <td style={TD}>
+          <button
+            type="button"
+            disabled={storageLoading}
+            onClick={() => storage.load(`/admin?storage=${encodeURIComponent(row.shop)}`)}
+            style={{
+              padding: '5px 10px',
+              border: '1px solid #babfc3',
+              background: 'white',
+              borderRadius: 4,
+              cursor: storageLoading ? 'default' : 'pointer',
+              fontSize: 12,
+              marginRight: 6,
+            }}
+          >
+            {storageLoading
+              ? 'Lade…'
+              : storage.data?.storage
+                ? `${storage.data.storage.storageMB} MB`
+                : storage.data?.error
+                  ? storage.data.error
+                  : 'Speicher'}
+          </button>
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
@@ -507,7 +409,7 @@ function ShopRowView({ row }: { row: ShopRow }) {
       </tr>
       {open && (
         <tr>
-          <td style={{ ...TD, background: '#fff4f4' }} colSpan={10}>
+          <td style={{ ...TD, background: '#fff4f4' }} colSpan={9}>
             <Form method="post" replace>
               <input type="hidden" name="intent" value="delete-shop" />
               <input type="hidden" name="shop" value={row.shop} />
@@ -728,7 +630,6 @@ export default function AdminPage() {
               <th style={TH}>Artikel</th>
               <th style={TH}>Seiten</th>
               <th style={TH}>Tasks</th>
-              <th style={TH}>Speicher</th>
               <th style={TH}>Sync</th>
               <th style={TH}>Aktion</th>
             </tr>
@@ -736,7 +637,7 @@ export default function AdminPage() {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td style={TD} colSpan={10}>
+                <td style={TD} colSpan={9}>
                   Keine Shops gefunden.
                 </td>
               </tr>
