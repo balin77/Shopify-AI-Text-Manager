@@ -96,6 +96,7 @@ model AISettings {
 
   /**
    * What the taster was WORTH when it was granted, in micro-euro — frozen.
+   *
    * The limit is derived from the price of the managed default model, and the
    * used figure never resets. Re-deriving it on every read made "once, ever"
    * false in both directions: moving `MANAGED_AI_MODEL` to a dearer model
@@ -103,6 +104,7 @@ model AISettings {
    * first, and moving to a cheaper one retroactively exhausted shops in the
    * middle of theirs. An ops action nobody would associate with a grant is
    * exactly the kind that must not be one.
+   *
    * Null means "not granted yet", and then the current derivation applies —
    * which is what makes a model change move the cost for NEW shops, as §10
    * intends, and leave settled ones alone.
@@ -111,6 +113,7 @@ model AISettings {
 
   /**
    * When the taster was found SPENT — a stamp, not the enforcement.
+   *
    * The ledger row under the `taster` key is what refuses a second grant.
    * This exists because `resolveAiCredentials` is synchronous and runs on
    * every detached path: without a column it cannot know, and a shop whose
@@ -133,6 +136,7 @@ model AISettings {
    * The verified subscription carries `test: true`, i.e. it charges nothing —
    * §7a's second signal, mirrored because the credential resolver runs on
    * detached paths that hold no admin client and cannot ask Shopify.
+   *
    * Three-valued like `partnerDevelopment` beside it: null means no sync has
    * established it, and an unknown answer must not cost a paying merchant
    * their budget. Written only where a subscription was really read.
@@ -234,7 +238,7 @@ model AISettings {
   // the dev app's client_id (SHOPIFY_API_KEY) AND APP_ENV !== 'production', so
   // this column is provably never consulted by the public App-Store build.
   // null = no override (normal Shopify-derived plan).
-  devForcedPlan      String? // "free" | "basic" | "pro" | "max" | null
+  devForcedPlan String? // "free" | "basic" | "pro" | "max" | null
   // Dev build only, and only with MANAGED_AI_ALLOW_DEV_BUILD: the forced plan
   // was chosen as its "+ AI" variant. The custom-app build has no Billing API,
   // so nothing else can record that a managed plan was "bought" there.
@@ -363,7 +367,7 @@ model AISettings {
   // Read through translation-change-policy.server.ts, which ANDs it with the
   // parent switch AND the plan on every read — the stored value survives both
   // a downgrade and a merchant switching the parent off to try something.
-  autoTranslateHandles    Boolean @default(false)
+  autoTranslateHandles Boolean @default(false)
   // Optional daily limit on FIRST automatic translations (resources whose
   // auto-translation rests on PrimaryDigestBaseline alone). NULL = no limit.
   // Settings -> KI-Anweisungen -> Übersetzungen, under the handle switch.
@@ -1341,8 +1345,8 @@ model PrimaryDigestBaseline {
 // REFUSED — reported in a Task row, their baseline NOT advanced, so the work is
 // deferred rather than swallowed. Shop-scoped: redactShopData() deletes it.
 model AutoTranslateFillBudget {
-  shop       String
-  day        String // "YYYY-MM-DD", UTC
+  shop    String
+  day     String // "YYYY-MM-DD", UTC
   used       Int      @default(0)
   // Resources refused today — DISTINCT ids, not events: a held resource is
   // refused again on every later change event that day.
@@ -1359,7 +1363,7 @@ model AutoTranslateFillBudget {
 // and FK-less: redactShopData deletes by shop, purgeContentFromCache and the
 // sync delete helpers by (shop, resourceId).
 model AutoTranslateRetry {
-  id            String    @id @default(cuid())
+  id            String   @id @default(cuid())
   shop          String
   resourceId    String
   resourceType  String // "Product" | "Collection" | "Page" | "Article" | "Blog" | "ShopPolicy"
@@ -1367,14 +1371,14 @@ model AutoTranslateRetry {
   resourceTitle String?
   pairs         Json
   reason        String // "limit" | "failed"
-  attempts      Int       @default(0)
-  status        String    @default("pending") // "pending" | "running" | "exhausted"
+  attempts      Int      @default(0)
+  status        String   @default("pending") // "pending" | "running" | "exhausted"
   lastError     String? // a CODE (not_delivered | could_not_start | unreadable | run_failed), rendered in settings
   // When the current attempt started — the stale-"running" check reads this,
   // never updatedAt, which every enqueue bumps.
   startedAt     DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@unique([shop, resourceId])
   @@index([shop, status])

@@ -86,6 +86,14 @@ interface CacheEntry {
   expiresAt: number;
 }
 const cache = new Map<string, CacheEntry>();
+// Bumped on EVERY write (and invalidation) of a shop. A read remembers the value
+// from before it queried and caches its answer only if it is unchanged, so a
+// slower read that overlapped a write cannot cache the state from before it.
+const generation = new Map<string, number>();
+const generationOf = (shop: string): number => generation.get(shop) ?? 0;
+const bump = (shop: string): void => {
+  generation.set(shop, generationOf(shop) + 1);
+};
 const webhookSeenWrittenAt = new Map<string, number>();
 
 function cacheSet(shop: string, block: ConnectionBlock | null): void {
@@ -95,9 +103,11 @@ function cacheSet(shop: string, block: ConnectionBlock | null): void {
 /** Drop the cached answer of one shop, or of all (tests, redact). */
 export function invalidateConnectionCache(shop?: string): void {
   if (shop === undefined) {
+    for (const key of new Set([...cache.keys(), ...generation.keys()])) bump(key);
     cache.clear();
     webhookSeenWrittenAt.clear();
   } else {
+    bump(shop);
     cache.delete(shop);
     webhookSeenWrittenAt.delete(shop);
   }
@@ -121,6 +131,7 @@ function sanitizeReason(reason: string): string {
 export async function getConnectionBlock(shop: string): Promise<ConnectionBlock | null> {
   const hit = cache.get(shop);
   if (hit && hit.expiresAt > Date.now()) return hit.block;
+  const genBefore = generationOf(shop);
   try {
     const db = await dbClient();
     const row = await db.shopInstallState.findUnique({
@@ -132,7 +143,7 @@ export async function getConnectionBlock(shop: string): Promise<ConnectionBlock 
       s === "needs_reauth" || s === "access_denied" || s === "shop_not_found"
         ? { state: s, since: row?.connectionStateSince ?? null, reason: row?.connectionStateReason ?? null }
         : null;
-    cacheSet(shop, block);
+    if (generationOf(shop) === genBefore) cacheSet(shop, block);
     return block;
   } catch (error) {
     // Fail open and do not cache the failure.
@@ -148,20 +159,35 @@ export type MarkBlockedResult =
   | { changed: false; why: "unchanged" | "fenced" | "no_row" | "error" };
 
 /**
- * Block the shop, or change the kind of an existing block. `observedAt` is when
- * the failing call BEGAN; a failure that started before the last clear is
- * ignored (the fence). A no-op for a shop already in the same state.
+ * Block the shop, or change the kind of an existing block. `observedAt` is
+ * REQUIRED, deliberately without a default: it is when the failing call BEGAN
+ * (capture it before sending the request), and a failure that started before
+ * the last clear is ignored (the fence). Defaulting it to "now" would stamp the
+ * moment the failure was noticed and defeat the fence for every call that was
+ * already in flight when the merchant re-authorised.
+ *
+ * A no-op for a shop already in the same state.
+ *
+ * `{ changed: false, why: "no_row" }` MUST be handled by the step-7 caller: this
+ * module never creates a ShopInstallState row (a fresh row reads as a new
+ * install and could resurrect a redacted shop), so for a shop without one the
+ * block silently does not exist. The caller logs that ONCE and creates a minimal
+ * row only when an offline Session exists for the shop (see PLAN_ADMIN_SHOP_OVERVIEW 2.2).
+ *
+ * The block KIND changing (e.g. needs_reauth -> shop_not_found) restarts
+ * `connectionStateSince` ON PURPOSE: the 404 window of "presumed uninstalled"
+ * (7 days) and the 24 h "give up" rules are measured from when THAT kind began.
  */
 export async function markConnectionBlocked(
   shop: string,
   state: ConnectionBlockState,
   reason: string,
-  opts: { observedAt?: Date } = {},
+  opts: { observedAt: Date },
 ): Promise<MarkBlockedResult> {
   try {
     const db = await dbClient();
     const now = new Date();
-    const observedAt = opts.observedAt ?? now;
+    const { observedAt } = opts;
     const code = sanitizeReason(reason);
     const res = await db.shopInstallState.updateMany({
       where: {
@@ -172,6 +198,7 @@ export async function markConnectionBlocked(
       data: { connectionState: state, connectionStateSince: now, connectionStateReason: code },
     });
     if (res.count > 0) {
+      bump(shop);
       cacheSet(shop, { state, since: now, reason: code });
       logger.warn(`[ConnectionState] BLOCKED shop=${shop} state=${state} reason=${code}`);
       return { changed: true };
@@ -229,6 +256,7 @@ export async function clearConnectionBlock(shop: string, cause: ConnectionClearC
         data: { connectionClearedAt: now, connectionClearedCause: cause },
       });
     }
+    bump(shop);
     cacheSet(shop, null);
     const dropped = before?.droppedWebhookCount ?? 0;
     const resync = before?.resyncRequiredSince ?? null;

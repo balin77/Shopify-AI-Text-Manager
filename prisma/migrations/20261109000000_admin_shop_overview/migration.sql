@@ -1,15 +1,23 @@
 -- PLAN_ADMIN_SHOP_OVERVIEW steps 5-6: connection state + durable activity +
 -- per-day usage statistics. ONE migration for both parts of the plan.
 --
+-- lock_timeout: the ALTERs below take a brief ACCESS EXCLUSIVE lock. If a long
+-- transaction holds the table, fail fast (the deploy retries) instead of
+-- queueing behind it and blocking every reader. SET LOCAL: scoped to the
+-- implicit transaction of this migration script, so it cannot leak to later
+-- migrations on the same connection.
+SET LOCAL lock_timeout = '5s';
+
 -- Additive and safe on a live database:
 --   * every new column is nullable or has a constant default, which PostgreSQL
 --     (11+) adds as a metadata-only change -- no table rewrite, only a brief
 --     ACCESS EXCLUSIVE lock;
 --   * no column is dropped or retyped, no existing data changes except the
 --     one-off backfill below;
---   * the new indexes sit on small tables (Session, WebhookLog -- processed
---     rows are deleted after 24 h) or on the new empty table, so the plain
---     CREATE INDEX does not hold writers for long;
+--   * the only index created here is on the new empty table. The indexes on the
+--     existing hot tables Session(shop) and WebhookLog(shop, createdAt) are in
+--     their OWN single-statement migrations (CREATE INDEX CONCURRENTLY), the
+--     repo's pattern for them (see 20261002000000_productimage_mediaid_index);
 --   * every statement is IF NOT EXISTS / guarded, so a re-run is a no-op.
 -- Nothing here is read by running code yet; an older container ignores it.
 
@@ -58,8 +66,6 @@ CREATE TABLE IF NOT EXISTS "ShopUsageDay" (
 -- CreateIndex
 CREATE UNIQUE INDEX IF NOT EXISTS "ShopUsageDay_shop_day_key" ON "ShopUsageDay"("shop", "day");
 CREATE INDEX IF NOT EXISTS "ShopUsageDay_day_idx" ON "ShopUsageDay"("day");
-CREATE INDEX IF NOT EXISTS "Session_shop_idx" ON "Session"("shop");
-CREATE INDEX IF NOT EXISTS "WebhookLog_shop_createdAt_idx" ON "WebhookLog"("shop", "createdAt");
 
 -- One-off, idempotent backfill of the durable "last opened" from the newest
 -- Session.lastActivityAt of the shop. APPROXIMATE, and flagged as such in

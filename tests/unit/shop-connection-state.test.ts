@@ -79,9 +79,9 @@ beforeEach(() => {
 
 describe("markConnectionBlocked / clearConnectionBlock", () => {
   it("blocks once and logs exactly one BLOCKED line, however often it is repeated", async () => {
-    expect(await markConnectionBlocked(SHOP, "needs_reauth", "admin_api_401")).toEqual({ changed: true });
+    expect(await markConnectionBlocked(SHOP, "needs_reauth", "admin_api_401", { observedAt: new Date() })).toEqual({ changed: true });
     for (let i = 0; i < 20; i++) {
-      expect(await markConnectionBlocked(SHOP, "needs_reauth", "admin_api_401")).toEqual({ changed: false, why: "unchanged" });
+      expect(await markConnectionBlocked(SHOP, "needs_reauth", "admin_api_401", { observedAt: new Date() })).toEqual({ changed: false, why: "unchanged" });
     }
     expect(logs.warn.filter((l) => l.includes("BLOCKED"))).toHaveLength(1);
     expect(store.get(SHOP)).toMatchObject({ connectionState: "needs_reauth", connectionStateReason: "admin_api_401" });
@@ -89,20 +89,20 @@ describe("markConnectionBlocked / clearConnectionBlock", () => {
   });
 
   it("changes the kind of an existing block (and logs that change once)", async () => {
-    await markConnectionBlocked(SHOP, "needs_reauth", "no_token");
-    expect(await markConnectionBlocked(SHOP, "shop_not_found", "token_endpoint_404")).toEqual({ changed: true });
+    await markConnectionBlocked(SHOP, "needs_reauth", "no_token", { observedAt: new Date() });
+    expect(await markConnectionBlocked(SHOP, "shop_not_found", "token_endpoint_404", { observedAt: new Date() })).toEqual({ changed: true });
     expect(store.get(SHOP)!.connectionState).toBe("shop_not_found");
     expect(logs.warn).toHaveLength(2);
   });
 
   it("stores a code, never a sentence or token-like text", async () => {
-    await markConnectionBlocked(SHOP, "needs_reauth", "Token shpat_ABC123 rejected!");
+    await markConnectionBlocked(SHOP, "needs_reauth", "Token shpat_ABC123 rejected!", { observedAt: new Date() });
     expect(store.get(SHOP)!.connectionStateReason).toMatch(/^[a-z0-9_]+$/);
   });
 
   it("the fence: a failure observed before the last clear cannot block again", async () => {
     const started = new Date(Date.now() - 5_000);
-    await markConnectionBlocked(SHOP, "needs_reauth", "admin_api_401");
+    await markConnectionBlocked(SHOP, "needs_reauth", "admin_api_401", { observedAt: new Date() });
     await clearConnectionBlock(SHOP, "reauth");
     expect(await markConnectionBlocked(SHOP, "needs_reauth", "admin_api_401", { observedAt: started })).toEqual({ changed: false, why: "fenced" });
     expect(store.get(SHOP)!.connectionState).toBeNull();
@@ -117,7 +117,7 @@ describe("markConnectionBlocked / clearConnectionBlock", () => {
   });
 
   it("clear lifts the block, keeps the resync debt, and logs one UNBLOCKED line with the count", async () => {
-    await markConnectionBlocked(SHOP, "needs_reauth", "admin_api_401");
+    await markConnectionBlocked(SHOP, "needs_reauth", "admin_api_401", { observedAt: new Date() });
     await noteDroppedWebhook(SHOP);
     await noteDroppedWebhook(SHOP);
     const res = await clearConnectionBlock(SHOP, "reinstall");
@@ -134,7 +134,7 @@ describe("markConnectionBlocked / clearConnectionBlock", () => {
   });
 
   it("never creates a row for an unknown shop", async () => {
-    expect(await markConnectionBlocked("nobody.myshopify.com", "needs_reauth", "x")).toEqual({ changed: false, why: "no_row" });
+    expect(await markConnectionBlocked("nobody.myshopify.com", "needs_reauth", "x", { observedAt: new Date() })).toEqual({ changed: false, why: "no_row" });
     await noteDroppedWebhook("nobody.myshopify.com");
     await recordWebhookSeen("nobody.myshopify.com");
     await clearConnectionBlock("nobody.myshopify.com", "reauth");
@@ -143,7 +143,7 @@ describe("markConnectionBlocked / clearConnectionBlock", () => {
 
   it("writers never throw on a database error", async () => {
     shopInstallState.updateMany.mockRejectedValueOnce(new Error("db down"));
-    expect(await markConnectionBlocked(SHOP, "needs_reauth", "x")).toEqual({ changed: false, why: "error" });
+    expect(await markConnectionBlocked(SHOP, "needs_reauth", "x", { observedAt: new Date() })).toEqual({ changed: false, why: "error" });
     shopInstallState.updateMany.mockRejectedValueOnce(new Error("db down"));
     await expect(noteDroppedWebhook(SHOP)).resolves.toBeUndefined();
     shopInstallState.findUnique.mockRejectedValueOnce(new Error("db down"));
@@ -157,7 +157,7 @@ describe("getConnectionBlock cache", () => {
     expect(await getConnectionBlock(SHOP)).toBeNull();
     expect(shopInstallState.findUnique).toHaveBeenCalledTimes(1);
 
-    await markConnectionBlocked(SHOP, "access_denied", "token_endpoint_403");
+    await markConnectionBlocked(SHOP, "access_denied", "token_endpoint_403", { observedAt: new Date() });
     shopInstallState.findUnique.mockClear();
     expect(await getConnectionBlock(SHOP)).toMatchObject({ state: "access_denied", reason: "token_endpoint_403" });
     expect(shopInstallState.findUnique).not.toHaveBeenCalled();
@@ -190,6 +190,26 @@ describe("getConnectionBlock cache", () => {
     shopInstallState.findUnique.mockRejectedValueOnce(new Error("db down"));
     expect(await getConnectionBlock(SHOP)).toBeNull();
     store.get(SHOP)!.connectionState = "needs_reauth";
+    expect(await getConnectionBlock(SHOP)).toMatchObject({ state: "needs_reauth" });
+  });
+});
+
+describe("getConnectionBlock generation guard", () => {
+  it("a slow read that overlapped a write does not cache the older answer", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    shopInstallState.findUnique.mockImplementationOnce(async () => {
+      const stale = { ...store.get(SHOP) }; // state as of the read's query
+      await gate;
+      return stale;
+    });
+    const slow = getConnectionBlock(SHOP);
+    await vi.waitFor(() => expect(shopInstallState.findUnique).toHaveBeenCalled());
+    await markConnectionBlocked(SHOP, "needs_reauth", "admin_api_401", { observedAt: new Date() });
+    release();
+    expect(await slow).toBeNull(); // the slow reader returns what it saw ...
+    // ... but did not cache it over the newer write
+    shopInstallState.findUnique.mockClear();
     expect(await getConnectionBlock(SHOP)).toMatchObject({ state: "needs_reauth" });
   });
 });

@@ -56,19 +56,26 @@ export const MIGRATION_GAVE_UP_ATTEMPTS = 40;
 /** A webhook this long after `uninstalledAt` is evidence the shop is still there. */
 export const WEBHOOK_AFTER_UNINSTALL_GRACE_MS = 5 * 60 * 1000;
 
+/**
+ * A point in time as it arrives: a Date on the server, an ISO string (or epoch
+ * ms) once loader data has been serialised to the client. Anything that does not
+ * parse is "unknown" (null), never evidence.
+ */
+export type DateLike = Date | string | number;
+
 /** The ShopInstallState columns the verdict reads. All optional: absent = unknown. */
 export interface ConnectionInstallFacts {
-  uninstalledAt?: Date | null;
+  uninstalledAt?: DateLike | null;
   uninstallSource?: string | null;
-  reinstallEvidenceAt?: Date | null;
+  reinstallEvidenceAt?: DateLike | null;
   connectionState?: string | null;
-  connectionStateSince?: Date | null;
+  connectionStateSince?: DateLike | null;
   connectionStateReason?: string | null;
-  resyncRequiredSince?: Date | null;
+  resyncRequiredSince?: DateLike | null;
   droppedWebhookCount?: number | null;
-  lastWebhookAt?: Date | null;
-  lastActivityAt?: Date | null;
-  lastAuthAt?: Date | null;
+  lastWebhookAt?: DateLike | null;
+  lastActivityAt?: DateLike | null;
+  lastAuthAt?: DateLike | null;
 }
 
 /** The SHAPE of the offline session; never its token. `null` = no offline session row. */
@@ -77,8 +84,8 @@ export interface ConnectionSessionFacts {
   tokenEmpty: boolean;
   hasRefreshToken: boolean;
   /** Access token expiry; null for a non-expiring token. */
-  expires?: Date | null;
-  refreshTokenExpires?: Date | null;
+  expires?: DateLike | null;
+  refreshTokenExpires?: DateLike | null;
 }
 
 /** The OfflineTokenMigration columns the verdict reads (never the encrypted token). */
@@ -86,11 +93,12 @@ export interface ConnectionMigrationFacts {
   status: string;
   attempts: number;
   failureKind?: string | null;
-  failureKindSince?: Date | null;
+  failureKindSince?: DateLike | null;
 }
 
 export interface ConnectionStatusInput {
-  now: Date;
+  /** Loader time; a Date or its serialised form. */
+  now: DateLike;
   install: ConnectionInstallFacts | null;
   session: ConnectionSessionFacts | null;
   migration: ConnectionMigrationFacts | null;
@@ -101,23 +109,23 @@ export interface ConnectionStatusResult {
   /** Machine code of why (a code, never a message); null when nothing is wrong. */
   reason: string | null;
   /** Since when the shop has been in this problem state, when known. */
-  since: Date | null;
+  since: DateLike | null;
   /** Webhooks of this shop are accepted but not processed (connectionState is set). */
   webhooksPaused: boolean;
   droppedWebhookCount: number;
-  resyncRequiredSince: Date | null;
+  resyncRequiredSince: DateLike | null;
   /** uninstalledAt is set although webhooks kept arriving after it (stale install state). */
   webhooksAfterUninstall: boolean;
   /** Blocked for long, with no webhook and no visit since the block began. */
   presumedUninstalled: boolean;
   /** Refresh-token expiry of an expiring session; for the "expires in < 14 days" warning. */
-  refreshTokenExpires: Date | null;
+  refreshTokenExpires: DateLike | null;
 }
 
-function ts(d: Date | null | undefined): number | null {
-  if (!(d instanceof Date)) return null;
-  const t = d.getTime();
-  return Number.isNaN(t) ? null : t;
+function ts(d: DateLike | null | undefined): number | null {
+  if (d === null || d === undefined) return null;
+  const t = d instanceof Date ? d.getTime() : typeof d === "number" ? d : typeof d === "string" ? Date.parse(d) : NaN;
+  return Number.isFinite(t) ? t : null;
 }
 
 function isBlockState(v: string | null | undefined): v is ConnectionBlockState {
@@ -137,7 +145,9 @@ export function hasWebhookAfterUninstall(install: ConnectionInstallFacts | null)
  * block began. A shop with no block, or one already marked uninstalled, is never
  * presumed. Without a block start there is no evidence, so the answer is false.
  */
-export function isPresumedUninstalled(install: ConnectionInstallFacts | null, now: Date): boolean {
+export function isPresumedUninstalled(install: ConnectionInstallFacts | null, now: DateLike): boolean {
+  const nowMs = ts(now);
+  if (nowMs === null) return false;
   if (!install || ts(install.uninstalledAt) !== null) return false;
   if (!isBlockState(install.connectionState)) return false;
   const since = ts(install.connectionStateSince);
@@ -146,7 +156,7 @@ export function isPresumedUninstalled(install: ConnectionInstallFacts | null, no
     install.connectionState === "shop_not_found"
       ? PRESUMED_UNINSTALLED_AFTER_MS_NOT_FOUND
       : PRESUMED_UNINSTALLED_AFTER_MS;
-  if (now.getTime() - since < window) return false;
+  if (nowMs - since < window) return false;
   for (const seen of [install.lastWebhookAt, install.lastActivityAt, install.lastAuthAt]) {
     const t = ts(seen);
     if (t !== null && t >= since) return false;
@@ -156,7 +166,7 @@ export function isPresumedUninstalled(install: ConnectionInstallFacts | null, no
 
 export function deriveConnectionStatus(input: ConnectionStatusInput): ConnectionStatusResult {
   const { now, install, session, migration } = input;
-  const nowMs = now.getTime();
+  const nowMs = ts(now) ?? Date.now();
   const state = isBlockState(install?.connectionState) ? install!.connectionState : null;
   const blockSince = install?.connectionStateSince ?? null;
   const blockReason = install?.connectionStateReason ?? null;
@@ -172,7 +182,7 @@ export function deriveConnectionStatus(input: ConnectionStatusInput): Connection
   const result = (
     status: ConnectionStatus,
     reason: string | null,
-    since: Date | null,
+    since: DateLike | null,
   ): ConnectionStatusResult => ({ status, reason, since, ...base });
 
   if (ts(install?.uninstalledAt) !== null) {

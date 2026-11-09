@@ -98,3 +98,26 @@ describe("webhooksAfterUninstall", () => {
     expect(hasWebhookAfterUninstall({ lastWebhookAt: day(1) })).toBe(false);
   });
 });
+
+describe("serialised dates (loader data reaches the client as ISO strings)", () => {
+  const iso = (d: Date) => d.toISOString();
+  it("reads every timestamp from ISO strings and epoch numbers", () => {
+    const install = {
+      connectionState: "needs_reauth",
+      connectionStateSince: iso(day(31)),
+      lastWebhookAt: iso(day(40)),
+    };
+    expect(isPresumedUninstalled(install, iso(NOW))).toBe(true);
+    expect(isPresumedUninstalled({ ...install, lastWebhookAt: iso(day(2)) }, iso(NOW))).toBe(false);
+    expect(isPresumedUninstalled({ ...install, connectionStateSince: day(31).getTime() }, NOW.getTime())).toBe(true);
+    expect(hasWebhookAfterUninstall({ uninstalledAt: iso(day(3)), lastWebhookAt: iso(day(1)) })).toBe(true);
+    expect(deriveConnectionStatus(input({ now: iso(NOW), install: { uninstalledAt: iso(day(2)) } })).status).toBe("uninstalled");
+    expect(
+      deriveConnectionStatus(input({ now: iso(NOW), session: { ...okSession, refreshTokenExpires: iso(day(1)) } })),
+    ).toMatchObject({ status: "needs_reauth", reason: "refresh_token_expired" });
+  });
+  it("an unparseable value is unknown, not evidence", () => {
+    expect(deriveConnectionStatus(input({ install: { uninstalledAt: "garbage" } })).status).toBe("valid_expiring");
+    expect(isPresumedUninstalled({ connectionState: "needs_reauth", connectionStateSince: "garbage" }, NOW)).toBe(false);
+  });
+});

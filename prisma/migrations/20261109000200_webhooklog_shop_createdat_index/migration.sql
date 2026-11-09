@@ -1,0 +1,11 @@
+-- WebhookLog(shop, createdAt): per-shop webhook counts of the last 24 h on
+-- /admin. WebhookLog is written on every product/collection webhook and not
+-- tiny: processed rows are deleted after 24 h, unprocessed ones are kept up to
+-- 7 days.
+--
+-- Additive: an index only. Built CONCURRENTLY so it does not block webhook
+-- writes; this file MUST stay a single statement (CONCURRENTLY cannot run in a
+-- transaction block, and a one-statement file is not wrapped in one -- see
+-- 20261002000000_productimage_mediaid_index). IF NOT EXISTS keeps a re-run
+-- idempotent.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "WebhookLog_shop_createdAt_idx" ON "WebhookLog"("shop", "createdAt");
