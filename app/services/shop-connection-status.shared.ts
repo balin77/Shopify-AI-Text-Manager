@@ -47,6 +47,14 @@ export const PRESUMED_UNINSTALLED_AFTER_MS = 30 * DAY_MS;
 export const PRESUMED_UNINSTALLED_AFTER_MS_NOT_FOUND = 7 * DAY_MS;
 
 /**
+ * Automatic marking as uninstalled (PLAN_ADMIN_SHOP_OVERVIEW 2.7, default OFF,
+ * STALE_INSTALL_AUTO_MARK=true): a block this old with no sign of life. Much
+ * longer than the "presumed" window on purpose: marking leads to deletion.
+ */
+export const AUTO_MARK_AFTER_MS = 90 * DAY_MS;
+export const AUTO_MARK_AFTER_MS_NOT_FOUND = 14 * DAY_MS;
+
+/**
  * Exchange attempts after which a token migration is given up on. Mirrors
  * MIGRATION_MAX_ATTEMPTS in offline-token-migration-store.server.ts (this file
  * cannot import it); a unit test pins the two together.
@@ -76,6 +84,8 @@ export interface ConnectionInstallFacts {
   lastWebhookAt?: DateLike | null;
   lastActivityAt?: DateLike | null;
   lastAuthAt?: DateLike | null;
+  /** Last successful Admin API call (probe); evidence for "installed". */
+  lastApiOkAt?: DateLike | null;
 }
 
 /** The SHAPE of the offline session; never its token. `null` = no offline session row. */
@@ -140,28 +150,66 @@ export function hasWebhookAfterUninstall(install: ConnectionInstallFacts | null)
 }
 
 /**
- * "Presumably uninstalled": the shop has been blocked for at least 30 days (7 for
- * a 404), and neither a webhook nor a visit/authentication has been seen since the
- * block began. A shop with no block, or one already marked uninstalled, is never
- * presumed. Without a block start there is no evidence, so the answer is false.
+ * Does the shop show proof of being installed AFTER it was marked uninstalled?
+ * A stored `reinstallEvidenceAt` later than `uninstalledAt`, a signed webhook
+ * clearly after it (`hasWebhookAfterUninstall`), or a successful Admin API call
+ * clearly after it. The reaper never deletes such a shop (2.7).
  */
-export function isPresumedUninstalled(install: ConnectionInstallFacts | null, now: DateLike): boolean {
+export function hasReinstallEvidenceAfterUninstall(install: ConnectionInstallFacts | null): boolean {
+  const un = ts(install?.uninstalledAt);
+  if (un === null) return false;
+  const ev = ts(install?.reinstallEvidenceAt);
+  if (ev !== null && ev > un) return true;
+  if (hasWebhookAfterUninstall(install)) return true;
+  const api = ts(install?.lastApiOkAt);
+  return api !== null && api > un + WEBHOOK_AFTER_UNINSTALL_GRACE_MS;
+}
+
+/**
+ * Blocked for at least `windowMs` (`notFoundWindowMs` for a 404), and no sign of
+ * life (webhook, visit, sign-in, API success, reinstall evidence) since the
+ * block began. A shop with no block, or one already marked uninstalled, never
+ * qualifies; without a block start there is no evidence.
+ */
+function blockedWithoutLifeSince(
+  install: ConnectionInstallFacts | null,
+  now: DateLike,
+  windowMs: number,
+  notFoundWindowMs: number,
+): boolean {
   const nowMs = ts(now);
   if (nowMs === null) return false;
   if (!install || ts(install.uninstalledAt) !== null) return false;
   if (!isBlockState(install.connectionState)) return false;
   const since = ts(install.connectionStateSince);
   if (since === null) return false;
-  const window =
-    install.connectionState === "shop_not_found"
-      ? PRESUMED_UNINSTALLED_AFTER_MS_NOT_FOUND
-      : PRESUMED_UNINSTALLED_AFTER_MS;
+  const window = install.connectionState === "shop_not_found" ? notFoundWindowMs : windowMs;
   if (nowMs - since < window) return false;
-  for (const seen of [install.lastWebhookAt, install.lastActivityAt, install.lastAuthAt]) {
+  for (const seen of [
+    install.lastWebhookAt,
+    install.lastActivityAt,
+    install.lastAuthAt,
+    install.lastApiOkAt,
+    install.reinstallEvidenceAt,
+  ]) {
     const t = ts(seen);
     if (t !== null && t >= since) return false;
   }
   return true;
+}
+
+/**
+ * "Presumably uninstalled": blocked for at least 30 days (7 for a 404) with no
+ * sign of life since. Purely a derived, read-only flag: nothing is deleted or
+ * marked because of it.
+ */
+export function isPresumedUninstalled(install: ConnectionInstallFacts | null, now: DateLike): boolean {
+  return blockedWithoutLifeSince(install, now, PRESUMED_UNINSTALLED_AFTER_MS, PRESUMED_UNINSTALLED_AFTER_MS_NOT_FOUND);
+}
+
+/** The same with the automatic-marking thresholds: 90 days (14 for a 404). */
+export function isStaleAutoMarkCandidate(install: ConnectionInstallFacts | null, now: DateLike): boolean {
+  return blockedWithoutLifeSince(install, now, AUTO_MARK_AFTER_MS, AUTO_MARK_AFTER_MS_NOT_FOUND);
 }
 
 export function deriveConnectionStatus(input: ConnectionStatusInput): ConnectionStatusResult {

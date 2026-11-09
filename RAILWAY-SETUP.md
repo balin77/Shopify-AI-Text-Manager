@@ -361,7 +361,36 @@ deinstallierten Shop (höchstens 5 pro Durchlauf; nicht während der IP-Pause un
 beim globalen Konfigurationsstopp): Erfolg hebt die Sperre auf (Ursache `probe_ok`),
 ein 403 oder 401 ändert nichts ausser `lastProbeAt`; (3) Nachholen verpasster
 Webhook-Änderungen für entsperrte Shops, deren Scheduler nicht läuft (höchstens 2 pro
-Durchlauf); (4) einmal am Tag die Zeile `[ConnectionSweep] SUMMARY blocked=… owingCatchUp=…`.
+Durchlauf); (4) einmal am Tag die Zeile `[ConnectionSweep] SUMMARY blocked=… presumedUninstalled=… owingCatchUp=…`
+(`presumedUninstalled` nur zur Anzeige: nichts wird deswegen markiert oder gelöscht).
+
+**Veralteter Installationsstatus** (`app/services/stale-install.server.ts`). Kommt der
+Webhook `app/uninstalled` nie an, steht ein Shop ohne `uninstalledAt` da; Markieren führt
+über den Reaper nach 30 Tagen zum Löschen der Daten und geschieht deshalb nur mit Belegen.
+
+- `[ConnectionState] REINSTALL_EVIDENCE shop=… source=webhook`: ein als deinstalliert
+  markierter Shop hat danach (mehr als 5 Minuten nach `uninstalledAt`) einen signierten
+  Webhook geschickt. Genau eine Zeile; `reinstallEvidenceAt` wird gesetzt, `uninstalledAt`
+  aufgehoben (ohne Session folgt die Sperre `needs_reauth`, Grund `reinstall_evidence`).
+  Der Reaper löscht ausserdem nie einen Shop mit Beleg nach `uninstalledAt`
+  (`Shop reap: skipping … REINSTALL_EVIDENCE`).
+- **Operator-Skript** `scripts/mark-stale-uninstalled.ts`, in der Production-Umgebung des
+  Web-Services (z. B. Railway-Shell) ausführen:
+  `npx tsx scripts/mark-stale-uninstalled.ts --shop <name>.myshopify.com` ist ein
+  **Trockenlauf**: er zeigt die Belege (letzter Webhook, letzter API-Erfolg, letzter
+  Besuch/Anmeldung, Verbindungszustand und Grund, Sessions und Token, Migration) und ändert
+  nichts. Erst mit `--apply` wird über `markShopUninstalled(…, "operator")` markiert.
+  Das Skript verweigert (Exit 2), wenn der Shop nicht «vermutlich deinstalliert» ist
+  (seit mindestens 30 Tagen gesperrt, 7 bei «Shop nicht gefunden», ohne Webhook, Besuch,
+  Anmeldung, API-Erfolg oder Beleg seit Beginn der Sperre), unbekannt oder schon
+  deinstalliert ist.
+- **Automatisches Markieren** `STALE_INSTALL_AUTO_MARK`: nur der exakte Wert `true` schaltet
+  an, **standardmässig AUS**. Der Verbindungs-Sweep markiert dann pro Durchlauf höchstens
+  5 Shops (Quelle `stale_auto`), die seit mindestens 90 Tagen (14 bei «Shop nicht
+  gefunden») gesperrt sind, ohne Webhook, Besuch, Anmeldung, API-Erfolg oder Beleg seit
+  Beginn der Sperre und ohne noch vorhandenes Token. Jede Markierung ist eine Zeile
+  `[StaleInstall] AUTO_MARKED_UNINSTALLED shop=…`. Empfehlung: aus lassen und den Weg über
+  das Skript gehen.
 
 **`needs_reauth`.** Antwortet Shopify auf die Migration mit 400 `invalid_subject_token`,
 ist das endgültig: das Token lässt sich nicht mehr tauschen (z. B. schon migriert und

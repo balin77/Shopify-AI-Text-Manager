@@ -57,6 +57,8 @@ import {
   MIGRATION_RECOVERY_WINDOW_MS,
   storedTokenDiffers,
 } from "../utils/offline-token-migration-store.server";
+import { autoMarkStaleInstalls } from "./stale-install.server";
+import { isPresumedUninstalled } from "./shop-connection-status.shared";
 import { classifyForbidden, isIpAllowlistPaused, noteApiSuccess, reportForbidden } from "../utils/shopify-forbidden.server";
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -199,6 +201,10 @@ export class ShopConnectionSweepService {
       await this.guarded("backfill", () => this.backfill(now, stats));
       await this.guarded("probe", () => this.probeBlockedShops(now, pauseMs, stats));
       await this.guarded("catch-up", () => this.catchUpOwedShops(pauseMs, stats));
+      // Off unless STALE_INSTALL_AUTO_MARK=true (stale-install.server.ts).
+      await this.guarded("stale-auto-mark", async () => {
+        await autoMarkStaleInstalls(now);
+      });
       await this.guarded("summary", () => this.summarize(now));
     } finally {
       this.ticking = false;
@@ -533,7 +539,17 @@ export class ShopConnectionSweepService {
     this.lastSummaryAt = now.getTime();
     const blocked = await db.shopInstallState.findMany({
       where: { connectionState: { not: null } },
-      select: { shop: true, connectionState: true, uninstalledAt: true },
+      select: {
+        shop: true,
+        connectionState: true,
+        uninstalledAt: true,
+        connectionStateSince: true,
+        lastWebhookAt: true,
+        lastActivityAt: true,
+        lastAuthAt: true,
+        lastApiOkAt: true,
+        reinstallEvidenceAt: true,
+      },
       take: 5000,
     });
     const owing = await db.shopInstallState.findMany({
@@ -541,6 +557,8 @@ export class ShopConnectionSweepService {
       select: { shop: true, droppedWebhookCount: true },
       take: 5000,
     });
+    // Read-only evaluation (2.6 step 5): nothing is marked or deleted because of it.
+    const presumed = blocked.filter((b) => isPresumedUninstalled(b, now)).length;
     const by = (state: string) => blocked.filter((b) => b.connectionState === state).length;
     const dropped = owing.reduce((n, o) => n + (o.droppedWebhookCount ?? 0), 0);
     const tally = Object.entries(this.probeTally)
@@ -550,7 +568,7 @@ export class ShopConnectionSweepService {
     const names = blocked.slice(0, SUMMARY_NAMES).map((b) => b.shop).join(",");
     logger.info(
       `[ConnectionSweep] SUMMARY blocked=${blocked.length} (needs_reauth=${by("needs_reauth")} access_denied=${by("access_denied")} shop_not_found=${by("shop_not_found")}) ` +
-        `owingCatchUp=${owing.length} droppedWebhooks=${dropped} probes[${tally || "none"}]` +
+        `presumedUninstalled=${presumed} owingCatchUp=${owing.length} droppedWebhooks=${dropped} probes[${tally || "none"}]` +
         (names ? ` shops=${names}${blocked.length > SUMMARY_NAMES ? ",..." : ""}` : ""),
     );
   }

@@ -38,7 +38,7 @@ const { store, logs, shopInstallState } = vi.hoisted(() => {
   return { store, logs, shopInstallState };
 });
 vi.mock("../../app/db.server", () => ({
-  db: { shopInstallState, $queryRaw: vi.fn(), offlineTokenMigration: { findUnique: vi.fn() } },
+  db: { shopInstallState, session: { count: vi.fn(async () => 0) }, $queryRaw: vi.fn(), offlineTokenMigration: { findUnique: vi.fn() } },
 }));
 vi.mock("../../app/utils/logger.server", () => ({
   logger: {
@@ -57,6 +57,7 @@ import {
   isShopConnectionBlockedError,
   markConnectionBlocked,
   noteDroppedWebhook,
+  noteReinstallEvidence,
   recordWebhookSeen,
   loadConnectionStatus,
 } from "../../app/utils/shop-connection-state.server";
@@ -345,5 +346,50 @@ describe("loadConnectionStatus", () => {
     expect(Object.keys(select)).not.toContain("encryptedOldToken");
     expect(Object.keys(select)).not.toContain("tokenFingerprint");
     expect(Object.keys(select)).not.toContain("lastError");
+  });
+});
+
+describe("REINSTALL_EVIDENCE (PLAN_ADMIN_SHOP_OVERVIEW 2.7)", () => {
+  const uninstalledAt = new Date(Date.now() - 3_600_000);
+  const lines = () => logs.warn.filter((l) => l.includes("REINSTALL_EVIDENCE"));
+
+  it("a signed webhook clearly after the uninstall sets the evidence once and logs one line", async () => {
+    store.set(SHOP, fresh({ uninstalledAt, uninstallSource: "webhook", reinstallEvidenceAt: null }));
+    const at = new Date(uninstalledAt.getTime() + 20 * 60_000);
+    await recordWebhookSeen(SHOP, at);
+    const row = store.get(SHOP)!;
+    expect(row.reinstallEvidenceAt).toEqual(at);
+    expect(row.uninstalledAt).toBeNull();
+    expect(lines()).toHaveLength(1);
+    // more webhooks (even past the throttle) neither log nor move the evidence
+    invalidateConnectionCache(SHOP);
+    await recordWebhookSeen(SHOP, new Date(at.getTime() + 60_000));
+    expect(noteReinstallEvidence).toBeDefined();
+    expect(await noteReinstallEvidence(SHOP, new Date(at.getTime() + 120_000), "webhook")).toBe(false);
+    expect(lines()).toHaveLength(1);
+    expect(store.get(SHOP)!.reinstallEvidenceAt).toEqual(at);
+  });
+
+  it("without an offline session the shop is blocked as needs_reauth", async () => {
+    store.set(SHOP, fresh({ uninstalledAt }));
+    await recordWebhookSeen(SHOP, new Date(uninstalledAt.getTime() + 20 * 60_000));
+    expect(store.get(SHOP)).toMatchObject({ connectionState: "needs_reauth", connectionStateReason: "reinstall_evidence" });
+  });
+
+  it("a webhook inside the 5 minute grace (the uninstall's own cancellations) is no evidence", async () => {
+    store.set(SHOP, fresh({ uninstalledAt }));
+    await recordWebhookSeen(SHOP, new Date(uninstalledAt.getTime() + 60_000));
+    expect(store.get(SHOP)!.uninstalledAt).toEqual(uninstalledAt);
+    expect(store.get(SHOP)!.reinstallEvidenceAt ?? null).toBeNull();
+    expect(lines()).toHaveLength(0);
+  });
+
+  it("an event from BEFORE the uninstall, or a shop that is not uninstalled, records nothing", async () => {
+    store.set(SHOP, fresh({ uninstalledAt }));
+    expect(await noteReinstallEvidence(SHOP, new Date(uninstalledAt.getTime() - 3_600_000), "webhook")).toBe(false);
+    store.set(SHOP, fresh());
+    expect(await noteReinstallEvidence(SHOP, new Date(), "api_ok")).toBe(false);
+    expect(await noteReinstallEvidence("nobody.myshopify.com", new Date(), "webhook")).toBe(false);
+    expect(lines()).toHaveLength(0);
   });
 });

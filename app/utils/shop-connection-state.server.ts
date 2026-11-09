@@ -36,6 +36,7 @@
 
 import { logger } from "./logger.server";
 import {
+  WEBHOOK_AFTER_UNINSTALL_GRACE_MS,
   deriveConnectionStatus,
   type ConnectionBlockState,
   type ConnectionInstallFacts,
@@ -308,6 +309,9 @@ export async function clearConnectionBlock(
       });
     }
     settleWrite(shop, mark, null);
+    // An uninstall resets the webhook-seen throttle: the first webhook after it
+    // is exactly the one that may be reinstall evidence and must not be skipped.
+    if (cause === "uninstalled") webhookSeenWrittenAt.delete(shop);
     const dropped = before?.droppedWebhookCount ?? 0;
     const resync = before?.resyncRequiredSince ?? null;
     if (lifted.count > 0) {
@@ -365,9 +369,64 @@ export async function recordWebhookSeen(shop: string, triggeredAt?: Date | strin
       where: { shop, OR: [{ lastWebhookAt: null }, { lastWebhookAt: { lt: at } }] },
       data: { lastWebhookAt: at },
     });
+    await noteReinstallEvidence(shop, at, "webhook");
   } catch (error) {
     webhookSeenWrittenAt.delete(shop);
     logger.debug(`[ConnectionState] recordWebhookSeen failed for ${shop}: ${error instanceof Error ? error.name : "error"}`);
+  }
+}
+
+export type ReinstallEvidenceSource = "webhook" | "api_ok";
+
+/**
+ * A shop marked uninstalled shows proof of being installed (PLAN_ADMIN_SHOP_OVERVIEW 2.7):
+ * a signed webhook, or a successful Admin API call, clearly AFTER `uninstalledAt`
+ * (5 minutes grace for the cancellation webhooks an uninstall itself triggers).
+ *
+ * Sets `reinstallEvidenceAt`, lifts `uninstalledAt` (the 30-day reaper then no
+ * longer sees the shop) and, when no offline session exists, blocks the shop as
+ * `needs_reauth` (reason `reinstall_evidence`): there is nothing to call Shopify
+ * with until the merchant opens the app. The compare on the `uninstalledAt` read
+ * makes it act ONCE: a second webhook finds no uninstall mark and logs nothing,
+ * and a newer uninstall that landed meanwhile is not undone. Returns whether the
+ * evidence was recorded. Never creates a row, never throws.
+ */
+export async function noteReinstallEvidence(
+  shop: string,
+  evidenceAt: Date,
+  source: ReinstallEvidenceSource,
+): Promise<boolean> {
+  try {
+    const db = await dbClient();
+    const row = await db.shopInstallState.findUnique({
+      where: { shop },
+      select: { uninstalledAt: true },
+    });
+    const uninstalledAt = row?.uninstalledAt;
+    if (!uninstalledAt) return false;
+    if (evidenceAt.getTime() <= uninstalledAt.getTime() + WEBHOOK_AFTER_UNINSTALL_GRACE_MS) return false;
+    const res = await db.shopInstallState.updateMany({
+      where: { shop, uninstalledAt },
+      data: { reinstallEvidenceAt: evidenceAt, uninstalledAt: null },
+    });
+    if (res.count === 0) return false;
+    bump(shop);
+    cache.delete(shop);
+    logger.warn(
+      `[ConnectionState] REINSTALL_EVIDENCE shop=${shop} source=${source} uninstalledAt=${uninstalledAt.toISOString()} evidenceAt=${evidenceAt.toISOString()}`,
+    );
+    try {
+      const sessions = await db.session.count({ where: { shop, isOnline: false } });
+      if (sessions === 0) {
+        await markConnectionBlocked(shop, "needs_reauth", "reinstall_evidence", { observedAt: new Date() });
+      }
+    } catch (error) {
+      logger.debug(`[ConnectionState] reinstall-evidence block failed for ${shop}: ${error instanceof Error ? error.name : "error"}`);
+    }
+    return true;
+  } catch (error) {
+    logger.debug(`[ConnectionState] noteReinstallEvidence failed for ${shop}: ${error instanceof Error ? error.name : "error"}`);
+    return false;
   }
 }
 
@@ -404,6 +463,7 @@ export async function loadConnectionStatus(shop: string, now: Date = new Date())
         lastWebhookAt: true,
         lastActivityAt: true,
         lastAuthAt: true,
+        lastApiOkAt: true,
       },
     }),
     db.$queryRaw<SessionShapeRow[]>`

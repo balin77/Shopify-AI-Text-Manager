@@ -93,6 +93,7 @@ export function fakeDelegate(table: Row[], defaults: () => Row = () => ({})) {
         select ? Object.fromEntries(Object.keys(select).map((k) => [k, r[k]])) : { ...r },
       );
     },
+    count: async ({ where }: Row = {}) => table.filter((r) => matches(r, where)).length,
     findUnique: async ({ where }: Row) => {
       const row = table.find((r) => matches(r, where));
       return row ? { ...row } : null;
