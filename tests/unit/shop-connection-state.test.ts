@@ -214,6 +214,64 @@ describe("getConnectionBlock generation guard", () => {
   });
 });
 
+describe("write ordering and global invalidation", () => {
+  it("a block write whose database call replies after a clear does not cache 'blocked'", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const realUpdateMany = shopInstallState.updateMany.getMockImplementation()!;
+    // the block's UPDATE commits at once, but its reply is delayed
+    shopInstallState.updateMany.mockImplementationOnce(async (args: any) => {
+      const res = await realUpdateMany(args);
+      await gate;
+      return res;
+    });
+    const block = markConnectionBlocked(SHOP, "needs_reauth", "admin_api_401", { observedAt: new Date() });
+    await vi.waitFor(() => expect(shopInstallState.updateMany).toHaveBeenCalled());
+    await clearConnectionBlock(SHOP, "reauth"); // the clear commits and caches "not blocked" meanwhile
+    release();
+    await block;
+    // whatever the database holds is what the next read must see, not the older reply
+    store.get(SHOP)!.connectionState = null;
+    shopInstallState.findUnique.mockClear();
+    expect(await getConnectionBlock(SHOP)).toBeNull();
+    expect(shopInstallState.findUnique).toHaveBeenCalledTimes(1); // answered from the database, not the cache
+  });
+
+  it("two overlapping clears do not cache over each other either", async () => {
+    await markConnectionBlocked(SHOP, "needs_reauth", "x", { observedAt: new Date() });
+    await Promise.all([clearConnectionBlock(SHOP, "reauth"), clearConnectionBlock(SHOP, "reinstall")]);
+    shopInstallState.findUnique.mockClear();
+    await getConnectionBlock(SHOP);
+    expect(shopInstallState.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidateConnectionCache() without a shop stops an in-flight read for a never-written shop from caching", async () => {
+    const OTHER = "never-written.myshopify.com";
+    store.set(OTHER, fresh({ shop: OTHER }));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    shopInstallState.findUnique.mockImplementationOnce(async () => {
+      const stale = { ...store.get(OTHER) };
+      await gate;
+      return stale;
+    });
+    const slow = getConnectionBlock(OTHER);
+    await vi.waitFor(() => expect(shopInstallState.findUnique).toHaveBeenCalled());
+    invalidateConnectionCache(); // e.g. a test reset or a redact sweep
+    store.get(OTHER)!.connectionState = "needs_reauth";
+    release();
+    expect(await slow).toBeNull();
+    expect(await getConnectionBlock(OTHER)).toMatchObject({ state: "needs_reauth" });
+  });
+
+  it("an uncontended write still caches its result", async () => {
+    await markConnectionBlocked(SHOP, "needs_reauth", "x", { observedAt: new Date() });
+    shopInstallState.findUnique.mockClear();
+    expect(await getConnectionBlock(SHOP)).toMatchObject({ state: "needs_reauth" });
+    expect(shopInstallState.findUnique).not.toHaveBeenCalled();
+  });
+});
+
 describe("noteDroppedWebhook", () => {
   it("counts every webhook and sets resyncRequiredSince once, at the first", async () => {
     await noteDroppedWebhook(SHOP);

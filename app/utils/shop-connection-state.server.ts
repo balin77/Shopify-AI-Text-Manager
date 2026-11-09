@@ -86,23 +86,49 @@ interface CacheEntry {
   expiresAt: number;
 }
 const cache = new Map<string, CacheEntry>();
-// Bumped on EVERY write (and invalidation) of a shop. A read remembers the value
-// from before it queried and caches its answer only if it is unchanged, so a
-// slower read that overlapped a write cannot cache the state from before it.
+// Bumped on EVERY write (and invalidation) of a shop. A read or a write takes
+// the value from BEFORE its database call and caches its answer only if it is
+// unchanged afterwards, so a slower call that overlapped another write cannot
+// cache the state from before it. `epoch` is the same guard for the
+// shop-less invalidation: it must also stop a call in flight for a shop that
+// has no generation entry yet.
 const generation = new Map<string, number>();
 const generationOf = (shop: string): number => generation.get(shop) ?? 0;
+let epoch = 0;
 const bump = (shop: string): void => {
   generation.set(shop, generationOf(shop) + 1);
 };
 const webhookSeenWrittenAt = new Map<string, number>();
 
+interface Mark {
+  gen: number;
+  epoch: number;
+}
+const markBefore = (shop: string): Mark => ({ gen: generationOf(shop), epoch });
+const markMoved = (shop: string, m: Mark): boolean => generationOf(shop) !== m.gen || epoch !== m.epoch;
+
 function cacheSet(shop: string, block: ConnectionBlock | null): void {
   cache.set(shop, { block, expiresAt: Date.now() + CONNECTION_CACHE_TTL_MS });
+}
+
+/**
+ * A write finished: cache its result only if nothing else touched the shop (or
+ * invalidated everything) since the write BEGAN. A write whose database call
+ * committed before another write's but replied after it would otherwise cache
+ * the older state on top of the newer one; if anything moved, the cache is
+ * dropped and the next read decides.
+ */
+function settleWrite(shop: string, before: Mark, block: ConnectionBlock | null): void {
+  const moved = markMoved(shop, before);
+  bump(shop);
+  if (moved) cache.delete(shop);
+  else cacheSet(shop, block);
 }
 
 /** Drop the cached answer of one shop, or of all (tests, redact). */
 export function invalidateConnectionCache(shop?: string): void {
   if (shop === undefined) {
+    epoch++;
     for (const key of new Set([...cache.keys(), ...generation.keys()])) bump(key);
     cache.clear();
     webhookSeenWrittenAt.clear();
@@ -131,7 +157,7 @@ function sanitizeReason(reason: string): string {
 export async function getConnectionBlock(shop: string): Promise<ConnectionBlock | null> {
   const hit = cache.get(shop);
   if (hit && hit.expiresAt > Date.now()) return hit.block;
-  const genBefore = generationOf(shop);
+  const before = markBefore(shop);
   try {
     const db = await dbClient();
     const row = await db.shopInstallState.findUnique({
@@ -143,7 +169,7 @@ export async function getConnectionBlock(shop: string): Promise<ConnectionBlock 
       s === "needs_reauth" || s === "access_denied" || s === "shop_not_found"
         ? { state: s, since: row?.connectionStateSince ?? null, reason: row?.connectionStateReason ?? null }
         : null;
-    if (generationOf(shop) === genBefore) cacheSet(shop, block);
+    if (!markMoved(shop, before)) cacheSet(shop, block);
     return block;
   } catch (error) {
     // Fail open and do not cache the failure.
@@ -185,6 +211,7 @@ export async function markConnectionBlocked(
   opts: { observedAt: Date },
 ): Promise<MarkBlockedResult> {
   try {
+    const before = markBefore(shop);
     const db = await dbClient();
     const now = new Date();
     const { observedAt } = opts;
@@ -198,8 +225,7 @@ export async function markConnectionBlocked(
       data: { connectionState: state, connectionStateSince: now, connectionStateReason: code },
     });
     if (res.count > 0) {
-      bump(shop);
-      cacheSet(shop, { state, since: now, reason: code });
+      settleWrite(shop, before, { state, since: now, reason: code });
       logger.warn(`[ConnectionState] BLOCKED shop=${shop} state=${state} reason=${code}`);
       return { changed: true };
     }
@@ -232,6 +258,7 @@ export interface ClearBlockResult {
 export async function clearConnectionBlock(shop: string, cause: ConnectionClearCause): Promise<ClearBlockResult> {
   const none: ClearBlockResult = { cleared: false, droppedWebhookCount: 0, resyncRequiredSince: null };
   try {
+    const mark = markBefore(shop);
     const db = await dbClient();
     const now = new Date();
     const before = await db.shopInstallState.findUnique({
@@ -256,8 +283,7 @@ export async function clearConnectionBlock(shop: string, cause: ConnectionClearC
         data: { connectionClearedAt: now, connectionClearedCause: cause },
       });
     }
-    bump(shop);
-    cacheSet(shop, null);
+    settleWrite(shop, mark, null);
     const dropped = before?.droppedWebhookCount ?? 0;
     const resync = before?.resyncRequiredSince ?? null;
     if (lifted.count > 0) {
