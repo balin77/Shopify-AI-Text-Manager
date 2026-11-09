@@ -14,6 +14,12 @@ vi.mock("../../app/utils/logger.server", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+const { noteDropped } = vi.hoisted(() => ({ noteDropped: vi.fn(async () => undefined) }));
+vi.mock("../../app/utils/shop-connection-state.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../app/utils/shop-connection-state.server")>()),
+  noteDroppedWebhook: noteDropped,
+}));
+
 import { OfflineAdminUnavailableError } from "../../app/utils/offline-admin.server";
 import { ShopConnectionBlockedError } from "../../app/utils/shop-connection-state.server";
 import { logger } from "../../app/utils/logger.server";
@@ -136,6 +142,7 @@ describe("webhook retry: a blocked shop connection is a quiet skip", () => {
     expect(create).not.toHaveBeenCalled();
     expect(logger.warn).not.toHaveBeenCalled();
     expect(logger.error).not.toHaveBeenCalled();
+    expect(noteDropped).toHaveBeenCalledWith("a.myshopify.com"); // a catch-up is owed
   });
 
   it("deletes the shop's existing rows on the next attempt, without a warn or error line", async () => {
@@ -148,6 +155,7 @@ describe("webhook retry: a blocked shop connection is a quiet skip", () => {
     });
     expect(deleteMany).toHaveBeenCalledWith({ where: { shop: "a.myshopify.com" } });
     expect(update).not.toHaveBeenCalled();
+    expect(noteDropped).toHaveBeenCalledWith("a.myshopify.com");
     expect(logger.warn).not.toHaveBeenCalled();
     expect(logger.error).not.toHaveBeenCalled();
   });

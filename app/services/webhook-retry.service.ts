@@ -27,6 +27,7 @@ import type { WebhookRetry } from "@prisma/client";
 import { db } from "../db.server";
 import { logger } from "../utils/logger.server";
 import { WEBHOOK_CONFIG } from "../config/constants";
+import { noteDroppedWebhook } from "../utils/shop-connection-state.server";
 
 // R4-H3: was `new PrismaClient()` — a SECOND client with its own connection
 // pool that was never $disconnect()-ed (pool leak; doubled DB connections,
@@ -141,6 +142,8 @@ class WebhookRetryService {
           shop,
           topic,
         });
+        // The change is lost for now: record that a catch-up is owed.
+        await noteDroppedWebhook(shop);
         return;
       }
 
@@ -346,6 +349,8 @@ class WebhookRetryService {
       // quietly (the same shape as the auth-dead path below, without its logs).
       if (isBlockedConnectionError(error)) {
         await db.webhookRetry.deleteMany({ where: { shop: retry.shop } }).catch(() => undefined);
+        // The dropped rows were missed changes: owe a catch-up (counted once per drop).
+        await noteDroppedWebhook(retry.shop);
         logger.debug('Webhook retry dropped — the shop connection is blocked', {
           context: 'WebhookRetry',
           retryId: retry.id,

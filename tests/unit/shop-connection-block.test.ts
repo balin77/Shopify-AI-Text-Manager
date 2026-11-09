@@ -69,9 +69,11 @@ import {
   MASS_401_WINDOW_MS,
   __resetConnectionBlockForTests,
   blockShopConnection,
+  liftConnectionBlockAfterAuth,
+  noteSuccessfulCall,
   noteUnauthorized,
 } from "../../app/utils/shop-connection-block.server";
-import { clearConnectionBlock, invalidateConnectionCache } from "../../app/utils/shop-connection-state.server";
+import { clearConnectionBlock, getConnectionBlock, invalidateConnectionCache } from "../../app/utils/shop-connection-state.server";
 
 const SHOP = "a.myshopify.com";
 const row = (over: Row = {}): Row => ({
@@ -92,22 +94,22 @@ afterEach(() => vi.useRealTimers());
 
 describe("blockShopConnection", () => {
   it("blocks as needs_reauth with the reason, answers true, and logs one BLOCKED line", async () => {
-    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBe(true);
+    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBeTruthy();
     expect(store.get(SHOP)).toMatchObject({ connectionState: "needs_reauth", connectionStateReason: "admin_api_401" });
-    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBe(true);
+    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBeTruthy();
     expect(logs.warn.filter((l) => l.includes("BLOCKED"))).toHaveLength(1);
   });
 
   it("an existing block of ANY kind is left alone (a final kind is not turned back into needs_reauth)", async () => {
     store.set(SHOP, row({ connectionState: "access_denied", connectionStateReason: "token_endpoint_403" }));
-    expect(await blockShopConnection(SHOP, "no_token", { observedAt: new Date() })).toBe(true);
+    expect(await blockShopConnection(SHOP, "no_token", { observedAt: new Date() })).toBeTruthy();
     expect(store.get(SHOP)!.connectionState).toBe("access_denied");
   });
 
   it("the fence: a failure that began before the last re-authorisation does not block", async () => {
     const started = new Date(Date.now() - 5_000);
     await clearConnectionBlock(SHOP, "reauth");
-    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: started })).toBe(false);
+    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: started })).toBeNull();
     expect(store.get(SHOP)!.connectionState).toBeNull();
     expect(logs.warn.filter((l) => l.includes("BLOCKED"))).toHaveLength(0);
   });
@@ -122,17 +124,38 @@ describe("mass-401 guard", () => {
     noteUnauthorized("x4.myshopify.com"); // already tripped: no second line
     expect(logs.error.filter((l) => l.includes("MASS_401"))).toHaveLength(1);
 
-    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBe(false);
+    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBeNull();
     expect(store.get(SHOP)!.connectionState).toBeNull();
     // terminal evidence about THIS shop is not held back
-    expect(await blockShopConnection(SHOP, "no_token", { observedAt: new Date() })).toBe(true);
+    expect(await blockShopConnection(SHOP, "no_token", { observedAt: new Date() })).toBeTruthy();
   });
 
   it("lifts after an hour", async () => {
     vi.useFakeTimers();
     ["x1", "x2", "x3"].forEach((s) => noteUnauthorized(`${s}.myshopify.com`));
     vi.advanceTimersByTime(MASS_401_SUPPRESS_MS + 1_000);
-    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBe(true);
+    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBeTruthy();
+  });
+
+  it("two shops in a burst: NEITHER is blocked (no loud line yet), and each is blocked once the other's 401 left the window", async () => {
+    vi.useFakeTimers();
+    store.set("b.myshopify.com", row({ shop: "b.myshopify.com" }));
+    noteUnauthorized(SHOP);
+    noteUnauthorized("b.myshopify.com");
+    expect(logs.error).toHaveLength(0);
+    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBeNull();
+    expect(await blockShopConnection("b.myshopify.com", "admin_api_401", { observedAt: new Date() })).toBeNull();
+    expect(store.get(SHOP)!.connectionState).toBeNull();
+    expect(store.get("b.myshopify.com")!.connectionState).toBeNull();
+    vi.advanceTimersByTime(MASS_401_WINDOW_MS + 1_000);
+    noteUnauthorized(SHOP);
+    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBeTruthy();
+  });
+
+  it("a lone shop's own repeated 401s still block it", async () => {
+    noteUnauthorized(SHOP);
+    noteUnauthorized(SHOP);
+    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBeTruthy();
   });
 
   it("does not trip on the same shop repeating, nor on 401s spread beyond the window", async () => {
@@ -142,7 +165,8 @@ describe("mass-401 guard", () => {
     vi.advanceTimersByTime(MASS_401_WINDOW_MS + 1_000);
     noteUnauthorized("x3.myshopify.com");
     expect(logs.error).toHaveLength(0);
-    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBe(true);
+    vi.advanceTimersByTime(MASS_401_WINDOW_MS + 1_000);
+    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBeTruthy();
   });
 });
 
@@ -150,8 +174,8 @@ describe("a shop without a ShopInstallState row", () => {
   const GONE = "gone.myshopify.com";
 
   it("without an offline session: nothing is created, nothing blocked, logged once", async () => {
-    expect(await blockShopConnection(GONE, "no_token", { observedAt: new Date() })).toBe(false);
-    expect(await blockShopConnection(GONE, "no_token", { observedAt: new Date() })).toBe(false);
+    expect(await blockShopConnection(GONE, "no_token", { observedAt: new Date() })).toBeNull();
+    expect(await blockShopConnection(GONE, "no_token", { observedAt: new Date() })).toBeNull();
     expect(store.has(GONE)).toBe(false);
     expect(shopInstallState.createMany).not.toHaveBeenCalled();
     expect(logs.warn.filter((l) => l.includes("no ShopInstallState row"))).toHaveLength(1);
@@ -159,13 +183,13 @@ describe("a shop without a ShopInstallState row", () => {
 
   it("an ONLINE session alone is not proof either", async () => {
     sessions.push({ id: "online_1", shop: GONE, isOnline: true });
-    expect(await blockShopConnection(GONE, "no_token", { observedAt: new Date() })).toBe(false);
+    expect(await blockShopConnection(GONE, "no_token", { observedAt: new Date() })).toBeNull();
     expect(store.has(GONE)).toBe(false);
   });
 
   it("with an offline session: a MINIMAL row is created (a fresh row, nothing else) and the shop is blocked", async () => {
     sessions.push({ id: `offline_${GONE}`, shop: GONE, isOnline: false });
-    expect(await blockShopConnection(GONE, "no_token", { observedAt: new Date() })).toBe(true);
+    expect(await blockShopConnection(GONE, "no_token", { observedAt: new Date() })).toBeTruthy();
     expect(shopInstallState.createMany).toHaveBeenCalledWith({ data: [{ shop: GONE }], skipDuplicates: true });
     const created = store.get(GONE)!;
     expect(created).toMatchObject({ connectionState: "needs_reauth", connectionStateReason: "no_token" });
@@ -176,7 +200,62 @@ describe("a shop without a ShopInstallState row", () => {
 
   it("never throws when the session lookup fails", async () => {
     session.findFirst.mockRejectedValueOnce(new Error("db down"));
-    await expect(blockShopConnection(GONE, "no_token", { observedAt: new Date() })).resolves.toBe(false);
+    await expect(blockShopConnection(GONE, "no_token", { observedAt: new Date() })).resolves.toBeNull();
     expect(store.has(GONE)).toBe(false);
+  });
+});
+
+describe("lifting", () => {
+  it("afterAuth: blocked -> lifted with cause reauth; a call that began before it cannot re-block (fence)", async () => {
+    const began = new Date(Date.now() - 2_000);
+    await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date(Date.now() - 5_000) });
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+    await liftConnectionBlockAfterAuth(SHOP);
+    expect(store.get(SHOP)).toMatchObject({ connectionState: null, connectionClearedCause: "reauth" });
+    expect(await getConnectionBlock(SHOP)).toBeNull();
+    // the in-flight call, started before the re-auth, fails late with a 401
+    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: began })).toBeNull();
+    expect(store.get(SHOP)!.connectionState).toBeNull();
+  });
+
+  it("afterAuth of a shop marked uninstalled lifts with cause reinstall", async () => {
+    store.set(SHOP, row({ uninstalledAt: new Date() }));
+    await blockShopConnection(SHOP, "no_token", { observedAt: new Date() });
+    await liftConnectionBlockAfterAuth(SHOP);
+    expect(store.get(SHOP)).toMatchObject({ connectionState: null, connectionClearedCause: "reinstall" });
+  });
+
+  it("afterAuth for a shop without a row creates nothing and never throws", async () => {
+    await expect(liftConnectionBlockAfterAuth("none.myshopify.com")).resolves.toBeUndefined();
+    expect(store.has("none.myshopify.com")).toBe(false);
+  });
+
+  it("a success that STARTED after an admin_api_401 block lifts it (probe_ok)", async () => {
+    await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() });
+    await noteSuccessfulCall(SHOP, new Date(Date.now() + 1_000));
+    expect(store.get(SHOP)).toMatchObject({ connectionState: null, connectionClearedCause: "probe_ok" });
+  });
+
+  it("a success that started BEFORE the block does not lift it", async () => {
+    const earlier = new Date(Date.now() - 10_000);
+    await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() });
+    await noteSuccessfulCall(SHOP, earlier);
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+  });
+
+  it.each(["no_token", "invalid_subject_token", "refresh_token_expired", "migration_needs_reauth"])(
+    "never lifts a terminal-evidence block (%s) this way",
+    async (reason) => {
+      await blockShopConnection(SHOP, reason, { observedAt: new Date() });
+      await noteSuccessfulCall(SHOP, new Date(Date.now() + 1_000));
+      expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+    },
+  );
+
+  it("looks at a shop at most every 30 s (a healthy shop costs no query per call)", async () => {
+    await noteSuccessfulCall(SHOP, new Date());
+    shopInstallState.findUnique.mockClear();
+    for (let i = 0; i < 20; i++) await noteSuccessfulCall(SHOP, new Date());
+    expect(shopInstallState.findUnique).not.toHaveBeenCalled();
   });
 });

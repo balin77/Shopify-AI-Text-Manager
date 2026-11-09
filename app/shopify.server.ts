@@ -25,6 +25,7 @@ import {
   type ShopifyApiVersionString,
 } from "./utils/api-version";
 import { expiringOfflineTokensEnabled, migrateToExpiringTokensEnabled } from "./utils/offline-token-flags.server";
+import { liftConnectionBlockAfterAuth } from "./utils/shop-connection-block.server";
 import {
   configureOfflineAdmin,
   forgetOfflineTokenMigration,
@@ -154,6 +155,11 @@ const shopify = shopifyApp({
       // A (re)install or token exchange stored a new offline session: drop
       // the background token cache so nothing keeps serving the previous one.
       invalidateOfflineAdmin(session.shop);
+      // The shop authenticated again: lift a connection block (cause reinstall
+      // or reauth) and stamp the fence so a call already in flight on the old
+      // token cannot re-block it. BEFORE the uninstall marker is cleared below,
+      // because that marker decides the cause. Never throws.
+      await liftConnectionBlockAfterAuth(session.shop);
       // A token exchange ends Shopify's 7-day recovery of a pending migration
       // and makes a `needs_reauth` shop healthy again: drop the durable record
       // (it holds an encrypted old token) and the in-process refusal. Own

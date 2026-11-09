@@ -152,9 +152,8 @@ function createRefreshingRawClient(shop: string): ShopifyGraphQLClient {
       // never evidence: it can be the IP allowlist. A different token that is
       // refused too may be a rotation race.)
       if (retried.status === 401 && fresh === token) {
-        if (await blockShopConnection(shop, "admin_api_401", { observedAt: startedAt })) {
-          throw new ShopConnectionBlockedError(shop, { state: "needs_reauth", since: null, reason: "admin_api_401" });
-        }
+        const blocked = await blockShopConnection(shop, "admin_api_401", { observedAt: startedAt });
+        if (blocked) throw new ShopConnectionBlockedError(shop, blocked);
       }
       return checkOk(retried);
     },

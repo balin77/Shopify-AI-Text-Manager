@@ -4,6 +4,7 @@ import { db } from "~/db.server";
 import { syncScheduler } from "~/services/sync-scheduler.service";
 import { logger } from "~/utils/logger.server";
 import { forgetOfflineTokenMigration, invalidateOfflineAdmin } from "~/utils/offline-admin.server";
+import { clearConnectionBlock } from "~/utils/shop-connection-state.server";
 
 /**
  * APP_UNINSTALLED webhook handler
@@ -69,6 +70,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       error instanceof Error ? error.message : String(error),
     );
   }
+
+  // The access is gone for good, so whatever block the shop carried is moot;
+  // clearing stamps the fence, and a reinstall must never inherit a stale
+  // block. After the upsert: the clear only touches an existing row. Never throws.
+  await clearConnectionBlock(shop, "uninstalled");
 
   // Uninstalling cancels the subscription on Shopify's side, so the verified
   // managed-AI entitlement ends here too. Without this a detached run already

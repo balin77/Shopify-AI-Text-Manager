@@ -60,7 +60,7 @@ import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { logger } from "./logger.server";
 import { expiringOfflineTokensEnabled, migrateToExpiringTokensEnabled } from "./offline-token-flags.server";
 import * as migrationStore from "./offline-token-migration-store.server";
-import { blockShopConnection, noteUnauthorized } from "./shop-connection-block.server";
+import { blockShopConnection, noteSuccessfulCall, noteUnauthorized } from "./shop-connection-block.server";
 import { clearConnectionBlock, ShopConnectionBlockedError } from "./shop-connection-state.server";
 
 export interface OfflineAdminContext {
@@ -432,7 +432,7 @@ async function blockOnTerminalEvidence(
   if (error.reason === "no_token" && migrationsInFlight.has(shop)) return false;
   if ((generation.get(shop) ?? 0) !== startedGeneration) return false;
   const reason = error.reason === "no_token" ? "no_token" : (error.terminalCause ?? "refresh_failed");
-  return blockShopConnection(shop, reason, { observedAt });
+  return !!(await blockShopConnection(shop, reason, { observedAt }));
 }
 
 /** The raw offline access token — for the few raw-fetch callers. */
@@ -642,7 +642,9 @@ export function createRefreshingAdmin(shop: string): AdminApiContext {
     const startedAt = new Date();
     const { admin, session } = await getOfflineAdmin(shop);
     try {
-      return await (admin.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
+      const result = await (admin.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
+      void noteSuccessfulCall(shop, startedAt);
+      return result;
     } catch (error) {
       if (!isUnauthorizedError(error)) {
         if (await isNonExpiringTokenRejectedError(error)) reportNonExpiringTokenRejection(shop, session.accessToken);
@@ -656,15 +658,16 @@ export function createRefreshingAdmin(shop: string): AdminApiContext {
         refusedToken: session.accessToken,
       });
       try {
-        return await (fresh.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
+        const retried = await (fresh.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
+        void noteSuccessfulCall(shop, startedAt);
+        return retried;
       } catch (second) {
         // A SECOND 401 with the very token the first one refused: the stored
         // access is dead. (A different token that is refused too may be a
         // rotation race; not evidence.)
         if (isUnauthorizedError(second) && freshSession.accessToken === session.accessToken) {
-          if (await blockShopConnection(shop, "admin_api_401", { observedAt: startedAt })) {
-            throw new ShopConnectionBlockedError(shop, { state: "needs_reauth", since: null, reason: "admin_api_401" });
-          }
+          const blocked = await blockShopConnection(shop, "admin_api_401", { observedAt: startedAt });
+          if (blocked) throw new ShopConnectionBlockedError(shop, blocked);
         }
         throw second;
       }

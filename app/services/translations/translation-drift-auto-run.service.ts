@@ -182,10 +182,17 @@ export class TranslationDriftAutoRunService {
         // list would otherwise be indistinguishable from a single-language shop
         // and the sweep would report a clean no-op for a whole day.
         let localeLookupFailed = false;
-        const locales = await getCachedShopLocales(admin as never, settings.shop).catch(() => {
-          localeLookupFailed = true;
+        let blockedMeanwhile = false;
+        const locales = await getCachedShopLocales(admin as never, settings.shop).catch((e: unknown) => {
+          if (isShopConnectionBlockedError(e)) blockedMeanwhile = true;
+          else localeLookupFailed = true;
           return [];
         });
+        if (blockedMeanwhile) {
+          // The shop got blocked after the client was created: quiet skip, stamped.
+          logger.debug(`[TranslationDrift] ${settings.shop} skipped - connection blocked`);
+          continue;
+        }
         if (localeLookupFailed) {
           stats.errored++;
           stampThisShop = false;

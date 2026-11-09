@@ -37,6 +37,8 @@ vi.mock("~/utils/shop-locales-cache.server", () => ({
   getCachedShopLocales: (admin: any, shop: string) => shopLocales(admin, shop),
 }));
 
+import { ShopConnectionBlockedError } from "~/utils/shop-connection-state.server";
+
 async function loadService() {
   const mod = await import("~/services/translations/translation-drift-auto-run.service");
   return mod.TranslationDriftAutoRunService.getInstance();
@@ -147,6 +149,20 @@ describe("TranslationDriftAutoRunService.tick", () => {
     // Stamping here would report a clean no-op for a whole day, because an
     // empty locale list looks exactly like a single-language shop.
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("a locale lookup that fails because the shop got BLOCKED is a quiet skip: stamped, not errored", async () => {
+    findMany.mockResolvedValue([DUE_SHOP]);
+    shopLocales.mockRejectedValue(
+      new ShopConnectionBlockedError("a.myshopify.com", { state: "needs_reauth", since: null, reason: "admin_api_401" }),
+    );
+    const service = await loadService();
+
+    const stats = await service.tick(new Date("2026-08-24T12:00:00Z"));
+
+    expect(stats.errored).toBe(0);
+    expect(scan).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledTimes(1); // stamped: looked at again in a day
   });
 
   it("counts a sweep that could not establish silence as INCOMPLETE", async () => {

@@ -9,6 +9,10 @@ const h = vi.hoisted(() => ({
   invalidate: vi.fn(),
   forget: vi.fn(),
   order: [] as string[],
+  clear: vi.fn(async (..._a: unknown[]) => undefined),
+}));
+vi.mock("~/utils/shop-connection-state.server", () => ({
+  clearConnectionBlock: (...a: unknown[]) => h.clear(...a),
 }));
 
 vi.mock("~/utils/webhook-auth.server", () => ({
@@ -54,5 +58,7 @@ describe("app/uninstalled webhook", () => {
     // forced: also with the token switches off (rollback case)
     expect(h.forget).toHaveBeenCalledWith("gone.myshopify.com", { force: true });
     expect(h.order).toEqual(["deleteSessions", "invalidate", "forgetMigration"]);
+    // a reinstall must never inherit a stale connection block
+    expect(h.clear).toHaveBeenCalledWith("gone.myshopify.com", "uninstalled");
   });
 });

@@ -9,7 +9,10 @@
  *    (a rotated secret, an outage) than a dozen merchants revoking the app at
  *    once. At least MASS_401_SHOPS distinct shops with a 401 inside
  *    MASS_401_WINDOW_MS trip the guard: ONE loud line, and for the next hour no
- *    NEW 401 block is set (blocks that exist stay). Only the `admin_api_401`
+ *    NEW 401 block is set (blocks that exist stay). A SECOND shop with a 401
+ *    inside the window already holds an `admin_api_401` block back (two shops at
+ *    once is not what merchants revoking the app looks like either); the loud
+ *    line needs three. Only the `admin_api_401`
  *    reason is held back -- terminal evidence (an empty token, a refresh token
  *    that has expired) says something about that one shop whatever the others do.
  *  - `no_row`. markConnectionBlocked never creates a ShopInstallState row (a
@@ -26,7 +29,13 @@
  */
 
 import { logger } from "./logger.server";
-import { getConnectionBlock, markConnectionBlocked, type MarkBlockedResult } from "./shop-connection-state.server";
+import {
+  clearConnectionBlock,
+  getConnectionBlock,
+  markConnectionBlocked,
+  type ConnectionBlock,
+  type MarkBlockedResult,
+} from "./shop-connection-state.server";
 
 export const MASS_401_WINDOW_MS = 10 * 60 * 1000;
 export const MASS_401_SHOPS = 3;
@@ -36,12 +45,16 @@ export const MASS_401_SUPPRESS_MS = 60 * 60 * 1000;
 const recentUnauthorized = new Map<string, number>();
 let suppress401Until = 0;
 const noRowLogged = new Set<string>();
+const successChecked = new Map<string, number>();
+/** noteSuccessfulCall looks at a shop at most this often. */
+export const SUCCESS_CHECK_INTERVAL_MS = 30_000;
 
 /** Test seam. */
 export function __resetConnectionBlockForTests(): void {
   recentUnauthorized.clear();
   suppress401Until = 0;
   noRowLogged.clear();
+  successChecked.clear();
 }
 
 /**
@@ -63,6 +76,16 @@ export function noteUnauthorized(shop: string): void {
         `(existing blocks stay). Check SHOPIFY_API_SECRET / client credentials and Shopify status first.`,
     );
   }
+}
+
+/** Did ANOTHER shop get a 401 inside the window? Then this shop's 401 is held back. */
+function otherShopHad401(shop: string): boolean {
+  const now = Date.now();
+  for (const [s, at] of recentUnauthorized) {
+    if (now - at > MASS_401_WINDOW_MS) recentUnauthorized.delete(s);
+    else if (s !== shop) return true;
+  }
+  return false;
 }
 
 /** Is a new 401 block held back right now? */
@@ -91,21 +114,23 @@ async function ensureInstallStateForSessionShop(shop: string): Promise<boolean> 
 
 /**
  * Block `shop` as `needs_reauth`. `observedAt` is when the failing call BEGAN.
- * Returns true when the shop is blocked afterwards (newly, or it already was).
+ * Returns the STORED block when the shop is blocked afterwards (newly, or it
+ * already was), else null (fenced, held back, no row, error).
  */
 export async function blockShopConnection(
   shop: string,
   reason: string,
   opts: { observedAt: Date },
-): Promise<boolean> {
+): Promise<ConnectionBlock | null> {
   try {
     // Already blocked (any kind): nothing to add, and a final kind such as
     // access_denied must not be turned back into needs_reauth. Answered from
     // the 30 s cache, so a loop of failing callers costs no query.
-    if (await getConnectionBlock(shop)) return true;
-    if (reason === "admin_api_401" && isMass401Active()) {
+    const existing = await getConnectionBlock(shop);
+    if (existing) return existing;
+    if (reason === "admin_api_401" && (isMass401Active() || otherShopHad401(shop))) {
       logger.debug(`[ConnectionState] 401 block for ${shop} held back (mass-401 guard)`);
-      return false;
+      return null;
     }
     let result: MarkBlockedResult = await markConnectionBlocked(shop, "needs_reauth", reason, opts);
     if (!result.changed && result.why === "no_row") {
@@ -117,8 +142,62 @@ export async function blockShopConnection(
         result = await markConnectionBlocked(shop, "needs_reauth", reason, opts);
       }
     }
-    return result.changed || result.why === "unchanged";
+    if (!(result.changed || result.why === "unchanged")) return null;
+    return (
+      (await getConnectionBlock(shop)) ?? {
+        state: "needs_reauth",
+        since: null,
+        reason: reason.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 64),
+      }
+    );
   } catch {
-    return false;
+    return null;
+  }
+}
+
+/**
+ * A call made with the stored offline token SUCCEEDED. Lifts an `admin_api_401`
+ * block (and only that kind: terminal evidence such as an empty token stays
+ * until a real re-authentication) when the call started AFTER the block was
+ * set -- a success that began before it proves nothing about the token the
+ * block was set on. Without this a wrong 401 block on a shop whose token still
+ * works could never be lifted: no token exchange means no afterAuth.
+ * Looks at a shop at most every 30 s; never throws.
+ */
+export async function noteSuccessfulCall(shop: string, startedAt: Date): Promise<void> {
+  try {
+    const now = Date.now();
+    const last = successChecked.get(shop);
+    if (last !== undefined && now - last < SUCCESS_CHECK_INTERVAL_MS) return;
+    successChecked.set(shop, now);
+    const block = await getConnectionBlock(shop);
+    if (!block || block.reason !== "admin_api_401" || !block.since) return;
+    if (startedAt.getTime() <= block.since.getTime()) return;
+    await clearConnectionBlock(shop, "probe_ok");
+  } catch {
+    /* never throws */
+  }
+}
+
+/**
+ * afterAuth: a new offline session was stored, so the shop is authenticated
+ * again. Lifts any block with the cause the existing install marker tells
+ * (`reinstall` if the shop was marked uninstalled, else `reauth`) and stamps the
+ * fence, so a call that began before this instant cannot block it again. MUST be
+ * called before the uninstall marker is cleared. Never throws.
+ */
+export async function liftConnectionBlockAfterAuth(shop: string): Promise<void> {
+  try {
+    let wasUninstalled = false;
+    try {
+      const db = await dbClient();
+      const row = await db.shopInstallState.findUnique({ where: { shop }, select: { uninstalledAt: true } });
+      wasUninstalled = !!row?.uninstalledAt;
+    } catch {
+      /* unknown: treated as a plain re-authentication */
+    }
+    await clearConnectionBlock(shop, wasUninstalled ? "reinstall" : "reauth");
+  } catch {
+    /* never throws */
   }
 }

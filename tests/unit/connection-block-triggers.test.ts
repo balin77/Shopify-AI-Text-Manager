@@ -10,8 +10,9 @@ import { Session } from "@shopify/shopify-api";
 const h = vi.hoisted(() => ({
   migrations: [] as Array<Record<string, any>>,
   install: [] as Array<Record<string, any>>,
-  block: vi.fn(async (..._a: any[]) => true),
+  block: vi.fn(async (..._a: any[]): Promise<any> => ({ state: "needs_reauth", since: new Date("2026-11-09T09:00:00Z"), reason: "stored_reason" })),
   noteUnauthorized: vi.fn(),
+  noteSuccess: vi.fn(async (..._a: any[]) => undefined),
   clear: vi.fn(async (..._a: any[]) => ({ cleared: false, droppedWebhookCount: 0, resyncRequiredSince: null })),
   getBlock: vi.fn<(shop: string) => Promise<any>>(async () => null),
 }));
@@ -31,6 +32,7 @@ vi.mock("~/shopify.server", () => ({ apiVersion: "2026-07", sessionStorage: { fi
 vi.mock("~/utils/shop-connection-block.server", () => ({
   blockShopConnection: (...a: any[]) => h.block(...a),
   noteUnauthorized: (...a: any[]) => h.noteUnauthorized(...a),
+  noteSuccessfulCall: (...a: any[]) => h.noteSuccess(...a),
 }));
 vi.mock("~/utils/shop-connection-state.server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/utils/shop-connection-state.server")>();
@@ -76,8 +78,9 @@ beforeEach(() => {
   __resetOfflineAdminForTests();
   h.migrations.length = 0;
   h.install.length = 0;
-  h.block.mockReset().mockResolvedValue(true);
+  h.block.mockReset().mockResolvedValue({ state: "needs_reauth", since: new Date("2026-11-09T09:00:00Z"), reason: "stored_reason" });
   h.noteUnauthorized.mockReset();
+  h.noteSuccess.mockReset();
   h.clear.mockReset().mockResolvedValue({ cleared: false, droppedWebhookCount: 0, resyncRequiredSince: null });
   h.getBlock.mockReset().mockResolvedValue(null);
   vi.mocked(logger.error).mockClear();
@@ -103,6 +106,8 @@ describe("library client (createRefreshingAdmin): a SECOND 401 with the same sto
     const admin = createRefreshingAdmin(SHOP);
     const err = await (admin.graphql as any)("q").catch((e: unknown) => e);
     expect(isShopConnectionBlockedError(err)).toBe(true);
+    // the error carries the STORED block, not a hard-coded one
+    expect(err).toMatchObject({ state: "needs_reauth", reason: "stored_reason", since: new Date("2026-11-09T09:00:00Z") });
     expect(graphql).toHaveBeenCalledTimes(2);
     expect(h.noteUnauthorized).toHaveBeenCalledWith(SHOP);
     expect(h.block).toHaveBeenCalledTimes(1);
@@ -116,6 +121,18 @@ describe("library client (createRefreshingAdmin): a SECOND 401 with the same sto
     configureOfflineAdmin(deps({ unauthenticatedAdmin: vi.fn(async () => ({ session: session("tok-1"), admin: { graphql } as never })) }));
     await expect((createRefreshingAdmin(SHOP).graphql as any)("q")).resolves.toBe("ok");
     expect(h.block).not.toHaveBeenCalled();
+    // the successful retry is the evidence that lifts a wrong admin_api_401 block
+    expect(h.noteSuccess).toHaveBeenCalledWith(SHOP, expect.any(Date));
+  });
+
+  it("a plain success reports itself, a failure does not", async () => {
+    const graphql = vi.fn().mockResolvedValueOnce("ok").mockRejectedValue(forbidden());
+    configureOfflineAdmin(deps({ unauthenticatedAdmin: vi.fn(async () => ({ session: session("tok-1"), admin: { graphql } as never })) }));
+    const admin = createRefreshingAdmin(SHOP);
+    await (admin.graphql as any)("q");
+    expect(h.noteSuccess).toHaveBeenCalledTimes(1);
+    await (admin.graphql as any)("q").catch(() => undefined);
+    expect(h.noteSuccess).toHaveBeenCalledTimes(1);
   });
 
   it("a second 401 with a DIFFERENT (freshly stored) token does not block", async () => {
@@ -132,7 +149,7 @@ describe("library client (createRefreshingAdmin): a SECOND 401 with the same sto
   });
 
   it("falls back to the original error when the block is held back (mass-401 guard) or cannot be written", async () => {
-    h.block.mockResolvedValue(false);
+    h.block.mockResolvedValue(null);
     const graphql = vi.fn(async () => {
       throw unauthorized();
     });
@@ -179,7 +196,7 @@ describe("raw client (createAdminClientFromShop)", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-11-09T10:00:00Z"));
     configureOfflineAdmin(deps());
-    h.block.mockResolvedValue(false); // fenced / held back
+    h.block.mockResolvedValue(null); // fenced / held back
     fetchMock.mockImplementation(async () => {
       vi.setSystemTime(new Date("2026-11-09T10:00:09Z"));
       return r401();
@@ -423,5 +440,24 @@ describe("migration needs_reauth", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await p;
     expect(h.block).not.toHaveBeenCalled();
+  });
+});
+
+describe("a finished token migration lifts the block", () => {
+  it("clears with cause reauth (afterAuth never runs for a migration)", async () => {
+    process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS = "true";
+    process.env.SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS = "true";
+    configureOfflineAdmin(deps());
+    expect(await maybeMigrateToExpiringToken(SHOP)).toBe("migrated");
+    expect(h.clear).toHaveBeenCalledTimes(1);
+    expect(h.clear).toHaveBeenCalledWith(SHOP, "reauth");
+  });
+
+  it("a failed migration does not clear", async () => {
+    process.env.SHOPIFY_EXPIRING_OFFLINE_TOKENS = "true";
+    process.env.SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS = "true";
+    configureOfflineAdmin(deps({ migrateToExpiringToken: vi.fn(async () => Promise.reject(exchangeError(400, "invalid_subject_token"))) }));
+    await maybeMigrateToExpiringToken(SHOP);
+    expect(h.clear).not.toHaveBeenCalled();
   });
 });
