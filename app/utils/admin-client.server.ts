@@ -141,7 +141,6 @@ function createRefreshingRawClient(shop: string): ShopifyGraphQLClient {
       const first = await rawGraphql(shop, token, query, options);
       await reportIfDeadlineRejection(shop, token, first);
       if (first.status !== 401) return checkOk(first);
-      noteUnauthorized(shop);
       logger.warn("[AdminClient] 401 from Shopify — reloading the offline session and retrying once", { shop });
       invalidateOfflineAdmin(shop);
       const fresh = (await getOfflineAdmin(shop, { forceReload: true, refusedToken: token })).session.accessToken!;
@@ -152,6 +151,7 @@ function createRefreshingRawClient(shop: string): ShopifyGraphQLClient {
       // never evidence: it can be the IP allowlist. A different token that is
       // refused too may be a rotation race.)
       if (retried.status === 401 && fresh === token) {
+        noteUnauthorized(shop); // a CONFIRMED 401 (mass-401 guard)
         const blocked = await blockShopConnection(shop, "admin_api_401", { observedAt: startedAt });
         if (blocked) throw new ShopConnectionBlockedError(shop, blocked);
       }

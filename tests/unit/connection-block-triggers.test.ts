@@ -121,6 +121,8 @@ describe("library client (createRefreshingAdmin): a SECOND 401 with the same sto
     configureOfflineAdmin(deps({ unauthenticatedAdmin: vi.fn(async () => ({ session: session("tok-1"), admin: { graphql } as never })) }));
     await expect((createRefreshingAdmin(SHOP).graphql as any)("q")).resolves.toBe("ok");
     expect(h.block).not.toHaveBeenCalled();
+    // a 401 the retry resolved is NOT a confirmed 401: the mass guard never sees it
+    expect(h.noteUnauthorized).not.toHaveBeenCalled();
     // the successful retry is the evidence that lifts a wrong admin_api_401 block
     expect(h.noteSuccess).toHaveBeenCalledWith(SHOP, expect.any(Date));
   });
@@ -146,6 +148,7 @@ describe("library client (createRefreshingAdmin): a SECOND 401 with the same sto
     const err = await (createRefreshingAdmin(SHOP).graphql as any)("q").catch((e: unknown) => e);
     expect(isShopConnectionBlockedError(err)).toBe(false);
     expect(h.block).not.toHaveBeenCalled();
+    expect(h.noteUnauthorized).not.toHaveBeenCalled(); // different token: not confirmed
   });
 
   it("falls back to the original error when the block is held back (mass-401 guard) or cannot be written", async () => {
@@ -209,12 +212,13 @@ describe("raw client (createAdminClientFromShop)", () => {
     expect(logger.error).toHaveBeenCalled(); // old behaviour when nothing was blocked
   });
 
-  it("a first 401 followed by success does not block", async () => {
+  it("a first 401 followed by success does not block and does not count for the mass guard", async () => {
     configureOfflineAdmin(deps());
     fetchMock.mockResolvedValueOnce(r401()).mockResolvedValue(ok());
     const client = await createAdminClientFromShop(SHOP);
     await expect(client.graphql("q")).resolves.toBeInstanceOf(Response);
     expect(h.block).not.toHaveBeenCalled();
+    expect(h.noteUnauthorized).not.toHaveBeenCalled();
   });
 
   it("a second 401 with a different token does not block", async () => {

@@ -37,6 +37,21 @@ import {
   type MarkBlockedResult,
 } from "./shop-connection-state.server";
 
+type Env = Record<string, string | undefined>;
+
+/**
+ * SHOP_BLOCK_ON_ADMIN_401: may a double 401 set a block? Exactly "true" turns it
+ * on, default OFF (like the token switches). A 401 is the weakest evidence, and
+ * a wrong block of that kind is lifted only by the 6-hourly probe of plan step
+ * 12, so the switch stays off until that exists. With it off the double-401
+ * sites keep their old behaviour (log, original error). The terminal-evidence
+ * reasons (no_token, invalid_subject_token, refresh_token_expired,
+ * migration_needs_reauth) are not affected.
+ */
+export function blockOnAdmin401Enabled(env: Env = process.env): boolean {
+  return env.SHOP_BLOCK_ON_ADMIN_401?.trim() === "true";
+}
+
 export const MASS_401_WINDOW_MS = 10 * 60 * 1000;
 export const MASS_401_SHOPS = 3;
 export const MASS_401_SUPPRESS_MS = 60 * 60 * 1000;
@@ -58,9 +73,10 @@ export function __resetConnectionBlockForTests(): void {
 }
 
 /**
- * A request for `shop` was answered with a 401. Call it for the FIRST 401 of a
- * call, before anything is decided, so the guard sees the burst early. Cheap,
- * in memory, never throws.
+ * A 401 for `shop` was CONFIRMED: the retry with the very same token failed
+ * too. A 401 the retry resolved (a rotated token) must not be reported here.
+ * Call it before `blockShopConnection`, whether or not the 401 switch is on, so
+ * the loud MASS_401 line works either way. Cheap, in memory, never throws.
  */
 export function noteUnauthorized(shop: string): void {
   const now = Date.now();
@@ -128,6 +144,7 @@ export async function blockShopConnection(
     // the 30 s cache, so a loop of failing callers costs no query.
     const existing = await getConnectionBlock(shop);
     if (existing) return existing;
+    if (reason === "admin_api_401" && !blockOnAdmin401Enabled()) return null;
     if (reason === "admin_api_401" && (isMass401Active() || otherShopHad401(shop))) {
       logger.debug(`[ConnectionState] 401 block for ${shop} held back (mass-401 guard)`);
       return null;
@@ -173,7 +190,8 @@ export async function noteSuccessfulCall(shop: string, startedAt: Date): Promise
     const block = await getConnectionBlock(shop);
     if (!block || block.reason !== "admin_api_401" || !block.since) return;
     if (startedAt.getTime() <= block.since.getTime()) return;
-    await clearConnectionBlock(shop, "probe_ok");
+    // Conditional in the database: a terminal block that appeared meanwhile stays.
+    await clearConnectionBlock(shop, "probe_ok", { onlyIfReason: "admin_api_401" });
   } catch {
     /* never throws */
   }
@@ -193,6 +211,9 @@ export async function liftConnectionBlockAfterAuth(shop: string): Promise<void> 
       const db = await dbClient();
       const row = await db.shopInstallState.findUnique({ where: { shop }, select: { uninstalledAt: true } });
       wasUninstalled = !!row?.uninstalledAt;
+      // The fence lives on the row: make sure there is one (a minimal row, the
+      // same thing afterAuth creates a moment later) so the clear can stamp it.
+      await db.shopInstallState.createMany({ data: [{ shop }], skipDuplicates: true });
     } catch {
       /* unknown: treated as a plain re-authentication */
     }

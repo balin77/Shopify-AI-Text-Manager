@@ -635,6 +635,10 @@ async function healIfMigrationCannotRun(shop: string, outcome: MigrationOutcome,
  * `getOfflineAdmin` (cheap while cached) and retries once on a 401 after a
  * forced reload. A 403 "non-expiring tokens are no longer accepted" is NOT
  * retried (same token, same answer): it starts the migration and rethrows.
+ *
+ * Deliberately NOT gated by the connection block: it is the path that lifts a
+ * wrong block (noteSuccessfulCall) and it keeps in-app background work alive for
+ * a shop whose block is stale. Only createAdminClientFromShop refuses.
  */
 export function createRefreshingAdmin(shop: string): AdminApiContext {
   const graphql = async (query: unknown, options?: unknown) => {
@@ -650,7 +654,6 @@ export function createRefreshingAdmin(shop: string): AdminApiContext {
         if (await isNonExpiringTokenRejectedError(error)) reportNonExpiringTokenRejection(shop, session.accessToken);
         throw error;
       }
-      noteUnauthorized(shop);
       logger.warn("[OfflineAdmin] 401 from Shopify — reloading the offline session and retrying once", { shop });
       invalidateOfflineAdmin(shop);
       const { admin: fresh, session: freshSession } = await getOfflineAdmin(shop, {
@@ -666,6 +669,7 @@ export function createRefreshingAdmin(shop: string): AdminApiContext {
         // access is dead. (A different token that is refused too may be a
         // rotation race; not evidence.)
         if (isUnauthorizedError(second) && freshSession.accessToken === session.accessToken) {
+          noteUnauthorized(shop); // a CONFIRMED 401 (mass-401 guard)
           const blocked = await blockShopConnection(shop, "admin_api_401", { observedAt: startedAt });
           if (blocked) throw new ShopConnectionBlockedError(shop, blocked);
         }

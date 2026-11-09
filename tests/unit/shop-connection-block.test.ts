@@ -68,6 +68,7 @@ import {
   MASS_401_SUPPRESS_MS,
   MASS_401_WINDOW_MS,
   __resetConnectionBlockForTests,
+  blockOnAdmin401Enabled,
   blockShopConnection,
   liftConnectionBlockAfterAuth,
   noteSuccessfulCall,
@@ -82,6 +83,7 @@ const row = (over: Row = {}): Row => ({
 });
 
 beforeEach(() => {
+  process.env.SHOP_BLOCK_ON_ADMIN_401 = "true"; // the 401 switch is tested below in both settings
   store.clear();
   store.set(SHOP, row());
   sessions.length = 0;
@@ -90,7 +92,10 @@ beforeEach(() => {
   __resetConnectionBlockForTests();
   vi.clearAllMocks();
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  delete process.env.SHOP_BLOCK_ON_ADMIN_401;
+});
 
 describe("blockShopConnection", () => {
   it("blocks as needs_reauth with the reason, answers true, and logs one BLOCKED line", async () => {
@@ -112,6 +117,33 @@ describe("blockShopConnection", () => {
     expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: started })).toBeNull();
     expect(store.get(SHOP)!.connectionState).toBeNull();
     expect(logs.warn.filter((l) => l.includes("BLOCKED"))).toHaveLength(0);
+  });
+});
+
+describe("SHOP_BLOCK_ON_ADMIN_401", () => {
+  it("OFF (default): a double 401 sets no block and writes nothing; terminal evidence still blocks", async () => {
+    delete process.env.SHOP_BLOCK_ON_ADMIN_401;
+    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBeNull();
+    expect(store.get(SHOP)!.connectionState).toBeNull();
+    expect(shopInstallState.updateMany).not.toHaveBeenCalled();
+    for (const reason of ["no_token", "invalid_subject_token", "refresh_token_expired", "migration_needs_reauth"]) {
+      store.set(SHOP, row());
+      invalidateConnectionCache();
+      expect(await blockShopConnection(SHOP, reason, { observedAt: new Date() })).toBeTruthy();
+    }
+  });
+
+  it.each(["1", "TRUE", "yes", ""])("only exactly 'true' turns it on (%j is off)", async (v) => {
+    process.env.SHOP_BLOCK_ON_ADMIN_401 = v;
+    expect(blockOnAdmin401Enabled()).toBe(false);
+    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBeNull();
+  });
+
+  it("ON: a double 401 blocks", async () => {
+    process.env.SHOP_BLOCK_ON_ADMIN_401 = " true ";
+    expect(blockOnAdmin401Enabled()).toBe(true);
+    expect(await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() })).toBeTruthy();
+    expect(store.get(SHOP)!.connectionStateReason).toBe("admin_api_401");
   });
 });
 
@@ -225,9 +257,24 @@ describe("lifting", () => {
     expect(store.get(SHOP)).toMatchObject({ connectionState: null, connectionClearedCause: "reinstall" });
   });
 
-  it("afterAuth for a shop without a row creates nothing and never throws", async () => {
+  it("afterAuth for a shop without a row creates the minimal row first, so the fence is stamped", async () => {
     await expect(liftConnectionBlockAfterAuth("none.myshopify.com")).resolves.toBeUndefined();
-    expect(store.has("none.myshopify.com")).toBe(false);
+    const created = store.get("none.myshopify.com")!;
+    expect(created.initialSyncCompletedAt).toBeNull();
+    expect(created.uninstalledAt).toBeNull();
+    expect(created.connectionClearedAt).toBeInstanceOf(Date);
+    // a late failure that began earlier cannot block it
+    expect(await blockShopConnection("none.myshopify.com", "no_token", { observedAt: new Date(Date.now() - 5_000) })).toBeNull();
+  });
+
+  it("the probe_ok lift is conditional in the database: a terminal block that appeared meanwhile stays", async () => {
+    await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() });
+    // the terminal block replaces it behind the cache's back
+    store.get(SHOP)!.connectionStateReason = "no_token";
+    await noteSuccessfulCall(SHOP, new Date(Date.now() + 1_000));
+    expect(store.get(SHOP)).toMatchObject({ connectionState: "needs_reauth", connectionStateReason: "no_token" });
+    // and the cache did not remember "unblocked"
+    expect(await getConnectionBlock(SHOP)).toMatchObject({ reason: "no_token" });
   });
 
   it("a success that STARTED after an admin_api_401 block lifts it (probe_ok)", async () => {

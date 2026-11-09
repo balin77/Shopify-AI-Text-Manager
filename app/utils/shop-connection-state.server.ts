@@ -6,8 +6,9 @@
  *
  * Blocks are SET at the evidence points of plan step 7 (through
  * shop-connection-block.server.ts: the second 401 with the same token in both
- * admin clients, an empty token, a terminal refresh failure, the migration's
- * needs_reauth) and READ by createAdminClientFromShop. They are LIFTED so far
+ * admin clients -- ONLY with SHOP_BLOCK_ON_ADMIN_401=true, default off until the
+ * step-12 probe exists --, an empty token, a terminal refresh failure, the
+ * migration's needs_reauth) and READ by createAdminClientFromShop. They are LIFTED so far
  * only by a finished token migration; afterAuth, the uninstall webhook and the
  * probe follow in later steps (plan 10, 12).
  *
@@ -259,7 +260,11 @@ export interface ClearBlockResult {
  * dropped count are KEPT: they say what the catch-up still owes. Safe to call
  * for a shop that is not blocked (it only moves the fence).
  */
-export async function clearConnectionBlock(shop: string, cause: ConnectionClearCause): Promise<ClearBlockResult> {
+export async function clearConnectionBlock(
+  shop: string,
+  cause: ConnectionClearCause,
+  opts: { onlyIfReason?: string } = {},
+): Promise<ClearBlockResult> {
   const none: ClearBlockResult = { cleared: false, droppedWebhookCount: 0, resyncRequiredSince: null };
   try {
     const mark = markBefore(shop);
@@ -270,7 +275,9 @@ export async function clearConnectionBlock(shop: string, cause: ConnectionClearC
       select: { droppedWebhookCount: true, resyncRequiredSince: true },
     });
     const lifted = await db.shopInstallState.updateMany({
-      where: { shop, connectionState: { not: null } },
+      where: opts.onlyIfReason
+        ? { shop, connectionState: "needs_reauth", connectionStateReason: opts.onlyIfReason }
+        : { shop, connectionState: { not: null } },
       data: {
         connectionState: null,
         connectionStateSince: null,
@@ -279,6 +286,13 @@ export async function clearConnectionBlock(shop: string, cause: ConnectionClearC
         connectionClearedCause: cause,
       },
     });
+    if (lifted.count === 0 && opts.onlyIfReason) {
+      // A conditional clear that found another block (or none): leave the row
+      // and the fence alone, and let the next read decide.
+      bump(shop);
+      cache.delete(shop);
+      return none;
+    }
     if (lifted.count === 0) {
       // Not blocked: still move the fence, so a call that began before this
       // instant cannot block the shop when it fails late.
