@@ -15,6 +15,8 @@ vi.mock("../../app/utils/logger.server", () => ({
 }));
 
 import { OfflineAdminUnavailableError } from "../../app/utils/offline-admin.server";
+import { ShopConnectionBlockedError } from "../../app/utils/shop-connection-state.server";
+import { logger } from "../../app/utils/logger.server";
 import { webhookRetryService } from "../../app/services/webhook-retry.service";
 
 // Same shape as OfflineAdminUnavailableError, built by hand: the service must
@@ -122,5 +124,31 @@ describe("webhook retry: unavailable offline admin is treated like a 401", () =>
     await (webhookRetryService as any).processRetry(row);
     expect(deleteMany).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("webhook retry: a blocked shop connection is a quiet skip", () => {
+  const blocked = () =>
+    new ShopConnectionBlockedError("a.myshopify.com", { state: "needs_reauth", since: null, reason: "admin_api_401" });
+
+  it("schedules no retry row and logs nothing above debug", async () => {
+    await webhookRetryService.scheduleRetry("a.myshopify.com", "PRODUCTS_UPDATE", { productId: "1" }, blocked());
+    expect(create).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("deletes the shop's existing rows on the next attempt, without a warn or error line", async () => {
+    webhookRetryService.registerHandler("TEST_BLOCKED", async () => {
+      throw blocked();
+    });
+    await (webhookRetryService as any).processRetry({
+      id: "r9", shop: "a.myshopify.com", topic: "TEST_BLOCKED", payload: "{}",
+      attempt: 0, maxAttempts: 5, nextRetry: new Date(), lastError: null,
+    });
+    expect(deleteMany).toHaveBeenCalledWith({ where: { shop: "a.myshopify.com" } });
+    expect(update).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });

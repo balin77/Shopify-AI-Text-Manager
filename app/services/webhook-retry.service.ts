@@ -79,6 +79,19 @@ function isOfflineAdminUnavailable(error: unknown): boolean {
   );
 }
 
+/**
+ * The shop's connection is blocked (shop-connection-state.server.ts): the
+ * failure is already known and logged once, so nothing more is queued or logged
+ * for it. By SHAPE, like the checks above.
+ */
+function isBlockedConnectionError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'SHOP_CONNECTION_BLOCKED'
+  );
+}
+
 export type WebhookHandler = (payload: Record<string, unknown>, shop: string) => Promise<void>;
 
 class WebhookRetryService {
@@ -118,6 +131,18 @@ class WebhookRetryService {
     try {
       const payloadString = JSON.stringify(payload);
       const errorMessage = error?.message || 'Unknown error';
+
+      // A blocked shop: no retry row, no log above debug (the BLOCKED line was
+      // logged once when the block was set; a webhook of that shop is counted
+      // elsewhere, and what it missed is caught up after the next sign-in).
+      if (isBlockedConnectionError(error)) {
+        logger.debug('Skipping webhook retry — the shop connection is blocked', {
+          context: 'WebhookRetry',
+          shop,
+          topic,
+        });
+        return;
+      }
 
       // Don't enqueue retries we already know will fail. A 401 means the
       // offline token is dead; retrying with the same dead token can't work,
@@ -316,6 +341,19 @@ class WebhookRetryService {
     } catch (error) {
       const newAttempt = retry.attempt + 1;
       const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // The shop got blocked since the row was queued: drop its whole queue
+      // quietly (the same shape as the auth-dead path below, without its logs).
+      if (isBlockedConnectionError(error)) {
+        await db.webhookRetry.deleteMany({ where: { shop: retry.shop } }).catch(() => undefined);
+        logger.debug('Webhook retry dropped — the shop connection is blocked', {
+          context: 'WebhookRetry',
+          retryId: retry.id,
+          shop: retry.shop,
+          topic: retry.topic,
+        });
+        return;
+      }
 
       logger.error('Webhook retry failed', {
         context: 'WebhookRetry',

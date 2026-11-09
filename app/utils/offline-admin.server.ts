@@ -60,6 +60,8 @@ import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { logger } from "./logger.server";
 import { expiringOfflineTokensEnabled, migrateToExpiringTokensEnabled } from "./offline-token-flags.server";
 import * as migrationStore from "./offline-token-migration-store.server";
+import { blockShopConnection, noteUnauthorized } from "./shop-connection-block.server";
+import { clearConnectionBlock, ShopConnectionBlockedError } from "./shop-connection-state.server";
 
 export interface OfflineAdminContext {
   session: Session;
@@ -125,14 +127,23 @@ export class OfflineAdminUnavailableError extends Error {
    * deliberately does NOT feed this flag.)
    */
   permanent: boolean;
+  /**
+   * Which terminal evidence made this `permanent` (a code for the connection
+   * block's reason, never a message): `invalid_subject_token` or
+   * `refresh_token_expired`. Absent for `no_token` (the reason says it) and for
+   * every non-terminal failure.
+   */
+  terminalCause?: string;
   constructor(
     readonly shop: string,
     readonly reason: "no_session" | "refresh_failed" | "no_token",
     message: string,
     permanent = false,
+    terminalCause?: string,
   ) {
     super(message);
     this.permanent = permanent || reason === "no_token";
+    this.terminalCause = terminalCause;
     this.name = "OfflineAdminUnavailableError";
   }
 }
@@ -224,6 +235,7 @@ async function acquireOnce(shop: string): Promise<OfflineAdminContext> {
           ? `Offline token for ${shop} has expired and could not be refreshed (no refresh token)`
           : `Offline token for ${shop} has expired and was not refreshed`,
         noRefreshToken,
+        noRefreshToken ? "refresh_token_expired" : undefined,
       );
     }
     return ctx;
@@ -245,6 +257,7 @@ async function acquireOnce(shop: string): Promise<OfflineAdminContext> {
       `Offline token for ${shop} could not be refreshed: ${describe(error)}`,
       // Only the one failure the library surfaces un-collapsed is terminal.
       isPermanentMigrationError(error),
+      isPermanentMigrationError(error) ? "invalid_subject_token" : undefined,
     );
   }
 }
@@ -329,6 +342,9 @@ function startAcquisition(shop: string): Promise<OfflineAdminContext> {
     refreshFailed.delete(shop);
   }
   const startedGeneration = generation.get(shop) ?? 0;
+  // The fence for a connection block this acquisition may set (see
+  // blockOnTerminalEvidence): when the acquisition BEGAN.
+  const startedAtDate = new Date();
   const promise: Promise<OfflineAdminContext> = (async () => {
     let ctx: OfflineAdminContext;
     try {
@@ -336,6 +352,7 @@ function startAcquisition(shop: string): Promise<OfflineAdminContext> {
     } catch (error) {
       if (!(error instanceof OfflineAdminUnavailableError) || error.reason !== "refresh_failed") {
         cache.delete(shop);
+        await blockOnTerminalEvidence(shop, error, startedAtDate, startedGeneration);
         throw error;
       }
       // Shopify does not retire a refresh token the moment it is used, but a
@@ -353,15 +370,24 @@ function startAcquisition(shop: string): Promise<OfflineAdminContext> {
         ctx = await acquireOnce(shop);
       } catch (second) {
         cache.delete(shop);
-        logger.error("[OfflineAdmin] Offline token unavailable — the shop must open the app to re-authenticate", {
-          shop,
-          error: describe(second),
-        });
+        if (second instanceof OfflineAdminUnavailableError && second.reason === "refresh_failed") {
+          // Terminal evidence in storage: the refresh token itself has expired.
+          if (!second.permanent && (await storedRefreshTokenExpired(shop))) {
+            second.permanent = true;
+            second.terminalCause = "refresh_token_expired";
+          }
+        }
+        // The BLOCKED line replaces the error line for a shop that is (now)
+        // blocked on terminal evidence; anything else keeps the old log.
+        if (!(await blockOnTerminalEvidence(shop, second, startedAtDate, startedGeneration))) {
+          logger.error("[OfflineAdmin] Offline token unavailable — the shop must open the app to re-authenticate", {
+            shop,
+            error: describe(second),
+          });
+        }
         // Only if no invalidation (re-auth, uninstall) landed meanwhile: the
         // failure may predate the event that cleared it.
         if (second instanceof OfflineAdminUnavailableError && second.reason === "refresh_failed") {
-          // Terminal evidence in storage: the refresh token itself has expired.
-          if (!second.permanent && (await storedRefreshTokenExpired(shop))) second.permanent = true;
           // Fail-fast heuristic only (NOT terminal evidence, see `permanent`).
           if (
             (await refreshWasReallyRefused(shop)) &&
@@ -382,6 +408,31 @@ function startAcquisition(shop: string): Promise<OfflineAdminContext> {
   });
   inflight.set(shop, promise);
   return promise;
+}
+
+/**
+ * Terminal evidence that the shop's access is dead: set the connection block.
+ * ONLY for an error that carries `permanent` -- an empty token (`no_token`), or
+ * a refresh that failed for good (`invalid_subject_token`, a refresh token past
+ * its own expiry). NEVER for a plain `refresh_failed`: the library collapses
+ * every other refresh failure into a bare 500, and behind that can sit an
+ * outage or the IP allowlist. Never for a 403, either (not called from there).
+ * Skipped while a migration of the shop is running (its own exchange blanks the
+ * stored token on purpose) and when an invalidation (re-auth, uninstall) landed
+ * since the acquisition began. Returns whether the shop is blocked afterwards.
+ */
+async function blockOnTerminalEvidence(
+  shop: string,
+  error: unknown,
+  observedAt: Date,
+  startedGeneration: number,
+): Promise<boolean> {
+  if (!(error instanceof OfflineAdminUnavailableError) || !error.permanent) return false;
+  if (error.reason !== "no_token" && error.reason !== "refresh_failed") return false;
+  if (error.reason === "no_token" && migrationsInFlight.has(shop)) return false;
+  if ((generation.get(shop) ?? 0) !== startedGeneration) return false;
+  const reason = error.reason === "no_token" ? "no_token" : (error.terminalCause ?? "refresh_failed");
+  return blockShopConnection(shop, reason, { observedAt });
 }
 
 /** The raw offline access token — for the few raw-fetch callers. */
@@ -587,6 +638,8 @@ async function healIfMigrationCannotRun(shop: string, outcome: MigrationOutcome,
  */
 export function createRefreshingAdmin(shop: string): AdminApiContext {
   const graphql = async (query: unknown, options?: unknown) => {
+    // When this call BEGAN: the fence for the block a second 401 may set.
+    const startedAt = new Date();
     const { admin, session } = await getOfflineAdmin(shop);
     try {
       return await (admin.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
@@ -595,13 +648,26 @@ export function createRefreshingAdmin(shop: string): AdminApiContext {
         if (await isNonExpiringTokenRejectedError(error)) reportNonExpiringTokenRejection(shop, session.accessToken);
         throw error;
       }
+      noteUnauthorized(shop);
       logger.warn("[OfflineAdmin] 401 from Shopify — reloading the offline session and retrying once", { shop });
       invalidateOfflineAdmin(shop);
-      const { admin: fresh } = await getOfflineAdmin(shop, {
+      const { admin: fresh, session: freshSession } = await getOfflineAdmin(shop, {
         forceReload: true,
         refusedToken: session.accessToken,
       });
-      return (fresh.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
+      try {
+        return await (fresh.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
+      } catch (second) {
+        // A SECOND 401 with the very token the first one refused: the stored
+        // access is dead. (A different token that is refused too may be a
+        // rotation race; not evidence.)
+        if (isUnauthorizedError(second) && freshSession.accessToken === session.accessToken) {
+          if (await blockShopConnection(shop, "admin_api_401", { observedAt: startedAt })) {
+            throw new ShopConnectionBlockedError(shop, { state: "needs_reauth", since: null, reason: "admin_api_401" });
+          }
+        }
+        throw second;
+      }
     }
   };
   return { graphql } as unknown as AdminApiContext;
@@ -1062,7 +1128,26 @@ async function clearDeadSessionToken(
   }
 }
 
+/**
+ * The migration reported `needs_reauth`: set the connection block -- but only if
+ * the token was emptied (ours or the library's) or no newer authentication
+ * happened since the run began (`reissueEpoch` unchanged). A merchant who
+ * re-authorised meanwhile has a fresh session this verdict says nothing about.
+ * `observedAt` is the run's start (the fence).
+ */
+async function blockAfterMigrationNeedsReauth(
+  shop: string,
+  reason: string,
+  startedAt: Date,
+  epoch: number,
+  tokenEmptied: boolean,
+): Promise<void> {
+  if (!tokenEmptied && (reissueEpoch.get(shop) ?? 0) !== epoch) return;
+  await blockShopConnection(shop, reason, { observedAt: startedAt });
+}
+
 async function runMigration(shop: string): Promise<MigrationOutcome> {
+  const runStartedAt = new Date();
   const epoch = reissueEpoch.get(shop) ?? 0;
   const d = await resolveDeps();
   const current = await d.loadOfflineSession(shop);
@@ -1100,6 +1185,7 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
 
   if (record?.status === "needs_reauth") {
     migrationNeedsReauth.add(shop);
+    await blockAfterMigrationNeedsReauth(shop, "migration_needs_reauth", runStartedAt, epoch, !current.accessToken);
     return "needs_reauth";
   }
   if (record) {
@@ -1128,6 +1214,7 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
         const why = "the stored session has no token and the 7-day recovery window is over";
         await markNeedsReauth(shop, why, 0);
         logNeedsReauth(shop, why, "the session has no token already, so the merchant's next visit token-exchanges directly");
+        await blockAfterMigrationNeedsReauth(shop, "no_token", runStartedAt, epoch, true);
         return "needs_reauth";
       }
       return "no_session";
@@ -1190,6 +1277,7 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
             ? "the dead stored token was blanked, so the merchant's next visit token-exchanges directly"
             : "the dead stored token could NOT be blanked (session changed meanwhile or the write failed): the merchant's first request may fail once with a 401 before the library token-exchanges",
         );
+        await blockAfterMigrationNeedsReauth(shop, "invalid_subject_token", runStartedAt, epoch, blanked);
         return "needs_reauth";
       }
       if (isMigrationConfigError(error)) {
@@ -1247,6 +1335,10 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
     invalidateOfflineAdmin(shop);
     migrationBackoff.delete(shop);
     migrationSettled.add(shop);
+    // A stored fresh pair IS a new authentication (afterAuth does not run for a
+    // migration): lift a block that the blank token of this very run, or an
+    // earlier failure, may have set. Stamps the fence. Never throws.
+    await clearConnectionBlock(shop, "reauth");
     await migrationStore.deleteMigrationRecord(shop).catch((error) => {
       logger.warn("[OfflineAdmin] Migrated, but could not delete the token-migration record", {
         shop,

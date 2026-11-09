@@ -15,6 +15,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const findMany = vi.fn<(args: any) => Promise<any>>();
 const update = vi.fn<(args: any) => Promise<any>>();
 const startCrawlRun = vi.fn<(args: any) => Promise<any>>();
+const createAdmin = vi.fn<(shop: string) => Promise<any>>();
+const warn = vi.fn();
+vi.mock("~/utils/logger.server", () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: (...a: any[]) => warn(...a), error: vi.fn() },
+}));
 
 vi.mock("~/db.server", () => ({
   db: {
@@ -25,11 +30,13 @@ vi.mock("~/db.server", () => ({
   },
 }));
 vi.mock("~/utils/admin-client.server", () => ({
-  createAdminClientFromShop: async () => ({ graphql: async () => ({ json: async () => ({}) }) }),
+  createAdminClientFromShop: (shop: string) => createAdmin(shop),
 }));
 vi.mock("~/services/seo/crawl-run.server", () => ({
   startCrawlRun: (args: any) => startCrawlRun(args),
 }));
+
+import { ShopConnectionBlockedError } from "~/utils/shop-connection-state.server";
 
 async function loadService() {
   const mod = await import("~/services/seo/crawl-auto-run.service");
@@ -43,6 +50,8 @@ describe("SeoCrawlAutoRunService.tick", () => {
     findMany.mockReset();
     update.mockReset();
     startCrawlRun.mockReset();
+    warn.mockReset();
+    createAdmin.mockReset().mockResolvedValue({ graphql: async () => ({ json: async () => ({}) }) });
     update.mockResolvedValue({});
     startCrawlRun.mockResolvedValue({ started: true, taskId: "t1", snapshotId: "s1" });
   });
@@ -115,6 +124,25 @@ describe("SeoCrawlAutoRunService.tick", () => {
     const stats = await service.tick(now);
 
     expect(stats).toMatchObject({ started: 0, errored: 1 });
+    expect(update).toHaveBeenCalledWith({
+      where: { shop: "a.myshopify.com" },
+      data: { lastAutoCrawlAt: now },
+    });
+  });
+
+  it("skips a shop whose connection is blocked quietly (no warn, no crawl) and still stamps it", async () => {
+    findMany.mockResolvedValue([DUE_SHOP]);
+    createAdmin.mockRejectedValue(
+      new ShopConnectionBlockedError("a.myshopify.com", { state: "needs_reauth", since: null, reason: "admin_api_401" }),
+    );
+    const service = await loadService();
+
+    const now = new Date("2026-08-19T03:00:00Z");
+    const stats = await service.tick(now);
+
+    expect(stats).toMatchObject({ started: 0, skipped: 1, errored: 0 });
+    expect(startCrawlRun).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledWith({
       where: { shop: "a.myshopify.com" },
       data: { lastAutoCrawlAt: now },

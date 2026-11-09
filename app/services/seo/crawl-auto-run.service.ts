@@ -39,6 +39,7 @@
 
 import { db } from "../../db.server";
 import { createAdminClientFromShop } from "../../utils/admin-client.server";
+import { isShopConnectionBlockedError } from "../../utils/shop-connection-state.server";
 import { logger } from "../../utils/logger.server";
 import { canUseScheduledSeoCrawl } from "../../utils/planUtils";
 import type { Plan } from "../../config/plans";
@@ -168,6 +169,12 @@ export class SeoCrawlAutoRunService {
           stats.skipped++;
         }
       } catch (err) {
+        if (isShopConnectionBlockedError(err)) {
+          // Known dead access: skipped quietly, still stamped below.
+          stats.skipped++;
+          logger.debug(`[SeoCrawlAutoRun] ${settings.shop} skipped - connection blocked`);
+          continue;
+        }
         stats.errored++;
         logger.warn(`[SeoCrawlAutoRun] Crawl start failed for ${settings.shop}`, {
           error: err instanceof Error ? err.message : String(err),

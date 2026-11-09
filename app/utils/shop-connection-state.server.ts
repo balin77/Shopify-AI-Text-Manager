@@ -4,8 +4,12 @@
  * The columns live on ShopInstallState; the verdict shown to the owner is
  * derived by app/services/shop-connection-status.shared.ts.
  *
- * NOT WIRED INTO ANY CALLER YET (plan step 6). Nothing here changes behaviour
- * until a later step calls it.
+ * Blocks are SET at the evidence points of plan step 7 (through
+ * shop-connection-block.server.ts: the second 401 with the same token in both
+ * admin clients, an empty token, a terminal refresh failure, the migration's
+ * needs_reauth) and READ by createAdminClientFromShop. They are LIFTED so far
+ * only by a finished token migration; afterAuth, the uninstall webhook and the
+ * probe follow in later steps (plan 10, 12).
  *
  * Rules that are load-bearing:
  *  - `markConnectionBlocked` / `clearConnectionBlock` act ONLY on a state change

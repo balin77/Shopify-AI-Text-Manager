@@ -34,6 +34,7 @@
 
 import { db } from "../../db.server";
 import { createAdminClientFromShop } from "../../utils/admin-client.server";
+import { isShopConnectionBlockedError } from "../../utils/shop-connection-state.server";
 import { logger } from "../../utils/logger.server";
 import { meetsPlan } from "../../utils/planUtils";
 import type { Plan } from "../../config/plans";
@@ -242,6 +243,12 @@ export class TranslationDriftAutoRunService {
           });
         }
       } catch (err) {
+        if (isShopConnectionBlockedError(err)) {
+          // Known dead access (the BLOCKED line was logged once): skip quietly.
+          // Still stamped below, so the shop is looked at again in a day.
+          logger.debug(`[TranslationDrift] ${settings.shop} skipped - connection blocked`);
+          continue;
+        }
         stats.errored++;
         logger.warn(`[TranslationDrift] Sweep failed for ${settings.shop}`, {
           error: err instanceof Error ? err.message : String(err),
