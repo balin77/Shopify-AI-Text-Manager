@@ -31,6 +31,7 @@ const h = vi.hoisted(() => {
     syncAll: vi.fn(),
     reconcile: vi.fn().mockResolvedValue(undefined),
     catchUp: vi.fn().mockResolvedValue('done'),
+    inFlight: false,
     order: [] as string[],
     migrate: vi.fn().mockResolvedValue('disabled'),
     mayNeed: vi.fn().mockReturnValue(true),
@@ -58,6 +59,7 @@ vi.mock('~/services/background-sync.service', () => ({
 }));
 vi.mock('~/services/webhook-catchup.server', () => ({
   runWebhookCatchUp: (...a: unknown[]) => h.catchUp(...a),
+  isCatchUpInFlight: () => h.inFlight,
 }));
 vi.mock('~/services/webhook-reconcile.service', () => ({
   reconcileWebhookBackedTypes: (...a: unknown[]) => h.reconcile(...a),
@@ -127,6 +129,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   h.order.length = 0;
   h.catchUp.mockResolvedValue('done');
+  h.inFlight = false;
   // Reset the singleton's private scheduling state between tests.
   sched.activeTimers.clear();
   sched.runningSyncs = 0;
@@ -141,6 +144,17 @@ beforeEach(async () => {
   h.syncAll.mockImplementation(
     () => new Promise((res) => { h.resolveSync = res as typeof h.resolveSync; }),
   );
+});
+
+describe('runSyncCycle — catch-up in flight elsewhere', () => {
+  it('does not run syncAll for a shop while a catch-up of that shop is running', async () => {
+    const entry = makeEntry();
+    sched.activeTimers.set(shop, entry);
+    h.inFlight = true;
+    await sched.runSyncCycle(shop, admin);
+    expect(h.syncAll).not.toHaveBeenCalled();
+    expect(entry.isRunning).toBe(false);
+  });
 });
 
 describe('runSyncCycle — R4 concurrency-guard identity check', () => {

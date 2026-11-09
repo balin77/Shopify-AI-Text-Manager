@@ -11,7 +11,7 @@
  *  - `ip_allowlist`: the text itself names the IP / allowlist. The production
  *    app enforces Shopify's Admin API IP allowlist (CLAUDE.md "Deploy-critical
  *    gotchas"); if our outbound address changes, EVERY shop gets this.
- *  - `ip_allowlist_suspected`: no such text, but several distinct shops got a
+ *  - `ip_allowlist_suspected`: no such text, but several (3) distinct shops got a
  *    403 within the window and no OTHER shop (one that did not 403 itself)
  *    succeeded in it. Shopify's answer to a blocked address is not always
  *    worded; "everybody fails at once" is the signal. With ONE active shop this
@@ -46,7 +46,7 @@ const IP_ALLOWLIST_TEXT = /\bIP\b|allow-?list/i;
 
 export const FORBIDDEN_WINDOW_MS = 10 * 60 * 1000;
 /** Distinct shops with a 403 inside the window before "everybody fails" is suspected. */
-export const FORBIDDEN_SUSPECT_SHOPS = 2;
+export const FORBIDDEN_SUSPECT_SHOPS = 3;
 export const IP_ALLOWLIST_PAUSE_MS = 30 * 60 * 1000;
 export const IP_ALLOWLIST_LOG_INTERVAL_MS = 5 * 60 * 1000;
 export const IP_ALLOWLIST_ALERT_INTERVAL_MS = 60 * 60 * 1000;
@@ -126,15 +126,23 @@ function suspectsAllowlist(now: number): boolean {
 
 /**
  * Classify a 403 for `shop`, or `null` when `error` is not a 403 at all. Every
- * non-deadline 403 is remembered for the "several shops" signal. Never throws.
+ * non-deadline 403 is remembered for the "several shops" signal (unless
+ * `opts.record === false`). Never throws.
  */
-export async function classifyForbidden(shop: string, error: unknown): Promise<ForbiddenKind | null> {
+export async function classifyForbidden(
+  shop: string,
+  error: unknown,
+  opts: { record?: boolean } = {},
+): Promise<ForbiddenKind | null> {
   try {
     if (!isForbiddenByShape(error)) return null;
     const text = await forbiddenText(error);
     if (NON_EXPIRING_REJECTED.test(text)) return "non_expiring_rejected";
     const now = Date.now();
-    recentForbidden.set(shop, now);
+    // The probe of an ALREADY-BLOCKED shop passes record:false: a shop that is
+    // dead for its own reasons answers 403 to everything and says nothing about
+    // our address. It is still classified against what the others show.
+    if (opts.record !== false) recentForbidden.set(shop, now);
     if (IP_ALLOWLIST_TEXT.test(text)) return "ip_allowlist";
     return suspectsAllowlist(now) ? "ip_allowlist_suspected" : "shop_specific";
   } catch {

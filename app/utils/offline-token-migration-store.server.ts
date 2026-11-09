@@ -89,7 +89,10 @@ export const KIND_FINAL_AFTER_MS = 24 * 60 * 60 * 1000;
 export const KIND_FINAL_MIN_RUNS = 3;
 
 /** Does the record fail with a kind that gets one attempt per run (a 404 or a shop-specific 403)? */
-export function hasSingleAttemptKind(record: Pick<MigrationRecord, "failureKind">): boolean {
+export function hasSingleAttemptKind(record: Pick<MigrationRecord, "failureKind" | "status">): boolean {
+  // Only a record still in the migration's own states: a needs_reauth row is a
+  // different verdict whatever kind it once carried.
+  if (record.status !== "pending" && record.status !== "failed") return false;
   return record.failureKind === "forbidden" || record.failureKind === "not_found";
 }
 
@@ -371,6 +374,9 @@ export async function markMigrationNeedsReauth(shop: string, message: string, at
       encryptedOldToken: null,
       lastError: clip(message),
       attempts: { increment: attemptsMade },
+      // A permanent refusal supersedes whatever kind the record carried.
+      failureKind: null,
+      failureKindSince: null,
     },
   });
 }
@@ -392,7 +398,7 @@ export async function deleteMigrationRecord(shop: string): Promise<void> {
  * token in the session anyway. Returns whether one was removed.
  */
 export async function deleteSingleAttemptKindRecord(shop: string): Promise<boolean> {
-  const res = await (await table()).deleteMany({ where: { shop, failureKind: { in: ["forbidden", "not_found"] } } });
+  const res = await (await table()).deleteMany({ where: { shop, status: { in: ["pending", "failed"] }, failureKind: { in: ["forbidden", "not_found"] } } });
   return res.count > 0;
 }
 

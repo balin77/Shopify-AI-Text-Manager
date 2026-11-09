@@ -81,31 +81,44 @@ describe("classifyForbidden", () => {
     expect(await classifyForbidden("a.myshopify.com", forbidden())).toBe("shop_specific");
   });
 
-  it("several shops with a 403 and no success elsewhere: ip_allowlist_suspected", async () => {
+  it("three shops with a 403 and no success elsewhere: ip_allowlist_suspected (two are not enough)", async () => {
     expect(await classifyForbidden("a.myshopify.com", forbidden())).toBe("shop_specific");
-    expect(await classifyForbidden("b.myshopify.com", forbidden())).toBe("ip_allowlist_suspected");
+    expect(await classifyForbidden("b.myshopify.com", forbidden())).toBe("shop_specific");
+    expect(await classifyForbidden("c.myshopify.com", forbidden())).toBe("ip_allowlist_suspected");
     expect(await classifyForbidden("a.myshopify.com", forbidden())).toBe("ip_allowlist_suspected");
   });
 
   it("another shop that succeeded inside the window makes it shop_specific", async () => {
-    noteApiSuccess("c.myshopify.com");
+    noteApiSuccess("d.myshopify.com");
     await classifyForbidden("a.myshopify.com", forbidden());
-    expect(await classifyForbidden("b.myshopify.com", forbidden())).toBe("shop_specific");
+    await classifyForbidden("b.myshopify.com", forbidden());
+    expect(await classifyForbidden("c.myshopify.com", forbidden())).toBe("shop_specific");
   });
 
   it("a success of a shop that itself got a 403 proves nothing", async () => {
     noteApiSuccess("a.myshopify.com");
     await classifyForbidden("a.myshopify.com", forbidden());
-    expect(await classifyForbidden("b.myshopify.com", forbidden())).toBe("ip_allowlist_suspected");
+    await classifyForbidden("b.myshopify.com", forbidden());
+    expect(await classifyForbidden("c.myshopify.com", forbidden())).toBe("ip_allowlist_suspected");
   });
 
   it("a success older than the window, or a 403 older than the window, does not count", async () => {
-    noteApiSuccess("c.myshopify.com");
+    noteApiSuccess("d.myshopify.com");
     await classifyForbidden("a.myshopify.com", forbidden());
     vi.advanceTimersByTime(FORBIDDEN_WINDOW_MS + MIN);
-    // the old success is gone: b and the (renewed) a suspect it
     expect(await classifyForbidden("a.myshopify.com", forbidden())).toBe("shop_specific"); // a's earlier 403 aged out
-    expect(await classifyForbidden("b.myshopify.com", forbidden())).toBe("ip_allowlist_suspected");
+    expect(await classifyForbidden("b.myshopify.com", forbidden())).toBe("shop_specific");
+    // the old success is gone: the third failing shop suspects it
+    expect(await classifyForbidden("c.myshopify.com", forbidden())).toBe("ip_allowlist_suspected");
+  });
+
+  it("403s of shops that are ALREADY blocked (record:false, the probe) never feed the suspicion", async () => {
+    for (const s of ["a", "b", "c", "d", "e"]) {
+      expect(await classifyForbidden(`${s}.myshopify.com`, forbidden(), { record: false })).toBe("shop_specific");
+    }
+    // and they are not counted for a live shop either
+    await classifyForbidden("x.myshopify.com", forbidden());
+    expect(await classifyForbidden("y.myshopify.com", forbidden())).toBe("shop_specific");
   });
 });
 

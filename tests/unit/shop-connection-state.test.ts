@@ -116,6 +116,15 @@ describe("markConnectionBlocked / clearConnectionBlock", () => {
     expect((await markConnectionBlocked(SHOP, "needs_reauth", "x", { observedAt: started })).changed).toBe(false);
   });
 
+  it("a clear bounded by sinceAtOrBefore lifts only a block that stood when the probe began", async () => {
+    const probeStart = new Date(Date.now() - 1_000);
+    await markConnectionBlocked(SHOP, "needs_reauth", "admin_api_401", { observedAt: new Date() }); // set AFTER the probe began
+    expect((await clearConnectionBlock(SHOP, "probe_ok", { sinceAtOrBefore: probeStart })).cleared).toBe(false);
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+    expect((await clearConnectionBlock(SHOP, "probe_ok", { sinceAtOrBefore: new Date(Date.now() + 1_000) })).cleared).toBe(true);
+    expect(store.get(SHOP)!.connectionState).toBeNull();
+  });
+
   it("clear lifts the block, keeps the resync debt, and logs one UNBLOCKED line with the count", async () => {
     await markConnectionBlocked(SHOP, "needs_reauth", "admin_api_401", { observedAt: new Date() });
     await noteDroppedWebhook(SHOP);

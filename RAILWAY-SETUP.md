@@ -321,13 +321,18 @@ anderes Token, bricht der Lauf ab und überschreibt/erzeugt nichts. Damit gilt:
 **404 und 403 des Token-Endpunkts.** Ein 404 (Shop weg) und ein Shop-spezifischer 403
 bekommen **einen** Versuch pro Lauf (`failureKind` = `not_found` / `forbidden` auf der
 Zeile), Neuversuch etwa alle 4 Stunden. Endgültig ist der Shop, wenn **dieselbe**
-Fehlerart seit mindestens 24 Stunden und über mindestens 3 Läufe anhält: einmal
+Fehlerart seit mindestens 24 Stunden und über mindestens 3 Läufe anhält **und** eine
+direkte Probe `{ shop { id } }` mit dem gespeicherten Zugang ebenfalls scheitert (antwortet
+der Shop, bleibt die Zeile wiederholbar) **und** in den letzten 24 Stunden kein Massenfall
+auftrat (drei Shops mit derselben Fehlerart innerhalb von 30 Minuten: Logzeile
+`TOKEN_ENDPOINT_MASS`, Meldung an Discord höchstens einmal pro Stunde, alle Migrationen
+und die Probe pausieren 2 Stunden, kein Versuch wird gezählt): einmal
 Logzeile `MIGRATION_GAVE_UP`, die Zeile gilt als aufgegeben (alter Token gelöscht),
 und der Shop bekommt die Sperre `shop_not_found` beziehungsweise `access_denied`
 (eindeutiger Beleg, nicht hinter `SHOP_BLOCK_ON_ADMIN_401`; eine neue Anmeldung hebt
 sie auf). Wechselt die Fehlerart, beginnen beide Uhren neu. Ein 403, der nach der IP-Liste
-aussieht (der Text nennt sie, oder mehrere Shops bekommen gleichzeitig 403 und kein
-anderer Shop hatte Erfolg), zählt **keinen** Versuch und setzt nur eine globale Pause von
+aussieht (der Text nennt sie, oder mindestens drei Shops bekommen gleichzeitig 403 und kein
+anderer Shop hatte Erfolg; 403 von Proben bereits gesperrter Shops zählen dafür nicht), zählt **keinen** Versuch und setzt nur eine globale Pause von
 30 Minuten für Migration und Probe. Ein 403 sperrt nie einen Shop und leert nie einen
 Zugang. Die Logzeile `[ShopifyIP] IP_ALLOWLIST_403` (höchstens alle 5 Minuten) verweist
 auf den Hinweis zur IP-Liste in CLAUDE.md; dazu kommt höchstens einmal pro Stunde eine

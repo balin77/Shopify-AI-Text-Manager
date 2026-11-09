@@ -45,11 +45,13 @@ import {
   configureOfflineAdmin,
   createRefreshingAdmin,
   maybeMigrateToExpiringToken,
+  isMigrationConfigHeld,
   migrationMayBeNeeded,
+  TOKEN_ENDPOINT_HOLD_MS,
   type OfflineAdminDeps,
 } from "~/utils/offline-admin.server";
 import { fingerprintToken, KIND_FINAL_AFTER_MS, KIND_RETRY_INTERVAL_MS, MIGRATION_MAX_ATTEMPTS } from "~/utils/offline-token-migration-store.server";
-import { IP_ALLOWLIST_PAUSE_MS, __resetForbiddenForTests, isIpAllowlistPaused } from "~/utils/shopify-forbidden.server";
+import { IP_ALLOWLIST_PAUSE_MS, __resetForbiddenForTests, isIpAllowlistPaused, noteApiSuccess } from "~/utils/shopify-forbidden.server";
 
 const SHOP = "test-shop.myshopify.com";
 const OTHER = "other-shop.myshopify.com";
@@ -237,21 +239,132 @@ describe("a 403 that looks like the IP allowlist", () => {
     expect(migrationMayBeNeeded(SHOP)).toBe(true);
   });
 
-  it("two shops with a plain 403 and no success: the second one only pauses (suspected)", async () => {
+  it("three shops with a plain 403 and no success: the third only pauses (suspected)", async () => {
     configureOfflineAdmin(deps(reject(403)));
     expect(await run(0)).toBe("failed"); // the first one looks shop-specific
     expect(record()).toMatchObject({ attempts: 1, failureKind: "forbidden" });
-    h.migrations.push({
-      shop: OTHER, encryptedOldToken: null, status: "pending", attempts: 0, startedAt: new Date(), updatedAt: new Date(), completedAt: null, lastError: null,
-    });
-    configureOfflineAdmin({
+    for (const other of [OTHER, "third-shop.myshopify.com"]) {
+      h.migrations.push({
+        shop: other, encryptedOldToken: null, status: "pending", attempts: 0, startedAt: new Date(), updatedAt: new Date(), completedAt: null, lastError: null,
+      });
+    }
+    const forShop = (shop: string) => ({
       ...deps(reject(403)),
-      loadOfflineSession: vi.fn(async () => new Session({ id: `offline_${OTHER}`, shop: OTHER, state: "", isOnline: false, accessToken: "legacy-2" })),
+      loadOfflineSession: vi.fn(async () => new Session({ id: `offline_${shop}`, shop, state: "", isOnline: false, accessToken: "legacy-2" })),
     });
-    expect(await maybeMigrateToExpiringToken(OTHER)).toBe("backoff");
-    expect(record(OTHER)).toMatchObject({ attempts: 0, status: "pending" });
+    configureOfflineAdmin(forShop(OTHER));
+    expect(await maybeMigrateToExpiringToken(OTHER)).toBe("failed"); // 2 shops: still shop-specific
+    configureOfflineAdmin(forShop("third-shop.myshopify.com"));
+    expect(await maybeMigrateToExpiringToken("third-shop.myshopify.com")).toBe("backoff");
+    expect(record("third-shop.myshopify.com")).toMatchObject({ attempts: 0, status: "pending" });
     expect(isIpAllowlistPaused()).toBe(true);
     expect(h.block).not.toHaveBeenCalled();
+  });
+});
+
+describe.each([
+  { code: 404, kind: "not_found" },
+  { code: 403, kind: "forbidden" },
+])("a mass $code from the token endpoint (our deploy, not merchants)", ({ code, kind }) => {
+  const shops = ["m1.myshopify.com", "m2.myshopify.com", "m3.myshopify.com"];
+  const forShop = (shop: string, exchange = reject(code), over: Partial<OfflineAdminDeps> = {}) => ({
+    ...deps(exchange),
+    loadOfflineSession: vi.fn(async () => new Session({ id: `offline_${shop}`, shop, state: "", isOnline: false, accessToken: "legacy" })),
+    ...over,
+  });
+  const runShop = async (shop: string, afterMs = 0) => {
+    await vi.advanceTimersByTimeAsync(afterMs);
+    configureOfflineAdmin(forShop(shop));
+    const p = maybeMigrateToExpiringToken(shop);
+    await vi.advanceTimersByTimeAsync(60_000);
+    return p;
+  };
+
+  it("the third shop trips a global hold: no attempt counted for it, one loud line, an ops alert, migrations pause", async () => {
+    noteApiSuccess("fine.myshopify.com"); // so a 403 stays shop-specific and the kind guard is what trips
+    const alerts = vi.spyOn(await import("~/services/ops-alert.server"), "notifyOps").mockImplementation(() => undefined);
+    for (const s of shops) h.migrations.push({ shop: s, status: "pending", attempts: 0, startedAt: new Date(), updatedAt: new Date(), encryptedOldToken: null });
+    expect(await runShop(shops[0])).toBe("failed");
+    expect(await runShop(shops[1])).toBe("failed");
+    expect(await runShop(shops[2])).toBe("backoff");
+    expect(h.migrations.find((m) => m.shop === shops[2])).toMatchObject({ attempts: 0, status: "pending" });
+    expect(vi.mocked(logger.error).mock.calls.filter((c) => String(c[0]).includes("TOKEN_ENDPOINT_MASS"))).toHaveLength(1);
+    expect(alerts).toHaveBeenCalledTimes(1);
+    expect(isMigrationConfigHeld()).toBe(true);
+    expect(migrationMayBeNeeded(shops[0])).toBe(false);
+    expect(await runShop(shops[0])).toBe("backoff");
+    alerts.mockRestore();
+  });
+
+  it("nothing becomes final by kind for 24 h after a mass event, however long the shop was counted", async () => {
+    noteApiSuccess("fine.myshopify.com"); // so a 403 stays shop-specific and the kind guard is what trips
+    h.migrations.push({
+      shop: SHOP, status: "failed", attempts: 5, failureKind: kind, tokenFingerprint: fingerprintToken("legacy-token"),
+      failureKindSince: new Date(Date.now() - 3 * KIND_FINAL_AFTER_MS), startedAt: new Date(), updatedAt: new Date(0), encryptedOldToken: encryptToken("legacy-token"),
+    });
+    for (const s of shops) await runShop(s); // the third trips the guard
+    expect(isMigrationConfigHeld()).toBe(true);
+    // after the hold the old record runs again; by its clocks it is final -- but a mass was seen
+    await vi.advanceTimersByTimeAsync(TOKEN_ENDPOINT_HOLD_MS + 1000);
+    noteApiSuccess("fine.myshopify.com");
+    configureOfflineAdmin(deps(reject(code)));
+    const p = maybeMigrateToExpiringToken(SHOP);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await p).toBe("failed");
+    expect(record().attempts).toBeLessThan(MIGRATION_MAX_ATTEMPTS);
+    expect(h.block).not.toHaveBeenCalled();
+  });
+});
+
+describe("final by kind needs a failing direct probe too", () => {
+  it("a shop that answers { shop { id } } with its stored token is NOT finalised nor blocked, and stays retriable", async () => {
+    h.migrations.push({
+      shop: SHOP, status: "failed", attempts: 5, failureKind: "not_found", tokenFingerprint: fingerprintToken("legacy-token"),
+      failureKindSince: new Date(Date.now() - 3 * KIND_FINAL_AFTER_MS), startedAt: new Date(), updatedAt: new Date(0), encryptedOldToken: encryptToken("legacy-token"),
+    });
+    const graphql = vi.fn(async () => ({ json: async () => ({ data: { shop: { id: "gid://shopify/Shop/1" } } }) }));
+    configureOfflineAdmin(
+      deps(reject(404), { unauthenticatedAdmin: vi.fn(async () => ({ session: session("legacy-token"), admin: { graphql } as never })) }),
+    );
+    expect(await run(0)).toBe("failed");
+    expect(graphql).toHaveBeenCalledTimes(1);
+    expect(record()).toMatchObject({ status: "failed", failureKind: "not_found" });
+    expect(record().attempts).toBeLessThan(MIGRATION_MAX_ATTEMPTS);
+    expect(h.block).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.error).mock.calls.some((c) => String(c[0]).includes("MIGRATION_GAVE_UP"))).toBe(false);
+  });
+
+  it("a shop whose probe fails IS finalised and blocked", async () => {
+    h.migrations.push({
+      shop: SHOP, status: "failed", attempts: 5, failureKind: "not_found", tokenFingerprint: fingerprintToken("legacy-token"),
+      failureKindSince: new Date(Date.now() - 3 * KIND_FINAL_AFTER_MS), startedAt: new Date(), updatedAt: new Date(0), encryptedOldToken: encryptToken("legacy-token"),
+    });
+    const graphql = vi.fn(async () => { throw Object.assign(new Error("gone"), { response: { code: 404 } }); });
+    configureOfflineAdmin(
+      deps(reject(404), { unauthenticatedAdmin: vi.fn(async () => ({ session: session("legacy-token"), admin: { graphql } as never })) }),
+    );
+    await run(0);
+    expect(h.block).toHaveBeenCalledTimes(1);
+    expect(h.block.mock.calls[0][2]).toMatchObject({ state: "shop_not_found" });
+  });
+});
+
+describe("a needs_reauth refusal supersedes a stale kind", () => {
+  it("markMigrationNeedsReauth resets failureKind / failureKindSince, and a needs_reauth row is not a single-attempt kind", async () => {
+    h.migrations.push({ shop: SHOP, status: "failed", attempts: 2, failureKind: "forbidden", failureKindSince: new Date(), encryptedOldToken: null });
+    const { markMigrationNeedsReauth, hasSingleAttemptKind } = await import("~/utils/offline-token-migration-store.server");
+    expect(hasSingleAttemptKind(record() as never)).toBe(true);
+    await markMigrationNeedsReauth(SHOP, "refused", 1);
+    expect(record()).toMatchObject({ status: "needs_reauth", failureKind: null, failureKindSince: null });
+    expect(hasSingleAttemptKind({ status: "needs_reauth", failureKind: "forbidden" })).toBe(false);
+    expect(hasSingleAttemptKind({ status: "failed", failureKind: null })).toBe(false);
+  });
+
+  it("the probe's cleanup (deleteSingleAttemptKindRecord) only touches pending / failed rows", async () => {
+    h.migrations.push({ shop: SHOP, status: "needs_reauth", failureKind: "not_found", encryptedOldToken: null });
+    const { deleteSingleAttemptKindRecord } = await import("~/utils/offline-token-migration-store.server");
+    expect(await deleteSingleAttemptKindRecord(SHOP)).toBe(false);
+    expect(h.migrations).toHaveLength(1);
   });
 });
 
@@ -268,7 +381,7 @@ describe("a 403 never blocks or empties anything", () => {
     expect(h.block).not.toHaveBeenCalled();
   });
 
-  it("healIfMigrationCannotRun never re-arms nor blanks a record given up by kind", async () => {
+  it("healIfMigrationCannotRun never re-arms a record given up by kind, but still blanks its dead token after the deadline 403", async () => {
     h.migrations.push({
       shop: SHOP, encryptedOldToken: null, tokenFingerprint: fingerprintToken("legacy-token"), status: "failed",
       attempts: MIGRATION_MAX_ATTEMPTS, failureKind: "not_found", failureKindSince: new Date(Date.now() - 3 * KIND_FINAL_AFTER_MS),
@@ -282,7 +395,23 @@ describe("a 403 never blocks or empties anything", () => {
     await expect((createRefreshingAdmin(SHOP).graphql as any)("q")).rejects.toBe(deadline);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(record().attempts).toBe(MIGRATION_MAX_ATTEMPTS); // not re-armed
-    expect(d.storeSession).not.toHaveBeenCalled(); // not blanked
-    expect(d.migrateToExpiringToken).not.toHaveBeenCalled();
+    expect(d.migrateToExpiringToken).not.toHaveBeenCalled(); // no extra run
+    expect(d.storeSession).toHaveBeenCalledTimes(1); // the dead token IS blanked ...
+    expect((d.storeSession as any).mock.calls[0][0].accessToken).toBeUndefined(); // ... so the next visit token-exchanges
+  });
+
+  it("a non-final (still retrying) kind record is neither re-armed nor blanked", async () => {
+    h.migrations.push({
+      shop: SHOP, encryptedOldToken: null, tokenFingerprint: fingerprintToken("legacy-token"), status: "failed",
+      attempts: 2, failureKind: "forbidden", failureKindSince: new Date(), startedAt: new Date(), updatedAt: new Date(), completedAt: null, lastError: "x",
+    });
+    const deadline = Object.assign(new Error("Non-expiring access tokens are no longer accepted for the Admin API."), { response: { code: 403 } });
+    const d = deps(reject(500), {
+      unauthenticatedAdmin: vi.fn(async () => ({ session: session("legacy-token"), admin: { graphql: vi.fn(async () => { throw deadline; }) } as never })),
+    });
+    configureOfflineAdmin(d);
+    await expect((createRefreshingAdmin(SHOP).graphql as any)("q")).rejects.toBe(deadline);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(d.storeSession).not.toHaveBeenCalled();
   });
 });

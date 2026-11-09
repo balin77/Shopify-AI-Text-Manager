@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   active: new Set<string>(),
   catchUp: vi.fn(async (..._a: any[]) => "done"),
   createClient: vi.fn(async (_s: string) => ({ graphql: vi.fn() })),
+  reportDeadline: vi.fn(),
 }));
 
 vi.mock("~/utils/logger.server", () => ({
@@ -34,7 +35,12 @@ vi.mock("~/db.server", async () => {
 });
 vi.mock("~/utils/offline-admin.server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/utils/offline-admin.server")>();
-  return { ...actual, getOfflineAdmin: (s: string) => h.getAdmin(s), isMigrationConfigHeld: () => h.configHeld };
+  return {
+    ...actual,
+    getOfflineAdmin: (s: string) => h.getAdmin(s),
+    isMigrationConfigHeld: () => h.configHeld,
+    reportNonExpiringTokenRejection: (...a: any[]) => h.reportDeadline(...a),
+  };
 });
 vi.mock("~/utils/shop-connection-block.server", () => ({ blockShopConnection: (...a: any[]) => h.block(...a) }));
 vi.mock("~/utils/shop-connection-state.server", () => ({
@@ -93,7 +99,8 @@ beforeEach(() => {
     if (row) Object.assign(row, { connectionState: "needs_reauth", connectionStateReason: reason });
     return { state: "needs_reauth" };
   });
-  h.clear.mockClear();
+  h.clear.mockReset().mockResolvedValue({ cleared: true });
+  h.reportDeadline.mockClear();
   h.getBlock.mockReset().mockResolvedValue(null);
   h.configHeld = false;
   h.active.clear();
@@ -115,7 +122,7 @@ describe("probe of blocked shops", () => {
     const stats = await sweep().tick(NOW, { pauseMs: 0 });
     expect(stats.probed).toBe(1);
     expect(stats.probeLifted).toBe(1);
-    expect(h.clear).toHaveBeenCalledWith("a.myshopify.com", "probe_ok");
+    expect(h.clear).toHaveBeenCalledWith("a.myshopify.com", "probe_ok", { sinceAtOrBefore: NOW });
     expect(installOf("a.myshopify.com").lastProbeAt).toBeInstanceOf(Date);
     expect(installOf("a.myshopify.com").lastApiOkAt).toBeInstanceOf(Date);
   });
@@ -206,10 +213,39 @@ describe("probe of blocked shops", () => {
     expect(installOf("empty.myshopify.com").lastProbeAt).toBeInstanceOf(Date);
   });
 
-  it("a block set after the probe began is not lifted", async () => {
+  it("a block set after the probe began is not lifted (the lift is conditional in the database)", async () => {
     blockedShop("a.myshopify.com");
-    h.getBlock.mockResolvedValue({ state: "needs_reauth", since: new Date(NOW.getTime() + 60_000), reason: "no_token" });
+    h.migrations.push({ shop: "a.myshopify.com", status: "failed", failureKind: "not_found", attempts: 3 });
+    h.clear.mockResolvedValueOnce({ cleared: false });
+    const stats = await sweep().tick(NOW, { pauseMs: 0 });
+    expect(stats.probeLifted).toBe(0);
+    expect(h.clear.mock.calls[0][2]).toEqual({ sinceAtOrBefore: NOW });
+    expect(h.migrations).toHaveLength(1); // nothing was proven about the old verdict
+    expect(installOf("a.myshopify.com").lastProbeAt).toBeInstanceOf(Date);
+  });
+
+  it("a probe that throws unexpectedly still stamps lastProbeAt (no hot loop on the same shop)", async () => {
+    blockedShop("a.myshopify.com");
+    h.clear.mockRejectedValueOnce(new Error("db"));
     await sweep().tick(NOW, { pauseMs: 0 });
+    expect(installOf("a.myshopify.com").lastProbeAt).toBeInstanceOf(Date);
+  });
+
+  it("a probe 403 of a blocked shop does not feed the allowlist suspicion (three blocked shops, no pause)", async () => {
+    for (const s of ["a", "b", "c", "d"]) blockedShop(`${s}.myshopify.com`);
+    h.getAdmin.mockResolvedValue({ admin: { graphql: vi.fn(async () => { throw status(403, "Forbidden"); }) } });
+    const stats = await sweep().tick(NOW, { pauseMs: 0 });
+    expect(stats.probed).toBe(4);
+    expect(isIpAllowlistPaused()).toBe(false);
+  });
+
+  it("a deadline 403 seen by the probe starts the migration handling like anywhere else", async () => {
+    blockedShop("a.myshopify.com");
+    h.getAdmin.mockResolvedValue({
+      admin: { graphql: vi.fn(async () => { throw status(403, "Non-expiring access tokens are no longer accepted for the Admin API."); }) },
+    });
+    await sweep().tick(NOW, { pauseMs: 0 });
+    expect(h.reportDeadline).toHaveBeenCalledWith("a.myshopify.com");
     expect(h.clear).not.toHaveBeenCalled();
   });
 
@@ -336,6 +372,38 @@ describe("backfill", () => {
   });
 });
 
+describe("backfill (hardening)", () => {
+  beforeEach(() => {
+    delete process.env.SHOP_CONNECTION_BACKFILL_DISABLED;
+  });
+
+  it("does not re-block a shop whose block was lifted AFTER the evidence was written", async () => {
+    shopRow("proven.myshopify.com", { connectionClearedAt: new Date(NOW.getTime() + 0) });
+    sessionRow("proven.myshopify.com", { accessToken: "" });
+    shopRow("old-clear.myshopify.com", { connectionClearedAt: new Date(NOW.getTime() - 10 * HOUR) });
+    sessionRow("old-clear.myshopify.com", { accessToken: "" });
+    h.migrations.push(
+      { shop: "proven.myshopify.com", status: "needs_reauth", tokenFingerprint: null, updatedAt: new Date(NOW.getTime() - HOUR) },
+      { shop: "old-clear.myshopify.com", status: "needs_reauth", tokenFingerprint: null, updatedAt: new Date(NOW.getTime() - HOUR) },
+    );
+    await sweep().tick(NOW, { pauseMs: 0 });
+    // proven: cleared after the record changed. old-clear: cleared BEFORE the record was written, so the record is newer evidence.
+    expect(h.block.mock.calls.filter((c) => c[1] === "backfill_migration_needs_reauth").map((c) => c[0])).toEqual(["old-clear.myshopify.com"]);
+    // a blank session of a once-cleared shop is left to the live detection
+    expect(h.block.mock.calls.filter((c) => c[1] === "backfill_no_token")).toHaveLength(0);
+  });
+
+  it("pages past 500 rows instead of silently stopping", async () => {
+    for (let i = 0; i < 620; i++) {
+      const shop = `p${String(i).padStart(4, "0")}.myshopify.com`;
+      shopRow(shop);
+      sessionRow(shop, { accessToken: "" });
+    }
+    const stats = await sweep().tick(NOW, { pauseMs: 0 });
+    expect(stats.backfilledNoToken).toBe(620);
+  });
+});
+
 describe("catch-up", () => {
   const owing = (shop: string, over: Record<string, any> = {}) =>
     shopRow(shop, { resyncRequiredSince: new Date(NOW.getTime() - HOUR), droppedWebhookCount: 3, initialSyncCompletedAt: new Date(NOW.getTime() - 99 * HOUR), ...over });
@@ -362,6 +430,31 @@ describe("catch-up", () => {
     for (let i = 0; i < 6; i++) owing(`s${i}.myshopify.com`);
     const stats = await sweep().tick(NOW, { pauseMs: 0 });
     expect(stats.catchUpRun).toBe(CATCHUP_BATCH);
+  });
+
+  it("only runs that really worked count toward the limit; busy / paused / throwing shops are skipped over", async () => {
+    for (let i = 0; i < 6; i++) owing(`s${i}.myshopify.com`);
+    const outcomes: Record<string, string | Error> = {
+      "s0.myshopify.com": "busy", "s1.myshopify.com": "paused", "s2.myshopify.com": new Error("boom"),
+      "s3.myshopify.com": "done", "s4.myshopify.com": "incomplete", "s5.myshopify.com": "done",
+    };
+    h.catchUp.mockImplementation(async (shop: string) => {
+      const o = outcomes[shop];
+      if (o instanceof Error) throw o;
+      return o;
+    });
+    const stats = await sweep().tick(NOW, { pauseMs: 0 });
+    expect(stats.catchUpRun).toBe(CATCHUP_BATCH);
+    expect(h.catchUp.mock.calls.map((c) => c[0])).toEqual(["s0", "s1", "s2", "s3", "s4"].map((s) => `${s}.myshopify.com`));
+  });
+
+  it("rotates: a shop tried a moment ago does not sit at the front and starve the others", async () => {
+    for (let i = 0; i < 3; i++) owing(`s${i}.myshopify.com`);
+    h.catchUp.mockImplementation(async (shop: string) => (shop === "s0.myshopify.com" ? "paused" : "done"));
+    await sweep().tick(NOW, { pauseMs: 0 });
+    h.catchUp.mockClear();
+    await sweep().tick(NOW, { pauseMs: 0 });
+    expect(h.catchUp.mock.calls.map((c) => c[0])).not.toContain("s0.myshopify.com");
   });
 
   it("a probe that lifts a block hands the shop to the catch-up on the NEXT tick, not the same one", async () => {

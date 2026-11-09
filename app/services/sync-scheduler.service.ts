@@ -273,6 +273,14 @@ class SyncSchedulerService {
           return;
         }
 
+        // A catch-up of this shop started elsewhere (the connection sweep) is
+        // still reading and writing the same caches: no syncAll beside it.
+        const { isCatchUpInFlight } = await import("./webhook-catchup.server");
+        if (isCatchUpInFlight(shop)) {
+          logger.debug(`[SyncScheduler] Catch-up in flight for ${shop} - incremental sync deferred to the next cycle`);
+          return;
+        }
+
         await this.acquireSyncSlot();
         try {
           logger.debug(`[SyncScheduler] Running incremental sync for ${shop} (slots ${this.runningSyncs}/${this.SYNC_MAX_CONCURRENCY})`);

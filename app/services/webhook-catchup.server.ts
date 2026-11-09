@@ -42,6 +42,11 @@ const lastIncompleteAt = new Map<string, number>();
 const incompleteCount = new Map<string, number>();
 const itemOnlyCount = new Map<string, number>();
 
+/** Is a catch-up of `shop` running right now? The scheduler does not run syncAll beside it. */
+export function isCatchUpInFlight(shop: string): boolean {
+  return inFlight.has(shop);
+}
+
 /** Test seam. */
 export function __resetCatchUpForTests(): void {
   inFlight.clear();

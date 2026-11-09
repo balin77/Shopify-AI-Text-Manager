@@ -34,6 +34,7 @@ vi.mock("~/utils/logger.server", () => ({
 import {
   __resetCatchUpForTests,
   clearResyncIfUnchanged,
+  isCatchUpInFlight,
   runWebhookCatchUp,
 } from "../../app/services/webhook-catchup.server";
 
@@ -95,9 +96,12 @@ describe("runWebhookCatchUp", () => {
     h.reconcile.mockImplementation(() => new Promise((r) => { release = r; }));
     const first = runWebhookCatchUp(SHOP, {} as never);
     for (let i = 0; i < 50 && h.reconcile.mock.calls.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(isCatchUpInFlight(SHOP)).toBe(true); // the scheduler runs no syncAll beside it
+    expect(isCatchUpInFlight("other.myshopify.com")).toBe(false);
     expect(await runWebhookCatchUp(SHOP, {} as never)).toBe("busy");
     release(allOk);
     expect(await first).toBe("done");
+    expect(isCatchUpInFlight(SHOP)).toBe(false);
     expect(h.reconcile).toHaveBeenCalledTimes(1);
   });
 

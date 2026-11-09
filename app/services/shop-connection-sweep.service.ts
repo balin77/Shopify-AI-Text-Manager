@@ -46,9 +46,10 @@ import {
   isMigrationConfigHeld,
   isUnauthorizedError,
   OfflineAdminUnavailableError,
+  reportNonExpiringTokenRejection,
 } from "../utils/offline-admin.server";
 import { blockShopConnection } from "../utils/shop-connection-block.server";
-import { clearConnectionBlock, getConnectionBlock } from "../utils/shop-connection-state.server";
+import { clearConnectionBlock } from "../utils/shop-connection-state.server";
 import {
   deleteSingleAttemptKindRecord,
   listMigrationShopsByStatus,
@@ -75,11 +76,16 @@ export const PROBE_BATCH = 5;
 export const PROBE_PAUSE_MS = envMs(process.env.SHOP_CONNECTION_SWEEP_PAUSE_MS, 2000, 0);
 /** The candidate read is this many times PROBE_BATCH, because tokenless shops are only stamped. */
 const PROBE_OVERFETCH = 10;
-/** Catch-ups started per tick. */
+/** Catch-ups that really ran (done / incomplete) per tick. */
 export const CATCHUP_BATCH = 2;
+/** Candidates read per tick; busy, paused or failing ones are skipped, not counted. */
+export const CATCHUP_CANDIDATES = 50;
+/** A shop whose catch-up was tried waits this long before the sweep tries it again. */
+export const CATCHUP_RETRY_MS = 30 * 60 * 1000;
 export const SUMMARY_INTERVAL_MS = 24 * HOUR_MS;
-/** Rows per backfill step. */
+/** Rows per backfill page. */
 export const BACKFILL_BATCH = 500;
+const BACKFILL_MAX_PAGES = 100;
 /** At most this many shop names are spelled out in the summary line. */
 const SUMMARY_NAMES = 10;
 
@@ -129,6 +135,7 @@ export class ShopConnectionSweepService {
   private ticking = false;
   private backfilled = false;
   private lastSummaryAt = 0;
+  private readonly catchUpTriedAt = new Map<string, number>();
   /** Probe results since the last summary line. */
   private probeTally: Partial<Record<ProbeOutcome, number>> = {};
 
@@ -177,6 +184,7 @@ export class ShopConnectionSweepService {
     this.backfilled = false;
     this.lastSummaryAt = 0;
     this.probeTally = {};
+    this.catchUpTriedAt.clear();
   }
 
   /** One sweep. Public so tests can drive it directly (`pauseMs: 0`). */
@@ -222,81 +230,129 @@ export class ShopConnectionSweepService {
     }
   }
 
-  /** Shops of `shops` that are uninstalled or already blocked: nothing to backfill for them. */
-  private async settledShops(shops: string[]): Promise<Set<string>> {
-    if (shops.length === 0) return new Set();
+  /**
+   * Shops of `shops` that are uninstalled or already blocked (nothing to
+   * backfill for them), and the `connectionClearedAt` of the others: a shop
+   * whose block was lifted AFTER the evidence was written has been proven
+   * working since (probe, re-authentication) and must not be re-blocked by it.
+   */
+  private async settledShops(shops: string[]): Promise<{ settled: Set<string>; clearedAt: Map<string, Date> }> {
+    if (shops.length === 0) return { settled: new Set(), clearedAt: new Map() };
     const rows = await db.shopInstallState.findMany({
-      where: { shop: { in: shops }, OR: [{ uninstalledAt: { not: null } }, { connectionState: { not: null } }] },
-      select: { shop: true },
+      where: { shop: { in: shops } },
+      select: { shop: true, uninstalledAt: true, connectionState: true, connectionClearedAt: true },
     });
-    return new Set(rows.map((r) => r.shop));
+    const settled = new Set<string>();
+    const clearedAt = new Map<string, Date>();
+    for (const r of rows) {
+      if (r.uninstalledAt || r.connectionState) settled.add(r.shop);
+      if (r.connectionClearedAt) clearedAt.set(r.shop, r.connectionClearedAt);
+    }
+    return { settled, clearedAt };
+  }
+
+  /** Pages through `read` (ordered by shop) until a short page, so no shop is silently left past the first 500. */
+  private async eachPage<T extends { shop: string }>(
+    read: (after: string | null) => Promise<T[]>,
+    handle: (page: T[]) => Promise<void>,
+  ): Promise<void> {
+    let after: string | null = null;
+    for (let i = 0; i < BACKFILL_MAX_PAGES; i++) {
+      const page = await read(after);
+      if (page.length === 0) return;
+      await handle(page);
+      if (page.length < BACKFILL_BATCH) return;
+      after = page[page.length - 1].shop;
+    }
+    logger.warn(`[ConnectionSweep] backfill stopped after ${BACKFILL_MAX_PAGES} pages; the rest follows on the next process start`);
   }
 
   private async backfillNeedsReauth(now: Date, stats: ConnectionSweepStats): Promise<void> {
-    const records = await db.offlineTokenMigration.findMany({
-      where: { status: "needs_reauth" },
-      select: { shop: true, tokenFingerprint: true },
-      take: BACKFILL_BATCH,
-    });
-    if (records.length === 0) return;
-    const shops = records.map((r) => r.shop);
-    const settled = await this.settledShops(shops);
-    const sessions = await db.session.findMany({
-      where: { isOnline: false, id: { startsWith: "offline_" }, shop: { in: shops } },
-      select: { shop: true, accessToken: true, expires: true },
-    });
-    const sessionOf = new Map(sessions.map((s) => [s.shop, s]));
-    for (const record of records) {
-      if (settled.has(record.shop)) continue;
-      const session = sessionOf.get(record.shop);
-      // No session: nothing is installed to be "dead". An expiring session, or a
-      // token that is not the one the verdict was about: the shop re-authenticated.
-      if (!session || session.expires) continue;
-      if (session.accessToken && storedTokenDiffers(record.tokenFingerprint, session.accessToken)) continue;
-      if (await blockShopConnection(record.shop, "backfill_migration_needs_reauth", { observedAt: now })) stats.backfilledNeedsReauth++;
-    }
+    await this.eachPage(
+      (after) =>
+        db.offlineTokenMigration.findMany({
+          where: { status: "needs_reauth", ...(after ? { shop: { gt: after } } : {}) },
+          select: { shop: true, tokenFingerprint: true, updatedAt: true },
+          orderBy: { shop: "asc" },
+          take: BACKFILL_BATCH,
+        }),
+      async (records) => {
+        const shops = records.map((r) => r.shop);
+        const { settled, clearedAt } = await this.settledShops(shops);
+        const sessions = await db.session.findMany({
+          where: { isOnline: false, id: { startsWith: "offline_" }, shop: { in: shops } },
+          select: { shop: true, accessToken: true, expires: true },
+        });
+        const sessionOf = new Map(sessions.map((s) => [s.shop, s]));
+        for (const record of records) {
+          if (settled.has(record.shop)) continue;
+          const cleared = clearedAt.get(record.shop);
+          if (cleared && record.updatedAt && cleared.getTime() > record.updatedAt.getTime()) continue;
+          const session = sessionOf.get(record.shop);
+          // No session: nothing is installed to be "dead". An expiring session, or a
+          // token that is not the one the verdict was about: the shop re-authenticated.
+          if (!session || session.expires) continue;
+          if (session.accessToken && storedTokenDiffers(record.tokenFingerprint, session.accessToken)) continue;
+          if (await blockShopConnection(record.shop, "backfill_migration_needs_reauth", { observedAt: now })) stats.backfilledNeedsReauth++;
+        }
+      },
+    );
   }
 
   private async backfillNoToken(now: Date, stats: ConnectionSweepStats): Promise<void> {
-    const empty = await db.session.findMany({
-      where: { isOnline: false, id: { startsWith: "offline_" }, accessToken: "" },
-      select: { shop: true },
-      take: BACKFILL_BATCH,
-    });
-    if (empty.length === 0) return;
-    const shops = empty.map((r) => r.shop);
-    const settled = await this.settledShops(shops);
     // A migration that can still recover the token (old token persisted, inside
     // the 7-day window) is working on exactly this blank: not dead yet.
     const recovering = new Set(
       await listMigrationShopsByStatus(["pending", "failed"], { withTokenSince: new Date(now.getTime() - MIGRATION_RECOVERY_WINDOW_MS) }),
     );
-    for (const shop of shops) {
-      if (settled.has(shop) || recovering.has(shop)) continue;
-      if (await blockShopConnection(shop, "backfill_no_token", { observedAt: now })) stats.backfilledNoToken++;
-    }
+    await this.eachPage(
+      (after) =>
+        db.session.findMany({
+          where: { isOnline: false, id: { startsWith: "offline_" }, accessToken: "", ...(after ? { shop: { gt: after } } : {}) },
+          select: { shop: true },
+          orderBy: { shop: "asc" },
+          take: BACKFILL_BATCH,
+        }),
+      async (empty) => {
+        const { settled, clearedAt } = await this.settledShops(empty.map((r) => r.shop));
+        for (const { shop } of empty) {
+          if (settled.has(shop) || recovering.has(shop)) continue;
+          // A session has no timestamp of its own to compare with: a shop that
+          // was ever cleared (re-authenticated, probed) and is blank again is a
+          // NEW event the live detection records; the backfill does not guess.
+          if (clearedAt.has(shop)) continue;
+          if (await blockShopConnection(shop, "backfill_no_token", { observedAt: now })) stats.backfilledNoToken++;
+        }
+      },
+    );
   }
 
   private async backfillNotFound(now: Date, stats: ConnectionSweepStats): Promise<void> {
-    const failed = await db.offlineTokenMigration.findMany({
-      where: { status: "failed", failureKind: null },
-      select: { shop: true, lastError: true, attempts: true },
-      take: BACKFILL_BATCH,
-    });
-    for (const record of failed) {
-      if (!record.lastError || !/\b404\b/.test(record.lastError)) continue;
-      // A record already at the cap stays as it is. A live one is counted from
-      // scratch as runs of this kind (one attempt per run), with the 24 h clock
-      // starting now: the backfill never finishes anybody off by itself.
-      const res = await db.offlineTokenMigration.updateMany({
-        where: { shop: record.shop, failureKind: null },
-        data:
-          record.attempts >= MIGRATION_MAX_ATTEMPTS
-            ? { failureKind: "not_found", failureKindSince: now }
-            : { failureKind: "not_found", failureKindSince: now, attempts: 1 },
-      });
-      if (res.count > 0) stats.backfilledNotFound++;
-    }
+    await this.eachPage(
+      (after) =>
+        db.offlineTokenMigration.findMany({
+          where: { status: "failed", failureKind: null, ...(after ? { shop: { gt: after } } : {}) },
+          select: { shop: true, lastError: true, attempts: true },
+          orderBy: { shop: "asc" },
+          take: BACKFILL_BATCH,
+        }),
+      async (failed) => {
+        for (const record of failed) {
+          if (!record.lastError || !/\b404\b/.test(record.lastError)) continue;
+          // A record already at the cap stays as it is. A live one is counted from
+          // scratch as runs of this kind (one attempt per run), with the 24 h clock
+          // starting now: the backfill never finishes anybody off by itself.
+          const res = await db.offlineTokenMigration.updateMany({
+            where: { shop: record.shop, failureKind: null },
+            data:
+              record.attempts >= MIGRATION_MAX_ATTEMPTS
+                ? { failureKind: "not_found", failureKindSince: now }
+                : { failureKind: "not_found", failureKindSince: now, attempts: 1 },
+          });
+          if (res.count > 0) stats.backfilledNotFound++;
+        }
+      },
+    );
   }
 
   // ── 2. probe ───────────────────────────────────────────────────────────────
@@ -381,11 +437,15 @@ export class ShopConnectionSweepService {
         await this.stampProbe(shop, startedAt);
         if (error instanceof OfflineAdminUnavailableError) return "unavailable";
         if (isUnauthorizedError(error)) return "unauthorized";
-        const kind = await classifyForbidden(shop, error);
+        // record:false -- the shop is blocked already, so its own 403s say
+        // nothing about our address and must not feed the allowlist suspicion.
+        const kind = await classifyForbidden(shop, error, { record: false });
         if (kind) {
           // A 403 is never evidence about this shop: nothing is blocked, lifted
-          // or emptied; an allowlist kind logs loud and pauses the next probes.
-          reportForbidden(shop, kind);
+          // or emptied; an allowlist kind logs loud and pauses the next probes,
+          // the deadline answer starts the migration handling like anywhere else.
+          if (kind === "non_expiring_rejected") reportNonExpiringTokenRejection(shop);
+          else reportForbidden(shop, kind);
           return "forbidden";
         }
         return "error";
@@ -395,20 +455,18 @@ export class ShopConnectionSweepService {
         return "still_blocked";
       }
       noteApiSuccess(shop);
-      // A block set AFTER this probe began says something the probe did not see.
-      const block = await getConnectionBlock(shop);
-      if (block?.since && block.since.getTime() > startedAt.getTime()) {
-        await this.stampProbe(shop, startedAt, true);
-        return "still_blocked";
-      }
-      await clearConnectionBlock(shop, "probe_ok");
+      // Conditional in the database: only a block that already stood when the
+      // probe began is lifted (one set after it says something it did not see).
+      const lifted = await clearConnectionBlock(shop, "probe_ok", { sinceAtOrBefore: startedAt });
       await this.stampProbe(shop, startedAt, true);
+      if (!lifted.cleared) return "still_blocked";
       // The shop works, so a 404 / shop-specific 403 of the token endpoint is
       // stale: let the migration try afresh instead of staying given up.
       await deleteSingleAttemptKindRecord(shop).catch(() => false);
       return "ok";
     } catch (error) {
       logger.debug(`[ConnectionSweep] probe of ${shop} failed: ${error instanceof Error ? error.name : "error"}`);
+      await this.stampProbe(shop, startedAt).catch(() => undefined);
       return "error";
     }
   }
@@ -425,27 +483,39 @@ export class ShopConnectionSweepService {
       },
       select: { shop: true },
       orderBy: { resyncRequiredSince: "asc" },
-      take: CATCHUP_BATCH * 5,
+      take: CATCHUP_CANDIDATES,
     });
     stats.catchUpCandidates = owing.length;
     if (owing.length === 0) return;
     const { syncScheduler } = await import("./sync-scheduler.service");
     const { createAdminClientFromShop } = await import("../utils/admin-client.server");
     const { runWebhookCatchUp } = await import("./webhook-catchup.server");
+    const nowMs = Date.now();
+    let started = 0;
     for (const { shop } of owing) {
       if (stats.catchUpRun >= CATCHUP_BATCH) break;
+      // Rotation: a shop tried recently (whatever came of it) waits, so shops
+      // that are paused, busy or failing at the front of the queue cannot
+      // starve the ones behind them.
+      const tried = this.catchUpTriedAt.get(shop);
+      if (tried !== undefined && nowMs - tried < CATCHUP_RETRY_MS) continue;
       // An active shop's scheduler does it itself, inside its own sync slot.
       if (syncScheduler.isShopActive(shop)) continue;
-      if (stats.catchUpRun > 0) await sleep(pauseMs);
-      stats.catchUpRun++;
+      if (started > 0) await sleep(pauseMs);
+      started++;
+      this.catchUpTriedAt.set(shop, nowMs);
       try {
         const admin = await createAdminClientFromShop(shop);
-        await runWebhookCatchUp(shop, admin);
+        const outcome = await runWebhookCatchUp(shop, admin);
+        // Only a run that really worked through the shop uses up the per-tick
+        // allowance; busy / paused / blocked / not_needed / error cost nothing.
+        if (outcome === "done" || outcome === "incomplete") stats.catchUpRun++;
       } catch (error) {
-        // A blocked or unreachable shop: the helper's own pause logic keeps it
-        // from repeating; nothing to log above debug.
         logger.debug(`[ConnectionSweep] catch-up of ${shop} skipped: ${error instanceof Error ? error.name : "error"}`);
       }
+    }
+    if (this.catchUpTriedAt.size > 1000) {
+      for (const [s, at] of this.catchUpTriedAt) if (nowMs - at > CATCHUP_RETRY_MS) this.catchUpTriedAt.delete(s);
     }
   }
 
