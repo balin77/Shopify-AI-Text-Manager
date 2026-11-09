@@ -78,4 +78,36 @@ describe("reconcileWebhookBackedTypes ok", () => {
     const r = await reconcileWebhookBackedTypes(listing("x", []) as never, "s.myshopify.com");
     expect(r.ok.products).toBe(false);
   });
+
+  it("an empty listing confirmed by a count of 0 is ok and deletes nothing", async () => {
+    const admin = {
+      graphql: vi.fn(async (q: string) => ({
+        json: async () =>
+          q.includes("Count")
+            ? { data: { productsCount: { count: 0 }, collectionsCount: { count: 0 } } }
+            : { data: { products: { pageInfo: { hasNextPage: false }, edges: [] }, collections: { pageInfo: { hasNextPage: false }, edges: [] } } },
+      })),
+    };
+    const r = await reconcileWebhookBackedTypes(admin as never, "s.myshopify.com");
+    expect(r.ok).toEqual({ products: true, collections: true });
+  });
+
+  it("a page answering without the connection is an incomplete listing: not ok, nothing deleted", async () => {
+    const admin = { graphql: vi.fn(async () => ({ json: async () => ({ data: { products: null, collections: null } }) })) };
+    const r = await reconcileWebhookBackedTypes(admin as never, "s.myshopify.com");
+    expect(r.ok).toEqual({ products: false, collections: false });
+    expect(r.itemFailuresOnly).toBe(false);
+  });
+
+  it("a page without pageInfo is an incomplete listing", async () => {
+    const admin = { graphql: vi.fn(async () => ({ json: async () => ({ data: { products: { edges: [] }, collections: { edges: [] } } }) })) };
+    const r = await reconcileWebhookBackedTypes(admin as never, "s.myshopify.com");
+    expect(r.ok.products).toBe(false);
+  });
+
+  it("item sync failures alone are reported as itemFailuresOnly", async () => {
+    h.syncProduct.mockRejectedValue(new Error("boom"));
+    const r = await reconcileWebhookBackedTypes(listing("x", [{ id: "p1", updatedAt: "2027-01-01T00:00:00Z" }]) as never, "s.myshopify.com");
+    expect(r.itemFailuresOnly).toBe(true);
+  });
 });

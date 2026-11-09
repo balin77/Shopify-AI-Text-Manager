@@ -114,34 +114,31 @@ async function trackUsage(
 
     const day = utcDay(nowMs);
 
-    // Active 5-minute window, once per slot.
+    // Active 5-minute window (once per slot) and the action (once per request)
+    // go into ONE upsert, so two concurrent upserts cannot race on a new
+    // (shop, day) row.
     const slot = slotOf(nowMs);
-    if (lastCountedSlot.get(shop) !== slot) {
-      lastCountedSlot.set(shop, slot);
+    const countSlot = lastCountedSlot.get(shop) !== slot;
+    const isAction = isActionMethod(request.method);
+    if (countSlot) lastCountedSlot.set(shop, slot);
+    if (countSlot || isAction) {
       writes.push(
         db.shopUsageDay
           .upsert({
             where: { shop_day: { shop, day } },
-            create: { shop, day, activeSlots: 1 },
-            update: { activeSlots: { increment: 1 } },
+            create: { shop, day, activeSlots: countSlot ? 1 : 0, actions: isAction ? 1 : 0 },
+            update: {
+              ...(countSlot ? { activeSlots: { increment: 1 } } : {}),
+              ...(isAction ? { actions: { increment: 1 } } : {}),
+            },
           })
           .catch(() => {
-            if (lastCountedSlot.get(shop) === slot) lastCountedSlot.delete(shop);
+            if (countSlot && lastCountedSlot.get(shop) === slot) lastCountedSlot.delete(shop);
           }),
       );
     }
 
-    // Action: exactly once per request.
-    if (isActionMethod(request.method)) {
-      writes.push(
-        db.shopUsageDay
-          .upsert({
-            where: { shop_day: { shop, day } },
-            create: { shop, day, actions: 1 },
-            update: { actions: { increment: 1 } },
-          })
-          .catch(() => undefined),
-      );
+    if (isAction) {
       const area = pathArea(pathname);
       const prev = lastActionWritten.get(shop);
       if (!prev || prev.area !== area || nowMs - prev.at >= ACTION_WRITE_INTERVAL_MS) {

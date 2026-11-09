@@ -72,7 +72,7 @@ describe("trackActivity", () => {
     await trackActivity(SHOP, r);
     await trackActivity(SHOP, r);
     expect(upsertsWith("actions")).toHaveLength(1);
-    expect((upsertsWith("actions")[0][0] as any).update).toEqual({ actions: { increment: 1 } });
+    expect((upsertsWith("actions")[0][0] as any).update).toEqual({ activeSlots: { increment: 1 }, actions: { increment: 1 } });
   });
 
   it("a GET is not an action", async () => {

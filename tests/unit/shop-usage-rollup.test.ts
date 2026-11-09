@@ -24,7 +24,7 @@ describe("rollupTaskUsage", () => {
   it("covers today, yesterday and the day before (UTC)", async () => {
     const db = fakeDb();
     expect(await rollupTaskUsage(db as never, NOW)).toBe(3);
-    expect(db.executed[0].values[0]).toEqual(new Date("2026-11-07T00:00:00Z"));
+    expect(db.executed[0].values[0]).toBe("2026-11-07T00:00:00.000Z");
   });
 
   it("is idempotent and monotone: GREATEST on every task column, never a plain overwrite", async () => {

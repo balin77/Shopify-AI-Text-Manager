@@ -88,6 +88,8 @@ export async function runInitialFullSync(
   // stay permanently uncached).
   let phaseFailed = false;
   let firstPhaseError: string | null = null;
+  /** A phase that synced some items but reported failed > 0: the setup is done, a missed-webhook catch-up is not. */
+  let partialFailure = false;
   /** Items to sync, and not one of them got through — see the emit sites. */
   const totalFailure = (run: { synced: number; failed: number }) => run.failed > 0 && run.synced === 0;
   const recordPhaseFailure = (phase: string, err: unknown): string => {
@@ -270,7 +272,7 @@ export async function runInitialFullSync(
         totalFailure(collectionRun)
           ? recordPhaseFailure('collections', new Error(collectionRun.firstError || 'no collection could be synced'))
           : collectionRun.failed > 0
-            ? `Synced ${collectionRun.synced} collections, ${collectionRun.failed} failed: ${collectionRun.firstError ?? ""}`
+            ? (partialFailure = true, `Synced ${collectionRun.synced} collections, ${collectionRun.failed} failed: ${collectionRun.firstError ?? ""}`)
             : `Synced ${stats.collections} collections`,
       );
     } catch (err: unknown) {
@@ -302,7 +304,7 @@ export async function runInitialFullSync(
         totalFailure(articleRun)
           ? recordPhaseFailure('articles', new Error(articleRun.firstError || 'no article could be synced'))
           : articleRun.failed > 0
-            ? `Synced ${articleRun.synced} articles, ${articleRun.failed} failed: ${articleRun.firstError ?? ""}`
+            ? (partialFailure = true, `Synced ${articleRun.synced} articles, ${articleRun.failed} failed: ${articleRun.firstError ?? ""}`)
             : `Synced ${stats.articles} articles`,
       );
     } catch (err: unknown) {
@@ -593,7 +595,9 @@ export async function runInitialFullSync(
     });
   }
 
-  if (resyncOwedAtStart) await clearResyncIfUnchanged(shop, resyncOwedAtStart);
+  // Keep the owed catch-up flag when any phase reported failed items: the
+  // scheduler's catch-up (reconcile) settles what this sync could not.
+  if (resyncOwedAtStart && !partialFailure) await clearResyncIfUnchanged(shop, resyncOwedAtStart);
 
   emit('done', 100, 'Sync complete!');
   return { stats, completed: true };

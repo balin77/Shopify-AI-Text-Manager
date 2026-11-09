@@ -23,6 +23,13 @@ describe("isActionMethod", () => {
   });
 });
 
+describe("pathArea encoded ids", () => {
+  it("drops an encoded GID segment and decodes the rest", () => {
+    expect(pathArea("/app/products/gid%3A%2F%2Fshopify%2FProduct%2F1")).toBe("app.products");
+    expect(pathArea("/app/%E0%A4%A")).toBe("app");
+  });
+});
+
 describe("pathArea", () => {
   it("keeps the path area only", () => {
     expect(pathArea("/app/products")).toBe("app.products");

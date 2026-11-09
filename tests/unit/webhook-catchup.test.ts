@@ -113,4 +113,25 @@ describe("clearResyncIfUnchanged", () => {
     h.updateMany.mockRejectedValue(new Error("db"));
     expect(await clearResyncIfUnchanged(SHOP, { since: SINCE, dropped: 0 })).toBe(false);
   });
+
+  it("pause doubles per incomplete run and is capped", async () => {
+    const { catchUpPauseMs, CATCHUP_RETRY_PAUSE_MS, CATCHUP_RETRY_PAUSE_MAX_MS } = await import("../../app/services/webhook-catchup.server");
+    expect(catchUpPauseMs(1)).toBe(CATCHUP_RETRY_PAUSE_MS);
+    expect(catchUpPauseMs(2)).toBe(2 * CATCHUP_RETRY_PAUSE_MS);
+    expect(catchUpPauseMs(30)).toBe(CATCHUP_RETRY_PAUSE_MAX_MS);
+  });
+
+  it("gives up and clears the flag after 5 consecutive item-failure-only runs", async () => {
+    vi.useFakeTimers();
+    try {
+      h.reconcile.mockResolvedValue({ products: 0, collections: 0, ok: { products: false, collections: true }, itemFailuresOnly: true });
+      for (let i = 0; i < 5; i++) {
+        expect(await runWebhookCatchUp(SHOP, {} as never)).toBe("incomplete");
+        vi.advanceTimersByTime(7 * 60 * 60 * 1000);
+      }
+      expect(h.updateMany).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

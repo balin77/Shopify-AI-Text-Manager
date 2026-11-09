@@ -82,8 +82,9 @@ export default function PrivacyPolicy() {
         </ul>
         <p>
           We also keep usage statistics per shop, such as how many days and time windows the app
-          was used and how many actions and tasks were run, which contain no personal data and are
-          kept for 90 days.
+          was used and how many actions and tasks were run. These statistics contain no customer
+          data and nothing beyond the shop itself, and are kept for 90 days. The date of the shop's
+          last use is kept until the shop's data is deleted after you uninstall the app.
         </p>
 
         <h3 style={{ fontSize: '1.4rem', marginTop: '20px', marginBottom: '10px' }}>2.4 Subscription Information</h3>

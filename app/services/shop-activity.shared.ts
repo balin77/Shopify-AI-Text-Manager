@@ -27,6 +27,9 @@ export const ACTION_WRITE_INTERVAL_MS = 30 * 1000;
  * of the app; a poller missing here costs an inflated window count, never a
  * wrong action count (pollers are GETs).
  */
+// Known limit: a page that revalidates every few seconds while a task runs (not in
+// this list, it is a page loader) counts as an active window and refreshes "last
+// opened" for the task's duration. See KNOWN_ISSUES.md "Server und Betrieb".
 export const POLLING_PATH_PREFIXES: readonly string[] = [
   "/api/running-tasks-count",
   "/api/running-tasks-list",
@@ -63,7 +66,14 @@ export function pathArea(pathname: string): string {
   const cleaned = pathname.split("?")[0].split("#")[0].replace(/\.data$/i, "");
   const segments = cleaned
     .split("/")
-    .map((s) => s.trim().toLowerCase())
+    .map((s) => {
+      // Decode first, so an encoded GID ("gid%3A%2F%2F...") is recognised as one.
+      try {
+        return decodeURIComponent(s).trim().toLowerCase();
+      } catch {
+        return "";
+      }
+    })
     .filter((s) => s.length > 0)
     .filter((s) => !/^\d+$/.test(s) && !/^gid:/.test(s) && s.length <= 40)
     .map((s) => s.replace(/[^a-z0-9_-]/g, "_"))

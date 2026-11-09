@@ -26,16 +26,28 @@ import { logger } from "~/utils/logger.server";
 import type { ShopifyGraphQLClient } from "./sync-types";
 
 export const CATCHUP_RETRY_PAUSE_MS = 5 * 60 * 1000;
+export const CATCHUP_RETRY_PAUSE_MAX_MS = 6 * 60 * 60 * 1000;
+/** After this many consecutive runs incomplete only through single-item failures, the flag is given up on. */
+export const CATCHUP_GIVE_UP_AFTER = 5;
+
+/** 5 min, doubling per consecutive incomplete run, capped. */
+export function catchUpPauseMs(failures: number): number {
+  return Math.min(CATCHUP_RETRY_PAUSE_MS * 2 ** Math.max(0, failures - 1), CATCHUP_RETRY_PAUSE_MAX_MS);
+}
 
 export type CatchUpOutcome = "not_needed" | "blocked" | "busy" | "paused" | "done" | "incomplete" | "error";
 
 const inFlight = new Set<string>();
 const lastIncompleteAt = new Map<string, number>();
+const incompleteCount = new Map<string, number>();
+const itemOnlyCount = new Map<string, number>();
 
 /** Test seam. */
 export function __resetCatchUpForTests(): void {
   inFlight.clear();
   lastIncompleteAt.clear();
+  incompleteCount.clear();
+  itemOnlyCount.clear();
 }
 
 export interface ResyncOwed {
@@ -95,7 +107,7 @@ export async function runWebhookCatchUp(shop: string, admin: ShopifyGraphQLClien
     if (await getConnectionBlock(shop)) return "blocked";
 
     const paused = lastIncompleteAt.get(shop);
-    if (paused !== undefined && Date.now() - paused < CATCHUP_RETRY_PAUSE_MS) return "paused";
+    if (paused !== undefined && Date.now() - paused < catchUpPauseMs(incompleteCount.get(shop) ?? 1)) return "paused";
 
     const owed: ResyncOwed = { since: st.resyncRequiredSince, dropped: st.droppedWebhookCount ?? 0 };
     const { reconcileWebhookBackedTypes } = await import("./webhook-reconcile.service");
@@ -103,10 +115,24 @@ export async function runWebhookCatchUp(shop: string, admin: ShopifyGraphQLClien
     const allOk = !!result?.ok && result.ok.products && result.ok.collections;
     if (!allOk) {
       lastIncompleteAt.set(shop, Date.now());
+      incompleteCount.set(shop, (incompleteCount.get(shop) ?? 0) + 1);
+      const itemOnly = result?.itemFailuresOnly === true;
+      const n = itemOnly ? (itemOnlyCount.get(shop) ?? 0) + 1 : 0;
+      itemOnlyCount.set(shop, n);
+      if (itemOnly && n >= CATCHUP_GIVE_UP_AFTER) {
+        await clearResyncIfUnchanged(shop, owed);
+        lastIncompleteAt.delete(shop);
+        incompleteCount.delete(shop);
+        itemOnlyCount.delete(shop);
+        logger.warn(`[CatchUp] shop=${shop} gave up after ${n} runs incomplete only through single-item failures; flag cleared, the periodic reconcile keeps covering it`);
+        return "incomplete";
+      }
       logger.info(`[CatchUp] shop=${shop} incomplete, flag kept`);
       return "incomplete";
     }
     lastIncompleteAt.delete(shop);
+    incompleteCount.delete(shop);
+    itemOnlyCount.delete(shop);
     const cleared = await clearResyncIfUnchanged(shop, owed);
     logger.info(
       cleared
@@ -116,6 +142,8 @@ export async function runWebhookCatchUp(shop: string, admin: ShopifyGraphQLClien
     return "done";
   } catch (error) {
     lastIncompleteAt.set(shop, Date.now());
+    incompleteCount.set(shop, (incompleteCount.get(shop) ?? 0) + 1);
+    itemOnlyCount.set(shop, 0);
     logger.warn(`[CatchUp] shop=${shop} failed: ${error instanceof Error ? error.name : "error"}`);
     return "error";
   } finally {

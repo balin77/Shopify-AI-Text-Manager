@@ -19,6 +19,9 @@
  *    output tokens); AI calls made outside a task are not in there. BigInt in
  *    the database, converted to Number only at the boundaries that display it.
  *
+ * The window is bound as an ISO string cast to `timestamp`, the column type
+ *    (timestamp(3), no zone), so it is right whatever the DB session TimeZone is.
+ *
  * Never throws (returns 0 / the error is logged).
  */
 
@@ -49,7 +52,7 @@ export async function rollupTaskUsage(db: RawClient, now: Date = new Date()): Pr
                COALESCE(SUM("costMicros"::bigint), 0)::bigint AS "cost",
                COALESCE(SUM("inputTokens"::bigint + "outputTokens"::bigint), 0)::bigint AS "tokens"
         FROM "Task"
-        WHERE "startedAt" >= ${from}
+        WHERE "startedAt" >= ${from.toISOString()}::timestamp
         GROUP BY "shop", "startedAt"::date
       ) t
       WHERE t."shop" IN (SELECT "shop" FROM "ShopInstallState" UNION SELECT "shop" FROM "Session")

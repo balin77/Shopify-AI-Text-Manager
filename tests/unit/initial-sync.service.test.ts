@@ -164,6 +164,14 @@ describe('runInitialFullSync — R1 completion marker', () => {
     });
   });
 
+  it('keeps the owed catch-up flag when a phase synced only partly (failed > 0)', async () => {
+    m.sisFindUnique.mockResolvedValue({ initialSyncCompletedAt: null, resyncRequiredSince: new Date(), droppedWebhookCount: 1 });
+    m.syncAllCollections.mockResolvedValue({ synced: 2, failed: 1, firstError: 'x' });
+    const res = await runInitialFullSync(admin, shop);
+    expect(res.completed).toBe(true);
+    expect(m.sisUpdateMany).not.toHaveBeenCalled();
+  });
+
   it('a failed initial sync does not touch the catch-up flag', async () => {
     m.sisFindUnique.mockResolvedValue({ initialSyncCompletedAt: null, resyncRequiredSince: new Date(), droppedWebhookCount: 1 });
     m.syncAllCollections.mockRejectedValue(new Error('API error'));
