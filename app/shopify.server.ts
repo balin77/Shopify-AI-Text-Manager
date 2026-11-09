@@ -190,11 +190,14 @@ const shopify = shopifyApp({
 
       // Clear any pending uninstall marker so a reinstall cancels the 30-day
       // reaper for this shop (see shop-reaper.service).
+      // lastAuthAt: the sign-in itself (install / re-consent / token exchange),
+      // shown on the /admin overview.
       try {
+        const authAt = new Date();
         await prisma.shopInstallState.upsert({
           where: { shop: session.shop },
-          create: { shop: session.shop, uninstalledAt: null },
-          update: { uninstalledAt: null },
+          create: { shop: session.shop, uninstalledAt: null, lastAuthAt: authAt },
+          update: { uninstalledAt: null, lastAuthAt: authAt },
         });
       } catch (error) {
         logger.warn(`[SHOPIFY.SERVER] afterAuth uninstall-marker clear failed`, { shop: session.shop, error: error instanceof Error ? error.message : String(error) });
@@ -326,7 +329,7 @@ const enhancedAuthenticate = {
     // from the offline-token sweep only (see maybeMigrateToExpiringToken).
 
     // Track activity for this shop (fire-and-forget — must not block the response)
-    trackActivity(session.shop).catch(err => {
+    trackActivity(session.shop, request).catch(err => {
       logger.error('[SHOPIFY.SERVER] trackActivity failed:', err);
     });
 

@@ -606,6 +606,17 @@ class SyncSchedulerService {
     try {
       const { db } = await import("../db.server");
 
+      // 0. Copy the per-shop task statistics of the last three days into
+      //    ShopUsageDay BEFORE the tasks below are deleted (it is idempotent,
+      //    never lowers a figure and never touches the tracker's counters), and
+      //    drop usage rows past their 90-day retention. A failure here is
+      //    logged inside and must not stop the cleanup.
+      {
+        const { rollupTaskUsage, pruneShopUsage } = await import("./shop-usage-rollup.server");
+        await rollupTaskUsage(db as never);
+        await pruneShopUsage(db as never);
+      }
+
       // 1. Delete expired tasks (older than 3 days)
       const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
       const expiredTasks = await db.task.deleteMany({

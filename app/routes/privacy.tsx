@@ -15,7 +15,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     appUrl,
-    lastUpdated: '2026-09-30',
+    lastUpdated: '2026-11-09',
     companyName: 'Gubler - Multimedia und Print',
     appName: 'ContentPilot AI',
     supportEmail: 'info@contentpilot-ai.com',
@@ -80,6 +80,11 @@ export default function PrivacyPolicy() {
           <li>API usage and performance metrics</li>
           <li>Error logs and debugging information</li>
         </ul>
+        <p>
+          We also keep usage statistics per shop, such as how many days and time windows the app
+          was used and how many actions and tasks were run, which contain no personal data and are
+          kept for 90 days.
+        </p>
 
         <h3 style={{ fontSize: '1.4rem', marginTop: '20px', marginBottom: '10px' }}>2.4 Subscription Information</h3>
         <p>If you subscribe to a paid plan:</p>
