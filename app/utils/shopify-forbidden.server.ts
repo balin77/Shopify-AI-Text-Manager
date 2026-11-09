@@ -42,7 +42,8 @@ export type ForbiddenKind = "non_expiring_rejected" | "ip_allowlist" | "ip_allow
 /** What Shopify answers an Admin API request made with a non-expiring offline token, from 2027-01-01. */
 const NON_EXPIRING_REJECTED = /Non-expiring access tokens are no longer accepted/i;
 /** The 403 text names the address list ("IP address is not allowed", "... allowlist"). */
-const IP_ALLOWLIST_TEXT = /\bIP\b|allow-?list/i;
+const IP_WORD = /\bIP\b/; // case-sensitive: the bare letters "ip" in any other spelling are not a hint
+const IP_PHRASE = /\bip[- ]address|\ballow[- ]?list|\ballowed[- ]ips?\b/i;
 
 export const FORBIDDEN_WINDOW_MS = 10 * 60 * 1000;
 /** Distinct shops with a 403 inside the window before "everybody fails" is suspected. */
@@ -143,7 +144,7 @@ export async function classifyForbidden(
     // dead for its own reasons answers 403 to everything and says nothing about
     // our address. It is still classified against what the others show.
     if (opts.record !== false) recentForbidden.set(shop, now);
-    if (IP_ALLOWLIST_TEXT.test(text)) return "ip_allowlist";
+    if (IP_WORD.test(text) || IP_PHRASE.test(text)) return "ip_allowlist";
     return suspectsAllowlist(now) ? "ip_allowlist_suspected" : "shop_specific";
   } catch {
     return null;

@@ -74,6 +74,14 @@ describe("classifyForbidden", () => {
     );
   });
 
+  it("the bare letters ip are not a hint; IP as a word or a fuller phrase is", async () => {
+    expect(await classifyForbidden("a.myshopify.com", forbidden("Required access: ip"))).toBe("shop_specific");
+    expect(await classifyForbidden("a.myshopify.com", forbidden("tip: ship it, the zip is wrong"))).toBe("shop_specific");
+    expect(await classifyForbidden("a.myshopify.com", forbidden("the ip address is blocked"))).toBe("ip_allowlist");
+    expect(await classifyForbidden("a.myshopify.com", forbidden("Blocked: IP not allowed"))).toBe("ip_allowlist");
+    expect(await classifyForbidden("a.myshopify.com", forbidden("not on the allow list"))).toBe("ip_allowlist");
+  });
+
   it("a scope 403 or a plain 403 of one shop is shop_specific", async () => {
     expect(await classifyForbidden("a.myshopify.com", forbidden("Access denied for productUpdate field. Required access: write_products"))).toBe("shop_specific");
     expect(await classifyForbidden("a.myshopify.com", forbidden())).toBe("shop_specific");

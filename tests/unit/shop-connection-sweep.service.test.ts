@@ -58,6 +58,7 @@ import { fingerprintToken, MIGRATION_RECOVERY_WINDOW_MS } from "~/utils/offline-
 import { __resetForbiddenForTests, isIpAllowlistPaused } from "~/utils/shopify-forbidden.server";
 import {
   CATCHUP_BATCH,
+  CATCHUP_MAX_STARTS,
   PROBE_BATCH,
   PROBE_INTERVAL_MS,
   SUMMARY_INTERVAL_MS,
@@ -338,8 +339,8 @@ describe("backfill", () => {
 
   it("gives 404 records their kind, leaves 403 and unrelated records alone, and is idempotent", async () => {
     h.migrations.push(
-      { shop: "nf.myshopify.com", status: "failed", failureKind: null, attempts: 12, lastError: "Received an error response (404 Not Found) from Shopify" },
-      { shop: "nf-done.myshopify.com", status: "failed", failureKind: null, attempts: 40, lastError: "HTTP 404" },
+      { shop: "nf.myshopify.com", status: "failed", failureKind: null, attempts: 12, updatedAt: new Date("2026-11-01T00:00:00Z"), lastError: "Received an error response (404 Not Found) from Shopify" },
+      { shop: "nf-done.myshopify.com", status: "failed", failureKind: null, attempts: 40, updatedAt: new Date("2026-11-01T00:00:00Z"), lastError: "HTTP 404" },
       { shop: "fb.myshopify.com", status: "failed", failureKind: null, attempts: 12, lastError: "Received an error response (403 Forbidden) from Shopify" },
       { shop: "other.myshopify.com", status: "failed", failureKind: null, attempts: 12, lastError: "fetch failed" },
     );
@@ -348,6 +349,8 @@ describe("backfill", () => {
     const rec = (s: string) => h.migrations.find((m) => m.shop === `${s}.myshopify.com`)!;
     expect(rec("nf")).toMatchObject({ failureKind: "not_found", attempts: 1 });
     expect(rec("nf").failureKindSince).toEqual(NOW);
+    expect(rec("nf").updatedAt).toEqual(new Date("2026-11-01T00:00:00Z")); // retry timing untouched
+    expect(rec("nf-done").updatedAt).toEqual(new Date("2026-11-01T00:00:00Z"));
     expect(rec("nf-done")).toMatchObject({ failureKind: "not_found", attempts: 40 }); // stays given up
     expect(rec("fb").failureKind).toBeNull();
     expect(rec("other").failureKind).toBeNull();
@@ -430,6 +433,19 @@ describe("catch-up", () => {
     for (let i = 0; i < 6; i++) owing(`s${i}.myshopify.com`);
     const stats = await sweep().tick(NOW, { pauseMs: 0 });
     expect(stats.catchUpRun).toBe(CATCHUP_BATCH);
+  });
+
+  it("caps the starts per tick and the queue moves on: shops tried a moment ago are left out in SQL", async () => {
+    for (let i = 0; i < 9; i++) owing(`s${i}.myshopify.com`);
+    h.catchUp.mockResolvedValue("paused");
+    await sweep().tick(NOW, { pauseMs: 0 });
+    expect(h.catchUp).toHaveBeenCalledTimes(CATCHUP_MAX_STARTS);
+    const first = h.catchUp.mock.calls.map((c) => c[0]);
+    h.catchUp.mockClear();
+    await sweep().tick(NOW, { pauseMs: 0 });
+    const second = h.catchUp.mock.calls.map((c) => c[0]);
+    expect(second).toHaveLength(4); // the remaining four, none of the first five again
+    expect(second.some((s) => first.includes(s))).toBe(false);
   });
 
   it("only runs that really worked count toward the limit; busy / paused / throwing shops are skipped over", async () => {

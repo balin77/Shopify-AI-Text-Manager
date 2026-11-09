@@ -323,10 +323,13 @@ bekommen **einen** Versuch pro Lauf (`failureKind` = `not_found` / `forbidden` a
 Zeile), Neuversuch etwa alle 4 Stunden. Endgültig ist der Shop, wenn **dieselbe**
 Fehlerart seit mindestens 24 Stunden und über mindestens 3 Läufe anhält **und** eine
 direkte Probe `{ shop { id } }` mit dem gespeicherten Zugang ebenfalls scheitert (antwortet
-der Shop, bleibt die Zeile wiederholbar) **und** in den letzten 24 Stunden kein Massenfall
-auftrat (drei Shops mit derselben Fehlerart innerhalb von 30 Minuten: Logzeile
-`TOKEN_ENDPOINT_MASS`, Meldung an Discord höchstens einmal pro Stunde, alle Migrationen
-und die Probe pausieren 2 Stunden, kein Versuch wird gezählt): einmal
+der Shop, wird er weder endgültig noch gesperrt, und der Lauf zählt nicht Richtung
+40-Versuche-Grenze; ein Stichtags-403 der Probe sperrt die Endgültigkeit nicht, weil der
+Zugang dann nutzlos ist). Das ist der gesamte Schutz gegen einen globalen Fehler des
+Token-Endpunkts. Drei Shops mit derselben Fehlerart innerhalb von 30 Minuten
+(jeder Shop zählt nur bei seinem ersten Fehler dieser Art) erzeugen nur die Logzeile
+`TOKEN_ENDPOINT_MASS` und höchstens einmal pro Stunde eine Meldung an Discord; es wird
+nichts angehalten. Wird ein Shop endgültig: einmal
 Logzeile `MIGRATION_GAVE_UP`, die Zeile gilt als aufgegeben (alter Token gelöscht),
 und der Shop bekommt die Sperre `shop_not_found` beziehungsweise `access_denied`
 (eindeutiger Beleg, nicht hinter `SHOP_BLOCK_ON_ADMIN_401`; eine neue Anmeldung hebt

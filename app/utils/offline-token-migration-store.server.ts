@@ -351,6 +351,19 @@ export async function markMigrationFailed(
 }
 
 /**
+ * A final verdict was WITHHELD (the shop answers a direct probe): keep the
+ * run count at the minimum the clocks ask for, so a shop that is provably alive
+ * never creeps toward the old 40-attempt cap while its token endpoint keeps
+ * answering 404 / 403.
+ */
+export async function capSingleKindAttempts(shop: string): Promise<void> {
+  await (await table()).updateMany({
+    where: { shop, status: "failed", failureKind: { in: ["forbidden", "not_found"] }, attempts: { gt: KIND_FINAL_MIN_RUNS } },
+    data: { attempts: KIND_FINAL_MIN_RUNS },
+  });
+}
+
+/**
  * Make a record final by kind: attempts to the cap, i.e. `isTerminal`, so every
  * existing check (sweep selection, persisted backoff, ciphertext erase) treats
  * it as given up without knowing about kinds. Only a failed single-attempt row.

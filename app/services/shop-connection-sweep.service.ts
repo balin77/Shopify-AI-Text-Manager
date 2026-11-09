@@ -80,6 +80,8 @@ const PROBE_OVERFETCH = 10;
 export const CATCHUP_BATCH = 2;
 /** Candidates read per tick; busy, paused or failing ones are skipped, not counted. */
 export const CATCHUP_CANDIDATES = 50;
+/** Catch-ups STARTED per tick, whatever came of them. */
+export const CATCHUP_MAX_STARTS = 5;
 /** A shop whose catch-up was tried waits this long before the sweep tries it again. */
 export const CATCHUP_RETRY_MS = 30 * 60 * 1000;
 export const SUMMARY_INTERVAL_MS = 24 * HOUR_MS;
@@ -332,7 +334,7 @@ export class ShopConnectionSweepService {
       (after) =>
         db.offlineTokenMigration.findMany({
           where: { status: "failed", failureKind: null, ...(after ? { shop: { gt: after } } : {}) },
-          select: { shop: true, lastError: true, attempts: true },
+          select: { shop: true, lastError: true, attempts: true, updatedAt: true },
           orderBy: { shop: "asc" },
           take: BACKFILL_BATCH,
         }),
@@ -342,12 +344,15 @@ export class ShopConnectionSweepService {
           // A record already at the cap stays as it is. A live one is counted from
           // scratch as runs of this kind (one attempt per run), with the 24 h clock
           // starting now: the backfill never finishes anybody off by itself.
+          // `updatedAt` is written back unchanged, so the retry timing of the
+          // record is left alone (a plain update would stamp it and set every
+          // backfilled row due in the same tick).
           const res = await db.offlineTokenMigration.updateMany({
             where: { shop: record.shop, failureKind: null },
             data:
               record.attempts >= MIGRATION_MAX_ATTEMPTS
-                ? { failureKind: "not_found", failureKindSince: now }
-                : { failureKind: "not_found", failureKindSince: now, attempts: 1 },
+                ? { failureKind: "not_found", failureKindSince: now, updatedAt: record.updatedAt }
+                : { failureKind: "not_found", failureKindSince: now, attempts: 1, updatedAt: record.updatedAt },
           });
           if (res.count > 0) stats.backfilledNotFound++;
         }
@@ -474,12 +479,17 @@ export class ShopConnectionSweepService {
   // ── 3. catch-up ────────────────────────────────────────────────────────────
 
   private async catchUpOwedShops(pauseMs: number, stats: ConnectionSweepStats): Promise<void> {
+    // Shops tried recently are left out IN SQL, so the queue moves past failing
+    // or paused ones instead of re-reading them at its front every tick.
+    const nowMs0 = Date.now();
+    const recent = [...this.catchUpTriedAt].filter(([, at]) => nowMs0 - at < CATCHUP_RETRY_MS).map(([s]) => s);
     const owing = await db.shopInstallState.findMany({
       where: {
         resyncRequiredSince: { not: null },
         initialSyncCompletedAt: { not: null },
         connectionState: null,
         uninstalledAt: null,
+        ...(recent.length ? { shop: { notIn: recent } } : {}),
       },
       select: { shop: true },
       orderBy: { resyncRequiredSince: "asc" },
@@ -493,7 +503,7 @@ export class ShopConnectionSweepService {
     const nowMs = Date.now();
     let started = 0;
     for (const { shop } of owing) {
-      if (stats.catchUpRun >= CATCHUP_BATCH) break;
+      if (stats.catchUpRun >= CATCHUP_BATCH || started >= CATCHUP_MAX_STARTS) break;
       // Rotation: a shop tried recently (whatever came of it) waits, so shops
       // that are paused, busy or failing at the front of the queue cannot
       // starve the ones behind them.

@@ -199,7 +199,7 @@ export function __resetOfflineAdminForTests(): void {
   migrationNeedsReauth.clear();
   migrationHeldUntil = 0;
   tokenEndpointKindSeen.clear();
-  tokenEndpointMassAt = 0;
+  tokenEndpointMassLoggedAt.clear();
   __resetForbiddenForTests();
   nonExpiringRejectionLoggedAt.clear();
   healAttemptedAt.clear();
@@ -806,56 +806,51 @@ export const MIGRATION_CONFIG_ERROR_HOLD_MS = 6 * 60 * 60 * 1000;
 let migrationHeldUntil = 0;
 
 /**
- * Mass guard for the token endpoint's 404 / shop-specific 403 (the sibling of
- * MASS_401): at least TOKEN_ENDPOINT_MASS_SHOPS distinct shops with the SAME
- * kind inside the window mean the cause is OUR deploy or Shopify's endpoint, not
- * thirty merchants deleting their shops. Then: a global hold of the migration
- * (and with it the probe), no attempt counted for that run, one loud line and
- * an ops alert (hourly throttle), and for 24 h NOTHING becomes final by kind.
+ * Mass DETECTION for the token endpoint's 404 / shop-specific 403 (the sibling
+ * of MASS_401), and nothing more: at least TOKEN_ENDPOINT_MASS_SHOPS distinct
+ * shops with the SAME kind inside the window make ONE loud line and an ops alert
+ * (hourly throttle), because that looks like our deploy or Shopify, not thirty
+ * merchants. It changes no behaviour -- no hold, no skipped attempt. The
+ * protection against a global token-endpoint fault is the direct probe before a
+ * shop is finalised (`shopAnswersProbe`): a shop whose stored token answers
+ * `{ shop { id } }` is never finalised or blocked. A shop is counted only on its
+ * FIRST failure of a kind (a record that already carries the kind is known
+ * dead), so shops that really are gone do not keep re-firing the alert.
  */
 export const TOKEN_ENDPOINT_MASS_SHOPS = 3;
 export const TOKEN_ENDPOINT_MASS_WINDOW_MS = 30 * 60 * 1000;
-export const TOKEN_ENDPOINT_HOLD_MS = 2 * 60 * 60 * 1000;
-export const TOKEN_ENDPOINT_MASS_MEMORY_MS = 24 * 60 * 60 * 1000;
+export const TOKEN_ENDPOINT_MASS_LOG_INTERVAL_MS = 60 * 60 * 1000;
 const tokenEndpointKindSeen = new Map<string, Map<string, number>>();
-let tokenEndpointMassAt = 0;
+const tokenEndpointMassLoggedAt = new Map<string, number>();
 
-/** Remember a 404 / 403 of `shop`; true when it makes a mass event. Never throws. */
-function noteTokenEndpointKind(shop: string, kind: "not_found" | "forbidden"): boolean {
+function noteTokenEndpointKind(shop: string, kind: "not_found" | "forbidden"): void {
   const now = Date.now();
   let seen = tokenEndpointKindSeen.get(kind);
   if (!seen) tokenEndpointKindSeen.set(kind, (seen = new Map()));
   seen.set(shop, now);
   for (const [s, at] of seen) if (now - at > TOKEN_ENDPOINT_MASS_WINDOW_MS) seen.delete(s);
-  if (seen.size < TOKEN_ENDPOINT_MASS_SHOPS) return false;
-  tokenEndpointMassAt = now;
-  const firstTime = now >= migrationHeldUntil;
-  migrationHeldUntil = Math.max(migrationHeldUntil, now + TOKEN_ENDPOINT_HOLD_MS);
-  if (firstTime) {
-    const code = kind === "not_found" ? 404 : 403;
-    logger.error(
-      `[OfflineAdmin] TOKEN_ENDPOINT_MASS -- ${seen.size} shops got a ${code} from the token endpoint within ${Math.round(TOKEN_ENDPOINT_MASS_WINDOW_MS / 60000)} min; ` +
-        `this looks like our deploy or Shopify, not merchants. All migrations pause for ${Math.round(TOKEN_ENDPOINT_HOLD_MS / 3600000)} h, no attempt is counted ` +
-        `and nothing becomes final by kind for 24 h. Check the client id / secret and the app version first.`,
-    );
-    notifyOps(
-      "token_endpoint_mass",
-      `${seen.size} shops got a ${code} from Shopify's token endpoint within ${Math.round(TOKEN_ENDPOINT_MASS_WINDOW_MS / 60000)} min: looks like our deploy or Shopify, not merchants. Migrations pause; no shop is finalised.`,
-    );
-  }
-  return true;
-}
-
-function tokenEndpointMassSeenRecently(): boolean {
-  return tokenEndpointMassAt > 0 && Date.now() - tokenEndpointMassAt < TOKEN_ENDPOINT_MASS_MEMORY_MS;
+  if (seen.size < TOKEN_ENDPOINT_MASS_SHOPS) return;
+  const last = tokenEndpointMassLoggedAt.get(kind);
+  if (last !== undefined && now - last < TOKEN_ENDPOINT_MASS_LOG_INTERVAL_MS) return;
+  tokenEndpointMassLoggedAt.set(kind, now);
+  const code = kind === "not_found" ? 404 : 403;
+  logger.error(
+    `[OfflineAdmin] TOKEN_ENDPOINT_MASS -- ${seen.size} shops got a ${code} from the token endpoint within ${Math.round(TOKEN_ENDPOINT_MASS_WINDOW_MS / 60000)} min; ` +
+      "this looks like our deploy or Shopify, not merchants. Nothing is paused: a shop is only finalised when a direct probe with its stored token fails too. " +
+      "Check the client id / secret and the app version first.",
+  );
+  notifyOps(
+    "token_endpoint_mass",
+    `${seen.size} shops got a ${code} from Shopify's token endpoint within ${Math.round(TOKEN_ENDPOINT_MASS_WINDOW_MS / 60000)} min: looks like our deploy or Shopify, not merchants. No shop is finalised unless its own probe fails.`,
+  );
 }
 
 /**
  * Before a shop is finalised by kind: does it answer `{ shop { id } }` with its
  * stored token right now? Then it is reachable and the 404 / 403 of the token
- * endpoint is not the whole story. A 403 of the deadline kind or of the
- * allowlist kinds also counts as "answers" (the shop exists; our address or the
- * token format is the problem). Any failure otherwise means "does not answer".
+ * endpoint is not the whole story. An allowlist-kind 403 also counts as
+ * "answers" (our address is the problem, not the shop). Any other failure, the
+ * deadline 403 included (the token is useless), means "does not answer".
  * Never throws.
  */
 async function shopAnswersProbe(shop: string): Promise<boolean> {
@@ -867,15 +862,20 @@ async function shopAnswersProbe(shop: string): Promise<boolean> {
       data?: { shop?: { id?: unknown } };
       errors?: unknown;
     } | null;
-    return !!body && !body.errors && typeof body.data?.shop?.id === "string" && body.data.shop.id.length > 0;
+    const answered = !!body && !body.errors && typeof body.data?.shop?.id === "string" && body.data.shop.id.length > 0;
+    if (answered) noteApiSuccess(shop);
+    return answered;
   } catch (error) {
     try {
       const kind = await classifyForbidden(shop, error, { record: false });
       if (kind === "ip_allowlist" || kind === "ip_allowlist_suspected") {
+        // Our address, not the shop: do not finalise on a verdict we cannot make.
         reportForbidden(shop, kind);
         return true;
       }
-      return kind === "non_expiring_rejected";
+      // The deadline answer means the stored token is useless: it does NOT
+      // withhold anything (the record becomes final and the heal can blank it).
+      return false;
     } catch {
       return false;
     }
@@ -1425,7 +1425,7 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
       if (status === 404) {
         // The shop is gone as far as the token endpoint knows. ONE attempt per
         // run; final only after >= 24 h and >= 3 runs of the same answer.
-        if (noteTokenEndpointKind(shop, "not_found")) return "backoff"; // mass: counts nothing
+        if (record?.failureKind !== "not_found") noteTokenEndpointKind(shop, "not_found");
         lastError = describe(error);
         failureKind = "not_found";
         break;
@@ -1439,10 +1439,14 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
           reportForbidden(shop, kind);
           return "backoff";
         }
-        if (noteTokenEndpointKind(shop, "forbidden")) return "backoff";
-        lastError = describe(error);
-        failureKind = "forbidden";
-        break;
+        if (kind !== "non_expiring_rejected") {
+          if (record?.failureKind !== "forbidden") noteTokenEndpointKind(shop, "forbidden");
+          lastError = describe(error);
+          failureKind = "forbidden";
+          break;
+        }
+        // The deadline answer at the token endpoint is not about this shop:
+        // it falls through as a transient failure.
       }
       lastError = describe(error);
       logger.warn("[OfflineAdmin] Token migration attempt failed (transient) — retrying", {
@@ -1547,10 +1551,13 @@ async function settleFailedRun(
   // up" honours this too.
   let finalByKind = false;
   if (!wasTerminal && after && !migrationStore.isTerminal(after) && migrationStore.isKindFinal(after)) {
-    if (tokenEndpointMassSeenRecently()) {
-      logger.warn("[OfflineAdmin] Final-by-kind withheld: a mass 404/403 of the token endpoint was seen in the last 24 h, so the verdict may not be about this shop", { shop });
-    } else if (await shopAnswersProbe(shop)) {
+    if (await shopAnswersProbe(shop)) {
+      // Reachable: not finalised, not blocked, and this withheld verdict must
+      // not push the record toward the old 40-attempt cap either (that would
+      // erase and give up a shop that is provably alive).
       logger.warn("[OfflineAdmin] Final-by-kind withheld: the shop answers a direct probe with its stored token, so it is reachable; the record stays retriable", { shop });
+      await migrationStore.capSingleKindAttempts(shop).catch(() => undefined);
+      after = await migrationStore.getMigrationRecord(shop).catch(() => null);
     } else {
       await migrationStore.markMigrationKindFinal(shop).catch(() => undefined);
       finalByKind = true;
