@@ -19,8 +19,8 @@
  * the same lifecycle the in-app SyncScheduler uses.
  *
  * Safety guards — a shop is purged ONLY when ALL hold:
- *   0. it shows no proof of being installed after the uninstall mark
- *      (reinstallEvidenceAt / lastWebhookAt / lastApiOkAt later than uninstalledAt)
+ *   0. it shows no proof of being installed in the last 30 days after the
+ *      uninstall mark (reinstallEvidenceAt / lastWebhookAt / lastApiOkAt)
  *   1. ShopInstallState.uninstalledAt is set and older than the retention window
  *   2. it has zero Session rows (no active install — cleared on reinstall)
  *
@@ -36,7 +36,7 @@
 import { db } from "../../app/db.server";
 import { loggers } from "../../app/utils/logger.server";
 import { redactShopData } from "../../app/services/gdpr.service";
-import { hasReinstallEvidenceAfterUninstall } from "../../app/services/shop-connection-status.shared";
+import { REINSTALL_EVIDENCE_PROTECTION_MS, latestEvidenceAfterUninstall } from "../../app/services/shop-connection-status.shared";
 
 /** Retention window before an uninstalled shop is purged. Default 30 days. */
 const RETENTION_DAYS = parseInt(process.env.REAPER_RETENTION_DAYS || "30", 10);
@@ -52,6 +52,7 @@ export class ShopReaperService {
   private static instance: ShopReaperService;
   private intervalId: NodeJS.Timeout | null = null;
   private isRunning = false;
+  private readonly evidenceSkipLogged = new Set<string>();
 
   private constructor() {}
 
@@ -129,10 +130,16 @@ export class ShopReaperService {
       const { shop } = candidate;
       // Guard 0 (PLAN_ADMIN_SHOP_OVERVIEW 2.7): proof of being installed AFTER
       // the uninstall mark (reinstall evidence, a signed webhook, a successful
-      // API call). A stale or wrong mark must never lead to deletion.
-      if (hasReinstallEvidenceAfterUninstall(candidate)) {
+      // API call) protects the shop for at most 30 days after that evidence
+      // (a shop holding a session is protected by guard 1 anyway). A shop that
+      // went silent again is reaped. Logged once per shop, not every run.
+      const evidenceAt = latestEvidenceAfterUninstall(candidate);
+      if (evidenceAt !== null && Date.now() - evidenceAt < REINSTALL_EVIDENCE_PROTECTION_MS) {
         skipped++;
-        loggers.queue("warn", `Shop reap: skipping ${shop} - REINSTALL_EVIDENCE after the uninstall mark`);
+        if (!this.evidenceSkipLogged.has(shop)) {
+          this.evidenceSkipLogged.add(shop);
+          loggers.queue("warn", `Shop reap: skipping ${shop} - REINSTALL_EVIDENCE after the uninstall mark`);
+        }
         continue;
       }
 

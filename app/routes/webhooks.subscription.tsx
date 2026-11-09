@@ -44,7 +44,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // Signature first, on a clone so the library can still read the body. A
   // refusal (401 / 400 / 405) is thrown as a Response and passes through.
   const verified = await verifyWebhookRequest(request.clone());
-  await recordWebhookSeen(verified.shop, request.headers.get("x-shopify-triggered-at"));
+  await recordWebhookSeen(verified.shop, request.headers.get("x-shopify-triggered-at"), { reinstallEvidence: false });
 
   let ctx: Awaited<ReturnType<typeof authenticate.webhook>>;
   try {

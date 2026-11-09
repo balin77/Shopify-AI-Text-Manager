@@ -353,33 +353,38 @@ describe("REINSTALL_EVIDENCE (PLAN_ADMIN_SHOP_OVERVIEW 2.7)", () => {
   const uninstalledAt = new Date(Date.now() - 3_600_000);
   const lines = () => logs.warn.filter((l) => l.includes("REINSTALL_EVIDENCE"));
 
-  it("a signed webhook clearly after the uninstall sets the evidence once and logs one line", async () => {
+  it("a products/collections webhook clearly after the uninstall records the evidence once, WITHOUT lifting the mark", async () => {
     store.set(SHOP, fresh({ uninstalledAt, uninstallSource: "webhook", reinstallEvidenceAt: null }));
     const at = new Date(uninstalledAt.getTime() + 20 * 60_000);
     await recordWebhookSeen(SHOP, at);
     const row = store.get(SHOP)!;
     expect(row.reinstallEvidenceAt).toEqual(at);
-    expect(row.uninstalledAt).toBeNull();
+    expect(row.uninstalledAt).toEqual(uninstalledAt);
     expect(lines()).toHaveLength(1);
-    // more webhooks (even past the throttle) neither log nor move the evidence
     invalidateConnectionCache(SHOP);
     await recordWebhookSeen(SHOP, new Date(at.getTime() + 60_000));
-    expect(noteReinstallEvidence).toBeDefined();
     expect(await noteReinstallEvidence(SHOP, new Date(at.getTime() + 120_000), "webhook")).toBe(false);
     expect(lines()).toHaveLength(1);
     expect(store.get(SHOP)!.reinstallEvidenceAt).toEqual(at);
   });
 
-  it("without an offline session the shop is blocked as needs_reauth", async () => {
+  it("the subscription path (reinstallEvidence: false) is no evidence and does not even move lastWebhookAt", async () => {
     store.set(SHOP, fresh({ uninstalledAt }));
-    await recordWebhookSeen(SHOP, new Date(uninstalledAt.getTime() + 20 * 60_000));
-    expect(store.get(SHOP)).toMatchObject({ connectionState: "needs_reauth", connectionStateReason: "reinstall_evidence" });
+    await recordWebhookSeen(SHOP, new Date(uninstalledAt.getTime() + 20 * 60_000), { reinstallEvidence: false });
+    const row = store.get(SHOP)!;
+    expect(row.reinstallEvidenceAt ?? null).toBeNull();
+    expect(row.lastWebhookAt ?? null).toBeNull();
+    expect(lines()).toHaveLength(0);
+    // for an installed shop the same call still records lastWebhookAt
+    store.set(SHOP, fresh());
+    invalidateConnectionCache(SHOP);
+    await recordWebhookSeen(SHOP, new Date(Date.now() - 1000), { reinstallEvidence: false });
+    expect(store.get(SHOP)!.lastWebhookAt).toBeInstanceOf(Date);
   });
 
-  it("a webhook inside the 5 minute grace (the uninstall's own cancellations) is no evidence", async () => {
+  it("a webhook inside the 5 minute grace is no evidence", async () => {
     store.set(SHOP, fresh({ uninstalledAt }));
     await recordWebhookSeen(SHOP, new Date(uninstalledAt.getTime() + 60_000));
-    expect(store.get(SHOP)!.uninstalledAt).toEqual(uninstalledAt);
     expect(store.get(SHOP)!.reinstallEvidenceAt ?? null).toBeNull();
     expect(lines()).toHaveLength(0);
   });

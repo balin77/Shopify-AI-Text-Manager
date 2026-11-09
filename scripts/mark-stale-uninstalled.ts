@@ -4,7 +4,9 @@
  * but only with evidence. Marking leads, 30 days later, to the data reaper
  * deleting the shop's data, so the default is a DRY RUN.
  *
- * Usage (in the production service environment, e.g. a Railway shell):
+ * Usage, from a LOCAL / dev checkout of the repository (npm install done), with
+ * the production DATABASE_URL set temporarily in the shell, never committed.
+ * It does NOT run in the production image (the app sources and tsx are not in it):
  *   npx tsx scripts/mark-stale-uninstalled.ts --shop example.myshopify.com
  *   npx tsx scripts/mark-stale-uninstalled.ts --shop example.myshopify.com --apply
  *
@@ -14,7 +16,8 @@
  * days (7 when Shopify says the shop is not found) with no webhook, visit,
  * sign-in, API success or reinstall evidence since the block began. Only
  * `--apply` writes, through markShopUninstalled(shop, { source: "operator" }),
- * after the facts were re-read. Exit codes: 0 ok / dry run, 1 usage or error,
+ * after the facts were re-read. A shop whose session still holds a token is
+ * refused too, unless --force-with-token is given. Exit codes: 0 ok / dry run, 1 usage or error,
  * 2 refused (no evidence, unknown shop, already uninstalled).
  *
  * Never prints a token. No shop names are stored in the repo.
@@ -29,18 +32,20 @@ export interface CliIo {
 
 const SHOP_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/;
 
-export function parseArgs(argv: string[]): { shop: string | null; apply: boolean; unknown: string[] } {
+export function parseArgs(argv: string[]): { shop: string | null; apply: boolean; forceWithToken: boolean; unknown: string[] } {
   let shop: string | null = null;
   let apply = false;
+  let forceWithToken = false;
   const unknown: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--apply") apply = true;
+    else if (a === "--force-with-token") forceWithToken = true;
     else if (a === "--shop") shop = (argv[++i] ?? "").trim().toLowerCase() || null;
     else if (a.startsWith("--shop=")) shop = a.slice(7).trim().toLowerCase() || null;
     else unknown.push(a);
   }
-  return { shop, apply, unknown };
+  return { shop, apply, forceWithToken, unknown };
 }
 
 const iso = (d: unknown): string => {
@@ -55,12 +60,24 @@ export async function runMarkStaleUninstalled(
   io: CliIo = { log: (l) => console.log(l), error: (l) => console.error(l) },
   now: Date = new Date(),
 ): Promise<number> {
-  const { shop, apply, unknown } = parseArgs(argv);
+  const { shop, apply, forceWithToken, unknown } = parseArgs(argv);
   if (!shop || unknown.length > 0 || !SHOP_RE.test(shop)) {
-    io.error("Usage: mark-stale-uninstalled.ts --shop <name>.myshopify.com [--apply]");
+    io.error("Usage: mark-stale-uninstalled.ts --shop <name>.myshopify.com [--apply] [--force-with-token]");
     return 1;
   }
-  const { reviewStaleInstall } = await import("../app/services/stale-install.server");
+  let reviewStaleInstall: typeof import("../app/services/stale-install.server").reviewStaleInstall;
+  let markShopUninstalled: typeof import("../app/services/shop-uninstall.server").markShopUninstalled;
+  try {
+    ({ reviewStaleInstall } = await import("../app/services/stale-install.server"));
+    ({ markShopUninstalled } = await import("../app/services/shop-uninstall.server"));
+  } catch (error) {
+    io.error(
+      "FAILED: the app sources or their dependencies could not be loaded (" +
+        (error instanceof Error ? error.message.split("\n")[0] : "unknown error") +
+        "). Run this script from a full local checkout (npm install) with tsx and DATABASE_URL set; it does not run in the production image.",
+    );
+    return 1;
+  }
   const review = await reviewStaleInstall(shop, now);
   if (!review.found) {
     io.error(`REFUSED: no install state is known for ${shop}.`);
@@ -76,7 +93,7 @@ export async function runMarkStaleUninstalled(
   io.log(`  last sign-in:          ${iso(i.lastAuthAt)}`);
   io.log(`  reinstall evidence:    ${iso(i.reinstallEvidenceAt)}`);
   io.log(`  uninstalled at:        ${iso(i.uninstalledAt)}${i.uninstallSource ? ` (source ${i.uninstallSource})` : ""}`);
-  io.log(`  offline sessions:      ${review.sessions.total} (${review.sessions.withToken} with a token)`);
+  io.log(`  offline sessions:      ${review.sessions.total} (${review.sessions.withToken} with a token, ${review.sessions.withRefreshToken} with a refresh token)`);
   io.log(`  token migration:       ${review.migration ? `${review.migration.status}, ${review.migration.attempts} attempt(s)` : "none"}`);
   io.log(`  presumed uninstalled:  ${review.presumedUninstalled ? "yes" : "no"}`);
 
@@ -91,18 +108,29 @@ export async function runMarkStaleUninstalled(
     );
     return 2;
   }
+  if (review.sessions.withToken > 0 && !forceWithToken) {
+    io.error(
+      `REFUSED: the shop still has ${review.sessions.withToken} offline session(s) holding a token, which may be a live access. ` +
+        "Check the shop first; to mark it anyway pass --force-with-token.",
+    );
+    return 2;
+  }
   if (!apply) {
     io.log("DRY RUN: nothing was changed. Run again with --apply to mark the shop uninstalled (source operator).");
     return 0;
   }
   // Re-read right before writing: a webhook or sign-in may have landed meanwhile.
   const again = await reviewStaleInstall(shop, now);
-  if (!again.found || again.alreadyUninstalled || !again.presumedUninstalled) {
+  if (!again.found || again.alreadyUninstalled || !again.presumedUninstalled || (again.sessions.withToken > 0 && !forceWithToken)) {
     io.error("REFUSED: the evidence changed while the script ran; nothing was marked.");
     return 2;
   }
-  const { markShopUninstalled } = await import("../app/services/shop-uninstall.server");
-  await markShopUninstalled(shop, { source: "operator" });
+  const since = again.install?.connectionStateSince;
+  const done = await markShopUninstalled(shop, { source: "operator", ifBlockedSince: since ? new Date(since) : undefined });
+  if (done === false) {
+    io.error("REFUSED: the shop's state changed while the script ran; nothing was marked.");
+    return 2;
+  }
   io.log(`MARKED: ${shop} is now uninstalled (source operator). The data reaper handles it after its retention window.`);
   return 0;
 }

@@ -56,7 +56,8 @@ beforeEach(() => {
 
 describe("mark-stale-uninstalled", () => {
   it("parses its arguments", () => {
-    expect(parseArgs(["--shop", "A.myshopify.com", "--apply"])).toEqual({ shop: "a.myshopify.com", apply: true, unknown: [] });
+    expect(parseArgs(["--shop", "A.myshopify.com", "--apply"])).toEqual({ shop: "a.myshopify.com", apply: true, forceWithToken: false, unknown: [] });
+    expect(parseArgs(["--shop", "a.myshopify.com", "--force-with-token"]).forceWithToken).toBe(true);
     expect(parseArgs(["--shop=a.myshopify.com", "--x"]).unknown).toEqual(["--x"]);
   });
 
@@ -84,7 +85,7 @@ describe("mark-stale-uninstalled", () => {
     const a = io();
     expect(await runMarkStaleUninstalled(["--shop", SHOP, "--apply"], a.io, NOW)).toBe(0);
     expect(h.mark).toHaveBeenCalledTimes(1);
-    expect(h.mark).toHaveBeenCalledWith(SHOP, { source: "operator" });
+    expect(h.mark).toHaveBeenCalledWith(SHOP, { source: "operator", ifBlockedSince: expect.any(Date) });
   });
 
   it("refuses (exit 2) without evidence, also with --apply", async () => {
@@ -114,6 +115,23 @@ describe("mark-stale-uninstalled", () => {
     install({ connectionState: "shop_not_found", connectionStateSince: ago(8) });
     expect(await runMarkStaleUninstalled(["--shop", SHOP, "--apply"], io().io, NOW)).toBe(0);
     expect(h.mark).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a shop whose session still holds a token unless --force-with-token", async () => {
+    install();
+    h.sessions.push({ shop: SHOP, isOnline: false, accessToken: "tok", refreshToken: null });
+    const a = io();
+    expect(await runMarkStaleUninstalled(["--shop", SHOP, "--apply"], a.io, NOW)).toBe(2);
+    expect(a.err.join("\n")).toContain("--force-with-token");
+    expect(h.mark).not.toHaveBeenCalled();
+    expect(await runMarkStaleUninstalled(["--shop", SHOP, "--apply", "--force-with-token"], io().io, NOW)).toBe(0);
+    expect(h.mark).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report success when the conditional mark finds the state changed", async () => {
+    install();
+    h.mark.mockResolvedValueOnce(false as any);
+    expect(await runMarkStaleUninstalled(["--shop", SHOP, "--apply"], io().io, NOW)).toBe(2);
   });
 
   it("never prints a token", async () => {

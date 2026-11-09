@@ -149,20 +149,31 @@ export function hasWebhookAfterUninstall(install: ConnectionInstallFacts | null)
   return un !== null && wh !== null && wh > un + WEBHOOK_AFTER_UNINSTALL_GRACE_MS;
 }
 
+/** Reaper protection by reinstall evidence ends this long after the evidence (a shop with a session is protected anyway). */
+export const REINSTALL_EVIDENCE_PROTECTION_MS = 30 * DAY_MS;
+
 /**
- * Does the shop show proof of being installed AFTER it was marked uninstalled?
- * A stored `reinstallEvidenceAt` later than `uninstalledAt`, a signed webhook
- * clearly after it (`hasWebhookAfterUninstall`), or a successful Admin API call
- * clearly after it. The reaper never deletes such a shop (2.7).
+ * The latest proof of being installed AFTER the uninstall mark, as epoch ms, or
+ * null: a stored `reinstallEvidenceAt` later than `uninstalledAt`, a signed
+ * webhook or a successful Admin API call clearly after it.
  */
-export function hasReinstallEvidenceAfterUninstall(install: ConnectionInstallFacts | null): boolean {
+export function latestEvidenceAfterUninstall(install: ConnectionInstallFacts | null): number | null {
   const un = ts(install?.uninstalledAt);
-  if (un === null) return false;
-  const ev = ts(install?.reinstallEvidenceAt);
-  if (ev !== null && ev > un) return true;
-  if (hasWebhookAfterUninstall(install)) return true;
-  const api = ts(install?.lastApiOkAt);
-  return api !== null && api > un + WEBHOOK_AFTER_UNINSTALL_GRACE_MS;
+  if (un === null) return null;
+  let best: number | null = null;
+  const consider = (v: DateLike | null | undefined, grace: number) => {
+    const t = ts(v);
+    if (t !== null && t > un + grace && (best === null || t > best)) best = t;
+  };
+  consider(install?.reinstallEvidenceAt, 0);
+  consider(install?.lastWebhookAt, WEBHOOK_AFTER_UNINSTALL_GRACE_MS);
+  consider(install?.lastApiOkAt, WEBHOOK_AFTER_UNINSTALL_GRACE_MS);
+  return best;
+}
+
+/** Does the shop show proof of being installed AFTER it was marked uninstalled? */
+export function hasReinstallEvidenceAfterUninstall(install: ConnectionInstallFacts | null): boolean {
+  return latestEvidenceAfterUninstall(install) !== null;
 }
 
 /**

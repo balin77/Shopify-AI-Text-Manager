@@ -370,27 +370,36 @@ Webhook `app/uninstalled` nie an, steht ein Shop ohne `uninstalledAt` da; Markie
 
 - `[ConnectionState] REINSTALL_EVIDENCE shop=… source=webhook`: ein als deinstalliert
   markierter Shop hat danach (mehr als 5 Minuten nach `uninstalledAt`) einen signierten
-  Webhook geschickt. Genau eine Zeile; `reinstallEvidenceAt` wird gesetzt, `uninstalledAt`
-  aufgehoben (ohne Session folgt die Sperre `needs_reauth`, Grund `reinstall_evidence`).
-  Der Reaper löscht ausserdem nie einen Shop mit Beleg nach `uninstalledAt`
-  (`Shop reap: skipping … REINSTALL_EVIDENCE`).
-- **Operator-Skript** `scripts/mark-stale-uninstalled.ts`, in der Production-Umgebung des
-  Web-Services (z. B. Railway-Shell) ausführen:
+  **Produkt- oder Kollektions**-Webhook geschickt (der Abo-Webhook zählt nicht: ihn löst die
+  Deinstallation selbst aus). Genau eine Zeile; es wird nur `reinstallEvidenceAt`
+  gesetzt, `uninstalledAt` bleibt (aufgehoben wird es erst durch eine echte Neuanmeldung).
+  Der Reaper löscht einen Shop mit solchem Beleg höchstens 30 Tage lang nicht (mit Session
+  schützt ihn ohnehin die Session-Regel); danach ist er wieder löschbar. Die Zeile
+  `Shop reap: skipping … REINSTALL_EVIDENCE` erscheint einmal pro Shop und Prozess.
+- **Operator-Skript** `scripts/mark-stale-uninstalled.ts`. Es läuft **nicht im
+  Production-Image** (App-Quellen und `tsx` sind dort nicht enthalten), sondern aus einem
+  lokalen Checkout (`npm install`), mit der Production-`DATABASE_URL` nur vorübergehend in
+  der Shell gesetzt (nie in eine Datei oder ein Commit):
   `npx tsx scripts/mark-stale-uninstalled.ts --shop <name>.myshopify.com` ist ein
   **Trockenlauf**: er zeigt die Belege (letzter Webhook, letzter API-Erfolg, letzter
   Besuch/Anmeldung, Verbindungszustand und Grund, Sessions und Token, Migration) und ändert
-  nichts. Erst mit `--apply` wird über `markShopUninstalled(…, "operator")` markiert.
-  Das Skript verweigert (Exit 2), wenn der Shop nicht «vermutlich deinstalliert» ist
-  (seit mindestens 30 Tagen gesperrt, 7 bei «Shop nicht gefunden», ohne Webhook, Besuch,
-  Anmeldung, API-Erfolg oder Beleg seit Beginn der Sperre), unbekannt oder schon
-  deinstalliert ist.
+  nichts. Erst mit `--apply` wird über `markShopUninstalled(…, "operator")` markiert, und
+  nur, wenn sich der Zustand seit der Prüfung nicht geändert hat (bedingte Markierung vor
+  dem Löschen der Sessions). Das Skript verweigert (Exit 2), wenn der Shop nicht
+  «vermutlich deinstalliert» ist (seit mindestens 30 Tagen gesperrt, 7 bei «Shop nicht
+  gefunden», ohne Webhook, Besuch, Anmeldung, API-Erfolg oder Beleg seit Beginn der Sperre),
+  unbekannt oder schon deinstalliert ist, oder wenn noch eine Session ein Token hält
+  (dann nur mit `--force-with-token`). Fehlen die App-Quellen, meldet es das klar.
 - **Automatisches Markieren** `STALE_INSTALL_AUTO_MARK`: nur der exakte Wert `true` schaltet
-  an, **standardmässig AUS**. Der Verbindungs-Sweep markiert dann pro Durchlauf höchstens
-  5 Shops (Quelle `stale_auto`), die seit mindestens 90 Tagen (14 bei «Shop nicht
+  an, **standardmässig AUS**. Der Verbindungs-Sweep prüft dann höchstens stündlich und
+  markiert (Quelle `stale_auto`) Shops, die seit mindestens 90 Tagen (14 bei «Shop nicht
   gefunden») gesperrt sind, ohne Webhook, Besuch, Anmeldung, API-Erfolg oder Beleg seit
-  Beginn der Sperre und ohne noch vorhandenes Token. Jede Markierung ist eine Zeile
-  `[StaleInstall] AUTO_MARKED_UNINSTALLED shop=…`. Empfehlung: aus lassen und den Weg über
-  das Skript gehen.
+  Beginn der Sperre und ohne noch vorhandenes Token. Grenzen: höchstens 5 Markierungen pro
+  UTC-Tag (nur im Prozess gezählt, ein Neustart setzt den Zähler zurück); sind mehr als 10
+  Shops gleichzeitig berechtigt, wird **nichts** markiert und es gibt genau eine laute Zeile
+  `[StaleInstall] AUTO_MARK_ABORTED` (vermutlich eine systemische Ursache). Jede Markierung
+  ist eine Zeile `[StaleInstall] AUTO_MARKED_UNINSTALLED shop=…`. Empfehlung: aus lassen und
+  den Weg über das Skript gehen.
 
 **`needs_reauth`.** Antwortet Shopify auf die Migration mit 400 `invalid_subject_token`,
 ist das endgültig: das Token lässt sich nicht mehr tauschen (z. B. schon migriert und

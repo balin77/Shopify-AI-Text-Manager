@@ -69,7 +69,18 @@ describe("markShopUninstalled", () => {
 
   it("still lifts the block and never throws when the marker write fails", async () => {
     h.upsert.mockRejectedValue(new Error("db"));
-    await expect(markShopUninstalled("x.myshopify.com", { source: "webhook" })).resolves.toBeUndefined();
+    await expect(markShopUninstalled("x.myshopify.com", { source: "webhook" })).resolves.toBe(true);
     expect(h.clear).toHaveBeenCalled();
+  });
+
+  it("ifBlockedSince: a failed claim touches nothing (no session deleted, no upsert)", async () => {
+    h.updateMany.mockResolvedValueOnce({ count: 0 });
+    const since = new Date("2026-01-01T00:00:00Z");
+    await expect(markShopUninstalled("x.myshopify.com", { source: "stale_auto", ifBlockedSince: since })).resolves.toBe(false);
+    expect(h.updateMany.mock.calls[0][0]).toMatchObject({
+      where: { shop: "x.myshopify.com", uninstalledAt: null, connectionStateSince: since },
+    });
+    expect(h.upsert).not.toHaveBeenCalled();
+    expect(h.clear).not.toHaveBeenCalled();
   });
 });

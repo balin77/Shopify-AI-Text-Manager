@@ -39,6 +39,9 @@ import {
 import {
   STALE_AUTO_MARK_PER_RUN,
   autoMarkStaleInstalls,
+  STALE_AUTO_MARK_INTERVAL_MS,
+  STALE_AUTO_MARK_MASS_LIMIT,
+  __resetStaleAutoMarkForTests,
   reviewStaleInstall,
   staleAutoMarkEnabled,
 } from "~/services/stale-install.server";
@@ -57,6 +60,7 @@ function blocked(shop: string, daysBlocked: number, over: Record<string, any> = 
 }
 
 beforeEach(() => {
+  __resetStaleAutoMarkForTests();
   h.install.length = 0;
   h.sessions.length = 0;
   h.migrations.length = 0;
@@ -114,7 +118,7 @@ describe("reviewStaleInstall", () => {
     h.sessions.push({ shop: "a.myshopify.com", isOnline: false, accessToken: "" });
     const r = await reviewStaleInstall("a.myshopify.com", NOW);
     expect(r).toMatchObject({ found: true, presumedUninstalled: true, autoMarkEligible: false });
-    expect(r.sessions).toEqual({ total: 1, withToken: 0 });
+    expect(r.sessions).toEqual({ total: 1, withToken: 0, withRefreshToken: 0 });
     expect(JSON.stringify(r)).not.toContain("accessToken");
     expect((await reviewStaleInstall("none.myshopify.com", NOW)).found).toBe(false);
   });
@@ -138,8 +142,8 @@ describe("autoMarkStaleInstalls", () => {
     blocked("gone-young.myshopify.com", 10, { connectionState: "shop_not_found" });
     const r = await autoMarkStaleInstalls(NOW, { env: ON });
     expect(r.marked.sort()).toEqual(["gone.myshopify.com", "old.myshopify.com"]);
-    expect(h.mark).toHaveBeenCalledWith("old.myshopify.com", { source: "stale_auto" });
-    expect(h.mark).toHaveBeenCalledWith("gone.myshopify.com", { source: "stale_auto" });
+    expect(h.mark).toHaveBeenCalledWith("old.myshopify.com", { source: "stale_auto", ifBlockedSince: expect.any(Date) });
+    expect(h.mark).toHaveBeenCalledWith("gone.myshopify.com", { source: "stale_auto", ifBlockedSince: expect.any(Date) });
     const lines = vi.mocked(logger.warn).mock.calls.map((c) => String(c[0])).filter((l) => l.includes("AUTO_MARKED_UNINSTALLED"));
     expect(lines).toHaveLength(2);
   });
@@ -162,14 +166,42 @@ describe("autoMarkStaleInstalls", () => {
     expect((await autoMarkStaleInstalls(NOW, { env: ON })).marked).toEqual([]);
   });
 
-  it("is bounded per run, oldest block first", async () => {
-    for (let i = 0; i < 12; i++) blocked(`s${i}.myshopify.com`, 100 + i);
+  it("is capped at 5 per UTC day (process-local) and oldest block first", async () => {
+    for (let i = 0; i < 8; i++) blocked(`s${i}.myshopify.com`, 100 + i);
     const r = await autoMarkStaleInstalls(NOW, { env: ON });
     expect(r.marked).toHaveLength(STALE_AUTO_MARK_PER_RUN);
-    expect(r.marked[0]).toBe("s11.myshopify.com");
-    expect(h.mark).toHaveBeenCalledTimes(STALE_AUTO_MARK_PER_RUN);
-    const two = await autoMarkStaleInstalls(NOW, { env: ON, limit: 2 });
-    expect(two.marked).toHaveLength(2);
+    expect(r.marked[0]).toBe("s7.myshopify.com");
+    // an hour later, same UTC day: the cap is spent
+    h.install.forEach((i) => { if (i.uninstalledAt === null) i.connectionStateSince = new Date(i.connectionStateSince); });
+    const later = new Date(NOW.getTime() + STALE_AUTO_MARK_INTERVAL_MS + 1000);
+    expect((await autoMarkStaleInstalls(later, { env: ON })).marked).toHaveLength(0);
+    // next UTC day: allowed again
+    const next = new Date(NOW.getTime() + 24 * 3600_000 + STALE_AUTO_MARK_INTERVAL_MS);
+    expect((await autoMarkStaleInstalls(next, { env: ON })).marked.length).toBeGreaterThan(0);
+  });
+
+  it("runs at most hourly", async () => {
+    blocked("a.myshopify.com", 100);
+    await autoMarkStaleInstalls(NOW, { env: ON });
+    h.mark.mockClear();
+    const again = await autoMarkStaleInstalls(new Date(NOW.getTime() + 60_000), { env: ON });
+    expect(again.throttled).toBe(true);
+    expect(h.mark).not.toHaveBeenCalled();
+  });
+
+  it("marks nothing and warns loudly once when more than 10 are eligible at once", async () => {
+    for (let i = 0; i < STALE_AUTO_MARK_MASS_LIMIT + 1; i++) blocked(`m${i}.myshopify.com`, 100);
+    const r = await autoMarkStaleInstalls(NOW, { env: ON });
+    expect(r).toMatchObject({ aborted: true, marked: [] });
+    expect(h.mark).not.toHaveBeenCalled();
+    const lines = vi.mocked(logger.warn).mock.calls.map((c) => String(c[0])).filter((l) => l.includes("AUTO_MARK_ABORTED"));
+    expect(lines).toHaveLength(1);
+  });
+
+  it("skips a shop whose conditional mark reports a changed state", async () => {
+    blocked("a.myshopify.com", 100);
+    h.mark.mockResolvedValueOnce(false as any);
+    expect((await autoMarkStaleInstalls(NOW, { env: ON })).marked).toEqual([]);
   });
 
   it("a failing mark does not stop the others and never throws", async () => {

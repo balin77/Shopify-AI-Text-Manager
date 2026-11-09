@@ -26,9 +26,40 @@ import { clearConnectionBlock } from "~/utils/shop-connection-state.server";
 
 export type UninstallSource = "webhook" | "operator" | "stale_auto";
 
-export async function markShopUninstalled(shop: string, opts: { source: UninstallSource }): Promise<void> {
+/**
+ * `ifBlockedSince` (stale marking only): mark ONLY IF the shop is still not
+ * uninstalled and its connection block is still the one that was reviewed
+ * (same `connectionStateSince`). The claim happens first, before any session is
+ * deleted, so a sign-in between review and mark is not destroyed. Returns false
+ * (nothing touched) when the claim fails; true otherwise.
+ */
+export async function markShopUninstalled(
+  shop: string,
+  opts: { source: UninstallSource; ifBlockedSince?: Date },
+): Promise<boolean> {
   const { source } = opts;
   const tag = `[APP_UNINSTALLED]`;
+
+  if (opts.ifBlockedSince) {
+    try {
+      const claim = await db.shopInstallState.updateMany({
+        where: {
+          shop,
+          uninstalledAt: null,
+          connectionState: { not: null },
+          connectionStateSince: opts.ifBlockedSince,
+        },
+        data: { uninstalledAt: new Date(), uninstallSource: source },
+      });
+      if (claim.count === 0) {
+        logger.info(`${tag} Not marking ${shop}: its state changed since it was reviewed`);
+        return false;
+      }
+    } catch (error) {
+      logger.error(`${tag} Claim for ${shop} failed:`, error instanceof Error ? error.message : String(error));
+      return false;
+    }
+  }
 
   // Stop background sync immediately — the access token is now revoked.
   try {
@@ -93,4 +124,5 @@ export async function markShopUninstalled(shop: string, opts: { source: Uninstal
       error instanceof Error ? error.message : String(error),
     );
   }
+  return true;
 }
