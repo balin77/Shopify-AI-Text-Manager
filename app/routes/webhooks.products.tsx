@@ -1,6 +1,13 @@
 import { data as json } from "react-router";
 import type { ActionFunctionArgs } from "react-router";
-import { authenticate } from "~/shopify.server";
+import { verifyWebhookRequest } from "~/utils/webhook-auth.server";
+import {
+  getConnectionBlock,
+  isShopConnectionBlockedError,
+  noteDroppedWebhook,
+  recordWebhookSeen,
+  ShopConnectionBlockedError,
+} from "~/utils/shop-connection-state.server";
 import { logger } from "~/utils/logger.server";
 
 /**
@@ -8,11 +15,33 @@ import { logger } from "~/utils/logger.server";
  *
  * Handles: products/create, products/update, products/delete
  *
- * Uses Shopify's built-in authenticate.webhook() for HMAC verification.
- * This automatically returns 401 for invalid HMAC signatures.
+ * Verified by signature only (verifyWebhookRequest -> 401 for an invalid HMAC):
+ * this route never reads the library's session/admin, and the library's offline
+ * token refresh after the HMAC check answered 500 for shops whose token is dead.
+ * The Admin client is created in the background processing only.
+ *
+ * A shop with a BLOCKED connection gets 200 and no Admin API call: a delete is
+ * applied locally (DB only), a create/update is only counted
+ * (noteDroppedWebhook -> a catch-up is owed after the next sign-in). No retry
+ * row, no WebhookLog error row, debug log only.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { topic, shop, payload } = await authenticate.webhook(request);
+  const verified = await verifyWebhookRequest(request);
+  const { shop, payload } = verified;
+  // The library spells topics PRODUCTS_UPDATE, the header products/update.
+  const topic = verified.topic.toUpperCase().replace("/", "_");
+  await recordWebhookSeen(shop, request.headers.get("x-shopify-triggered-at"));
+
+  const blocked = await getConnectionBlock(shop);
+  if (blocked && topic !== "PRODUCTS_DELETE") {
+    await noteDroppedWebhook(shop);
+    logger.debug("[WEBHOOK] Product webhook of a blocked shop counted, not processed", {
+      context: "Webhook",
+      shop,
+      topic,
+    });
+    return json({ received: true }, { status: 200 });
+  }
 
   const productPayload = payload as { id: string | number };
   const productId = `gid://shopify/Product/${productPayload.id}`;
@@ -118,6 +147,15 @@ async function enqueueDeletedProductForIndexNow(db: any, shop: string, productId
   } catch { /* ignore */ }
 }
 
+/** Placeholder client for the DB-only delete path: any Shopify call is a bug and fails loudly. */
+function unusableAdmin(shop: string) {
+  return {
+    graphql: async () => {
+      throw new ShopConnectionBlockedError(shop, { state: "needs_reauth", reason: "webhook_delete_no_admin", since: null });
+    },
+  };
+}
+
 /**
  * Process webhook in the background
  */
@@ -133,8 +171,15 @@ async function processWebhookAsync(
   const { db } = await import("../db.server");
 
   try {
-    const { createAdminClientFromShop } = await import("../utils/admin-client.server");
-    const admin = await createAdminClientFromShop(shop);
+    // A delete touches the database only (deleteProduct never calls Shopify),
+    // so it needs no Admin client: it must work for a blocked shop too.
+    let admin: any;
+    if (topic === "PRODUCTS_DELETE") {
+      admin = unusableAdmin(shop);
+    } else {
+      const { createAdminClientFromShop } = await import("../utils/admin-client.server");
+      admin = await createAdminClientFromShop(shop);
+    }
 
     const syncService = new ProductSyncService(admin, shop);
 
@@ -172,6 +217,14 @@ async function processWebhookAsync(
       data: { processed: true },
     });
   } catch (error: unknown) {
+    // The connection got blocked after the request was accepted: the same quiet
+    // path as a blocked shop at the door (counted, no error row, no retry).
+    if (isShopConnectionBlockedError(error)) {
+      logger.debug("[WEBHOOK-ASYNC] Shop connection blocked, webhook counted", { context: "Webhook", shop, topic });
+      await noteDroppedWebhook(shop);
+      await db.webhookLog.update({ where: { id: logId }, data: { processed: true } }).catch(() => undefined);
+      return;
+    }
     const msg = error instanceof Error ? error.message : String(error);
     logger.error("[WEBHOOK-ASYNC] Error processing webhook", {
       context: "Webhook",

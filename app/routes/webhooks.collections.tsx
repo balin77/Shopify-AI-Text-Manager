@@ -1,6 +1,13 @@
 import { data as json } from "react-router";
 import type { ActionFunctionArgs } from "react-router";
-import { authenticate } from "~/shopify.server";
+import { verifyWebhookRequest } from "~/utils/webhook-auth.server";
+import {
+  getConnectionBlock,
+  isShopConnectionBlockedError,
+  noteDroppedWebhook,
+  recordWebhookSeen,
+  ShopConnectionBlockedError,
+} from "~/utils/shop-connection-state.server";
 import { ContentSyncService } from "../services/content-sync.service";
 import { logger } from "~/utils/logger.server";
 
@@ -9,11 +16,27 @@ import { logger } from "~/utils/logger.server";
  *
  * Handles: collections/create, collections/update, collections/delete
  *
- * Uses Shopify's built-in authenticate.webhook() for HMAC verification.
- * This automatically returns 401 for invalid HMAC signatures.
+ * Verified by signature only (verifyWebhookRequest -> 401 for an invalid HMAC);
+ * the library's offline token refresh is not involved. A BLOCKED shop gets 200
+ * and no Admin API call: a delete is applied locally, create/update are only
+ * counted (noteDroppedWebhook); no retry row, no error row, debug log only.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { topic, shop, payload } = await authenticate.webhook(request);
+  const verified = await verifyWebhookRequest(request);
+  const { shop, payload } = verified;
+  const topic = verified.topic.toUpperCase().replace("/", "_");
+  await recordWebhookSeen(shop, request.headers.get("x-shopify-triggered-at"));
+
+  const blocked = await getConnectionBlock(shop);
+  if (blocked && topic !== "COLLECTIONS_DELETE") {
+    await noteDroppedWebhook(shop);
+    logger.debug("[WEBHOOK] Collection webhook of a blocked shop counted, not processed", {
+      context: "Webhook",
+      shop,
+      topic,
+    });
+    return json({ received: true }, { status: 200 });
+  }
 
   const collectionPayload = payload as { id: string | number };
   const collectionId = `gid://shopify/Collection/${collectionPayload.id}`;
@@ -75,8 +98,19 @@ async function processWebhookAsync(
   const { webhookRetryService } = await import("../services/webhook-retry.service");
 
   try {
-    const { createAdminClientFromShop } = await import("../utils/admin-client.server");
-    const admin = await createAdminClientFromShop(shop);
+    // A delete is DB-only (deleteCollection never calls Shopify): no Admin
+    // client, so it also works for a blocked shop.
+    let admin: any;
+    if (topic === "COLLECTIONS_DELETE") {
+      admin = {
+        graphql: async () => {
+          throw new ShopConnectionBlockedError(shop, { state: "needs_reauth", reason: "webhook_delete_no_admin", since: null });
+        },
+      };
+    } else {
+      const { createAdminClientFromShop } = await import("../utils/admin-client.server");
+      admin = await createAdminClientFromShop(shop);
+    }
 
     const syncService = new ContentSyncService(admin, shop);
 
@@ -102,6 +136,13 @@ async function processWebhookAsync(
       data: { processed: true },
     });
   } catch (error: unknown) {
+    // Blocked meanwhile: counted quietly, no error row, no retry.
+    if (isShopConnectionBlockedError(error)) {
+      logger.debug("[WEBHOOK-ASYNC] Shop connection blocked, webhook counted", { context: "Webhook", shop, topic });
+      await noteDroppedWebhook(shop);
+      await db.webhookLog.update({ where: { id: logId }, data: { processed: true } }).catch(() => undefined);
+      return;
+    }
     const msg = error instanceof Error ? error.message : String(error);
     logger.error("[WEBHOOK-ASYNC] Error processing webhook", {
       context: "Webhook",
