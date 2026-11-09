@@ -49,6 +49,8 @@ export const FORBIDDEN_WINDOW_MS = 10 * 60 * 1000;
 /** Distinct shops with a 403 inside the window before "everybody fails" is suspected. */
 export const FORBIDDEN_SUSPECT_SHOPS = 3;
 export const IP_ALLOWLIST_PAUSE_MS = 30 * 60 * 1000;
+/** One incident pauses for at most this long in total, however often it is reported. */
+export const IP_ALLOWLIST_PAUSE_MAX_MS = 2 * 60 * 60 * 1000;
 export const IP_ALLOWLIST_LOG_INTERVAL_MS = 5 * 60 * 1000;
 export const IP_ALLOWLIST_ALERT_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -58,6 +60,7 @@ const recentForbidden = new Map<string, number>();
 /** shop -> when a call with its stored access last succeeded. */
 const recentSuccess = new Map<string, number>();
 let pausedUntil = 0;
+let incidentStartedAt = 0;
 let lastLoggedAt = 0;
 
 /** Test seam. */
@@ -66,6 +69,7 @@ export function __resetForbiddenForTests(): void {
   recentSuccess.clear();
   rawBodyLogged.clear();
   pausedUntil = 0;
+  incidentStartedAt = 0;
   lastLoggedAt = 0;
 }
 
@@ -160,11 +164,13 @@ export async function classifyForbidden(
   }
 }
 
-/** A token-like or long opaque string is masked; the text is cut to 300 characters. */
+/** Token-like strings, IP addresses and base64-ish runs are masked; the text is cut to 300 characters. */
 function redactBody(text: string): string {
   return text
     .replace(/shp[a-z]{2}_[A-Za-z0-9]+/g, "[token]")
-    .replace(/[A-Za-z0-9_-]{32,}/g, "[opaque]")
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[ip]")
+    .replace(/\b[0-9a-fA-F]{0,4}(?::[0-9a-fA-F]{0,4}){2,7}\b/g, "[ip]")
+    .replace(/[A-Za-z0-9+/=_-]{20,}/g, "[opaque]")
     .replace(/\s+/g, " ")
     .slice(0, 300);
 }
@@ -196,7 +202,10 @@ export function reportForbidden(shop: string, kind: ForbiddenKind): void {
   if (kind !== "ip_allowlist" && kind !== "ip_allowlist_suspected") return;
   try {
     const now = Date.now();
-    pausedUntil = Math.max(pausedUntil, now + IP_ALLOWLIST_PAUSE_MS);
+    // A report after the pause ran out starts a new incident; within one, the
+    // pause grows by reports but never past IP_ALLOWLIST_PAUSE_MAX_MS in total.
+    if (now >= pausedUntil) incidentStartedAt = now;
+    pausedUntil = Math.max(pausedUntil, Math.min(now + IP_ALLOWLIST_PAUSE_MS, incidentStartedAt + IP_ALLOWLIST_PAUSE_MAX_MS));
     if (now - lastLoggedAt >= IP_ALLOWLIST_LOG_INTERVAL_MS) {
       lastLoggedAt = now;
       logger.error(

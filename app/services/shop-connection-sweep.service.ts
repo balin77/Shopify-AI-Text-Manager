@@ -333,7 +333,8 @@ export class ShopConnectionSweepService {
     await this.eachPage(
       (after) =>
         db.offlineTokenMigration.findMany({
-          where: { status: "failed", failureKind: null, ...(after ? { shop: { gt: after } } : {}) },
+          // Not yet terminal only: a record at the cap is given up and keeps its history as it is.
+          where: { status: "failed", failureKind: null, attempts: { lt: MIGRATION_MAX_ATTEMPTS }, ...(after ? { shop: { gt: after } } : {}) },
           select: { shop: true, lastError: true, attempts: true, updatedAt: true },
           orderBy: { shop: "asc" },
           take: BACKFILL_BATCH,
@@ -341,18 +342,14 @@ export class ShopConnectionSweepService {
       async (failed) => {
         for (const record of failed) {
           if (!record.lastError || !/\b404\b/.test(record.lastError)) continue;
-          // A record already at the cap stays as it is. A live one is counted from
-          // scratch as runs of this kind (one attempt per run), with the 24 h clock
-          // starting now: the backfill never finishes anybody off by itself.
+          // Counted from scratch as runs of this kind (one attempt per run), with
+          // the 24 h clock starting now: the backfill never finishes anybody off.
           // `updatedAt` is written back unchanged, so the retry timing of the
           // record is left alone (a plain update would stamp it and set every
           // backfilled row due in the same tick).
           const res = await db.offlineTokenMigration.updateMany({
             where: { shop: record.shop, failureKind: null },
-            data:
-              record.attempts >= MIGRATION_MAX_ATTEMPTS
-                ? { failureKind: "not_found", failureKindSince: now, updatedAt: record.updatedAt }
-                : { failureKind: "not_found", failureKindSince: now, attempts: 1, updatedAt: record.updatedAt },
+            data: { failureKind: "not_found", failureKindSince: now, attempts: 1, updatedAt: record.updatedAt },
           });
           if (res.count > 0) stats.backfilledNotFound++;
         }

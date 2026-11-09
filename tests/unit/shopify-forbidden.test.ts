@@ -16,6 +16,7 @@ import {
   FORBIDDEN_WINDOW_MS,
   IP_ALLOWLIST_ALERT_INTERVAL_MS,
   IP_ALLOWLIST_LOG_INTERVAL_MS,
+  IP_ALLOWLIST_PAUSE_MAX_MS,
   IP_ALLOWLIST_PAUSE_MS,
   __resetForbiddenForTests,
   classifyForbidden,
@@ -131,6 +132,14 @@ describe("classifyForbidden", () => {
 });
 
 describe("the first allowlist classification logs the raw body, redacted and truncated", () => {
+  it("also masks IPv4 / IPv6 addresses and base64-ish runs", async () => {
+    vi.mocked(logger.warn).mockClear();
+    await classifyForbidden("a.myshopify.com", forbidden("IP 203.0.113.77 and 2001:db8::1234 blocked, id dGhpcyBpcyBhIGxvbmcgYmFzZTY0IHN0cmluZw=="));
+    const line = String(vi.mocked(logger.warn).mock.calls.map((c) => c[0]).find((l) => String(l).includes("first 403")));
+    expect(line).not.toMatch(/203\.0\.113|2001:db8|dGhpcy/);
+    expect(line).toContain("[ip]");
+  });
+
   it("logs once per kind, masks token-like strings, cuts at 300 characters", async () => {
     const body = `the IP is blocked shpat_abcdef1234567890 ${"x".repeat(500)}`;
     vi.mocked(logger.warn).mockClear();
@@ -188,6 +197,18 @@ describe("reportForbidden", () => {
     await vi.advanceTimersByTimeAsync(1);
     const body = String(fetchMock.mock.calls[0][1].body);
     expect(body).not.toMatch(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/);
+  });
+
+  it("one incident pauses for at most 2 hours however often it is reported", () => {
+    reportForbidden("a.myshopify.com", "ip_allowlist"); // t = 0
+    for (let i = 0; i < 4; i++) {
+      vi.advanceTimersByTime(25 * MIN);
+      reportForbidden("a.myshopify.com", "ip_allowlist"); // t = 25, 50, 75, 100: each would extend to t + 30
+    }
+    vi.advanceTimersByTime(19 * MIN); // t = 119
+    expect(isIpAllowlistPaused()).toBe(true);
+    vi.advanceTimersByTime(2 * MIN); // t = 121: the cap of 120 min ends it, not the last report + 30
+    expect(isIpAllowlistPaused()).toBe(false);
   });
 
   it("sets a 30-minute global pause that repeats extend and that then ends", () => {

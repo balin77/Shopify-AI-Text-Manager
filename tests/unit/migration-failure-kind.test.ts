@@ -435,10 +435,38 @@ describe("withheld, deadline and transient edge cases", () => {
       deps(reject(404), { unauthenticatedAdmin: vi.fn(async () => ({ session: session("legacy-token"), admin: { graphql } as never })) }),
     );
 
-  it("a deadline 403 from the pre-finalise probe does not withhold: the token is useless, the record becomes final", async () => {
-    finalRecord();
-    withAdmin(async () => { throw Object.assign(new Error("Non-expiring access tokens are no longer accepted for the Admin API."), { response: { code: 403 } }); });
+  const withAdminCode = (code: number, graphql: () => Promise<unknown>) =>
+    configureOfflineAdmin(
+      deps(reject(code), { unauthenticatedAdmin: vi.fn(async () => ({ session: session("legacy-token"), admin: { graphql } as never })) }),
+    );
+  const deadline403 = async () => { throw Object.assign(new Error("Non-expiring access tokens are no longer accepted for the Admin API."), { response: { code: 403 } }); };
+
+  it("a deadline 403 from the probe of a FORBIDDEN record is dead: the token is useless, the record becomes final", async () => {
+    finalRecord({ failureKind: "forbidden" });
+    withAdminCode(403, deadline403);
     await run(0);
+    expect(record().attempts).toBe(MIGRATION_MAX_ATTEMPTS);
+    expect(h.block).toHaveBeenCalledTimes(1);
+  });
+
+  it("a deadline 403 from the probe of a NOT_FOUND record is unknown: it proves the shop exists", async () => {
+    finalRecord();
+    withAdmin(deadline403);
+    await run(0);
+    expect(record().attempts).toBe(3);
+    expect(record().encryptedOldToken).not.toBeNull();
+    expect(h.block).not.toHaveBeenCalled();
+  });
+
+  it("a shop-specific 403 from the probe of a FORBIDDEN record is unknown (no independent evidence); a 404 or 401 is dead", async () => {
+    finalRecord({ failureKind: "forbidden" });
+    withAdminCode(403, async () => { throw Object.assign(new Error("Access denied for shop field"), { response: { code: 403 } }); });
+    await run(0);
+    expect(record().attempts).toBe(3);
+    expect(h.block).not.toHaveBeenCalled();
+    await run(KIND_RETRY_INTERVAL_MS + 1000);
+    withAdminCode(403, async () => { throw Object.assign(new Error("gone"), { response: { code: 404 } }); });
+    await run(KIND_RETRY_INTERVAL_MS + 1000);
     expect(record().attempts).toBe(MIGRATION_MAX_ATTEMPTS);
     expect(h.block).toHaveBeenCalledTimes(1);
   });
@@ -498,7 +526,6 @@ describe("the pre-finalise probe is three-valued: only definitive evidence final
     ["HTTP 401", async () => { throw httpError(401); }],
     ["HTTP 404", async () => { throw httpError(404); }],
     ["a shop-specific 403", async () => { throw httpError(403, "Access denied for shop field"); }],
-    ["the deadline 403", async () => { throw httpError(403, "Non-expiring access tokens are no longer accepted for the Admin API."); }],
     ["a 200 with data.shop null and no errors", async () => ({ json: async () => ({ data: { shop: null } }) })],
   ])("DEAD: %s finalises, erases and blocks", async (_n, graphql) => {
     finalRecord();
@@ -549,7 +576,7 @@ describe("the pre-finalise probe is three-valued: only definitive evidence final
   });
 });
 
-describe("a mass seen in the last 24 h withholds only the final verdict", () => {
+describe("a mass of the same kind in the last 48 h withholds only the final verdict (derived from the database)", () => {
   it("the verdict waits (even for a dead probe) while the attempt still runs; after 24 h it proceeds", async () => {
     // three fresh shops with a 404 trip the detector
     for (const s of ["m1", "m2", "m3"].map((x) => `${x}.myshopify.com`)) {
@@ -569,8 +596,22 @@ describe("a mass seen in the last 24 h withholds only the final verdict", () => 
     expect(await run(0)).toBe("failed"); // the attempt ran
     expect(record().attempts).toBe(3);
     expect(h.block).not.toHaveBeenCalled();
-    // after the 24 h the verdict proceeds normally
-    await vi.advanceTimersByTimeAsync(25 * HOUR);
+    // a restart forgets the in-process detector, the database does not: still withheld,
+    // even though a deadline-403 probe of a not_found record is unknown anyway
+    __resetOfflineAdminForTests();
+    configureOfflineAdmin(
+      deps(reject(404), {
+        unauthenticatedAdmin: vi.fn(async () => ({
+          session: session("legacy-token"),
+          admin: { graphql: vi.fn(async () => { throw Object.assign(new Error("Non-expiring access tokens are no longer accepted for the Admin API."), { response: { code: 403 } }); }) } as never,
+        })),
+      }),
+    );
+    await run(KIND_RETRY_INTERVAL_MS + 1000);
+    expect(record().attempts).toBe(3);
+    expect(h.block).not.toHaveBeenCalled();
+    // past the 48 h the verdict proceeds normally
+    await vi.advanceTimersByTimeAsync(49 * HOUR); // past the 48 h look-back
     configureOfflineAdmin(deps(reject(404)));
     await run(0);
     expect(record().attempts).toBe(MIGRATION_MAX_ATTEMPTS);

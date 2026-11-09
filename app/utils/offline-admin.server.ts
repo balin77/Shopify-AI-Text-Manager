@@ -200,7 +200,6 @@ export function __resetOfflineAdminForTests(): void {
   migrationHeldUntil = 0;
   tokenEndpointKindSeen.clear();
   tokenEndpointMassLoggedAt.clear();
-  tokenEndpointMassAt.clear();
   __resetForbiddenForTests();
   nonExpiringRejectionLoggedAt.clear();
   healAttemptedAt.clear();
@@ -811,11 +810,12 @@ let migrationHeldUntil = 0;
  * of MASS_401), and nothing more: at least TOKEN_ENDPOINT_MASS_SHOPS distinct
  * shops with the SAME kind inside the window make ONE loud line and an ops alert
  * (hourly throttle), because that looks like our deploy or Shopify, not thirty
- * merchants. It changes no attempt and holds nothing, for this shop or any
- * other; the only thing it affects is the FINAL VERDICT of that kind, which is
- * withheld for 24 h after the mass was seen. The main protection is the direct
- * probe before a shop is finalised (`shopAnswersProbe`, three-valued): only
- * definitive evidence that the shop's access is dead lets a verdict through. A shop is counted only on its
+ * merchants. In-process, for the log line and the alert ONLY: it changes no
+ * attempt and holds nothing. What withholds a final verdict is derived from the
+ * database at verdict time (`otherShopsWithSameKindRecently`, 48 h, survives a
+ * restart), plus the direct probe before a shop is finalised
+ * (`shopAnswersProbe`, three-valued): only definitive evidence that the shop's
+ * access is dead lets a verdict through. A shop is counted only on its
  * FIRST failure of a kind (a record that already carries the kind is known
  * dead), so shops that really are gone do not keep re-firing the alert.
  */
@@ -824,16 +824,6 @@ export const TOKEN_ENDPOINT_MASS_WINDOW_MS = 30 * 60 * 1000;
 export const TOKEN_ENDPOINT_MASS_LOG_INTERVAL_MS = 60 * 60 * 1000;
 const tokenEndpointKindSeen = new Map<string, Map<string, number>>();
 const tokenEndpointMassLoggedAt = new Map<string, number>();
-/** kind -> when >= TOKEN_ENDPOINT_MASS_SHOPS distinct shops last carried it inside the window. */
-const tokenEndpointMassAt = new Map<string, number>();
-/** While a mass was seen this recently, the FINAL VERDICT (only that) is withheld for that kind. */
-export const TOKEN_ENDPOINT_MASS_MEMORY_MS = 24 * 60 * 60 * 1000;
-
-function massSeenRecently(kind: string | null | undefined): boolean {
-  const at = kind ? tokenEndpointMassAt.get(kind) : undefined;
-  return at !== undefined && Date.now() - at < TOKEN_ENDPOINT_MASS_MEMORY_MS;
-}
-
 function noteTokenEndpointKind(shop: string, kind: "not_found" | "forbidden"): void {
   const now = Date.now();
   let seen = tokenEndpointKindSeen.get(kind);
@@ -841,7 +831,6 @@ function noteTokenEndpointKind(shop: string, kind: "not_found" | "forbidden"): v
   seen.set(shop, now);
   for (const [s, at] of seen) if (now - at > TOKEN_ENDPOINT_MASS_WINDOW_MS) seen.delete(s);
   if (seen.size < TOKEN_ENDPOINT_MASS_SHOPS) return;
-  tokenEndpointMassAt.set(kind, now);
   const last = tokenEndpointMassLoggedAt.get(kind);
   if (last !== undefined && now - last < TOKEN_ENDPOINT_MASS_LOG_INTERVAL_MS) return;
   tokenEndpointMassLoggedAt.set(kind, now);
@@ -873,9 +862,10 @@ function httpStatusOf(error: unknown): number | undefined {
  * verdict erases the last copy of the old token and blocks the shop:
  *
  *  - `answers`: the shop is reachable.
- *  - `dead`: DEFINITIVE evidence only -- HTTP 401, HTTP 404, a shop-specific
- *    403, the deadline 403 (the token is useless), or a 200 whose `data.shop` is
- *    null without errors.
+ *  - `dead`: DEFINITIVE evidence only -- HTTP 401, HTTP 404, a 200 whose
+ *    `data.shop` is null without errors, a shop-specific 403 (not for a
+ *    `forbidden` record: no independent evidence) or the deadline 403 (not for a
+ *    `not_found` record: it proves the shop exists).
  *  - `unknown`: everything else -- 429, 5xx, network or timeout, a GraphQL
  *    error (THROTTLED included), an allowlist-kind 403, the access being
  *    unavailable (a blank stored token, so a run working from the persisted
@@ -883,7 +873,7 @@ function httpStatusOf(error: unknown): number | undefined {
  *
  * `answers` and `unknown` withhold the verdict alike. Never throws.
  */
-async function shopAnswersProbe(shop: string): Promise<ProbeVerdict> {
+async function shopAnswersProbe(shop: string, kind: string | null | undefined): Promise<ProbeVerdict> {
   try {
     const { admin } = await getOfflineAdmin(shop);
     const response = await (admin.graphql as (q: string) => Promise<unknown>)("query ConnectionProbe { shop { id } }");
@@ -906,12 +896,18 @@ async function shopAnswersProbe(shop: string): Promise<ProbeVerdict> {
       const status = httpStatusOf(error);
       if (status === 401 || status === 404) return "dead";
       if (status === 403) {
-        const kind = await classifyForbidden(shop, error, { record: false });
-        if (kind === "ip_allowlist" || kind === "ip_allowlist_suspected") {
-          reportForbidden(shop, kind);
+        const forbiddenKind = await classifyForbidden(shop, error, { record: false });
+        if (forbiddenKind === "ip_allowlist" || forbiddenKind === "ip_allowlist_suspected") {
+          reportForbidden(shop, forbiddenKind);
           return "unknown"; // our address, not the shop
         }
-        return kind === "non_expiring_rejected" || kind === "shop_specific" ? "dead" : "unknown";
+        // The deadline answer proves the shop EXISTS: it is not evidence against a
+        // record that says the shop is gone (not_found). A shop-specific 403 is
+        // the same kind of answer the record already holds (forbidden), so it is
+        // no independent evidence there.
+        if (forbiddenKind === "non_expiring_rejected") return kind === "not_found" ? "unknown" : "dead";
+        if (forbiddenKind === "shop_specific") return kind === "forbidden" ? "unknown" : "dead";
+        return "unknown";
       }
       return "unknown";
     } catch {
@@ -1593,8 +1589,15 @@ async function settleFailedRun(
   // up" honours this too.
   let finalByKind = false;
   if (!wasTerminal && after && !migrationStore.isTerminal(after) && migrationStore.isKindFinal(after)) {
-    const massWithheld = massSeenRecently(after.failureKind);
-    const verdict: ProbeVerdict = massWithheld ? "unknown" : await shopAnswersProbe(shop);
+    // The mass check is derived from the database (survives a restart); a read
+    // error withholds.
+    let massWithheld = false;
+    try {
+      massWithheld = await migrationStore.otherShopsWithSameKindRecently(shop, after.failureKind ?? "");
+    } catch {
+      massWithheld = true;
+    }
+    const verdict: ProbeVerdict = massWithheld ? "unknown" : await shopAnswersProbe(shop, after.failureKind);
     if (verdict !== "dead") {
       // Not finalised, not blocked, nothing erased, retried in ~4 h, and this
       // withheld verdict must not push the record toward the old 40-attempt cap
@@ -1602,7 +1605,7 @@ async function settleFailedRun(
       // VERDICT is held back; the run itself (the attempt) happened as usual.
       logger.warn(
         massWithheld
-          ? "[OfflineAdmin] Final-by-kind withheld: a mass 404/403 of the token endpoint was seen in the last 24 h, so the verdict may not be about this shop; the record stays retriable"
+          ? "[OfflineAdmin] Final-by-kind withheld: at least 3 other shops carry the same 404/403 kind from the last 48 h, so the verdict may not be about this shop; the record stays retriable"
           : `[OfflineAdmin] Final-by-kind withheld: the direct probe with the stored token ${verdict === "answers" ? "answers, the shop is reachable" : "could not tell"}; the record stays retriable`,
         { shop },
       );

@@ -345,13 +345,13 @@ describe("backfill", () => {
       { shop: "other.myshopify.com", status: "failed", failureKind: null, attempts: 12, lastError: "fetch failed" },
     );
     const stats = await sweep().tick(NOW, { pauseMs: 0 });
-    expect(stats.backfilledNotFound).toBe(2);
+    expect(stats.backfilledNotFound).toBe(1);
     const rec = (s: string) => h.migrations.find((m) => m.shop === `${s}.myshopify.com`)!;
     expect(rec("nf")).toMatchObject({ failureKind: "not_found", attempts: 1 });
     expect(rec("nf").failureKindSince).toEqual(NOW);
     expect(rec("nf").updatedAt).toEqual(new Date("2026-11-01T00:00:00Z")); // retry timing untouched
     expect(rec("nf-done").updatedAt).toEqual(new Date("2026-11-01T00:00:00Z"));
-    expect(rec("nf-done")).toMatchObject({ failureKind: "not_found", attempts: 40 }); // stays given up
+    expect(rec("nf-done")).toMatchObject({ failureKind: null, attempts: 40 }); // terminal records are not touched
     expect(rec("fb").failureKind).toBeNull();
     expect(rec("other").failureKind).toBeNull();
     // a second pass (a restart) changes nothing

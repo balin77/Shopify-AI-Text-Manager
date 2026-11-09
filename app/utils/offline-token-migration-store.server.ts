@@ -350,6 +350,31 @@ export async function markMigrationFailed(
   });
 }
 
+/** The mass check at verdict time looks this far back at other shops' kind clocks. */
+export const KIND_MASS_LOOKBACK_MS = 48 * 60 * 60 * 1000;
+export const KIND_MASS_SHOPS = 3;
+
+/**
+ * Derived from the database, so it survives a restart: are there at least
+ * KIND_MASS_SHOPS OTHER shops whose record carries the SAME failure kind and
+ * whose kind began within the last 48 h? Then this shop's 404 / 403 may be
+ * ours or Shopify's, and its final verdict is withheld. Throws on a database
+ * error (the caller treats that as "withhold").
+ */
+export async function otherShopsWithSameKindRecently(shop: string, kind: string, now: number = Date.now()): Promise<boolean> {
+  const rows = await (await table()).findMany({
+    where: {
+      shop: { not: shop },
+      status: { in: ["pending", "failed"] },
+      failureKind: kind,
+      failureKindSince: { gte: new Date(now - KIND_MASS_LOOKBACK_MS) },
+    },
+    select: { shop: true },
+    take: KIND_MASS_SHOPS,
+  });
+  return rows.length >= KIND_MASS_SHOPS;
+}
+
 /**
  * A final verdict was WITHHELD (the shop answers a direct probe): keep the
  * run count at the minimum the clocks ask for, so a shop that is provably alive

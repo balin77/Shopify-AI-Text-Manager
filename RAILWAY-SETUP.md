@@ -323,16 +323,18 @@ bekommen **einen** Versuch pro Lauf (`failureKind` = `not_found` / `forbidden` a
 Zeile), Neuversuch etwa alle 4 Stunden. Endgültig ist der Shop, wenn **dieselbe**
 Fehlerart seit mindestens 24 Stunden und über mindestens 3 Läufe anhält **und** eine
 direkte Probe `{ shop { id } }` mit dem gespeicherten Zugang eindeutig zeigt, dass der Zugang
-tot ist (HTTP 401 oder 404, ein Shop-spezifischer oder Stichtags-403, oder eine Antwort mit
-`shop: null` ohne Fehler). Antwortet der Shop, oder ist das Ergebnis unklar (429, 5xx,
-Netzwerk, GraphQL-Fehler wie `THROTTLED`, ein 403 mit IP-Liste, ein leeres gespeichertes
-Token), wird der Shop weder endgültig noch gesperrt, nichts wird gelöscht, der Neuversuch
-folgt in 4 Stunden und der Lauf zählt nicht Richtung 40-Versuche-Grenze. Drei Shops mit
-derselben Fehlerart innerhalb von 30 Minuten (jeder Shop zählt nur bei seinem ersten Fehler
-dieser Art) erzeugen die Logzeile `TOKEN_ENDPOINT_MASS`, höchstens einmal pro Stunde eine
-Meldung an Discord, und halten **nur das Endgültig-Werden** dieser Fehlerart 24 Stunden lang
-zurück (die Versuche laufen weiter, andere Shops sind nicht betroffen; der Merker liegt im
-Prozess und geht beim Neustart verloren). Token-Endpunkt-403 zählen nicht für den
+tot ist (HTTP 401 oder 404, eine Antwort mit `shop: null` ohne Fehler, ein Shop-spezifischer
+403 ausser bei Zeilen, die schon `forbidden` sind, ein Stichtags-403 ausser bei Zeilen mit
+`not_found`, weil er beweist, dass der Shop existiert). Antwortet der Shop, oder ist das
+Ergebnis unklar (429, 5xx, Netzwerk, GraphQL-Fehler wie `THROTTLED`, ein 403 mit IP-Liste,
+ein leeres gespeichertes Token), wird der Shop weder endgültig noch gesperrt, nichts wird
+gelöscht, der Neuversuch folgt in 4 Stunden und der Lauf zählt nicht Richtung
+40-Versuche-Grenze. Ebenso wird das Endgültig-Werden zurückgehalten, solange mindestens drei
+**andere** Shops dieselbe Fehlerart mit Beginn in den letzten 48 Stunden tragen (aus der
+Datenbank gelesen, übersteht also einen Neustart; die Versuche laufen weiter). Drei Shops mit
+derselben Fehlerart innerhalb von 30 Minuten erzeugen ausserdem die Logzeile
+`TOKEN_ENDPOINT_MASS` und höchstens einmal pro Stunde eine Meldung an Discord (jeder Shop zählt
+dafür nur bei seinem ersten Fehler dieser Art). Token-Endpunkt-403 zählen nicht für den
 Verdacht auf die IP-Liste der Admin-API. Wird ein Shop endgültig: einmal
 Logzeile `MIGRATION_GAVE_UP`, die Zeile gilt als aufgegeben (alter Token gelöscht),
 und der Shop bekommt die Sperre `shop_not_found` beziehungsweise `access_denied`
@@ -340,7 +342,7 @@ und der Shop bekommt die Sperre `shop_not_found` beziehungsweise `access_denied`
 sie auf). Wechselt die Fehlerart, beginnen beide Uhren neu. Ein 403, der nach der IP-Liste
 aussieht (der Text nennt sie, oder mindestens drei Shops bekommen gleichzeitig 403 und kein
 anderer Shop hatte Erfolg; 403 von Proben bereits gesperrter Shops zählen dafür nicht), zählt **keinen** Versuch und setzt nur eine globale Pause von
-30 Minuten für Migration und Probe. Ein 403 sperrt nie einen Shop und leert nie einen
+30 Minuten (je Vorfall insgesamt höchstens 2 Stunden) für Migration und Probe. Ein 403 sperrt nie einen Shop und leert nie einen
 Zugang. Die Logzeile `[ShopifyIP] IP_ALLOWLIST_403` (höchstens alle 5 Minuten) verweist
 auf den Hinweis zur IP-Liste in CLAUDE.md; dazu kommt höchstens einmal pro Stunde eine
 Meldung an `ALERT_WEBHOOK_URL` (Discord). Dieselbe Meldung gibt es einmal pro Stunde bei
