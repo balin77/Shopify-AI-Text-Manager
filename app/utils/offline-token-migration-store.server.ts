@@ -385,6 +385,18 @@ export async function deleteMigrationRecord(shop: string): Promise<void> {
 }
 
 /**
+ * Remove a record that is failing with a 404 / shop-specific 403 (and only
+ * that): the shop just PROVED it works (a probe succeeded), so the verdict of
+ * the token endpoint is stale and the sweep should try the migration afresh.
+ * Such a record holds no usable ciphertext once final; a non-final one keeps its
+ * token in the session anyway. Returns whether one was removed.
+ */
+export async function deleteSingleAttemptKindRecord(shop: string): Promise<boolean> {
+  const res = await (await table()).deleteMany({ where: { shop, failureKind: { in: ["forbidden", "not_found"] } } });
+  return res.count > 0;
+}
+
+/**
  * Shops the sweep must leave alone (needs_reauth) and shops whose migration is
  * retriable (pending/failed inside the window, token still present) — one query
  * each, for the shops of one sweep candidate list.

@@ -43,12 +43,15 @@ type Env = Record<string, string | undefined>;
 
 /**
  * SHOP_BLOCK_ON_ADMIN_401: may a double 401 set a block? Exactly "true" turns it
- * on, default OFF (like the token switches). A 401 is the weakest evidence, and
- * a wrong block of that kind is lifted only by the 6-hourly probe of plan step
- * 12, so the switch stays off until that exists. With it off the double-401
- * sites keep their old behaviour (log, original error). The terminal-evidence
- * reasons (no_token, invalid_subject_token, refresh_token_expired,
- * migration_needs_reauth) are not affected.
+ * on, default OFF (like the token switches) -- the owner decides when. A 401 is
+ * the weakest evidence; a wrong block of that kind is lifted by the first
+ * successful call with the stored access (noteSuccessfulCall) and, since plan
+ * step 12, by the connection sweep's probe every 6 hours
+ * (shop-connection-sweep.service.ts), so turning it on is now safe. With it off
+ * the double-401 sites keep their old behaviour (log, original error). The
+ * terminal-evidence reasons (no_token, invalid_subject_token,
+ * refresh_token_expired, migration_needs_reauth, and the final token_endpoint_404
+ * / token_endpoint_403 kinds) are not affected.
  */
 export function blockOnAdmin401Enabled(env: Env = process.env): boolean {
   return env.SHOP_BLOCK_ON_ADMIN_401?.trim() === "true";

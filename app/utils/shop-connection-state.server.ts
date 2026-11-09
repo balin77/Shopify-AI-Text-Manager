@@ -6,11 +6,11 @@
  *
  * Blocks are SET at the evidence points of plan step 7 (through
  * shop-connection-block.server.ts: the second 401 with the same token in both
- * admin clients -- ONLY with SHOP_BLOCK_ON_ADMIN_401=true, default off until the
- * step-12 probe exists --, an empty token, a terminal refresh failure, the
- * migration's needs_reauth) and READ by createAdminClientFromShop. They are LIFTED so far
- * only by a finished token migration; afterAuth, the uninstall webhook and the
- * probe follow in later steps (plan 10, 12).
+ * admin clients -- ONLY with SHOP_BLOCK_ON_ADMIN_401=true, default off; the
+ * step-12 probe exists now and the owner decides --, an empty token, a terminal refresh failure, the
+ * migration's needs_reauth, a 404 / shop-specific 403 of the token endpoint over
+ * 24 h) and READ by createAdminClientFromShop. They are LIFTED by afterAuth, the
+ * uninstall webhook, a finished token migration and the connection sweep's probe.
  *
  * Rules that are load-bearing:
  *  - `markConnectionBlocked` / `clearConnectionBlock` act ONLY on a state change

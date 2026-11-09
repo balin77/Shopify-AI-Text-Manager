@@ -10,6 +10,7 @@ import { ShopReaperService } from "../src/services/shop-reaper.service";
 import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
 import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
 import { OfflineTokenSweepService } from "./services/offline-token-sweep.service";
+import { ShopConnectionSweepService } from "./services/shop-connection-sweep.service";
 import { IndexNowAutoSubmitService } from "./services/seo/index-now-auto-submit.service";
 import { SeoAuditAutoRunService } from "./services/seo/audit-auto-run.service";
 import { SeoCrawlAutoRunService } from "./services/seo/crawl-auto-run.service";
@@ -218,6 +219,7 @@ process.on('SIGTERM', () => {
   GscAutoSyncService.getInstance().stop();
   LlmsAutoRefreshService.getInstance().stop();
   OfflineTokenSweepService.getInstance().stop();
+  ShopConnectionSweepService.getInstance().stop();
   IndexNowAutoSubmitService.getInstance().stop();
   SeoAuditAutoRunService.getInstance().stop();
   SeoCrawlAutoRunService.getInstance().stop();
@@ -230,6 +232,7 @@ process.on('SIGINT', () => {
   GscAutoSyncService.getInstance().stop();
   LlmsAutoRefreshService.getInstance().stop();
   OfflineTokenSweepService.getInstance().stop();
+  ShopConnectionSweepService.getInstance().stop();
   IndexNowAutoSubmitService.getInstance().stop();
   SeoAuditAutoRunService.getInstance().stop();
   SeoCrawlAutoRunService.getInstance().stop();

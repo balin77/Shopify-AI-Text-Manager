@@ -801,6 +801,15 @@ export const MIGRATION_CONFIG_ERROR_HOLD_MS = 6 * 60 * 60 * 1000;
 let migrationHeldUntil = 0;
 
 /**
+ * Is the global configuration hold of the token migration in force (Shopify
+ * answered OUR request with invalid_client / invalid_requested_token_type)? The
+ * connection sweep's probe stands still while it is: the cause is app-wide.
+ */
+export function isMigrationConfigHeld(): boolean {
+  return Date.now() < migrationHeldUntil;
+}
+
+/**
  * Could `maybeMigrateToExpiringToken(shop)` do anything right now? Cheap and
  * synchronous: lets the scheduler skip its activity lookup for a shop that is
  * already migrated, backed off, being migrated, refused for good, or with the

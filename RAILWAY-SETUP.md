@@ -203,7 +203,7 @@ sich die App exakt wie vorher.
 |---|---|
 | `SHOPIFY_EXPIRING_OFFLINE_TOKENS` | Nur `"true"` schaltet an. Setzt `future.expiringOfflineAccessTokens`: neue Token-Exchanges (Installation, Re-Auth, abgelaufene Session) bekommen ablaufende Offline-Tokens, und alle Langläufer nutzen den sich selbst erneuernden Client statt des Clients ihres Requests. Bestehende, NICHT ablaufende Tokens bleiben unverändert und funktionieren weiter. |
 | `SHOPIFY_MIGRATE_TO_EXPIRING_TOKENS` | Nur `"true"`, und **nur wirksam, solange die erste Variable an ist**. Tauscht das bestehende, nicht ablaufende Offline-Token eines Shops gegen ein ablaufendes — pro Shop, **nur im Hintergrund**, nie im Request selbst (ein laufender Request hält das alte Token noch, und ein 401 darauf würde das migrierte Paar überschreiben). Zwei Auslöser: (1) der Sync-Zyklus eines Shops, dessen Merchant die App geöffnet hat — frühestens eine Minute nach Scheduler-Start und nur in einer ruhigen Phase (seit mindestens 20 s kein authentifizierter Request); (2) der **Offline-Token-Sweep** für Shops, die die App nie öffnen (siehe unten). Wichtig: Die App zu öffnen migriert einen Shop **nicht** von selbst — ein nicht ablaufendes Token gilt der Library immer als „aktiv", es findet kein Token-Exchange statt. Ohne den Sweep würde ein Shop, der die App nie öffnet, **am 2027-01-01 ausfallen** (ab dann lehnt Shopify nicht ablaufende Offline-Tokens für die Admin API mit HTTP 403 ab: „Non-expiring access tokens are no longer accepted for the Admin API."). Single-flight pro Shop, wirft nie in den Request. Shopify widerruft das alte Token mit der Migration sofort (Doku; keine Übergangsfrist). Restrisiko: ein Request, der genau während der Migration noch läuft, schlägt für den Merchant fehl (401 ohne Retry-Header, kein automatischer Neuversuch); der nächste Request legt die Session per Token-Exchange neu an, bis dahin scheitern Hintergrund-Aufrufe (`no_token`). |
-| `SHOP_BLOCK_ON_ADMIN_401` | Nur `"true"` schaltet an, **standardmässig AUS**. Erlaubt, einen Shop nach einem zweiten 401 mit demselben gespeicherten Zugang als «muss sich neu anmelden» zu sperren (Hintergrunddienste überspringen ihn dann). Erst einschalten, wenn die 6-stündliche Probe (Admin-Plan Schritt 12) ausgeliefert ist, die eine falsche Sperre wieder aufhebt. Die Sperren aus eindeutigen Belegen (leerer Zugang, abgelaufenes Auffrischungs-Token, abgelehnte Migration) sind davon unabhängig immer aktiv. |
+| `SHOP_BLOCK_ON_ADMIN_401` | Nur `"true"` schaltet an, **standardmässig AUS**. Erlaubt, einen Shop nach einem zweiten 401 mit demselben gespeicherten Zugang als «muss sich neu anmelden» zu sperren (Hintergrunddienste überspringen ihn dann). Die 6-stündliche Probe des Verbindungs-Sweeps (siehe unten) hebt eine falsche Sperre wieder auf, **die Schalter darf also eingeschaltet werden**; der Owner entscheidet, wann. Die Sperren aus eindeutigen Belegen (leerer Zugang, abgelaufenes Auffrischungs-Token, abgelehnte Migration, 404/403 des Token-Endpunkts über 24 h) sind davon unabhängig immer aktiv. |
 
 Beim Start loggt die App `[SHOPIFY.SERVER] Expiring offline tokens: ON|OFF … migration …: ON|OFF`.
 
@@ -317,6 +317,37 @@ anderes Token, bricht der Lauf ab und überschreibt/erzeugt nichts. Damit gilt:
   `SHOPIFY_EXPIRING_OFFLINE_TOKENS` an ist) gelöscht. Bei ausgeschalteten Variablen
   macht die Migration selbst keinen DB-Zugriff; die beiden Löschungen oben sind die
   Ausnahme.
+
+**404 und 403 des Token-Endpunkts.** Ein 404 (Shop weg) und ein Shop-spezifischer 403
+bekommen **einen** Versuch pro Lauf (`failureKind` = `not_found` / `forbidden` auf der
+Zeile), Neuversuch etwa alle 4 Stunden. Endgültig ist der Shop, wenn **dieselbe**
+Fehlerart seit mindestens 24 Stunden und über mindestens 3 Läufe anhält: einmal
+Logzeile `MIGRATION_GAVE_UP`, die Zeile gilt als aufgegeben (alter Token gelöscht),
+und der Shop bekommt die Sperre `shop_not_found` beziehungsweise `access_denied`
+(eindeutiger Beleg, nicht hinter `SHOP_BLOCK_ON_ADMIN_401`; eine neue Anmeldung hebt
+sie auf). Wechselt die Fehlerart, beginnen beide Uhren neu. Ein 403, der nach der IP-Liste
+aussieht (der Text nennt sie, oder mehrere Shops bekommen gleichzeitig 403 und kein
+anderer Shop hatte Erfolg), zählt **keinen** Versuch und setzt nur eine globale Pause von
+30 Minuten für Migration und Probe. Ein 403 sperrt nie einen Shop und leert nie einen
+Zugang. Die Logzeile `[ShopifyIP] IP_ALLOWLIST_403` (höchstens alle 5 Minuten) verweist
+auf den Hinweis zur IP-Liste in CLAUDE.md; dazu kommt höchstens einmal pro Stunde eine
+Meldung an `ALERT_WEBHOOK_URL` (Discord). Dieselbe Meldung gibt es einmal pro Stunde bei
+`MASS_401` (mehrere Shops bekommen gleichzeitig einen 401). Pro Sperre gibt es bewusst
+keine Meldung.
+
+**Verbindungs-Sweep** (`shop-connection-sweep.service.ts`, alle 10 Minuten, unabhängig
+von den Token-Schaltern; abschaltbar mit `SHOP_CONNECTION_SWEEP_DISABLED=true`,
+Intervall `SHOP_CONNECTION_SWEEP_INTERVAL_MS` ≥ 60000, Pause zwischen Shops
+`SHOP_CONNECTION_SWEEP_PAUSE_MS`): (1) einmal pro Prozessstart ein Nachtrag aus
+vorhandenen Belegen (`needs_reauth`-Zeilen und Sessions mit leerem Zugang werden zu
+`needs_reauth`, 404-Zeilen bekommen ihre Fehlerart; 403-Zeilen bleiben unberührt;
+abschaltbar mit `SHOP_CONNECTION_BACKFILL_DISABLED=true`); (2) alle 6 Stunden eine
+Probe `{ shop { id } }` mit dem gespeicherten Zugang für jeden gesperrten, nicht
+deinstallierten Shop (höchstens 5 pro Durchlauf; nicht während der IP-Pause und nicht
+beim globalen Konfigurationsstopp): Erfolg hebt die Sperre auf (Ursache `probe_ok`),
+ein 403 oder 401 ändert nichts ausser `lastProbeAt`; (3) Nachholen verpasster
+Webhook-Änderungen für entsperrte Shops, deren Scheduler nicht läuft (höchstens 2 pro
+Durchlauf); (4) einmal am Tag die Zeile `[ConnectionSweep] SUMMARY blocked=… owingCatchUp=…`.
 
 **`needs_reauth`.** Antwortet Shopify auf die Migration mit 400 `invalid_subject_token`,
 ist das endgültig: das Token lässt sich nicht mehr tauschen (z. B. schon migriert und

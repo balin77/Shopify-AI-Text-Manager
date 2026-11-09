@@ -276,6 +276,7 @@ registerShopAccessTokenHook();
 import { trackActivity } from "./middleware/activity-tracker.middleware";
 import { syncScheduler } from "./services/sync-scheduler.service";
 import { OfflineTokenSweepService } from "./services/offline-token-sweep.service";
+import { ShopConnectionSweepService } from "./services/shop-connection-sweep.service";
 import { ShopReaperService } from "../src/services/shop-reaper.service";
 import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
 import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
@@ -297,6 +298,11 @@ let managedSmokeTestFired = false;
 // SHOPIFY_EXPIRING_OFFLINE_TOKENS is on (default: no timer at all; the migration
 // part of a tick additionally needs the migrate switch) and idempotent.
 OfflineTokenSweepService.getInstance().start();
+
+// The connection sweep (backfill, probe of blocked shops, catch-up, summary) is
+// independent of the token switches: a blocked shop must be re-checked whether or
+// not tokens expire. Started at boot for the same reason, idempotent.
+ShopConnectionSweepService.getInstance().start();
 
 import { hostParamRejection } from "./utils/shopify-host-param.server";
 import { apiAuthBounceRejection } from "./utils/api-auth-bounce.server";
@@ -358,6 +364,7 @@ const enhancedAuthenticate = {
     // Migration / keep-alive sweep for offline tokens (already started at boot;
     // idempotent, and a no-op unless the expiring-token switch is on).
     OfflineTokenSweepService.getInstance().start();
+    ShopConnectionSweepService.getInstance().start();
 
     // Bootstrap the IndexNow auto-submit sweep (same idempotent-start
     // reasoning). Without it the webhook-fed URL queue only ever drained when
