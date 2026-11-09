@@ -28,6 +28,14 @@ import { decryptToken, encryptToken } from "./encryption.server";
 
 export type MigrationStatus = "pending" | "needs_reauth" | "failed";
 
+/**
+ * What the token endpoint keeps answering (PLAN_ADMIN_SHOP_OVERVIEW 2.5):
+ * "transient" (network, 5xx, 429, ...), "forbidden" (a SHOP-SPECIFIC 403) or
+ * "not_found" (404). The last two get one attempt per run and become final by
+ * `isKindFinal`.
+ */
+export type MigrationFailureKind = "transient" | "forbidden" | "not_found";
+
 export interface MigrationRecord {
   shop: string;
   status: MigrationStatus;
@@ -39,6 +47,10 @@ export interface MigrationRecord {
   startedAt: Date;
   completedAt: Date | null;
   updatedAt: Date;
+  /** NULL on rows that predate the column: the old rule (failed + 40 attempts) decides for them. */
+  failureKind?: string | null;
+  /** Since when the SAME kind has been failing (restarts when the kind changes). */
+  failureKindSince?: Date | null;
 }
 
 /**
@@ -70,6 +82,29 @@ export function persistedBackoffMs(attempts: number, attemptsPerRun: number): nu
   return Math.min(PERSISTED_BACKOFF_BASE_MS * 2 ** (failedRuns(attempts, attemptsPerRun) - 1), PERSISTED_BACKOFF_MAX_MS);
 }
 
+/** A forbidden / not_found record is retried this often (one attempt per run), not on the exponential schedule. */
+export const KIND_RETRY_INTERVAL_MS = 4 * 60 * 60 * 1000;
+/** Same failure kind for at least this long AND this many runs: the shop is final. */
+export const KIND_FINAL_AFTER_MS = 24 * 60 * 60 * 1000;
+export const KIND_FINAL_MIN_RUNS = 3;
+
+/** Does the record fail with a kind that gets one attempt per run (a 404 or a shop-specific 403)? */
+export function hasSingleAttemptKind(record: Pick<MigrationRecord, "failureKind">): boolean {
+  return record.failureKind === "forbidden" || record.failureKind === "not_found";
+}
+
+/**
+ * Final by kind: the SAME 404 / shop-specific 403 has persisted for at least 24 h
+ * AND over at least 3 runs (each such run counts one attempt, and a change of
+ * kind restarts both clocks). Evidence about the shop, so the migration is
+ * given up and the shop is blocked (shop_not_found / access_denied). A 5xx or a
+ * network error is not this: it follows the 40-attempt rule.
+ */
+export function isKindFinal(record: MigrationRecord, now: number = Date.now()): boolean {
+  if (record.status !== "failed" || !hasSingleAttemptKind(record) || !record.failureKindSince) return false;
+  return now - record.failureKindSince.getTime() >= KIND_FINAL_AFTER_MS && record.attempts >= KIND_FINAL_MIN_RUNS;
+}
+
 export function isTerminal(record: MigrationRecord): boolean {
   return record.status === "failed" && record.attempts >= MIGRATION_MAX_ATTEMPTS;
 }
@@ -78,6 +113,7 @@ export function isTerminal(record: MigrationRecord): boolean {
 export function retryNotBefore(record: MigrationRecord, attemptsPerRun: number): number {
   if (record.status !== "failed") return 0;
   if (isTerminal(record)) return Infinity;
+  if (hasSingleAttemptKind(record)) return (record.updatedAt ?? record.startedAt).getTime() + KIND_RETRY_INTERVAL_MS;
   return (record.updatedAt ?? record.startedAt).getTime() + persistedBackoffMs(record.attempts, attemptsPerRun);
 }
 
@@ -263,17 +299,42 @@ export async function persistOldToken(shop: string, oldToken: string, existing: 
           attempts: 0,
           completedAt: null,
           lastError: null,
+          failureKind: null,
+          failureKindSince: null,
         },
   });
 }
 
-/** The prompt retries ran out: keep the token, remember why. Retriable later. */
-export async function markMigrationFailed(shop: string, message: string, attemptsMade: number): Promise<void> {
+/**
+ * The prompt retries ran out: keep the token, remember why. Retriable later.
+ *
+ * `kind` (PLAN_ADMIN_SHOP_OVERVIEW 2.5) is what the token endpoint keeps
+ * answering. `failureKindSince` is when THAT kind began: it is kept while the kind
+ * stays the same and restarts when it changes. For forbidden / not_found a run
+ * counts ONE attempt (`attemptsMade` is ignored), and a change of kind restarts
+ * the count at 1, so `attempts` reads as "runs of this kind" and
+ * `isKindFinal` can ask for 3 of them. Flipping between kinds never reaches
+ * final -- the safe direction.
+ */
+export async function markMigrationFailed(
+  shop: string,
+  message: string,
+  attemptsMade: number,
+  kind: MigrationFailureKind = "transient",
+): Promise<void> {
+  const table_ = await table();
+  const prev = (await table_.findUnique({ where: { shop } })) as MigrationRecord | null;
+  const prevKind = prev?.failureKind ?? "transient";
+  const sameKind = prevKind === kind;
+  const now = new Date();
+  const since = sameKind && prev?.failureKindSince ? prev.failureKindSince : now;
+  const single = kind === "forbidden" || kind === "not_found";
+  const attempts = single ? (sameKind ? { increment: 1 } : 1) : { increment: attemptsMade };
   // updateMany, never upsert: a record deleted meanwhile (uninstall, re-auth)
   // must not be re-created, least of all with a credential in it.
   // Restricted to pending/failed: a `needs_reauth` verdict (set while this run
   // was out, or by another path) must never be overwritten by a transient failure.
-  await (await table()).updateMany({
+  await table_.updateMany({
     // Only a TERMINAL row (failed AND at the cap) is never counted further. A
     // pending row at/over the cap (another process flipped it back) still is, and
     // becomes failed = terminal here.
@@ -282,7 +343,19 @@ export async function markMigrationFailed(shop: string, message: string, attempt
       status: { in: ["pending", "failed"] },
       NOT: { status: "failed", attempts: { gte: MIGRATION_MAX_ATTEMPTS } },
     },
-    data: { status: "failed", lastError: clip(message), attempts: { increment: attemptsMade } },
+    data: { status: "failed", lastError: clip(message), attempts, failureKind: kind, failureKindSince: since },
+  });
+}
+
+/**
+ * Make a record final by kind: attempts to the cap, i.e. `isTerminal`, so every
+ * existing check (sweep selection, persisted backoff, ciphertext erase) treats
+ * it as given up without knowing about kinds. Only a failed single-attempt row.
+ */
+export async function markMigrationKindFinal(shop: string): Promise<void> {
+  await (await table()).updateMany({
+    where: { shop, status: "failed", failureKind: { in: ["forbidden", "not_found"] } },
+    data: { attempts: MIGRATION_MAX_ATTEMPTS },
   });
 }
 

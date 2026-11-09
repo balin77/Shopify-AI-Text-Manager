@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+const opsAlerts: unknown[][] = vi.hoisted(() => []);
+
 // The REAL state module runs on top of a tiny in-memory ShopInstallState/Session.
 type Row = Record<string, any>;
 const { store, sessions, logs, shopInstallState, session } = vi.hoisted(() => {
@@ -64,6 +66,8 @@ vi.mock("../../app/utils/logger.server", () => ({
   },
 }));
 
+vi.mock("../../app/services/ops-alert.server", () => ({ notifyOps: (...a: unknown[]) => opsAlerts.push(a) }));
+
 import {
   MASS_401_SUPPRESS_MS,
   MASS_401_WINDOW_MS,
@@ -120,6 +124,39 @@ describe("blockShopConnection", () => {
   });
 });
 
+describe("final kinds from the token migration (shop_not_found / access_denied)", () => {
+  it("block with the given state and are NOT behind the 401 switch nor the mass-401 guard", async () => {
+    delete process.env.SHOP_BLOCK_ON_ADMIN_401;
+    noteUnauthorized("x.myshopify.com");
+    noteUnauthorized("y.myshopify.com");
+    noteUnauthorized("z.myshopify.com"); // mass-401 trips
+    const block = await blockShopConnection(SHOP, "token_endpoint_404", { observedAt: new Date(), state: "shop_not_found" });
+    expect(block).toMatchObject({ state: "shop_not_found" });
+    expect(store.get(SHOP)).toMatchObject({ connectionState: "shop_not_found", connectionStateReason: "token_endpoint_404" });
+  });
+
+  it("replace a weaker needs_reauth block, but are never turned back into it", async () => {
+    await blockShopConnection(SHOP, "no_token", { observedAt: new Date() });
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+    await blockShopConnection(SHOP, "token_endpoint_403", { observedAt: new Date(), state: "access_denied" });
+    expect(store.get(SHOP)).toMatchObject({ connectionState: "access_denied", connectionStateReason: "token_endpoint_403" });
+    await blockShopConnection(SHOP, "no_token", { observedAt: new Date() });
+    expect(store.get(SHOP)!.connectionState).toBe("access_denied");
+  });
+
+  it("are lifted by afterAuth like every other block", async () => {
+    await blockShopConnection(SHOP, "token_endpoint_404", { observedAt: new Date(), state: "shop_not_found" });
+    await liftConnectionBlockAfterAuth(SHOP);
+    expect(store.get(SHOP)).toMatchObject({ connectionState: null, connectionClearedCause: "reauth" });
+  });
+
+  it("the fence still applies", async () => {
+    const started = new Date(Date.now() - 5_000);
+    await clearConnectionBlock(SHOP, "reauth");
+    expect(await blockShopConnection(SHOP, "token_endpoint_403", { observedAt: started, state: "access_denied" })).toBeNull();
+  });
+});
+
 describe("SHOP_BLOCK_ON_ADMIN_401", () => {
   it("OFF (default): a double 401 sets no block and writes nothing; terminal evidence still blocks", async () => {
     delete process.env.SHOP_BLOCK_ON_ADMIN_401;
@@ -160,6 +197,18 @@ describe("mass-401 guard", () => {
     expect(store.get(SHOP)!.connectionState).toBeNull();
     // terminal evidence about THIS shop is not held back
     expect(await blockShopConnection(SHOP, "no_token", { observedAt: new Date() })).toBeTruthy();
+  });
+
+  it("alerts ops once (not per block) when it trips", async () => {
+    opsAlerts.length = 0;
+    noteUnauthorized("a1.myshopify.com");
+    noteUnauthorized("a2.myshopify.com");
+    expect(opsAlerts).toHaveLength(0);
+    noteUnauthorized("a3.myshopify.com");
+    expect(opsAlerts).toHaveLength(1);
+    expect(opsAlerts[0][0]).toBe("mass_401");
+    await blockShopConnection(SHOP, "no_token", { observedAt: new Date() });
+    expect(opsAlerts).toHaveLength(1); // a block alerts nobody
   });
 
   it("lifts after an hour", async () => {

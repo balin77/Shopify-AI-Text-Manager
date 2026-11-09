@@ -29,11 +29,13 @@
  */
 
 import { logger } from "./logger.server";
+import { notifyOps } from "../services/ops-alert.server";
 import {
   clearConnectionBlock,
   getConnectionBlock,
   markConnectionBlocked,
   type ConnectionBlock,
+  type ConnectionBlockState,
   type MarkBlockedResult,
 } from "./shop-connection-state.server";
 
@@ -91,6 +93,13 @@ export function noteUnauthorized(shop: string): void {
         `this looks like our credentials or Shopify, not merchants. No NEW 401 blocks for ${Math.round(MASS_401_SUPPRESS_MS / 60000)} min ` +
         `(existing blocks stay). Check SHOPIFY_API_SECRET / client credentials and Shopify status first.`,
     );
+    // Ops alert (at most once an hour per key): the one case besides the IP
+    // allowlist the owner wants to hear about -- never one alert per block.
+    notifyOps(
+      "mass_401",
+      `${recentUnauthorized.size} shops got a 401 within ${Math.round(MASS_401_WINDOW_MS / 60000)} min: this looks like our credentials or Shopify, not merchants. ` +
+        "New 401 blocks are held back for an hour. Check SHOPIFY_API_SECRET and Shopify status.",
+    );
   }
 }
 
@@ -136,33 +145,36 @@ async function ensureInstallStateForSessionShop(shop: string): Promise<boolean> 
 export async function blockShopConnection(
   shop: string,
   reason: string,
-  opts: { observedAt: Date },
+  opts: { observedAt: Date; state?: ConnectionBlockState },
 ): Promise<ConnectionBlock | null> {
   try {
-    // Already blocked (any kind): nothing to add, and a final kind such as
-    // access_denied must not be turned back into needs_reauth. Answered from
-    // the 30 s cache, so a loop of failing callers costs no query.
+    const state: ConnectionBlockState = opts.state ?? "needs_reauth";
+    // Already blocked: nothing to add, and a final kind such as access_denied
+    // must not be turned back into needs_reauth. Answered from the 30 s cache,
+    // so a loop of failing callers costs no query. Only a FINAL kind
+    // (`opts.state`: shop_not_found / access_denied, terminal evidence from the
+    // token migration) may replace the weaker needs_reauth it finds.
     const existing = await getConnectionBlock(shop);
-    if (existing) return existing;
+    if (existing && !(state !== "needs_reauth" && existing.state === "needs_reauth")) return existing;
     if (reason === "admin_api_401" && !blockOnAdmin401Enabled()) return null;
     if (reason === "admin_api_401" && (isMass401Active() || otherShopHad401(shop))) {
       logger.debug(`[ConnectionState] 401 block for ${shop} held back (mass-401 guard)`);
       return null;
     }
-    let result: MarkBlockedResult = await markConnectionBlocked(shop, "needs_reauth", reason, opts);
+    let result: MarkBlockedResult = await markConnectionBlocked(shop, state, reason, opts);
     if (!result.changed && result.why === "no_row") {
       if (!noRowLogged.has(shop)) {
         noRowLogged.add(shop);
         logger.warn(`[ConnectionState] no ShopInstallState row for ${shop}; creating one only if an offline session exists`);
       }
       if (await ensureInstallStateForSessionShop(shop)) {
-        result = await markConnectionBlocked(shop, "needs_reauth", reason, opts);
+        result = await markConnectionBlocked(shop, state, reason, opts);
       }
     }
     if (!(result.changed || result.why === "unchanged")) return null;
     return (
       (await getConnectionBlock(shop)) ?? {
-        state: "needs_reauth",
+        state,
         since: null,
         reason: reason.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 64),
       }

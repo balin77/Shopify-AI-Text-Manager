@@ -61,6 +61,14 @@ import { logger } from "./logger.server";
 import { expiringOfflineTokensEnabled, migrateToExpiringTokensEnabled } from "./offline-token-flags.server";
 import * as migrationStore from "./offline-token-migration-store.server";
 import { blockShopConnection, noteSuccessfulCall, noteUnauthorized } from "./shop-connection-block.server";
+import {
+  __resetForbiddenForTests,
+  classifyForbidden,
+  isIpAllowlistPaused,
+  isNonExpiringRejection,
+  noteApiSuccess,
+  reportForbidden,
+} from "./shopify-forbidden.server";
 import { clearConnectionBlock, ShopConnectionBlockedError } from "./shop-connection-state.server";
 
 export interface OfflineAdminContext {
@@ -189,6 +197,7 @@ export function __resetOfflineAdminForTests(): void {
   migrationSettled.clear();
   migrationNeedsReauth.clear();
   migrationHeldUntil = 0;
+  __resetForbiddenForTests();
   nonExpiringRejectionLoggedAt.clear();
   healAttemptedAt.clear();
   rearmedOnce.clear();
@@ -454,38 +463,32 @@ export function isUnauthorizedError(error: unknown): boolean {
   return e.response?.code === 401 || e.response?.status === 401 || e.status === 401;
 }
 
-/** What Shopify answers an Admin API request made with a non-expiring offline token, from 2027-01-01. */
-const NON_EXPIRING_REJECTED = /Non-expiring access tokens are no longer accepted/i;
-
-function isForbiddenByShape(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  if (error instanceof Response) return error.status === 403;
-  const e = error as { response?: { code?: number; status?: number }; status?: number };
-  return e.response?.code === 403 || e.response?.status === 403 || e.status === 403;
-}
-
 /**
  * Is this the 403 Shopify sends for a NON-expiring offline token after the
  * 2027-01-01 deadline ("Non-expiring access tokens are no longer accepted for
- * the Admin API.")? A 403 alone is not enough — a missing access scope is a 403
- * too — so the message is matched as well: in the error's message (the library's
- * `HttpResponseError` embeds the `errors` of the body there), in its parsed
- * `response.body` / `body`, and, for a thrown `Response`, in a CLONE of its body
- * (the original stays readable for whoever catches it next). Matched by shape,
- * like `isUnauthorizedError`. Never throws.
+ * the Admin API.")? A 403 alone is not enough -- a missing access scope is a 403
+ * too -- so the message is matched as well (shopify-forbidden.server.ts owns the
+ * detection and the other 403 classes). Never throws.
  */
 export async function isNonExpiringTokenRejectedError(error: unknown): Promise<boolean> {
-  if (!isForbiddenByShape(error)) return false;
+  return isNonExpiringRejection(error);
+}
+
+/**
+ * Classify a 403 and react (PLAN_ADMIN_SHOP_OVERVIEW 2.5): the deadline answer
+ * starts the migration, an allowlist kind logs loud and pauses the migration and
+ * the probe, anything else changes nothing. A 403 never blocks a shop and never
+ * empties a token. `error` may be a thrown error or a returned `Response`. Not a
+ * 403 ⇒ nothing happens. Never throws.
+ */
+async function handleForbiddenResponse(shop: string, error: unknown, refusedToken?: string): Promise<void> {
   try {
-    if (error instanceof Response) return NON_EXPIRING_REJECTED.test(await error.clone().text());
-    const e = error as { message?: unknown; body?: unknown; errors?: unknown; response?: { body?: unknown } };
-    const parts: unknown[] = [e.message, e.errors, e.body, e.response?.body];
-    return parts.some((part) => {
-      if (part === undefined || part === null) return false;
-      return NON_EXPIRING_REJECTED.test(typeof part === "string" ? part : JSON.stringify(part));
-    });
+    const kind = await classifyForbidden(shop, error);
+    if (kind === null) return;
+    if (kind === "non_expiring_rejected") reportNonExpiringTokenRejection(shop, refusedToken);
+    else reportForbidden(shop, kind);
   } catch {
-    return false;
+    /* never throws */
   }
 }
 
@@ -567,7 +570,7 @@ async function healIfMigrationCannotRun(shop: string, outcome: MigrationOutcome,
   // without a record, NOT a failed record past the 7-day window while the
   // session still holds the token (the next run's exchange decides, and its
   // permanent-refusal path blanks by itself).
-  if (outcome === "disabled" || Date.now() < migrationHeldUntil) return;
+  if (outcome === "disabled" || Date.now() < migrationHeldUntil || isIpAllowlistPaused()) return;
   const epoch = reissueEpoch.get(shop) ?? 0;
   let record: migrationStore.MigrationRecord | null;
   try {
@@ -576,6 +579,10 @@ async function healIfMigrationCannotRun(shop: string, outcome: MigrationOutcome,
     return; // an unreadable record is not "no record" — never blank on a read error
   }
   if (!record) return;
+  // A record given up (or still failing) with a 404 / shop-specific 403 of the
+  // TOKEN ENDPOINT is evidence about the shop, not about this token: it is never
+  // re-armed and its token never blanked (a 403 empties nothing).
+  if (migrationStore.hasSingleAttemptKind(record)) return;
   const terminal = migrationStore.isTerminal(record);
   if (record.status !== "needs_reauth" && !terminal) return;
   const d = await resolveDeps();
@@ -647,11 +654,12 @@ export function createRefreshingAdmin(shop: string): AdminApiContext {
     const { admin, session } = await getOfflineAdmin(shop);
     try {
       const result = await (admin.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
+      noteApiSuccess(shop);
       void noteSuccessfulCall(shop, startedAt);
       return result;
     } catch (error) {
       if (!isUnauthorizedError(error)) {
-        if (await isNonExpiringTokenRejectedError(error)) reportNonExpiringTokenRejection(shop, session.accessToken);
+        await handleForbiddenResponse(shop, error, session.accessToken);
         throw error;
       }
       logger.warn("[OfflineAdmin] 401 from Shopify — reloading the offline session and retrying once", { shop });
@@ -662,6 +670,7 @@ export function createRefreshingAdmin(shop: string): AdminApiContext {
       });
       try {
         const retried = await (fresh.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
+        noteApiSuccess(shop);
         void noteSuccessfulCall(shop, startedAt);
         return retried;
       } catch (second) {
@@ -799,7 +808,7 @@ let migrationHeldUntil = 0;
  */
 export function migrationMayBeNeeded(shop: string): boolean {
   if (!migrateToExpiringTokensEnabled()) return false;
-  if (Date.now() < migrationHeldUntil) return false;
+  if (Date.now() < migrationHeldUntil || isIpAllowlistPaused()) return false;
   if (migrationSettled.has(shop)) return false;
   if (migrationNeedsReauth.has(shop)) return false;
   if (migrationsInFlight.has(shop)) return false;
@@ -998,7 +1007,7 @@ export async function maybeMigrateToExpiringToken(shop: string): Promise<Migrati
   if (migrationSettled.has(shop)) return "not_needed";
   const running = migrationsInFlight.get(shop);
   if (running) return running;
-  if (Date.now() < migrationHeldUntil) return "backoff";
+  if (Date.now() < migrationHeldUntil || isIpAllowlistPaused()) return "backoff";
   if (migrationNeedsReauth.has(shop)) return "needs_reauth";
   const failedAt = migrationBackoff.get(shop);
   if (failedAt !== undefined && Date.now() - failedAt < MIGRATION_BACKOFF_MS) return "backoff";
@@ -1153,6 +1162,27 @@ async function blockAfterMigrationNeedsReauth(
   await blockShopConnection(shop, reason, { observedAt: startedAt });
 }
 
+/**
+ * The migration is final by kind (404 / shop-specific 403 for >= 24 h over >= 3
+ * runs): block the shop as `shop_not_found` / `access_denied`. Terminal
+ * evidence, so NOT behind SHOP_BLOCK_ON_ADMIN_401; fenced like the others (a
+ * merchant who re-authorised since the run began has a fresh session this
+ * verdict says nothing about), and lifted by afterAuth / a migrated pair.
+ */
+async function blockAfterMigrationKindFinal(
+  shop: string,
+  kind: string | null | undefined,
+  startedAt: Date,
+  epoch: number,
+): Promise<void> {
+  if ((reissueEpoch.get(shop) ?? 0) !== epoch) return;
+  const notFound = kind === "not_found";
+  await blockShopConnection(shop, notFound ? "token_endpoint_404" : "token_endpoint_403", {
+    observedAt: startedAt,
+    state: notFound ? "shop_not_found" : "access_denied",
+  });
+}
+
 async function runMigration(shop: string): Promise<MigrationOutcome> {
   const runStartedAt = new Date();
   const epoch = reissueEpoch.get(shop) ?? 0;
@@ -1247,6 +1277,7 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
   }
 
   let lastError = "unknown";
+  let failureKind: migrationStore.MigrationFailureKind = "transient";
   const maxAttempts = attemptsPerRun();
   let attempts = 0;
   for (let i = 0; i < maxAttempts; i++) {
@@ -1298,6 +1329,27 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
           { shop },
         );
         return "failed";
+      }
+      const status = exchangeStatus(error);
+      if (status === 404) {
+        // The shop is gone as far as the token endpoint knows. ONE attempt per
+        // run; final only after >= 24 h and >= 3 runs of the same answer.
+        lastError = describe(error);
+        failureKind = "not_found";
+        break;
+      }
+      if (status === 403) {
+        const kind = await classifyForbidden(shop, error);
+        if (kind === "ip_allowlist" || kind === "ip_allowlist_suspected") {
+          // Our address, not this shop: loud line + global pause, NO attempt
+          // counted and nothing on this shop's record changes (it stays pending
+          // with its persisted token).
+          reportForbidden(shop, kind);
+          return "backoff";
+        }
+        lastError = describe(error);
+        failureKind = "forbidden";
+        break;
       }
       lastError = describe(error);
       logger.warn("[OfflineAdmin] Token migration attempt failed (transient) — retrying", {
@@ -1362,7 +1414,7 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
     return "migrated";
   }
 
-  const terminal = await settleFailedRun(shop, lastError, attempts);
+  const terminal = await settleFailedRun(shop, lastError, attempts, { kind: failureKind, startedAt: runStartedAt, epoch });
   if (!terminal) {
     logger.error("[OfflineAdmin] Token migration failed after prompt retries — kept the persisted old token, retried after backoff", {
       shop,
@@ -1380,7 +1432,12 @@ async function runMigration(shop: string): Promise<MigrationOutcome> {
  * (attempt cap) erase the ciphertext (no use any more; the fingerprint stays) and
  * log MIGRATION_GAVE_UP once. Returns whether the record is terminal.
  */
-async function settleFailedRun(shop: string, lastError: string, attemptsMade: number): Promise<boolean> {
+async function settleFailedRun(
+  shop: string,
+  lastError: string,
+  attemptsMade: number,
+  run: { kind?: migrationStore.MigrationFailureKind; startedAt?: Date; epoch?: number } = {},
+): Promise<boolean> {
   // Count, erase and log only on the TRANSITION into terminal: a run that threw
   // EARLY (before the persisted-backoff check) on a record that is already given
   // up must neither add attempts nor log GAVE_UP a second time. A run that threw
@@ -1388,8 +1445,19 @@ async function settleFailedRun(shop: string, lastError: string, attemptsMade: nu
   // counter is that thrown runs cannot retry forever).
   const before = await migrationStore.getMigrationRecord(shop).catch(() => null);
   const wasTerminal = !!before && migrationStore.isTerminal(before);
-  if (!wasTerminal) await migrationStore.markMigrationFailed(shop, lastError, attemptsMade).catch(() => undefined);
-  const after = wasTerminal ? before : await migrationStore.getMigrationRecord(shop).catch(() => null);
+  if (!wasTerminal) {
+    await migrationStore.markMigrationFailed(shop, lastError, attemptsMade, run.kind ?? "transient").catch(() => undefined);
+  }
+  let after = wasTerminal ? before : await migrationStore.getMigrationRecord(shop).catch(() => null);
+  // Final by kind (404 / shop-specific 403 for >= 24 h over >= 3 runs): promote
+  // to the existing terminal state, so everything that already honours "given
+  // up" honours this too.
+  let finalByKind = false;
+  if (!wasTerminal && after && !migrationStore.isTerminal(after) && migrationStore.isKindFinal(after)) {
+    await migrationStore.markMigrationKindFinal(shop).catch(() => undefined);
+    finalByKind = true;
+    after = await migrationStore.getMigrationRecord(shop).catch(() => null);
+  }
   const notBefore = after ? migrationStore.retryNotBefore(after, attemptsPerRun()) : 0;
   backoffUntil(
     shop,
@@ -1401,10 +1469,16 @@ async function settleFailedRun(shop: string, lastError: string, attemptsMade: nu
   if (wasTerminal) return true;
   await migrationStore.eraseOldToken(shop).catch(() => undefined);
   logger.error(
-    "[OfflineAdmin] MIGRATION_GAVE_UP — the token migration kept failing; no automatic retry any more. " +
-      "Reset: see RAILWAY-SETUP.md (OfflineTokenMigration)",
+    finalByKind
+      ? `[OfflineAdmin] MIGRATION_GAVE_UP — the token endpoint kept answering ${after.failureKind === "not_found" ? "404" : "403"} for the same shop for 24 h or more; ` +
+          "no automatic retry any more and the shop is blocked. Reset: see RAILWAY-SETUP.md (OfflineTokenMigration)"
+      : "[OfflineAdmin] MIGRATION_GAVE_UP — the token migration kept failing; no automatic retry any more. " +
+          "Reset: see RAILWAY-SETUP.md (OfflineTokenMigration)",
     { shop, attempts: after.attempts, error: lastError },
   );
+  if (finalByKind && run.startedAt && run.epoch !== undefined) {
+    await blockAfterMigrationKindFinal(shop, after.failureKind, run.startedAt, run.epoch);
+  }
   return true;
 }
 
