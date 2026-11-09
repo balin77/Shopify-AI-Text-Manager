@@ -26,6 +26,9 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
   lastActivityAt      DateTime? @default(now())
+
+  // The activity tracker and the /admin overview look sessions up by shop.
+  @@index([shop])
 }
 
 model AISettings {
@@ -93,7 +96,6 @@ model AISettings {
 
   /**
    * What the taster was WORTH when it was granted, in micro-euro — frozen.
-   *
    * The limit is derived from the price of the managed default model, and the
    * used figure never resets. Re-deriving it on every read made "once, ever"
    * false in both directions: moving `MANAGED_AI_MODEL` to a dearer model
@@ -101,7 +103,6 @@ model AISettings {
    * first, and moving to a cheaper one retroactively exhausted shops in the
    * middle of theirs. An ops action nobody would associate with a grant is
    * exactly the kind that must not be one.
-   *
    * Null means "not granted yet", and then the current derivation applies —
    * which is what makes a model change move the cost for NEW shops, as §10
    * intends, and leave settled ones alone.
@@ -110,7 +111,6 @@ model AISettings {
 
   /**
    * When the taster was found SPENT — a stamp, not the enforcement.
-   *
    * The ledger row under the `taster` key is what refuses a second grant.
    * This exists because `resolveAiCredentials` is synchronous and runs on
    * every detached path: without a column it cannot know, and a shop whose
@@ -133,7 +133,6 @@ model AISettings {
    * The verified subscription carries `test: true`, i.e. it charges nothing —
    * §7a's second signal, mirrored because the credential resolver runs on
    * detached paths that hold no admin client and cannot ask Shopify.
-   *
    * Three-valued like `partnerDevelopment` beside it: null means no sync has
    * established it, and an unknown answer must not cost a paying merchant
    * their budget. Written only where a subscription was really read.
@@ -235,7 +234,7 @@ model AISettings {
   // the dev app's client_id (SHOPIFY_API_KEY) AND APP_ENV !== 'production', so
   // this column is provably never consulted by the public App-Store build.
   // null = no override (normal Shopify-derived plan).
-  devForcedPlan String? // "free" | "basic" | "pro" | "max" | null
+  devForcedPlan      String? // "free" | "basic" | "pro" | "max" | null
   // Dev build only, and only with MANAGED_AI_ALLOW_DEV_BUILD: the forced plan
   // was chosen as its "+ AI" variant. The custom-app build has no Billing API,
   // so nothing else can record that a managed plan was "bought" there.
@@ -364,7 +363,7 @@ model AISettings {
   // Read through translation-change-policy.server.ts, which ANDs it with the
   // parent switch AND the plan on every read — the stored value survives both
   // a downgrade and a merchant switching the parent off to try something.
-  autoTranslateHandles Boolean @default(false)
+  autoTranslateHandles    Boolean @default(false)
   // Optional daily limit on FIRST automatic translations (resources whose
   // auto-translation rests on PrimaryDigestBaseline alone). NULL = no limit.
   // Settings -> KI-Anweisungen -> Übersetzungen, under the handle switch.
@@ -1102,6 +1101,8 @@ model WebhookLog {
   @@index([shop, topic])
   @@index([processed])
   @@index([createdAt])
+  // Per-shop webhook counts of the last 24 h on /admin (PLAN_ADMIN_SHOP_OVERVIEW 3.2).
+  @@index([shop, createdAt])
 }
 
 model WebhookRetry {
@@ -1340,8 +1341,8 @@ model PrimaryDigestBaseline {
 // REFUSED — reported in a Task row, their baseline NOT advanced, so the work is
 // deferred rather than swallowed. Shop-scoped: redactShopData() deletes it.
 model AutoTranslateFillBudget {
-  shop    String
-  day     String // "YYYY-MM-DD", UTC
+  shop       String
+  day        String // "YYYY-MM-DD", UTC
   used       Int      @default(0)
   // Resources refused today — DISTINCT ids, not events: a held resource is
   // refused again on every later change event that day.
@@ -1358,7 +1359,7 @@ model AutoTranslateFillBudget {
 // and FK-less: redactShopData deletes by shop, purgeContentFromCache and the
 // sync delete helpers by (shop, resourceId).
 model AutoTranslateRetry {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   shop          String
   resourceId    String
   resourceType  String // "Product" | "Collection" | "Page" | "Article" | "Blog" | "ShopPolicy"
@@ -1366,14 +1367,14 @@ model AutoTranslateRetry {
   resourceTitle String?
   pairs         Json
   reason        String // "limit" | "failed"
-  attempts      Int      @default(0)
-  status        String   @default("pending") // "pending" | "running" | "exhausted"
+  attempts      Int       @default(0)
+  status        String    @default("pending") // "pending" | "running" | "exhausted"
   lastError     String? // a CODE (not_delivered | could_not_start | unreadable | run_failed), rendered in settings
   // When the current attempt started — the stale-"running" check reads this,
   // never updatedAt, which every enqueue bumps.
   startedAt     DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@unique([shop, resourceId])
   @@index([shop, status])
@@ -1654,6 +1655,54 @@ model ShopInstallState {
   initialSyncForceRequested Boolean   @default(false)
   updatedAt                 DateTime  @updatedAt
 
+  // ---- Connection state (PLAN_ADMIN_SHOP_OVERVIEW 2.1) -------------------
+  // Written ONLY through app/utils/shop-connection-state.server.ts; read as a
+  // verdict through app/services/shop-connection-status.shared.ts. Every column
+  // is nullable or defaulted: NULL means "no known problem" / "unknown", never
+  // a value to guess from. None of them ever holds a token.
+  //
+  // null = no known problem; "needs_reauth" | "access_denied" | "shop_not_found".
+  connectionState        String?
+  connectionStateSince   DateTime?
+  // A code (invalid_subject_token, admin_api_401, no_token, ...), never a message.
+  connectionStateReason  String?
+  // Last lifting and why ("reauth" | "reinstall" | "probe_ok" | "uninstalled").
+  // The fence: a failure from a call that BEGAN before this instant must not
+  // block the shop again.
+  connectionClearedAt    DateTime?
+  connectionClearedCause String?
+  // Changes missed while the shop was blocked: since when a catch-up is owed,
+  // and how many webhooks were accepted but not processed.
+  resyncRequiredSince    DateTime?
+  droppedWebhookCount    Int       @default(0)
+  // X-Shopify-Triggered-At of the last webhook with a valid signature
+  // (written at most every 10 min). Evidence for "installed".
+  lastWebhookAt          DateTime?
+  // Last probe of a 401 block.
+  lastProbeAt            DateTime?
+  // Where uninstalledAt came from ("webhook" | "operator" | "stale_auto") and
+  // whether webhooks kept arriving after it.
+  uninstallSource        String?
+  reinstallEvidenceAt    DateTime?
+  // Last successful Admin API call (written at most hourly). Optional evidence.
+  lastApiOkAt            DateTime?
+
+  // ---- Activity (PLAN_ADMIN_SHOP_OVERVIEW 3.2) ----------------------------
+  // The durable "last opened": written at most once per 5 min by the activity
+  // tracker. Session.lastActivityAt is NOT the source (polling counted, and it
+  // goes with the session on uninstall).
+  lastActivityAt     DateTime?
+  // TRUE while lastActivityAt is only the one-off backfill from
+  // Session.lastActivityAt (approximate: polling counted, and that column's
+  // default stamped new rows). The live writer sets it back to false.
+  lastActivityApprox Boolean   @default(false)
+  // Path AREA (e.g. "app.products", never the query) of the last request that
+  // was not a GET, and when.
+  lastActionAt       DateTime?
+  lastActionArea     String?
+  // Set in afterAuth (install / re-consent / token exchange).
+  lastAuthAt         DateTime?
+
   @@index([uninstalledAt])
 }
 
@@ -1671,6 +1720,31 @@ model ImageOperationCounter {
 
   @@unique([shop, period])
   @@index([shop])
+}
+
+// Shop-level usage statistics per UTC day (PLAN_ADMIN_SHOP_OVERVIEW 3.2): no
+// personal data, counts only. Written by the activity tracker (activeSlots,
+// actions) and the hourly rollup (tasks, AI), which never overwrites the
+// tracker's counts. Retained 90 days; redactShopData deletes it by shop.
+model ShopUsageDay {
+  id           String   @id @default(cuid())
+  shop         String
+  day          DateTime @db.Date // UTC calendar day
+  // Distinct 5-minute windows with a non-polling request.
+  activeSlots  Int      @default(0)
+  // Requests that were not a GET, at most once per request.
+  actions      Int      @default(0)
+  tasksStarted Int      @default(0)
+  tasksFailed  Int      @default(0)
+  // Micro-euro / tokens: BIGINT like the AI ledger.
+  aiCostMicros BigInt   @default(0)
+  aiTokens     BigInt   @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([shop, day])
+  // The 90-day retention sweep and the /admin window read by day.
+  @@index([day])
 }
 
 // What the AI really consumed (PLAN_MANAGED_AI_KEY §4.3).
@@ -2482,4 +2556,11 @@ model OfflineTokenMigration {
   startedAt         DateTime  @default(now())
   completedAt       DateTime?
   updatedAt         DateTime  @updatedAt
+
+  // Kind of the failure the shop keeps hitting (PLAN_ADMIN_SHOP_OVERVIEW 2.5):
+  // "transient" | "forbidden" (shop-specific 403) | "not_found" (404), and
+  // since when that SAME kind has been failing. NULL on rows that predate the
+  // column: the old rule (failed + 40 attempts = final) still decides for them.
+  failureKind      String?
+  failureKindSince DateTime?
 }

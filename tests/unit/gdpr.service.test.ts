@@ -285,7 +285,7 @@ describe('redactShopData()', () => {
 
     await redactShopData({ shop_id: 1, shop_domain: SHOP_A });
 
-    for (const model of ['primaryDigestBaseline', 'autoTranslateFillBudget', 'autoTranslateRetry']) {
+    for (const model of ['primaryDigestBaseline', 'autoTranslateFillBudget', 'autoTranslateRetry', 'shopUsageDay']) {
       expect(calls.find((c) => c.model === model)?.where).toEqual({ shop: SHOP_A });
     }
   });

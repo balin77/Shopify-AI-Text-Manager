@@ -198,7 +198,7 @@ export async function redactCustomerData(
  *      ThemeTranslation, WebhookLog, WebhookRetry, OptionValueMemory,
  *      GroupedFieldTranslation, AltTextTemplate, MetaobjectDefinition,
  *      Metaobject, MetaobjectTranslation, ShopInstallState,
- *      ImageOperationCounter, AiUsageCounter, EnabledMetafieldDefinition,
+ *      ImageOperationCounter, AiUsageCounter, ShopUsageDay, EnabledMetafieldDefinition,
  *      DirectTranslationItem, DirectTranslationCandidate,
  *      DirectTranslationSettings, Seo404Hit, SeoAiReferral, SeoKeyword,
  *      SeoKeywordAssignment, SeoKeywordGroup, SeoKeywordGroupMembership,
@@ -445,6 +445,13 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${aiUsageCountersDeleted.count} AI usage counters`);
+
+    // 24b2. Per-day shop usage statistics (PLAN_ADMIN_SHOP_OVERVIEW 3.2) --
+    //       shop-identifying usage data, FK-less like the counters above.
+    const shopUsageDaysDeleted = await tx.shopUsageDay.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${shopUsageDaysDeleted.count} shop usage days`);
 
     // 24c. The AI processing consent log — shop-scoped, goes with the shop.
     const aiConsentEventsDeleted = await tx.aiConsentEvent.deleteMany({
