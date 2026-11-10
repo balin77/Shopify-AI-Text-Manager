@@ -61,6 +61,15 @@ describe("markShopUninstalled", () => {
     expect(arg.update.resyncRequiredSince).toBeUndefined();
   });
 
+  it("a conditional mark whose block start is undefined is refused, never run unconditionally", async () => {
+    const failure: { reason?: string } = {};
+    await expect(
+      markShopUninstalled("x.myshopify.com", { source: "operator", ifBlockedSince: undefined, failure: failure as never }),
+    ).resolves.toBe(false);
+    expect(failure.reason).toBe("error");
+    expect(h.upsert).not.toHaveBeenCalled();
+  });
+
   it("lifts the connection block AFTER the marker is written", async () => {
     await markShopUninstalled("x.myshopify.com", { source: "webhook" });
     expect(h.clear).toHaveBeenCalledWith("x.myshopify.com", "uninstalled");

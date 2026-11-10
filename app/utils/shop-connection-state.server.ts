@@ -225,7 +225,13 @@ export async function markConnectionBlocked(
     const res = await db.shopInstallState.updateMany({
       where: {
         shop,
-        OR: [{ connectionState: null }, { connectionState: { not: state } }],
+        // needs_reauth is the WEAKEST kind: it may only create a block, never
+        // replace one (a final shop_not_found / access_denied stays, whatever
+        // the 30 s cache of the caller believed). The final kinds may replace
+        // each other and needs_reauth (the kind change restarts the clock).
+        ...(state === "needs_reauth"
+          ? { connectionState: null }
+          : { OR: [{ connectionState: null }, { connectionState: { not: state } }] }),
         AND: [{ OR: [{ connectionClearedAt: null }, { connectionClearedAt: { lte: observedAt } }] }],
       },
       data: { connectionState: state, connectionStateSince: now, connectionStateReason: code },
@@ -242,6 +248,12 @@ export async function markConnectionBlocked(
     });
     if (!row) return { changed: false, why: "no_row" };
     if (row.connectionState === state) return { changed: false, why: "unchanged" };
+    // A weaker kind found a block (of any kind) standing: it is blocked, nothing to add.
+    if (state === "needs_reauth" && row.connectionState) {
+      // The caller's cache did not know about that block: let the next read see it.
+      invalidateConnectionCache(shop);
+      return { changed: false, why: "unchanged" };
+    }
     return { changed: false, why: "fenced" };
   } catch (error) {
     logger.debug(`[ConnectionState] mark failed for ${shop}: ${error instanceof Error ? error.name : "error"}`);

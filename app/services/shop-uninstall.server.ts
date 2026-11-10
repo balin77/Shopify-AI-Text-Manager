@@ -45,6 +45,15 @@ export async function markShopUninstalled(
   const { source } = opts;
   const tag = `[APP_UNINSTALLED]`;
 
+  // A caller that NAMES the claim but hands in nothing (`ifBlockedSince:
+  // undefined`, e.g. from a shop with no recorded block start) must not fall
+  // through to the unconditional mark below.
+  if ("ifBlockedSince" in opts && !opts.ifBlockedSince) {
+    logger.error(`${tag} Refusing to mark ${shop}: a conditional mark came without the reviewed block start`);
+    if (opts.failure) opts.failure.reason = "error";
+    return false;
+  }
+
   if (opts.ifBlockedSince) {
     try {
       const claim = await db.shopInstallState.updateMany({

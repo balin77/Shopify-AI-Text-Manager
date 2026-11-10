@@ -116,6 +116,15 @@ describe("blockShopConnection", () => {
     expect(store.get(SHOP)!.connectionState).toBe("access_denied");
   });
 
+  it("a stale cache cannot let needs_reauth overwrite a final kind (the write is conditional in the database)", async () => {
+    expect(await getConnectionBlock(SHOP)).toBeNull(); // cache: not blocked
+    // the final kind lands behind the cache's back (another instance)
+    store.set(SHOP, row({ connectionState: "shop_not_found", connectionStateSince: new Date(), connectionStateReason: "token_endpoint_404" }));
+    const blocked = await blockShopConnection(SHOP, "no_token", { observedAt: new Date() });
+    expect(blocked).toMatchObject({ state: "shop_not_found" });
+    expect(store.get(SHOP)).toMatchObject({ connectionState: "shop_not_found", connectionStateReason: "token_endpoint_404" });
+  });
+
   it("the fence: a failure that began before the last re-authorisation does not block", async () => {
     const started = new Date(Date.now() - 5_000);
     await clearConnectionBlock(SHOP, "reauth");
