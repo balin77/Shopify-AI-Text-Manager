@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   mark: vi.fn(async (..._a: unknown[]) => true),
   warn: vi.fn(),
   info: vi.fn(),
+  error: vi.fn(),
 }));
 vi.mock("~/utils/webhook-auth.server", () => ({ verifyWebhookRequest: async () => h.verified }));
 vi.mock("~/db.server", () => ({
@@ -21,7 +22,7 @@ vi.mock("~/db.server", () => ({
   },
 }));
 vi.mock("~/services/shop-uninstall.server", () => ({ markShopUninstalled: (...a: unknown[]) => h.mark(...a) }));
-vi.mock("~/utils/logger.server", () => ({ logger: { warn: h.warn, info: h.info, error: vi.fn(), debug: vi.fn() } }));
+vi.mock("~/utils/logger.server", () => ({ logger: { warn: h.warn, info: h.info, error: h.error, debug: vi.fn() } }));
 
 import { action } from "~/routes/webhooks.app-uninstalled";
 import { isStaleUninstall, isUninstallTopic, payloadMatchesShop } from "~/services/uninstall-webhook-guard.shared";
@@ -33,6 +34,7 @@ beforeEach(() => {
   h.mark.mockClear();
   h.warn.mockClear();
   h.info.mockClear();
+  h.error.mockClear();
   h.lastAuthAt = null;
   h.findFails = false;
   h.verified = { shop: "a.myshopify.com", topic: "app/uninstalled", webhookId: "w", payload: { myshopify_domain: "a.myshopify.com" } };
@@ -58,6 +60,9 @@ describe("guard helpers", () => {
     expect(isStaleUninstall(null, auth)).toBe(false);
     expect(isStaleUninstall("garbage", auth)).toBe(false);
     expect(isStaleUninstall("2026-11-01T09:00:00Z", null)).toBe(false);
+    // within the 5 s clock-skew margin: not stale
+    expect(isStaleUninstall("2026-11-01T09:59:56Z", auth)).toBe(false);
+    expect(isStaleUninstall("2026-11-01T09:59:54Z", auth)).toBe(true);
   });
 });
 
@@ -70,19 +75,33 @@ describe("app/uninstalled route", () => {
     h.verified.topic = "products/update";
     expect((await call()).status).toBe(200);
     expect(h.mark).not.toHaveBeenCalled();
-    expect(h.warn).toHaveBeenCalled();
+    expect(h.error).toHaveBeenCalled();
   });
   it("answers 200 and touches nothing when the payload names another shop", async () => {
     h.verified.payload = { myshopify_domain: "victim.myshopify.com" };
     expect((await call()).status).toBe(200);
     expect(h.mark).not.toHaveBeenCalled();
-    expect(h.warn).toHaveBeenCalled();
+    expect(h.error).toHaveBeenCalled();
   });
   it("skips a delivery older than the last sign-in with one info line", async () => {
     h.lastAuthAt = new Date("2026-11-01T10:00:00Z");
     expect((await call({ "x-shopify-triggered-at": "2026-11-01T09:00:00Z" })).status).toBe(200);
     expect(h.mark).not.toHaveBeenCalled();
     expect(h.info).toHaveBeenCalledTimes(1);
+  });
+  it("honours the verified triggeredAt and the Events-style header name", async () => {
+    h.lastAuthAt = new Date("2026-11-01T10:00:00Z");
+    h.verified.triggeredAt = "2026-11-01T09:00:00Z";
+    await call();
+    expect(h.mark).not.toHaveBeenCalled();
+    delete h.verified.triggeredAt;
+    await call({ "shopify-triggered-at": "2026-11-01T09:00:00Z" });
+    expect(h.mark).not.toHaveBeenCalled();
+  });
+  it("logs a topic or shop mismatch at error level", async () => {
+    h.verified.topic = "products/update";
+    await call();
+    expect(h.error).toHaveBeenCalled();
   });
   it("keeps current behaviour for a newer, missing or invalid header and a failed read", async () => {
     h.lastAuthAt = new Date("2026-11-01T10:00:00Z");

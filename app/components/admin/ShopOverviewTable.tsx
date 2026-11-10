@@ -125,7 +125,7 @@ function ShopRowView({ row, nowMs, cols }: { row: ShopRow; nowMs: number; cols: 
           <button type="button" onClick={toggleDetail} style={{ ...BUTTON, marginRight: 6 }} aria-expanded={detailOpen}>
             {detailLoading ? 'Lade…' : detailOpen ? 'Details zu' : 'Details'}
           </button>
-          <button type="button" onClick={() => setDeleteOpen((v) => !v)} style={{ ...BUTTON, border: `1px solid ${DANGER}`, color: DANGER }}>
+          <button type="button" onClick={() => { setDeleteOpen((v) => !v); setForceDelete(false); }} style={{ ...BUTTON, border: `1px solid ${DANGER}`, color: DANGER }}>
             Alle Daten löschen…
           </button>
         </td>

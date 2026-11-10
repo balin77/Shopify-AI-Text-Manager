@@ -28,9 +28,12 @@ export function payloadMatchesShop(payload: Record<string, unknown> | undefined,
  * header says the event is OLDER than the shop's last sign-in. A missing or
  * unparseable header, or an unknown sign-in, keeps the current behaviour.
  */
+/** Shopify's clock and ours may differ; only a clearly older delivery is skipped. */
+export const CLOCK_SKEW_MS = 5_000;
+
 export function isStaleUninstall(triggeredAtHeader: string | null, lastAuthAt: Date | null | undefined): boolean {
   if (!triggeredAtHeader || !lastAuthAt) return false;
   const triggered = Date.parse(triggeredAtHeader);
   if (!Number.isFinite(triggered)) return false;
-  return triggered < lastAuthAt.getTime();
+  return triggered < lastAuthAt.getTime() - CLOCK_SKEW_MS;
 }

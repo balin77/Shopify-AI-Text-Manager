@@ -95,14 +95,20 @@ describe("delete-shop: installed shops", () => {
     expect(h.redact).toHaveBeenCalledWith({ shop_id: 0, shop_domain: SHOP });
   });
 
-  it("deletes without the switch when the shop is marked uninstalled or has no token", async () => {
+  it("a blanked token (needs_reauth) still counts as installed", async () => {
+    h.install.push({ shop: SHOP, uninstalledAt: null });
+    h.sessions.push({ shop: SHOP, isOnline: false, accessToken: "" });
+    expect((await post(DEL)).status).toBe(409);
+    expect(h.redact).not.toHaveBeenCalled();
+  });
+
+  it("deletes without the switch when the shop is marked uninstalled or has no session", async () => {
     h.install.push({ shop: SHOP, uninstalledAt: new Date() });
     h.sessions.push({ shop: SHOP, isOnline: false, accessToken: "tok" });
     expect((await post(DEL)).status).toBe(200);
     h.install.length = 0;
     h.sessions.length = 0;
     h.install.push({ shop: SHOP, uninstalledAt: null });
-    h.sessions.push({ shop: SHOP, isOnline: false, accessToken: "" });
     expect((await post(DEL)).status).toBe(200);
     expect(h.redact).toHaveBeenCalledTimes(2);
   });

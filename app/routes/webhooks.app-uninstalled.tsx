@@ -31,20 +31,23 @@ import {
  * way, with one info line.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, topic, payload } = await verifyWebhookRequest(request);
+  const { shop, topic, payload, triggeredAt: verifiedTriggeredAt } = await verifyWebhookRequest(request);
 
   if (!isUninstallTopic(topic)) {
-    logger.warn(`[APP_UNINSTALLED] Ignored: topic "${String(topic).slice(0, 60)}" is not APP_UNINSTALLED (shop ${shop})`);
+    logger.error(`[APP_UNINSTALLED] Ignored: topic "${String(topic).slice(0, 60)}" is not APP_UNINSTALLED (shop ${shop})`);
     return new Response("OK", { status: 200 });
   }
   if (!payloadMatchesShop(payload, shop)) {
-    logger.warn(`[APP_UNINSTALLED] Ignored: payload shop does not match the signed shop ${shop}`);
+    logger.error(`[APP_UNINSTALLED] Ignored: payload shop does not match the signed shop ${shop}`);
     return new Response("OK", { status: 200 });
   }
 
   try {
     const state = await db.shopInstallState.findUnique({ where: { shop }, select: { lastAuthAt: true } });
-    const triggeredAt = request.headers.get("x-shopify-triggered-at");
+    const triggeredAt =
+      verifiedTriggeredAt ??
+      request.headers.get("x-shopify-triggered-at") ??
+      request.headers.get("shopify-triggered-at");
     if (isStaleUninstall(triggeredAt, state?.lastAuthAt)) {
       logger.info(
         `[APP_UNINSTALLED] Skipped for ${shop}: delivery (triggered ${triggeredAt}) is older than the last sign-in`,
