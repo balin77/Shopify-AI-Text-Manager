@@ -136,3 +136,23 @@ export function applyDocumentSecurityHeaders(
     responseHeaders.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
   }
 }
+
+/**
+ * Same-origin guard for the admin's state-changing actions that go beyond the
+ * SameSite=Lax cookie: a browser tells us where the request came from
+ * (`Sec-Fetch-Site`, else `Origin`). A request that names a foreign origin is
+ * refused; one that names none (a non-browser client with a valid cookie) passes,
+ * because it cannot be a cross-site form post.
+ */
+export function isSameOriginAdminRequest(request: Request): boolean {
+  const site = request.headers.get("Sec-Fetch-Site");
+  if (site) return site === "same-origin" || site === "none";
+  const origin = request.headers.get("Origin");
+  if (!origin) return true;
+  try {
+    const hosts = [new URL(request.url).host, request.headers.get("X-Forwarded-Host"), request.headers.get("Host")];
+    return hosts.some((h) => !!h && h === new URL(origin).host);
+  } catch {
+    return false;
+  }
+}

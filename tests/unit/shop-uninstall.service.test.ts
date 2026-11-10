@@ -83,4 +83,28 @@ describe("markShopUninstalled", () => {
     expect(h.upsert).not.toHaveBeenCalled();
     expect(h.clear).not.toHaveBeenCalled();
   });
+
+  it("ifBlockedSince: the claim also requires no sign of life since the block began", async () => {
+    const since = new Date("2026-01-01T00:00:00Z");
+    await markShopUninstalled("x.myshopify.com", { source: "operator", ifBlockedSince: since });
+    const where = h.updateMany.mock.calls[0][0] as { where: { AND: Array<{ OR: Array<Record<string, unknown>> }> } };
+    const fields = where.where.AND.map((c) => Object.keys(c.OR[0])[0]).sort();
+    expect(fields).toEqual(["lastActivityAt", "lastApiOkAt", "lastAuthAt", "lastWebhookAt", "reinstallEvidenceAt"]);
+    for (const c of where.where.AND) {
+      const f = Object.keys(c.OR[0])[0];
+      expect(c.OR).toEqual([{ [f]: null }, { [f]: { lt: since } }]);
+    }
+  });
+
+  it("ifBlockedSince: tells a changed state from a database error", async () => {
+    const since = new Date("2026-01-01T00:00:00Z");
+    const a: { reason?: "changed" | "error" } = {};
+    h.updateMany.mockResolvedValueOnce({ count: 0 });
+    await markShopUninstalled("x.myshopify.com", { source: "operator", ifBlockedSince: since, failure: a });
+    expect(a.reason).toBe("changed");
+    const b: { reason?: "changed" | "error" } = {};
+    h.updateMany.mockRejectedValueOnce(new Error("db down"));
+    await expect(markShopUninstalled("x.myshopify.com", { source: "operator", ifBlockedSince: since, failure: b })).resolves.toBe(false);
+    expect(b.reason).toBe("error");
+  });
 });

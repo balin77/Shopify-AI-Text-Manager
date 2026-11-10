@@ -8,6 +8,8 @@
 
 import type { ShopDetail } from '~/services/admin/shop-overview.shared';
 import { relativeAge, utcStamp } from '~/services/admin/shop-overview.shared';
+import type { UninstallReviewView } from '~/services/admin/uninstall-review.shared';
+import { MarkUninstalledSection } from './MarkUninstalledSection';
 import { MUTED, STATUS_DOT, STATUS_TINT } from './admin-styles';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -24,7 +26,7 @@ function thirtyDays(detail: ShopDetail): Array<{ day: string; slots: number; act
   return out;
 }
 
-export function ShopDetailPanel({ detail }: { detail: ShopDetail }) {
+export function ShopDetailPanel({ detail, uninstall = null }: { detail: ShopDetail; uninstall?: UninstallReviewView | null }) {
   const nowMs = Date.parse(detail.now);
   const days = thirtyDays(detail);
   const maxSlots = Math.max(1, ...days.map((d) => d.slots));
@@ -81,6 +83,8 @@ export function ShopDetailPanel({ detail }: { detail: ShopDetail }) {
           ))}
         </div>
       </div>
+
+      {uninstall && <MarkUninstalledSection review={uninstall} />}
 
       <div>
         <div style={{ color: MUTED, marginBottom: 4 }}>Zeitleiste (höchstens 100 Einträge)</div>

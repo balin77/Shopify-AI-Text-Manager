@@ -29,6 +29,7 @@ import {
 import { COLOR_LABELS, type ShopStatusColor } from '~/services/admin/shop-status.shared';
 import { BUTTON, DANGER, MUTED, STATUS_DOT, STATUS_TINT, TD, TH } from './admin-styles';
 import { ShopDetailPanel } from './ShopDetailPanel';
+import type { UninstallReviewView } from '~/services/admin/uninstall-review.shared';
 
 const COLORS: ShopStatusColor[] = ['red', 'yellow', 'green', 'grey'];
 
@@ -76,7 +77,7 @@ function ShopRowView({ row, nowMs, cols }: { row: ShopRow; nowMs: number; cols: 
   const nav = useNavigation();
   const busy = nav.state !== 'idle' && nav.formData?.get('shop') === row.shop;
   // The detail is loaded on click through the page's own loader (`?detail=`).
-  const detail = useFetcher<{ detail?: ShopDetail; error?: string }>();
+  const detail = useFetcher<{ detail?: ShopDetail; uninstall?: UninstallReviewView | null; error?: string }>();
   const detailLoading = detail.state !== 'idle';
   const lastOpened = row.status.lastOpenedMs;
 
@@ -133,7 +134,7 @@ function ShopRowView({ row, nowMs, cols }: { row: ShopRow; nowMs: number; cols: 
           <td style={{ ...TD, whiteSpace: 'normal', background: '#f6f6f7' }} colSpan={cols}>
             {detail.data?.error && <span style={{ color: DANGER }}>{detail.data.error}</span>}
             {detail.data?.detail ? (
-              <ShopDetailPanel detail={detail.data.detail} />
+              <ShopDetailPanel detail={detail.data.detail} uninstall={detail.data.uninstall ?? null} />
             ) : (
               !detail.data?.error && <span>Lade…</span>
             )}

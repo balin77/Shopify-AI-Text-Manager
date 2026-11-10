@@ -394,6 +394,10 @@ Webhook `app/uninstalled` nie an, steht ein Shop ohne `uninstalledAt` da; Markie
   gefunden», ohne Webhook, Besuch, Anmeldung, API-Erfolg oder Beleg seit Beginn der Sperre),
   unbekannt oder schon deinstalliert ist, oder wenn noch eine Session ein Token hält
   (dann nur mit `--force-with-token`). Fehlen die App-Quellen, meldet es das klar.
+  **Dieselbe Prüfung gibt es als Knopf** in `/admin` (Details eines Shops → «Als deinstalliert
+  markieren»): aktiv nur mit Beleg, zeigt vorher die Belege, verlangt die exakt getippte
+  Shop-Domain und liest die Fakten auf dem Server neu. Ein Shop, dessen Session noch ein
+  Token hält, lässt sich dort **nicht** markieren (nur per Skript mit `--force-with-token`).
 - **Automatisches Markieren** `STALE_INSTALL_AUTO_MARK`: nur der exakte Wert `true` schaltet
   an, **standardmässig AUS**. Der Verbindungs-Sweep prüft dann höchstens stündlich und
   markiert (Quelle `stale_auto`) Shops, die seit mindestens 90 Tagen (14 bei «Shop nicht
