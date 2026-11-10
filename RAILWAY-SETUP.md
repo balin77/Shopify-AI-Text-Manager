@@ -889,28 +889,39 @@ railway connect Postgres
 
 ### Fehlgeschlagene Migration beheben
 
-`scripts/run-all-migrations.js` läuft vor dem Serverstart (`npm run start:production`). Schlägt
-`prisma migrate deploy` fehl (typisch: P3009 nach einem abgebrochenen `CREATE INDEX CONCURRENTLY`),
-bricht das Deploy mit Exit-Code 1 ab und der alte Container bleibt aktiv. Im Log nach
-`MIGRATE_DEPLOY_FAILED` suchen. Es gibt bewusst **keinen** stillen Wechsel auf `prisma db push`:
-der liesse ungültige (INVALID) Indizes und fehlgeschlagene Migrationszeilen für immer stehen,
-würde spätere SQL-Backfills überspringen und spätere Indizes ohne `CONCURRENTLY` bauen.
+`scripts/run-all-migrations.js` läuft vor dem Serverstart (`npm run start:production`), also bei **jedem** Containerstart. Schlägt
+`prisma migrate deploy` fehl (typisch: P3009 nach einem abgebrochenen `CREATE INDEX CONCURRENTLY`), gilt:
 
-Manuelle Behebung:
+- Verbindungsfehler (P1001, P1002, ECONNREFUSED) werden bis zu 3-mal mit Wartezeit wiederholt, andere Fehler nie.
+- Sind **alle** Migrationen des Images trotzdem sauber angewendet (die fehlgeschlagene gehört zu einem neueren Image),
+  startet der Container trotzdem und loggt `MIGRATE_DEPLOY_FAILED_BUT_SCHEMA_CURRENT` mit dem Namen der fehlgeschlagenen
+  Migration. Der alte Container läuft also weiter, solange seine eigenen Migrationen angewendet sind, und gerät nach einem
+  fehlgeschlagenen Deploy nicht in eine Absturzschleife.
+- Fehlt dem Image eine Migration, ist sie fehlgeschlagen oder lässt sich der Stand nicht lesen, bricht das Deploy mit
+  Exit-Code 1 ab (Log: `MIGRATE_DEPLOY_FAILED`) und der alte Container bleibt aktiv.
+
+Es gibt bewusst **keinen** stillen Wechsel auf `prisma db push`: der liesse ungültige (INVALID) Indizes und
+fehlgeschlagene Migrationszeilen für immer stehen, würde spätere SQL-Backfills überspringen und spätere Indizes ohne
+`CONCURRENTLY` bauen.
+
+Manuelle Behebung (die Befehle laufen gegen die Produktionsdatenbank, z. B. mit `railway run <befehl>` aus dem
+verknüpften Projekt oder mit gesetztem produktivem `DATABASE_URL`):
 
 1. Fehlgeschlagene Migration finden:
    `SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL;`
-2. Ungültigen Index finden und entfernen (ausserhalb einer Transaktion):
-   `SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;` dann
-   `DROP INDEX CONCURRENTLY IF EXISTS "<indexname>";`
-3. Migration als zurückgerollt markieren:
+2. Ungültigen Index finden: `SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;`
+   Achtung: Die Abfrage listet auch einen Index, der **gerade aufgebaut wird**. Nichts löschen, solange ein Deploy oder
+   eine Migration läuft. Danach den ausgegebenen Namen unverändert (ohne zusätzliche Anführungszeichen) verwenden:
+   `DROP INDEX CONCURRENTLY IF EXISTS <ausgegebener_name>;` (ausserhalb einer Transaktion).
+3. Enthält die Migration mehrere Statements mit `CONCURRENTLY`, bleiben die früheren Statements angewendet. Vor dem
+   erneuten Lauf prüfen, was schon existiert, und Reste löschen; die Migration sollte `IF NOT EXISTS` verwenden.
+4. Migration als zurückgerollt markieren:
    `npx prisma migrate resolve --rolled-back <migrationsname>`
-4. Neu deployen (Redeploy), die Migration läuft dann erneut.
+5. Neu deployen (Redeploy), die Migration läuft dann erneut.
 
 Notfall-Schalter: `ALLOW_DB_PUSH_FALLBACK=true` (genau dieser Wert) erlaubt nach einem
-fehlgeschlagenen `migrate deploy` den Fallback auf `prisma db push`. Nur setzen, wenn bewusst
+fehlgeschlagenen `migrate deploy` mit unvollständigem Schema den Fallback auf `prisma db push`. Nur setzen, wenn bewusst
 in Kauf genommen wird, dass die oben genannten Altlasten bleiben; danach wieder entfernen.
-
 
 ### Build Fails:
 - Checke Logs im Railway Dashboard
