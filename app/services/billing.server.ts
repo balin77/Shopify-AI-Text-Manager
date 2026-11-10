@@ -613,8 +613,9 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
   //
   // So it runs here, and only while the answer is UNKNOWN. That makes it one
   // extra GraphQL query per shop per lifetime rather than one per navigation —
-  // `checkAndSyncSubscription` runs on the app.tsx loader, so an unconditional
-  // lookup here is a real cost on a real path.
+  // `checkAndSyncSubscription` runs on afterAuth, the settings loader, the
+  // billing callback (and the app.tsx loader after `?billing=success`), so an
+  // unconditional lookup here is a real cost on a real path.
   //
   // A failed lookup writes NOTHING rather than `false`: an answer established
   // earlier survives a throttled sync, and "never determined" stays
@@ -691,9 +692,9 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
       });
     }
 
-    // R4-DI4: ~6 callers (afterAuth, app.tsx loader on every navigation,
-    // settings, billing.callback, webhooks.subscription + redelivery,
-    // scheduler) can run this concurrently. The old flow let two racers both
+    // R4-DI4: several callers (afterAuth, the app.tsx loader after
+    // `?billing=success`, the settings loader, billing.callback,
+    // webhooks.subscription + redelivery; the scheduler does NOT call it) can run this concurrently. The old flow let two racers both
     // observe previousPlan='free', both write 'pro' and BOTH fire a full
     // upgrade resync for the same shop. Gate the expensive resync behind an
     // atomic compare-and-set executed BEFORE the (idempotent) write: exactly

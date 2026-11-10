@@ -27,6 +27,7 @@ import type { WebhookRetry } from "@prisma/client";
 import { db } from "../db.server";
 import { logger } from "../utils/logger.server";
 import { WEBHOOK_CONFIG } from "../config/constants";
+import { noteDroppedWebhook } from "../utils/shop-connection-state.server";
 
 // R4-H3: was `new PrismaClient()` — a SECOND client with its own connection
 // pool that was never $disconnect()-ed (pool leak; doubled DB connections,
@@ -42,6 +43,54 @@ export interface WebhookRetryJob {
   maxAttempts: number;
   nextRetry: Date;
   lastError?: string;
+}
+
+/**
+ * An offline-admin failure that retrying cannot fix (no token, an expired
+ * token without a refresh token, a refresh failing with a terminal answer):
+ * the same situation as a 401. offline-admin marks exactly those with `permanent: true`; a plain `refresh_failed` (database or
+ * pool blip, Shopify 5xx) does NOT carry it and stays retryable. Checked by
+ * SHAPE, not instanceof: the class can exist twice across dynamic-import
+ * boundaries.
+ */
+function isOfflineAdminUnavailableError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'OFFLINE_ADMIN_UNAVAILABLE'
+  );
+}
+
+/**
+ * Is this failure auth-dead (retrying cannot help)? An offline-admin error is
+ * decided by its `permanent` flag ALONE: its message carries the shop domain,
+ * so the 401 text patterns must not be applied to it (`shop-401.myshopify.com`).
+ */
+function isAuthDeadError(error: unknown, errorMessage: string): boolean {
+  if (isOfflineAdminUnavailableError(error)) return isOfflineAdminUnavailable(error);
+  return /\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage);
+}
+
+function isOfflineAdminUnavailable(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'OFFLINE_ADMIN_UNAVAILABLE' &&
+    (error as { permanent?: unknown }).permanent === true
+  );
+}
+
+/**
+ * The shop's connection is blocked (shop-connection-state.server.ts): the
+ * failure is already known and logged once, so nothing more is queued or logged
+ * for it. By SHAPE, like the checks above.
+ */
+function isBlockedConnectionError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'SHOP_CONNECTION_BLOCKED'
+  );
 }
 
 export type WebhookHandler = (payload: Record<string, unknown>, shop: string) => Promise<void>;
@@ -84,12 +133,26 @@ class WebhookRetryService {
       const payloadString = JSON.stringify(payload);
       const errorMessage = error?.message || 'Unknown error';
 
+      // A blocked shop: no retry row, no log above debug (the BLOCKED line was
+      // logged once when the block was set; a webhook of that shop is counted
+      // elsewhere, and what it missed is caught up after the next sign-in).
+      if (isBlockedConnectionError(error)) {
+        logger.debug('Skipping webhook retry — the shop connection is blocked', {
+          context: 'WebhookRetry',
+          shop,
+          topic,
+        });
+        // The change is lost for now: record that a catch-up is owed.
+        await noteDroppedWebhook(shop);
+        return;
+      }
+
       // Don't enqueue retries we already know will fail. A 401 means the
       // offline token is dead; retrying with the same dead token can't work,
       // and a session refresh only happens when the merchant opens the app.
       // The inline webhook that just failed will be picked up again by the
       // next products/update event after the token is refreshed.
-      if (/\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage)) {
+      if (isAuthDeadError(error, errorMessage)) {
         logger.warn('Skipping webhook retry — auth error not recoverable by retry', {
           context: 'WebhookRetry',
           shop,
@@ -282,6 +345,21 @@ class WebhookRetryService {
       const newAttempt = retry.attempt + 1;
       const errorMessage = error instanceof Error ? error.message : String(error);
 
+      // The shop got blocked since the row was queued: drop its whole queue
+      // quietly (the same shape as the auth-dead path below, without its logs).
+      if (isBlockedConnectionError(error)) {
+        await db.webhookRetry.deleteMany({ where: { shop: retry.shop } }).catch(() => undefined);
+        // The dropped rows were missed changes: owe a catch-up (counted once per drop).
+        await noteDroppedWebhook(retry.shop);
+        logger.debug('Webhook retry dropped — the shop connection is blocked', {
+          context: 'WebhookRetry',
+          retryId: retry.id,
+          shop: retry.shop,
+          topic: retry.topic,
+        });
+        return;
+      }
+
       logger.error('Webhook retry failed', {
         context: 'WebhookRetry',
         retryId: retry.id,
@@ -300,7 +378,7 @@ class WebhookRetryService {
       // request will refresh the session, and ProductSync is idempotent — so
       // the next inline webhook (or a user-triggered open of the app) will
       // resync the latest state anyway.
-      const isAuthError = /\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage);
+      const isAuthError = isAuthDeadError(error, errorMessage);
       if (isAuthError) {
         const purged = await db.webhookRetry.deleteMany({ where: { shop: retry.shop } });
         logger.warn('Webhook retry aborted — auth error, dropping all retries for shop', {

@@ -145,4 +145,59 @@ describe('ShopReaperService.reapInactiveShops()', () => {
     expect(result.skipped).toBe(1);
     expect(mockQueue.mock.calls.some(([level]) => level === 'error')).toBe(true);
   });
+  describe('REINSTALL_EVIDENCE guard (PLAN_ADMIN_SHOP_OVERVIEW 2.7)', () => {
+    const uninstalled = () => new Date(Date.now() - 90 * DAY_MS);
+    const daysAgo = (d: number) => new Date(Date.now() - d * DAY_MS);
+
+    it('selects the evidence columns it needs', async () => {
+      await ShopReaperService.getInstance().triggerReap();
+      expect(mockFindMany.mock.calls[0][0].select).toMatchObject({
+        reinstallEvidenceAt: true, lastWebhookAt: true, lastApiOkAt: true,
+      });
+    });
+
+    it.each([
+      ['stored reinstall evidence', { reinstallEvidenceAt: daysAgo(5) }],
+      ['a signed webhook', { lastWebhookAt: daysAgo(5) }],
+      ['an API success', { lastApiOkAt: daysAgo(5) }],
+    ])('does not purge a session-less shop with recent %s', async (_n, extra) => {
+      mockFindMany.mockResolvedValueOnce([{ shop: 'alive.myshopify.com', uninstalledAt: uninstalled(), ...extra }]);
+      const result = await ShopReaperService.getInstance().triggerReap();
+      expect(mockRedactShopData).not.toHaveBeenCalled();
+      expect(result).toEqual({ purged: [], skipped: 1 });
+    });
+
+    it('logs the skip once per shop, not on every run', async () => {
+      const row = { shop: 'once.myshopify.com', uninstalledAt: uninstalled(), reinstallEvidenceAt: daysAgo(5) };
+      const warns = () => mockQueue.mock.calls.filter((c) => c[0] === 'warn' && String(c[1]).includes('once.myshopify.com'));
+      mockFindMany.mockResolvedValueOnce([row]);
+      await ShopReaperService.getInstance().triggerReap();
+      mockFindMany.mockResolvedValueOnce([row]);
+      await ShopReaperService.getInstance().triggerReap();
+      expect(warns()).toHaveLength(1);
+    });
+
+    it('reaps a session-less shop whose evidence is older than 30 days (long silent again)', async () => {
+      mockFindMany.mockResolvedValueOnce([
+        { shop: 'quiet.myshopify.com', uninstalledAt: uninstalled(), reinstallEvidenceAt: daysAgo(45), lastWebhookAt: daysAgo(40) },
+      ]);
+      const result = await ShopReaperService.getInstance().triggerReap();
+      expect(result.purged).toEqual(['quiet.myshopify.com']);
+    });
+
+    it('still purges when the evidence is OLDER than the uninstall mark or inside the grace', async () => {
+      const un = uninstalled();
+      mockFindMany.mockResolvedValueOnce([
+        {
+          shop: 'gone.myshopify.com',
+          uninstalledAt: un,
+          reinstallEvidenceAt: new Date(un.getTime() - DAY_MS),
+          lastWebhookAt: new Date(un.getTime() + 60_000),
+          lastApiOkAt: null,
+        },
+      ]);
+      const result = await ShopReaperService.getInstance().triggerReap();
+      expect(result.purged).toEqual(['gone.myshopify.com']);
+    });
+  });
 });

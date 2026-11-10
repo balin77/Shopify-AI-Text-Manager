@@ -25,9 +25,34 @@ import type { ShopifyGraphQLClient } from "./sync-types";
 
 const PAGE_SIZE = 250;
 
+/** `ok` is false when anything inconclusive or failed happened: the catch-up keeps its flag then. */
+interface ReconcileTypeResult {
+  repaired: number;
+  ok: boolean;
+  /** Not ok ONLY because single items failed to sync/delete (the listing itself was conclusive). */
+  itemFailuresOnly: boolean;
+}
+
 interface RemoteRef {
   id: string;
   updatedAt: string;
+}
+
+/**
+ * Confirms an EMPTY listing with the shop's own count. True only for an explicit
+ * count of 0; a failed or malformed answer is "cannot tell" (false).
+ */
+async function confirmEmptyByCount(admin: ShopifyGraphQLClient, root: "products" | "collections"): Promise<boolean> {
+  try {
+    const field = root === "products" ? "productsCount" : "collectionsCount";
+    const res = await admin.graphql(`#graphql
+      query reconcileCount { ${field} { count } }`);
+    const data = await res.json();
+    if (data.errors?.length) return false;
+    return data.data?.[field]?.count === 0;
+  } catch {
+    return false;
+  }
 }
 
 /** Lists id+updatedAt for a connection, capped at maxItems. `complete` is true
@@ -58,6 +83,11 @@ async function listRefs(
       throw new Error(`GraphQL error in reconcile ${root}: ${data.errors[0].message}`);
     }
     const conn = data.data?.[root];
+    // An answer without the connection (or its pageInfo) is a partial listing:
+    // exactly like the errors branch it must never reach the stale-delete pass.
+    if (!conn || !conn.pageInfo || !Array.isArray(conn.edges)) {
+      throw new Error(`Incomplete answer in reconcile ${root}: connection or pageInfo missing`);
+    }
     const edges: Array<{ node: RemoteRef }> = conn?.edges || [];
     for (const e of edges) refs.set(e.node.id, e.node.updatedAt);
 
@@ -72,7 +102,7 @@ async function listRefs(
   return { refs, complete };
 }
 
-async function reconcileProducts(admin: ShopifyGraphQLClient, shop: string, maxItems: number): Promise<number> {
+async function reconcileProducts(admin: ShopifyGraphQLClient, shop: string, maxItems: number): Promise<ReconcileTypeResult> {
   const { refs, complete } = await listRefs(admin, "products", maxItems);
   const local = await db.product.findMany({
     where: { shop },
@@ -82,6 +112,8 @@ async function reconcileProducts(admin: ShopifyGraphQLClient, shop: string, maxI
   const svc = new ProductSyncService(admin, shop);
 
   let repaired = 0;
+  let ok = true;
+  let structural = false;
   for (const [id, updatedAt] of refs) {
     const localUpdated = localMap.get(id);
     if (!localUpdated || new Date(updatedAt) > localUpdated) {
@@ -95,6 +127,7 @@ async function reconcileProducts(admin: ShopifyGraphQLClient, shop: string, maxI
         await svc.syncProduct(id, false, { reconcileTranslations: localMap.has(id) });
         repaired++;
       } catch (e) {
+        ok = false;
         logger.warn(`[Reconcile] product sync failed ${id}`, { shop, error: e instanceof Error ? e.message : String(e) });
       }
     }
@@ -102,7 +135,16 @@ async function reconcileProducts(admin: ShopifyGraphQLClient, shop: string, maxI
 
   if (complete) {
     if (refs.size === 0 && local.length > 0) {
-      logger.warn(`[Reconcile] Skipping product stale-delete: Shopify returned 0 but ${local.length} exist locally (possible outage)`);
+      // Never deletes on an empty listing (outage guard). A count of 0 confirms
+      // the shop really is empty, so the pass is conclusive (ok); the local
+      // rows are left to the delete webhooks / plan cleanup.
+      if (await confirmEmptyByCount(admin, "products")) {
+        logger.info(`[Reconcile] products: Shopify confirms 0 (count), ${local.length} local rows left untouched`, { shop });
+      } else {
+        ok = false;
+        structural = true;
+        logger.warn(`[Reconcile] Skipping product stale-delete: Shopify returned 0 but ${local.length} exist locally (possible outage)`);
+      }
     } else {
       for (const p of local) {
         if (!refs.has(p.id)) {
@@ -110,16 +152,17 @@ async function reconcileProducts(admin: ShopifyGraphQLClient, shop: string, maxI
             await svc.deleteProduct(p.id);
             repaired++;
           } catch (e) {
+            ok = false;
             logger.warn(`[Reconcile] product delete failed ${p.id}`, { shop, error: e instanceof Error ? e.message : String(e) });
           }
         }
       }
     }
   }
-  return repaired;
+  return { repaired, ok, itemFailuresOnly: !ok && !structural };
 }
 
-async function reconcileCollections(admin: ShopifyGraphQLClient, shop: string, maxItems: number): Promise<number> {
+async function reconcileCollections(admin: ShopifyGraphQLClient, shop: string, maxItems: number): Promise<ReconcileTypeResult> {
   const { refs, complete } = await listRefs(admin, "collections", maxItems);
   const local = await db.collection.findMany({
     where: { shop },
@@ -129,6 +172,8 @@ async function reconcileCollections(admin: ShopifyGraphQLClient, shop: string, m
   const svc = new ContentSyncService(admin, shop);
 
   let repaired = 0;
+  let ok = true;
+  let structural = false;
   for (const [id, updatedAt] of refs) {
     const localUpdated = localMap.get(id);
     if (!localUpdated || new Date(updatedAt) > localUpdated) {
@@ -138,6 +183,7 @@ async function reconcileCollections(admin: ShopifyGraphQLClient, shop: string, m
         await svc.syncCollection(id, false, { reconcileTranslations: localMap.has(id) });
         repaired++;
       } catch (e) {
+        ok = false;
         logger.warn(`[Reconcile] collection sync failed ${id}`, { shop, error: e instanceof Error ? e.message : String(e) });
       }
     }
@@ -145,7 +191,16 @@ async function reconcileCollections(admin: ShopifyGraphQLClient, shop: string, m
 
   if (complete) {
     if (refs.size === 0 && local.length > 0) {
-      logger.warn(`[Reconcile] Skipping collection stale-delete: Shopify returned 0 but ${local.length} exist locally (possible outage)`);
+      // Never deletes on an empty listing (outage guard). A count of 0 confirms
+      // the shop really is empty, so the pass is conclusive (ok); the local
+      // rows are left to the delete webhooks / plan cleanup.
+      if (await confirmEmptyByCount(admin, "collections")) {
+        logger.info(`[Reconcile] collections: Shopify confirms 0 (count), ${local.length} local rows left untouched`, { shop });
+      } else {
+        ok = false;
+        structural = true;
+        logger.warn(`[Reconcile] Skipping collection stale-delete: Shopify returned 0 but ${local.length} exist locally (possible outage)`);
+      }
     } else {
       for (const c of local) {
         if (!refs.has(c.id)) {
@@ -153,24 +208,36 @@ async function reconcileCollections(admin: ShopifyGraphQLClient, shop: string, m
             await svc.deleteCollection(c.id);
             repaired++;
           } catch (e) {
+            ok = false;
             logger.warn(`[Reconcile] collection delete failed ${c.id}`, { shop, error: e instanceof Error ? e.message : String(e) });
           }
         }
       }
     }
   }
-  return repaired;
+  return { repaired, ok, itemFailuresOnly: !ok && !structural };
 }
 
 /**
  * Reconcile the webhook-backed types (products, collections) for a shop.
  * Plan-aware (skips types the plan does not entitle). Per-type isolated so one
- * failing type never breaks the other or the scheduler. Returns repair counts.
+ * failing type never breaks the other or the scheduler. Returns repair counts
+ * and, per type, whether the pass was CLEAN (`ok`): a listing that threw, an
+ * item that failed to sync or delete, or an inconclusive empty answer is not ok.
+ * A type the plan does not cover counts as ok (nothing is owed there). The
+ * catch-up after a connection block (webhook-catchup.server.ts) clears its flag
+ * only when every type is ok.
  */
 export async function reconcileWebhookBackedTypes(
   admin: ShopifyGraphQLClient,
   shop: string,
-): Promise<{ products: number; collections: number }> {
+): Promise<{
+  products: number;
+  collections: number;
+  ok: { products: boolean; collections: boolean };
+  /** Every type that is not ok failed only on single items (listings were conclusive). */
+  itemFailuresOnly: boolean;
+}> {
   const settings = await db.aISettings.findUnique({
     where: { shop },
     select: { subscriptionPlan: true },
@@ -180,18 +247,30 @@ export async function reconcileWebhookBackedTypes(
 
   let products = 0;
   let collections = 0;
+  const ok = { products: true, collections: true };
+  let itemFailuresOnly = true;
 
   if (scope.products.enabled) {
     try {
-      products = await reconcileProducts(admin, shop, scope.products.max ?? 10000);
+      const r = await reconcileProducts(admin, shop, scope.products.max ?? 10000);
+      products = r.repaired;
+      ok.products = r.ok;
+      if (!r.ok && !r.itemFailuresOnly) itemFailuresOnly = false;
     } catch (e) {
+      ok.products = false;
+      itemFailuresOnly = false;
       logger.warn(`[Reconcile] products reconcile aborted`, { shop, error: e instanceof Error ? e.message : String(e) });
     }
   }
   if (scope.collections.enabled) {
     try {
-      collections = await reconcileCollections(admin, shop, scope.collections.max ?? 10000);
+      const r = await reconcileCollections(admin, shop, scope.collections.max ?? 10000);
+      collections = r.repaired;
+      ok.collections = r.ok;
+      if (!r.ok && !r.itemFailuresOnly) itemFailuresOnly = false;
     } catch (e) {
+      ok.collections = false;
+      itemFailuresOnly = false;
       logger.warn(`[Reconcile] collections reconcile aborted`, { shop, error: e instanceof Error ? e.message : String(e) });
     }
   }
@@ -199,5 +278,5 @@ export async function reconcileWebhookBackedTypes(
   if (products > 0 || collections > 0) {
     logger.info(`[Reconcile] Repaired drift for ${shop}`, { products, collections });
   }
-  return { products, collections };
+  return { products, collections, ok, itemFailuresOnly };
 }

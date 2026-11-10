@@ -1,0 +1,15 @@
+-- Session(shop): the activity tracker and the /admin overview look sessions up
+-- by shop; without an index each lookup scans the table.
+--
+-- Additive: an index only. Built CONCURRENTLY so it does not block writes to the
+-- hot Session table. CONCURRENTLY cannot run inside a transaction block, and
+-- Prisma runs a one-statement migration file without an implicit transaction --
+-- so this file MUST stay a single statement (same rule and reasoning as
+-- 20261002000000_productimage_mediaid_index). IF NOT EXISTS keeps a re-run
+-- idempotent.
+--
+-- If this build fails or the container is killed mid-build, Postgres keeps an
+-- INVALID index under this name and IF NOT EXISTS would skip it on a re-run.
+-- Before `prisma migrate resolve --rolled-back`, drop it with
+-- DROP INDEX CONCURRENTLY IF EXISTS on the same name.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "Session_shop_idx" ON "Session"("shop");

@@ -29,7 +29,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // api key for both so the shopify-api-key meta + App Bridge script are not
   // rendered.
   const pathname = new URL(request.url).pathname;
-  const isEmbedded = !pathname.startsWith("/admin") && !isMarketingPath(pathname);
+  const isEmbedded = !/^\/admin(\/|$)/i.test(pathname) && !isMarketingPath(pathname);
   const apiKey = isEmbedded ? process.env.SHOPIFY_API_KEY || "" : "";
 
   // The public pages are served in three languages under their own URL

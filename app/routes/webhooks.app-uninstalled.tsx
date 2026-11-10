@@ -1,87 +1,27 @@
 import type { ActionFunctionArgs } from "react-router";
-import { authenticate } from "~/shopify.server";
-import { db } from "~/db.server";
-import { syncScheduler } from "~/services/sync-scheduler.service";
+import { verifyWebhookRequest } from "~/utils/webhook-auth.server";
 import { logger } from "~/utils/logger.server";
-import { forgetOfflineTokenMigration, invalidateOfflineAdmin } from "~/utils/offline-admin.server";
+import { markShopUninstalled } from "~/services/shop-uninstall.server";
 
 /**
  * APP_UNINSTALLED webhook handler
  *
- * Fires immediately when a shop uninstalls the app. Cleans up the session and
- * stops the background sync scheduler so subsequent reinstalls don't inherit
- * a stale, revoked admin token.
+ * Fires immediately when a shop uninstalls the app. The cleanup itself lives in
+ * markShopUninstalled (shop-uninstall.server.ts), shared with every other path
+ * that marks a shop as uninstalled.
  *
  * Full data deletion (products, translations, etc.) is handled by the
  * SHOP_REDACT webhook, which Shopify sends 48 hours after uninstall.
+ *
+ * Verified by signature only (verifyWebhookRequest): the cleanup needs no
+ * session, and the library's token refresh fails once Shopify has revoked the
+ * tokens.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop } = await authenticate.webhook(request);
+  const { shop } = await verifyWebhookRequest(request);
 
   logger.info(`[APP_UNINSTALLED] Received for shop: ${shop}`);
-
-  // Stop background sync immediately — the access token is now revoked.
-  if (syncScheduler.isShopActive(shop)) {
-    syncScheduler.stopSyncForShop(shop);
-    logger.info(`[APP_UNINSTALLED] Stopped sync scheduler for ${shop}`);
-  }
-
-  // Delete sessions so a reinstall always starts with a clean OAuth grant.
-  try {
-    const deleted = await db.session.deleteMany({ where: { shop } });
-    logger.info(`[APP_UNINSTALLED] Deleted ${deleted.count} session(s) for ${shop}`);
-  } catch (error) {
-    logger.error(
-      `[APP_UNINSTALLED] Failed to delete sessions for ${shop}:`,
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-
-  // The sessions are gone (or about to be revoked anyway): background callers
-  // in this process must not keep serving the cached offline token. Done even
-  // when the delete failed — the token is revoked by Shopify either way.
-  invalidateOfflineAdmin(shop);
-
-  // A pending token migration holds the shop's old token (encrypted) in its own
-  // table; it dies with the install. Never throws. `force`: also with the
-  // switches off, because after a rollback an unfinished record may still exist.
-  await forgetOfflineTokenMigration(shop, { force: true });
-
-  // Stamp the uninstall time. This is the reliable "inactive since" anchor for
-  // the 30-day reaper (shop-reaper.service), which finally purges all remaining
-  // shop data if Shopify's shop/redact webhook never succeeds. Cleared again on
-  // any (re)install in shopify.server afterAuth. Own try/catch — must not fail
-  // the 200 we owe Shopify.
-  try {
-    await db.shopInstallState.upsert({
-      where: { shop },
-      create: { shop, uninstalledAt: new Date() },
-      update: { uninstalledAt: new Date() },
-    });
-    logger.info(`[APP_UNINSTALLED] Marked uninstalledAt for ${shop}`);
-  } catch (error) {
-    logger.error(
-      `[APP_UNINSTALLED] Failed to record uninstalledAt for ${shop}:`,
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-
-  // Uninstalling cancels the subscription on Shopify's side, so the verified
-  // managed-AI entitlement ends here too. Without this a detached run already
-  // in flight kept spending the operator's key against a plan that no longer
-  // exists until the next billing sync, which for an uninstalled shop never
-  // comes. A reinstall re-syncs the subscription in afterAuth. Own try/catch.
-  try {
-    await db.aISettings.updateMany({
-      where: { shop, managedAiActive: true },
-      data: { managedAiActive: false },
-    });
-  } catch (error) {
-    logger.error(
-      `[APP_UNINSTALLED] Failed to clear the managed-AI entitlement for ${shop}:`,
-      error instanceof Error ? error.message : String(error),
-    );
-  }
+  await markShopUninstalled(shop, { source: "webhook" });
 
   return new Response("OK", { status: 200 });
 };

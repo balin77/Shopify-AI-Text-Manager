@@ -37,6 +37,7 @@ import { db } from "../../db.server";
 import { logger } from "../../utils/logger.server";
 import { meetsPlan } from "../../utils/planUtils";
 import { createAdminClientFromShop } from "../../utils/admin-client.server";
+import { isShopConnectionBlockedError } from "../../utils/shop-connection-state.server";
 import { resolvePrimaryDomain } from "../../utils/shop-domain.server";
 import type { Plan } from "../../config/plans";
 import { drainQueue, firstFailureKind, syncIndexNowHost, syncKeyLocation } from "./index-now.service";
@@ -244,6 +245,10 @@ export class IndexNowAutoSubmitService {
     } catch (err) {
       // Uninstalled shop / expired session: leave the host as is and let the
       // drain proceed. Nothing here may abort the sweep for other shops.
+      if (isShopConnectionBlockedError(err)) {
+        logger.debug(`[IndexNowAutoSubmit] ${shop} - connection blocked, host/key redirect repair skipped`);
+        return;
+      }
       logger.warn(`[IndexNowAutoSubmit] Could not repair host/key redirect for ${shop}`, {
         error: err instanceof Error ? err.message : String(err),
       });

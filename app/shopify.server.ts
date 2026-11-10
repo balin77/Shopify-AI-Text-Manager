@@ -25,6 +25,7 @@ import {
   type ShopifyApiVersionString,
 } from "./utils/api-version";
 import { expiringOfflineTokensEnabled, migrateToExpiringTokensEnabled } from "./utils/offline-token-flags.server";
+import { liftConnectionBlockAfterAuth } from "./utils/shop-connection-block.server";
 import {
   configureOfflineAdmin,
   forgetOfflineTokenMigration,
@@ -154,6 +155,11 @@ const shopify = shopifyApp({
       // A (re)install or token exchange stored a new offline session: drop
       // the background token cache so nothing keeps serving the previous one.
       invalidateOfflineAdmin(session.shop);
+      // The shop authenticated again: lift a connection block (cause reinstall
+      // or reauth) and stamp the fence so a call already in flight on the old
+      // token cannot re-block it. BEFORE the uninstall marker is cleared below,
+      // because that marker decides the cause. Never throws.
+      await liftConnectionBlockAfterAuth(session.shop);
       // A token exchange ends Shopify's 7-day recovery of a pending migration
       // and makes a `needs_reauth` shop healthy again: drop the durable record
       // (it holds an encrypted old token) and the in-process refusal. Own
@@ -184,11 +190,14 @@ const shopify = shopifyApp({
 
       // Clear any pending uninstall marker so a reinstall cancels the 30-day
       // reaper for this shop (see shop-reaper.service).
+      // lastAuthAt: the sign-in itself (install / re-consent / token exchange),
+      // shown on the /admin overview.
       try {
+        const authAt = new Date();
         await prisma.shopInstallState.upsert({
           where: { shop: session.shop },
-          create: { shop: session.shop, uninstalledAt: null },
-          update: { uninstalledAt: null },
+          create: { shop: session.shop, uninstalledAt: null, lastAuthAt: authAt },
+          update: { uninstalledAt: null, lastAuthAt: authAt },
         });
       } catch (error) {
         logger.warn(`[SHOPIFY.SERVER] afterAuth uninstall-marker clear failed`, { shop: session.shop, error: error instanceof Error ? error.message : String(error) });
@@ -218,7 +227,8 @@ logger.info(`[SHOPIFY.SERVER] Shopify App initialized`);
 
 // The migration call lives on @shopify/shopify-api's `auth`, which the
 // react-router wrapper does not expose. A second, minimal api instance is built
-// LAZILY — only the first time a migration actually runs (both env switches on).
+// LAZILY, on first use: a token migration (both env switches on) OR the first
+// webhook whose signature is validated through validateWebhookRequest below.
 let migrationApi: ReturnType<typeof shopifyApi> | null = null;
 function getMigrationApi(): ReturnType<typeof shopifyApi> {
   if (!migrationApi) {
@@ -238,6 +248,21 @@ function getMigrationApi(): ReturnType<typeof shopifyApi> {
   return migrationApi;
 }
 
+/**
+ * Independent webhook signature check (HMAC), for webhook-auth.server.ts. The
+ * react-router wrapper does not expose its api instance, so this reuses the
+ * minimal one above; signature validation only needs the API secret.
+ * NOTE: that lazy instance therefore also serves webhook HMAC validation. It
+ * fails CLOSED: a misconfigured secret or construction error makes every
+ * validation throw/fail, so the webhook routes refuse (they never skip the
+ * check) - the cost is a visible failure, not an open door.
+ */
+export function validateWebhookRequest(
+  args: Parameters<ReturnType<typeof shopifyApi>["webhooks"]["validate"]>[0],
+) {
+  return getMigrationApi().webhooks.validate(args);
+}
+
 configureOfflineAdmin({
   unauthenticatedAdmin: (shop) => shopify.unauthenticated.admin(shop),
   loadOfflineSession: (shop) => shopify.sessionStorage!.loadSession(`offline_${shop}`),
@@ -251,6 +276,7 @@ registerShopAccessTokenHook();
 import { trackActivity } from "./middleware/activity-tracker.middleware";
 import { syncScheduler } from "./services/sync-scheduler.service";
 import { OfflineTokenSweepService } from "./services/offline-token-sweep.service";
+import { ShopConnectionSweepService } from "./services/shop-connection-sweep.service";
 import { ShopReaperService } from "../src/services/shop-reaper.service";
 import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
 import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
@@ -272,6 +298,11 @@ let managedSmokeTestFired = false;
 // SHOPIFY_EXPIRING_OFFLINE_TOKENS is on (default: no timer at all; the migration
 // part of a tick additionally needs the migrate switch) and idempotent.
 OfflineTokenSweepService.getInstance().start();
+
+// The connection sweep (backfill, probe of blocked shops, catch-up, summary) is
+// independent of the token switches: a blocked shop must be re-checked whether or
+// not tokens expire. Started at boot for the same reason, idempotent.
+ShopConnectionSweepService.getInstance().start();
 
 import { hostParamRejection } from "./utils/shopify-host-param.server";
 import { apiAuthBounceRejection } from "./utils/api-auth-bounce.server";
@@ -304,7 +335,7 @@ const enhancedAuthenticate = {
     // from the offline-token sweep only (see maybeMigrateToExpiringToken).
 
     // Track activity for this shop (fire-and-forget — must not block the response)
-    trackActivity(session.shop).catch(err => {
+    trackActivity(session.shop, request).catch(err => {
       logger.error('[SHOPIFY.SERVER] trackActivity failed:', err);
     });
 
@@ -333,6 +364,7 @@ const enhancedAuthenticate = {
     // Migration / keep-alive sweep for offline tokens (already started at boot;
     // idempotent, and a no-op unless the expiring-token switch is on).
     OfflineTokenSweepService.getInstance().start();
+    ShopConnectionSweepService.getInstance().start();
 
     // Bootstrap the IndexNow auto-submit sweep (same idempotent-start
     // reasoning). Without it the webhook-fed URL queue only ever drained when

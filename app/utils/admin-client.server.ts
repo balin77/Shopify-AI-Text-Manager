@@ -14,11 +14,13 @@ import { isEncrypted } from "./encryption.server";
 import {
   getOfflineAdmin,
   invalidateOfflineAdmin,
-  isNonExpiringTokenRejectedError,
   markSelfRefreshingAdminClient,
   reportNonExpiringTokenRejection,
   OfflineAdminUnavailableError,
 } from "./offline-admin.server";
+import { blockShopConnection, noteUnauthorized } from "./shop-connection-block.server";
+import { getConnectionBlock, ShopConnectionBlockedError } from "./shop-connection-state.server";
+import { classifyForbidden, noteApiSuccess, reportForbidden } from "./shopify-forbidden.server";
 
 export {
   getOfflineAdmin,
@@ -46,6 +48,14 @@ export async function createAdminClientFromShop(
   if (!isValidShopDomain(shop)) {
     throw new Error(`Invalid shop domain: ${shop}`);
   }
+
+  // A shop whose access is known to be dead gets NO Shopify call from
+  // background code: the caller learns it at once and skips the shop quietly
+  // (isShopConnectionBlockedError). In-app requests never come through here,
+  // they authenticate through `authenticate.admin`, so a merchant who opens
+  // the app always reaches the token exchange that lifts the block.
+  const block = await getConnectionBlock(shop);
+  if (block) throw new ShopConnectionBlockedError(shop, block);
 
   // The token is NOT read once and kept. With expiring offline tokens (~1h) a
   // client built from a token captured here dies mid-run for every long caller
@@ -102,18 +112,21 @@ async function legacyOnlineTokenClient(shop: string): Promise<ShopifyGraphQLClie
  * a reload of the stored session.
  */
 /**
- * Same handling as createRefreshingAdmin for the 403 "non-expiring tokens are no
- * longer accepted": warn, start the migration (switches permitting), heal a shop
- * the migration cannot help; no retry with the same token — the caller gets the
- * ordinary error for the 403. Runs on the first response AND on the response of
- * the 401 retry. Reads (a clone of) the body of EVERY 403, also with the token
- * switches off — intended: it is how the deadline message is recognised, and
- * reporting only warns then.
+ * Same handling as createRefreshingAdmin for a 403 (PLAN_ADMIN_SHOP_OVERVIEW
+ * 2.5): the deadline answer "non-expiring tokens are no longer accepted" warns,
+ * starts the migration (switches permitting) and heals a shop the migration
+ * cannot help; an IP-allowlist suspicion logs loud and pauses migration and
+ * probe; any other 403 changes nothing. A 403 never blocks a shop. No retry with
+ * the same token -- the caller gets the ordinary error for the 403. Runs on the
+ * first response AND on the response of the 401 retry. Reads (a clone of) the
+ * body of EVERY 403, also with the token switches off -- intended: it is how the
+ * messages are recognised, and reporting only logs then.
  */
 async function reportIfDeadlineRejection(shop: string, token: string, response: Response): Promise<void> {
-  if (response.status === 403 && (await isNonExpiringTokenRejectedError(response))) {
-    reportNonExpiringTokenRejection(shop, token);
-  }
+  if (response.status !== 403) return;
+  const kind = await classifyForbidden(shop, response);
+  if (kind === "non_expiring_rejected") reportNonExpiringTokenRejection(shop, token);
+  else if (kind) reportForbidden(shop, kind);
 }
 
 function createRefreshingRawClient(shop: string): ShopifyGraphQLClient {
@@ -121,15 +134,32 @@ function createRefreshingRawClient(shop: string): ShopifyGraphQLClient {
   // its raw contract for the library client's (see offline-admin.server.ts).
   return markSelfRefreshingAdminClient({
     graphql: async (query: string, options?: { variables?: any }) => {
+      // When this call BEGAN: the fence for the block a second 401 may set.
+      const startedAt = new Date();
+      // A long-lived client (a sweep over hundreds of calls) stops at the first
+      // call after the shop got blocked, not only at creation. Cached for 30 s.
+      const block = await getConnectionBlock(shop);
+      if (block) throw new ShopConnectionBlockedError(shop, block);
       const token = (await getOfflineAdmin(shop)).session.accessToken!;
       const first = await rawGraphql(shop, token, query, options);
       await reportIfDeadlineRejection(shop, token, first);
+      if (first.ok) noteApiSuccess(shop);
       if (first.status !== 401) return checkOk(first);
       logger.warn("[AdminClient] 401 from Shopify — reloading the offline session and retrying once", { shop });
       invalidateOfflineAdmin(shop);
       const fresh = (await getOfflineAdmin(shop, { forceReload: true, refusedToken: token })).session.accessToken!;
       const retried = await rawGraphql(shop, fresh, query, options);
       await reportIfDeadlineRejection(shop, fresh, retried);
+      // A SECOND 401 with the very token the first one refused: the stored
+      // access is dead. The BLOCKED line replaces checkOk's error log. (A 403 is
+      // never evidence: it can be the IP allowlist. A different token that is
+      // refused too may be a rotation race.)
+      if (retried.status === 401 && fresh === token) {
+        noteUnauthorized(shop); // a CONFIRMED 401 (mass-401 guard)
+        const blocked = await blockShopConnection(shop, "admin_api_401", { observedAt: startedAt });
+        if (blocked) throw new ShopConnectionBlockedError(shop, blocked);
+      }
+      if (retried.ok) noteApiSuccess(shop);
       return checkOk(retried);
     },
   });

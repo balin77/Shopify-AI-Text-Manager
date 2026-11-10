@@ -25,8 +25,8 @@ const {
   mockLogGDPRRequest: vi.fn(),
 }));
 
-vi.mock('~/shopify.server', () => ({
-  authenticate: { webhook: mockAuthenticateWebhook },
+vi.mock('~/utils/webhook-auth.server', () => ({
+  verifyWebhookRequest: mockAuthenticateWebhook,
 }));
 
 vi.mock('~/services/gdpr.service', () => ({

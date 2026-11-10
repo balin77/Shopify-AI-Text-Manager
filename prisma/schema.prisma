@@ -26,6 +26,9 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
   lastActivityAt      DateTime? @default(now())
+
+  // The activity tracker and the /admin overview look sessions up by shop.
+  @@index([shop])
 }
 
 model AISettings {
@@ -1102,6 +1105,8 @@ model WebhookLog {
   @@index([shop, topic])
   @@index([processed])
   @@index([createdAt])
+  // Per-shop webhook counts of the last 24 h on /admin (PLAN_ADMIN_SHOP_OVERVIEW 3.2).
+  @@index([shop, createdAt])
 }
 
 model WebhookRetry {
@@ -1654,6 +1659,54 @@ model ShopInstallState {
   initialSyncForceRequested Boolean   @default(false)
   updatedAt                 DateTime  @updatedAt
 
+  // ---- Connection state (PLAN_ADMIN_SHOP_OVERVIEW 2.1) -------------------
+  // Written ONLY through app/utils/shop-connection-state.server.ts; read as a
+  // verdict through app/services/shop-connection-status.shared.ts. Every column
+  // is nullable or defaulted: NULL means "no known problem" / "unknown", never
+  // a value to guess from. None of them ever holds a token.
+  //
+  // null = no known problem; "needs_reauth" | "access_denied" | "shop_not_found".
+  connectionState        String?
+  connectionStateSince   DateTime?
+  // A code (invalid_subject_token, admin_api_401, no_token, ...), never a message.
+  connectionStateReason  String?
+  // Last lifting and why ("reauth" | "reinstall" | "probe_ok" | "uninstalled").
+  // The fence: a failure from a call that BEGAN before this instant must not
+  // block the shop again.
+  connectionClearedAt    DateTime?
+  connectionClearedCause String?
+  // Changes missed while the shop was blocked: since when a catch-up is owed,
+  // and how many webhooks were accepted but not processed.
+  resyncRequiredSince    DateTime?
+  droppedWebhookCount    Int       @default(0)
+  // X-Shopify-Triggered-At of the last webhook with a valid signature
+  // (written at most every 10 min). Evidence for "installed".
+  lastWebhookAt          DateTime?
+  // Last probe of a 401 block.
+  lastProbeAt            DateTime?
+  // Where uninstalledAt came from ("webhook" | "operator" | "stale_auto") and
+  // whether webhooks kept arriving after it.
+  uninstallSource        String?
+  reinstallEvidenceAt    DateTime?
+  // Last successful Admin API call (written at most hourly). Optional evidence.
+  lastApiOkAt            DateTime?
+
+  // ---- Activity (PLAN_ADMIN_SHOP_OVERVIEW 3.2) ----------------------------
+  // The durable "last opened": written at most once per 5 min by the activity
+  // tracker. Session.lastActivityAt is NOT the source (polling counted, and it
+  // goes with the session on uninstall).
+  lastActivityAt     DateTime?
+  // TRUE while lastActivityAt is only the one-off backfill from
+  // Session.lastActivityAt (approximate: polling counted, and that column's
+  // default stamped new rows). The live writer sets it back to false.
+  lastActivityApprox Boolean   @default(false)
+  // Path AREA (e.g. "app.products", never the query) of the last request that
+  // was not a GET, and when.
+  lastActionAt       DateTime?
+  lastActionArea     String?
+  // Set in afterAuth (install / re-consent / token exchange).
+  lastAuthAt         DateTime?
+
   @@index([uninstalledAt])
 }
 
@@ -1671,6 +1724,31 @@ model ImageOperationCounter {
 
   @@unique([shop, period])
   @@index([shop])
+}
+
+// Shop-level usage statistics per UTC day (PLAN_ADMIN_SHOP_OVERVIEW 3.2): no
+// personal data, counts only. Written by the activity tracker (activeSlots,
+// actions) and the hourly rollup (tasks, AI), which never overwrites the
+// tracker's counts. Retained 90 days; redactShopData deletes it by shop.
+model ShopUsageDay {
+  id           String   @id @default(cuid())
+  shop         String
+  day          DateTime @db.Date // UTC calendar day
+  // Distinct 5-minute windows with a non-polling request.
+  activeSlots  Int      @default(0)
+  // Requests that were not a GET, at most once per request.
+  actions      Int      @default(0)
+  tasksStarted Int      @default(0)
+  tasksFailed  Int      @default(0)
+  // Micro-euro / tokens: BIGINT like the AI ledger.
+  aiCostMicros BigInt   @default(0)
+  aiTokens     BigInt   @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([shop, day])
+  // The 90-day retention sweep and the /admin window read by day.
+  @@index([day])
 }
 
 // What the AI really consumed (PLAN_MANAGED_AI_KEY §4.3).
@@ -2482,4 +2560,11 @@ model OfflineTokenMigration {
   startedAt         DateTime  @default(now())
   completedAt       DateTime?
   updatedAt         DateTime  @updatedAt
+
+  // Kind of the failure the shop keeps hitting (PLAN_ADMIN_SHOP_OVERVIEW 2.5):
+  // "transient" | "forbidden" (shop-specific 403) | "not_found" (404), and
+  // since when that SAME kind has been failing. NULL on rows that predate the
+  // column: the old rule (failed + 40 attempts = final) still decides for them.
+  failureKind      String?
+  failureKindSince DateTime?
 }

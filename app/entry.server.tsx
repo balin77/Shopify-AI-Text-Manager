@@ -4,11 +4,13 @@ import { createReadableStreamFromReadable } from "@react-router/node";
 import { ServerRouter, isRouteErrorResponse } from "react-router";
 import { renderToPipeableStream } from "react-dom/server";
 import { addDocumentResponseHeaders } from "./shopify.server";
+import { applyDocumentSecurityHeaders } from "~/utils/admin-auth.server";
 import { syncScheduler } from "./services/sync-scheduler.service";
 import { ShopReaperService } from "../src/services/shop-reaper.service";
 import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
 import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
 import { OfflineTokenSweepService } from "./services/offline-token-sweep.service";
+import { ShopConnectionSweepService } from "./services/shop-connection-sweep.service";
 import { IndexNowAutoSubmitService } from "./services/seo/index-now-auto-submit.service";
 import { SeoAuditAutoRunService } from "./services/seo/audit-auto-run.service";
 import { SeoCrawlAutoRunService } from "./services/seo/crawl-auto-run.service";
@@ -217,6 +219,7 @@ process.on('SIGTERM', () => {
   GscAutoSyncService.getInstance().stop();
   LlmsAutoRefreshService.getInstance().stop();
   OfflineTokenSweepService.getInstance().stop();
+  ShopConnectionSweepService.getInstance().stop();
   IndexNowAutoSubmitService.getInstance().stop();
   SeoAuditAutoRunService.getInstance().stop();
   SeoCrawlAutoRunService.getInstance().stop();
@@ -229,6 +232,7 @@ process.on('SIGINT', () => {
   GscAutoSyncService.getInstance().stop();
   LlmsAutoRefreshService.getInstance().stop();
   OfflineTokenSweepService.getInstance().stop();
+  ShopConnectionSweepService.getInstance().stop();
   IndexNowAutoSubmitService.getInstance().stop();
   SeoAuditAutoRunService.getInstance().stop();
   SeoCrawlAutoRunService.getInstance().stop();
@@ -249,16 +253,16 @@ export default async function handleRequest(
     headers: Object.fromEntries(request.headers.entries())
   });
 
-  addDocumentResponseHeaders(request, responseHeaders);
-
-  // Security headers
-  responseHeaders.set("X-Content-Type-Options", "nosniff");
-  responseHeaders.set("X-Frame-Options", "SAMEORIGIN");
-  responseHeaders.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  responseHeaders.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  if (process.env.NODE_ENV === "production") {
-    responseHeaders.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
-  }
+  // /admin keeps its own (anti-framing) headers; see applyDocumentSecurityHeaders.
+  applyDocumentSecurityHeaders(
+    request,
+    responseHeaders,
+    addDocumentResponseHeaders,
+    process.env.NODE_ENV === "production",
+    reactRouterContext.staticHandlerContext?.matches?.some(
+      (m: { route: { id: string } }) => m.route.id === "routes/admin",
+    ) ?? false,
+  );
 
   return new Promise((resolve, reject) => {
     let shellRendered = false;

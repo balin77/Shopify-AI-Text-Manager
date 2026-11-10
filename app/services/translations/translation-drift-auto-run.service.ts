@@ -34,6 +34,7 @@
 
 import { db } from "../../db.server";
 import { createAdminClientFromShop } from "../../utils/admin-client.server";
+import { isShopConnectionBlockedError } from "../../utils/shop-connection-state.server";
 import { logger } from "../../utils/logger.server";
 import { meetsPlan } from "../../utils/planUtils";
 import type { Plan } from "../../config/plans";
@@ -181,10 +182,17 @@ export class TranslationDriftAutoRunService {
         // list would otherwise be indistinguishable from a single-language shop
         // and the sweep would report a clean no-op for a whole day.
         let localeLookupFailed = false;
-        const locales = await getCachedShopLocales(admin as never, settings.shop).catch(() => {
-          localeLookupFailed = true;
+        let blockedMeanwhile = false;
+        const locales = await getCachedShopLocales(admin as never, settings.shop).catch((e: unknown) => {
+          if (isShopConnectionBlockedError(e)) blockedMeanwhile = true;
+          else localeLookupFailed = true;
           return [];
         });
+        if (blockedMeanwhile) {
+          // The shop got blocked after the client was created: quiet skip, stamped.
+          logger.debug(`[TranslationDrift] ${settings.shop} skipped - connection blocked`);
+          continue;
+        }
         if (localeLookupFailed) {
           stats.errored++;
           stampThisShop = false;
@@ -242,6 +250,12 @@ export class TranslationDriftAutoRunService {
           });
         }
       } catch (err) {
+        if (isShopConnectionBlockedError(err)) {
+          // Known dead access (the BLOCKED line was logged once): skip quietly.
+          // Still stamped below, so the shop is looked at again in a day.
+          logger.debug(`[TranslationDrift] ${settings.shop} skipped - connection blocked`);
+          continue;
+        }
         stats.errored++;
         logger.warn(`[TranslationDrift] Sweep failed for ${settings.shop}`, {
           error: err instanceof Error ? err.message : String(err),

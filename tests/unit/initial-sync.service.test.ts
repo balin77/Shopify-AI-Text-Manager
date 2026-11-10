@@ -24,6 +24,7 @@ const m = vi.hoisted(() => ({
   aiFindUnique: vi.fn(),
   sisFindUnique: vi.fn(),
   sisUpsert: vi.fn().mockResolvedValue({}),
+  sisUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
   productFindMany: vi.fn().mockResolvedValue([]),
   transaction: vi.fn().mockResolvedValue([]),
   syncAllProducts: vi.fn().mockResolvedValue(0),
@@ -46,7 +47,7 @@ const m = vi.hoisted(() => ({
 vi.mock('~/db.server', () => ({
   db: {
     aISettings: { findUnique: m.aiFindUnique },
-    shopInstallState: { findUnique: m.sisFindUnique, upsert: m.sisUpsert },
+    shopInstallState: { findUnique: m.sisFindUnique, upsert: m.sisUpsert, updateMany: m.sisUpdateMany },
     product: { findMany: m.productFindMany, deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     contentTranslation: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     productImage: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
@@ -150,6 +151,33 @@ describe('runInitialFullSync — R1 completion marker', () => {
     expect((ok![0] as any).update.initialSyncForceRequested).toBe(false);
     expect((ok![0] as any).update.initialSyncError).toBeNull();
     expect(errorUpsertCall()).toBeUndefined();
+  });
+
+  it('settles a owed catch-up by compare-and-delete against the state read at the START (plan 2.4)', async () => {
+    const since = new Date('2026-11-01T00:00:00Z');
+    m.sisFindUnique.mockResolvedValue({ initialSyncCompletedAt: null, resyncRequiredSince: since, droppedWebhookCount: 4 });
+    const res = await runInitialFullSync(admin, shop);
+    expect(res.completed).toBe(true);
+    expect(m.sisUpdateMany).toHaveBeenCalledWith({
+      where: { shop, resyncRequiredSince: since, droppedWebhookCount: 4 },
+      data: { resyncRequiredSince: null, droppedWebhookCount: 0 },
+    });
+  });
+
+  it('keeps the owed catch-up flag when a phase synced only partly (failed > 0)', async () => {
+    m.sisFindUnique.mockResolvedValue({ initialSyncCompletedAt: null, resyncRequiredSince: new Date(), droppedWebhookCount: 1 });
+    m.syncAllCollections.mockResolvedValue({ synced: 2, failed: 1, firstError: 'x' });
+    const res = await runInitialFullSync(admin, shop);
+    expect(res.completed).toBe(true);
+    expect(m.sisUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('a failed initial sync does not touch the catch-up flag', async () => {
+    m.sisFindUnique.mockResolvedValue({ initialSyncCompletedAt: null, resyncRequiredSince: new Date(), droppedWebhookCount: 1 });
+    m.syncAllCollections.mockRejectedValue(new Error('API error'));
+    const res = await runInitialFullSync(admin, shop);
+    expect(res.completed).toBe(false);
+    expect(m.sisUpdateMany).not.toHaveBeenCalled();
   });
 
   it('a non-abort error in an ENABLED phase → completed:false, NO marker, error recorded', async () => {

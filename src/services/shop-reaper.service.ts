@@ -18,7 +18,9 @@
  * request path (app/shopify.server.ts) and stopped in app/entry.server.tsx,
  * the same lifecycle the in-app SyncScheduler uses.
  *
- * Safety guards — a shop is purged ONLY when BOTH hold:
+ * Safety guards — a shop is purged ONLY when ALL hold:
+ *   0. it shows no proof of being installed in the last 30 days after the
+ *      uninstall mark (reinstallEvidenceAt / lastWebhookAt / lastApiOkAt)
  *   1. ShopInstallState.uninstalledAt is set and older than the retention window
  *   2. it has zero Session rows (no active install — cleared on reinstall)
  *
@@ -34,6 +36,7 @@
 import { db } from "../../app/db.server";
 import { loggers } from "../../app/utils/logger.server";
 import { redactShopData } from "../../app/services/gdpr.service";
+import { REINSTALL_EVIDENCE_PROTECTION_MS, latestEvidenceAfterUninstall } from "../../app/services/shop-connection-status.shared";
 
 /** Retention window before an uninstalled shop is purged. Default 30 days. */
 const RETENTION_DAYS = parseInt(process.env.REAPER_RETENTION_DAYS || "30", 10);
@@ -49,6 +52,7 @@ export class ShopReaperService {
   private static instance: ShopReaperService;
   private intervalId: NodeJS.Timeout | null = null;
   private isRunning = false;
+  private readonly evidenceSkipLogged = new Set<string>();
 
   private constructor() {}
 
@@ -110,13 +114,35 @@ export class ShopReaperService {
 
     const candidates = await db.shopInstallState.findMany({
       where: { uninstalledAt: { not: null, lt: cutoff } },
-      select: { shop: true, uninstalledAt: true },
+      select: {
+        shop: true,
+        uninstalledAt: true,
+        reinstallEvidenceAt: true,
+        lastWebhookAt: true,
+        lastApiOkAt: true,
+      },
     });
 
     const purged: string[] = [];
     let skipped = 0;
 
-    for (const { shop } of candidates) {
+    for (const candidate of candidates) {
+      const { shop } = candidate;
+      // Guard 0 (PLAN_ADMIN_SHOP_OVERVIEW 2.7): proof of being installed AFTER
+      // the uninstall mark (reinstall evidence, a signed webhook, a successful
+      // API call) protects the shop for at most 30 days after that evidence
+      // (a shop holding a session is protected by guard 1 anyway). A shop that
+      // went silent again is reaped. Logged once per shop, not every run.
+      const evidenceAt = latestEvidenceAfterUninstall(candidate);
+      if (evidenceAt !== null && Date.now() - evidenceAt < REINSTALL_EVIDENCE_PROTECTION_MS) {
+        skipped++;
+        if (!this.evidenceSkipLogged.has(shop)) {
+          this.evidenceSkipLogged.add(shop);
+          loggers.queue("warn", `Shop reap: skipping ${shop} - REINSTALL_EVIDENCE after the uninstall mark`);
+        }
+        continue;
+      }
+
       // Guard 1: an active install (sessions exist) — cleared on uninstall,
       // recreated on reinstall. Never purge a shop that is installed.
       const sessionCount = await db.session.count({ where: { shop } });

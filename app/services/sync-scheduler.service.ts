@@ -240,15 +240,44 @@ class SyncSchedulerService {
           initialSyncCompletedAt: true,
           initialSyncStartedAt: true,
           initialSyncForceRequested: true,
+          resyncRequiredSince: true,
         },
       });
 
       if (st?.initialSyncCompletedAt) {
-        // ---- Incremental path (unchanged) ----
+        // ---- Incremental path ----
+        // Changes missed while the shop was blocked or uninstalled are owed a
+        // catch-up (PLAN_ADMIN_SHOP_OVERVIEW 2.4). BEFORE the inactivity check,
+        // so even a short visit after the new login repairs them; the periodic
+        // reconcile below needs ~30 minutes of uninterrupted activity. Holds a
+        // sync slot like any other Shopify work, never throws, and the helper
+        // refuses a blocked shop and runs at most once per shop at a time.
+        if (st.resyncRequiredSince) {
+          await this.acquireSyncSlot();
+          try {
+            const { runWebhookCatchUp } = await import("./webhook-catchup.server");
+            await runWebhookCatchUp(shop, admin);
+          } catch (err) {
+            logger.warn(`[SyncScheduler] Webhook catch-up failed for ${shop}`, {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          } finally {
+            this.releaseSyncSlot();
+          }
+        }
+
         const active = await isShopActive(shop, this.INACTIVITY_THRESHOLD_MINUTES);
         if (!active) {
           logger.debug(`[SyncScheduler] Shop ${shop} inactive for ${this.INACTIVITY_THRESHOLD_MINUTES}+ minutes - stopping sync`);
           this.stopSyncForShop(shop);
+          return;
+        }
+
+        // A catch-up of this shop started elsewhere (the connection sweep) is
+        // still reading and writing the same caches: no syncAll beside it.
+        const { isCatchUpInFlight } = await import("./webhook-catchup.server");
+        if (isCatchUpInFlight(shop)) {
+          logger.debug(`[SyncScheduler] Catch-up in flight for ${shop} - incremental sync deferred to the next cycle`);
           return;
         }
 
@@ -584,6 +613,17 @@ class SyncSchedulerService {
 
     try {
       const { db } = await import("../db.server");
+
+      // 0. Copy the per-shop task statistics of the last three days into
+      //    ShopUsageDay BEFORE the tasks below are deleted (it is idempotent,
+      //    never lowers a figure and never touches the tracker's counters), and
+      //    drop usage rows past their 90-day retention. A failure here is
+      //    logged inside and must not stop the cleanup.
+      {
+        const { rollupTaskUsage, pruneShopUsage } = await import("./shop-usage-rollup.server");
+        await rollupTaskUsage(db as never);
+        await pruneShopUsage(db as never);
+      }
 
       // 1. Delete expired tasks (older than 3 days)
       const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);

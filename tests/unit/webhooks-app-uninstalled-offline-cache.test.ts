@@ -9,10 +9,14 @@ const h = vi.hoisted(() => ({
   invalidate: vi.fn(),
   forget: vi.fn(),
   order: [] as string[],
+  clear: vi.fn(async (..._a: unknown[]) => undefined),
+}));
+vi.mock("~/utils/shop-connection-state.server", () => ({
+  clearConnectionBlock: (...a: unknown[]) => h.clear(...a),
 }));
 
-vi.mock("~/shopify.server", () => ({
-  authenticate: { webhook: vi.fn(async () => ({ shop: "gone.myshopify.com" })) },
+vi.mock("~/utils/webhook-auth.server", () => ({
+  verifyWebhookRequest: vi.fn(async () => ({ shop: "gone.myshopify.com" })),
 }));
 vi.mock("~/db.server", () => ({
   db: {
@@ -22,7 +26,7 @@ vi.mock("~/db.server", () => ({
         return { count: 1 };
       }),
     },
-    shopInstallState: { upsert: vi.fn(async () => ({})) },
+    shopInstallState: { upsert: vi.fn(async () => ({})), updateMany: vi.fn(async () => ({ count: 1 })) },
     aISettings: { updateMany: vi.fn(async () => ({ count: 0 })) },
   },
 }));
@@ -54,5 +58,7 @@ describe("app/uninstalled webhook", () => {
     // forced: also with the token switches off (rollback case)
     expect(h.forget).toHaveBeenCalledWith("gone.myshopify.com", { force: true });
     expect(h.order).toEqual(["deleteSessions", "invalidate", "forgetMigration"]);
+    // a reinstall must never inherit a stale connection block
+    expect(h.clear).toHaveBeenCalledWith("gone.myshopify.com", "uninstalled");
   });
 });

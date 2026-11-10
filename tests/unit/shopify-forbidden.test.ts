@@ -1,0 +1,225 @@
+/**
+ * PLAN_ADMIN_SHOP_OVERVIEW 2.5: what a 403 from Shopify is, and that it never
+ * blocks a shop. Ops alerts run through the REAL ops-alert module with a stubbed
+ * fetch, so "at most once per hour" is asserted where it is enforced.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+vi.mock("~/utils/logger.server", () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+import { logger } from "~/utils/logger.server";
+import { resetOpsAlertThrottle } from "~/services/ops-alert.server";
+import {
+  FORBIDDEN_WINDOW_MS,
+  IP_ALLOWLIST_ALERT_INTERVAL_MS,
+  IP_ALLOWLIST_LOG_INTERVAL_MS,
+  IP_ALLOWLIST_PAUSE_MAX_MS,
+  IP_ALLOWLIST_PAUSE_MS,
+  __resetForbiddenForTests,
+  classifyForbidden,
+  isIpAllowlistPaused,
+  noteApiSuccess,
+  reportForbidden,
+} from "~/utils/shopify-forbidden.server";
+
+const MIN = 60_000;
+const forbidden = (msg = "Forbidden") => Object.assign(new Error(msg), { response: { code: 403 } });
+const fetchMock = vi.fn();
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-11-09T10:00:00Z"));
+  __resetForbiddenForTests();
+  resetOpsAlertThrottle();
+  vi.mocked(logger.error).mockClear();
+  fetchMock.mockReset().mockResolvedValue({ ok: true, status: 204 });
+  vi.stubGlobal("fetch", fetchMock);
+  process.env.ALERT_WEBHOOK_URL = "https://alerts.example.invalid/hook";
+});
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  delete process.env.ALERT_WEBHOOK_URL;
+});
+
+describe("classifyForbidden", () => {
+  it("is null for anything that is not a 403", async () => {
+    expect(await classifyForbidden("a.myshopify.com", new Error("boom"))).toBeNull();
+    expect(await classifyForbidden("a.myshopify.com", { response: { code: 401 } })).toBeNull();
+    expect(await classifyForbidden("a.myshopify.com", new Response("{}", { status: 500 }))).toBeNull();
+    expect(await classifyForbidden("a.myshopify.com", undefined)).toBeNull();
+  });
+
+  it("recognises the non-expiring deadline answer (error and Response)", async () => {
+    const text = "Non-expiring access tokens are no longer accepted for the Admin API.";
+    expect(await classifyForbidden("a.myshopify.com", forbidden(text))).toBe("non_expiring_rejected");
+    expect(await classifyForbidden("a.myshopify.com", new Response(JSON.stringify({ errors: text }), { status: 403 }))).toBe(
+      "non_expiring_rejected",
+    );
+  });
+
+  it("the deadline answer is not an outage signal: it never feeds the several-shops rule", async () => {
+    const text = "Non-expiring access tokens are no longer accepted for the Admin API.";
+    await classifyForbidden("a.myshopify.com", forbidden(text));
+    await classifyForbidden("b.myshopify.com", forbidden(text));
+    expect(await classifyForbidden("c.myshopify.com", forbidden("Forbidden"))).toBe("shop_specific");
+  });
+
+  it("names the IP allowlist when the text does", async () => {
+    expect(await classifyForbidden("a.myshopify.com", forbidden("Access denied: the IP address is not on the allowlist"))).toBe("ip_allowlist");
+    expect(await classifyForbidden("a.myshopify.com", new Response(JSON.stringify({ errors: "IP is not in the app's allowlist" }), { status: 403 }))).toBe(
+      "ip_allowlist",
+    );
+  });
+
+  it("the bare letters ip are not a hint; IP as a word or a fuller phrase is", async () => {
+    expect(await classifyForbidden("a.myshopify.com", forbidden("Required access: ip"))).toBe("shop_specific");
+    expect(await classifyForbidden("a.myshopify.com", forbidden("tip: ship it, the zip is wrong"))).toBe("shop_specific");
+    expect(await classifyForbidden("a.myshopify.com", forbidden("the ip address is blocked"))).toBe("ip_allowlist");
+    expect(await classifyForbidden("a.myshopify.com", forbidden("Blocked: IP not allowed"))).toBe("ip_allowlist");
+    expect(await classifyForbidden("a.myshopify.com", forbidden("not on the allow list"))).toBe("ip_allowlist");
+  });
+
+  it("a scope 403 or a plain 403 of one shop is shop_specific", async () => {
+    expect(await classifyForbidden("a.myshopify.com", forbidden("Access denied for productUpdate field. Required access: write_products"))).toBe("shop_specific");
+    expect(await classifyForbidden("a.myshopify.com", forbidden())).toBe("shop_specific");
+    // the same shop failing again is still ONE shop
+    expect(await classifyForbidden("a.myshopify.com", forbidden())).toBe("shop_specific");
+  });
+
+  it("three shops with a 403 and no success elsewhere: ip_allowlist_suspected (two are not enough)", async () => {
+    expect(await classifyForbidden("a.myshopify.com", forbidden())).toBe("shop_specific");
+    expect(await classifyForbidden("b.myshopify.com", forbidden())).toBe("shop_specific");
+    expect(await classifyForbidden("c.myshopify.com", forbidden())).toBe("ip_allowlist_suspected");
+    expect(await classifyForbidden("a.myshopify.com", forbidden())).toBe("ip_allowlist_suspected");
+  });
+
+  it("another shop that succeeded inside the window makes it shop_specific", async () => {
+    noteApiSuccess("d.myshopify.com");
+    await classifyForbidden("a.myshopify.com", forbidden());
+    await classifyForbidden("b.myshopify.com", forbidden());
+    expect(await classifyForbidden("c.myshopify.com", forbidden())).toBe("shop_specific");
+  });
+
+  it("a success of a shop that itself got a 403 proves nothing", async () => {
+    noteApiSuccess("a.myshopify.com");
+    await classifyForbidden("a.myshopify.com", forbidden());
+    await classifyForbidden("b.myshopify.com", forbidden());
+    expect(await classifyForbidden("c.myshopify.com", forbidden())).toBe("ip_allowlist_suspected");
+  });
+
+  it("a success older than the window, or a 403 older than the window, does not count", async () => {
+    noteApiSuccess("d.myshopify.com");
+    await classifyForbidden("a.myshopify.com", forbidden());
+    vi.advanceTimersByTime(FORBIDDEN_WINDOW_MS + MIN);
+    expect(await classifyForbidden("a.myshopify.com", forbidden())).toBe("shop_specific"); // a's earlier 403 aged out
+    expect(await classifyForbidden("b.myshopify.com", forbidden())).toBe("shop_specific");
+    // the old success is gone: the third failing shop suspects it
+    expect(await classifyForbidden("c.myshopify.com", forbidden())).toBe("ip_allowlist_suspected");
+  });
+
+  it("403s of shops that are ALREADY blocked (record:false, the probe) never feed the suspicion", async () => {
+    for (const s of ["a", "b", "c", "d", "e"]) {
+      expect(await classifyForbidden(`${s}.myshopify.com`, forbidden(), { record: false })).toBe("shop_specific");
+    }
+    // and they are not counted for a live shop either
+    await classifyForbidden("x.myshopify.com", forbidden());
+    expect(await classifyForbidden("y.myshopify.com", forbidden())).toBe("shop_specific");
+  });
+});
+
+describe("the first allowlist classification logs the raw body, redacted and truncated", () => {
+  it("also masks IPv4 / IPv6 addresses and base64-ish runs", async () => {
+    vi.mocked(logger.warn).mockClear();
+    await classifyForbidden("a.myshopify.com", forbidden("IP 203.0.113.77 and 2001:db8::1234 blocked, id dGhpcyBpcyBhIGxvbmcgYmFzZTY0IHN0cmluZw=="));
+    const line = String(vi.mocked(logger.warn).mock.calls.map((c) => c[0]).find((l) => String(l).includes("first 403")));
+    expect(line).not.toMatch(/203\.0\.113|2001:db8|dGhpcy/);
+    expect(line).toContain("[ip]");
+  });
+
+  it("logs once per kind, masks token-like strings, cuts at 300 characters", async () => {
+    const body = `the IP is blocked shpat_abcdef1234567890 ${"x".repeat(500)}`;
+    vi.mocked(logger.warn).mockClear();
+    await classifyForbidden("a.myshopify.com", forbidden(body));
+    await classifyForbidden("b.myshopify.com", forbidden("the IP is blocked again"));
+    const lines = vi.mocked(logger.warn).mock.calls.map((c) => String(c[0])).filter((l) => l.includes("first 403 classified as ip_allowlist"));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).not.toContain("shpat_");
+    expect(lines[0].length).toBeLessThan(450);
+    // a different kind logs its own first body
+    await classifyForbidden("c.myshopify.com", forbidden("plain"));
+    await classifyForbidden("d.myshopify.com", forbidden("plain"));
+    await classifyForbidden("e.myshopify.com", forbidden("plain"));
+    expect(vi.mocked(logger.warn).mock.calls.filter((c) => String(c[0]).includes("ip_allowlist_suspected"))).toHaveLength(1);
+  });
+});
+
+describe("reportForbidden", () => {
+  it("shop_specific and the deadline answer do nothing: no line, no alert, no pause", () => {
+    reportForbidden("a.myshopify.com", "shop_specific");
+    reportForbidden("a.myshopify.com", "non_expiring_rejected");
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(isIpAllowlistPaused()).toBe(false);
+  });
+
+  it("logs IP_ALLOWLIST_403 at most every 5 minutes and points at the CLAUDE.md note", () => {
+    reportForbidden("a.myshopify.com", "ip_allowlist");
+    reportForbidden("b.myshopify.com", "ip_allowlist_suspected");
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    const line = String(vi.mocked(logger.error).mock.calls[0][0]);
+    expect(line).toContain("IP_ALLOWLIST_403");
+    expect(line).toContain("CLAUDE.md");
+    vi.advanceTimersByTime(IP_ALLOWLIST_LOG_INTERVAL_MS + 1000);
+    reportForbidden("c.myshopify.com", "ip_allowlist_suspected");
+    expect(logger.error).toHaveBeenCalledTimes(2);
+  });
+
+  it("alerts ops at most once an hour", async () => {
+    reportForbidden("a.myshopify.com", "ip_allowlist");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(IP_ALLOWLIST_ALERT_INTERVAL_MS - 2 * MIN);
+    reportForbidden("b.myshopify.com", "ip_allowlist_suspected");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(3 * MIN);
+    reportForbidden("c.myshopify.com", "ip_allowlist_suspected");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not name any IP address in the alert", async () => {
+    reportForbidden("a.myshopify.com", "ip_allowlist");
+    await vi.advanceTimersByTimeAsync(1);
+    const body = String(fetchMock.mock.calls[0][1].body);
+    expect(body).not.toMatch(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/);
+  });
+
+  it("one incident pauses for at most 2 hours however often it is reported", () => {
+    reportForbidden("a.myshopify.com", "ip_allowlist"); // t = 0
+    for (let i = 0; i < 4; i++) {
+      vi.advanceTimersByTime(25 * MIN);
+      reportForbidden("a.myshopify.com", "ip_allowlist"); // t = 25, 50, 75, 100: each would extend to t + 30
+    }
+    vi.advanceTimersByTime(19 * MIN); // t = 119
+    expect(isIpAllowlistPaused()).toBe(true);
+    vi.advanceTimersByTime(2 * MIN); // t = 121: the cap of 120 min ends it, not the last report + 30
+    expect(isIpAllowlistPaused()).toBe(false);
+  });
+
+  it("sets a 30-minute global pause that repeats extend and that then ends", () => {
+    reportForbidden("a.myshopify.com", "ip_allowlist_suspected");
+    expect(isIpAllowlistPaused()).toBe(true);
+    vi.advanceTimersByTime(IP_ALLOWLIST_PAUSE_MS - MIN);
+    expect(isIpAllowlistPaused()).toBe(true);
+    reportForbidden("b.myshopify.com", "ip_allowlist_suspected"); // extends
+    vi.advanceTimersByTime(IP_ALLOWLIST_PAUSE_MS - MIN);
+    expect(isIpAllowlistPaused()).toBe(true);
+    vi.advanceTimersByTime(2 * MIN);
+    expect(isIpAllowlistPaused()).toBe(false);
+  });
+});

@@ -45,6 +45,7 @@
 import { db } from "../../db.server";
 import { logger } from "../../utils/logger.server";
 import { createAdminClientFromShop } from "../../utils/admin-client.server";
+import { isShopConnectionBlockedError } from "../../utils/shop-connection-state.server";
 import { meetsPlan } from "../../utils/planUtils";
 import type { Plan } from "../../config/plans";
 import { refreshLlmsTxtIfStale, themeWritesEnabled } from "./aeo.service";
@@ -183,6 +184,11 @@ export class LlmsAutoRefreshService {
         else if (outcome === "absent") stats.absent++;
         else if (outcome === "failed") stats.errored++;
       } catch (err) {
+        if (isShopConnectionBlockedError(err)) {
+          // Known dead access: skipped quietly, still stamped below.
+          logger.debug(`[LlmsAutoRefresh] ${row.shop} skipped - connection blocked`);
+          continue;
+        }
         stats.errored++;
         logger.warn(`[LlmsAutoRefresh] Refresh failed for ${row.shop}`, {
           error: err instanceof Error ? err.message : String(err),
