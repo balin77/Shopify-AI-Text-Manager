@@ -29,7 +29,7 @@ vi.mock("~/utils/logger.server", () => ({
 vi.mock("~/db.server", () => ({
   db: {
     session: { deleteMany: vi.fn(async () => { h.cleanup(); return { count: 1 }; }) },
-    shopInstallState: { upsert: vi.fn(async () => ({})) },
+    shopInstallState: { findUnique: vi.fn(async () => null), upsert: vi.fn(async () => ({})) },
     aISettings: { updateMany: vi.fn(async () => ({ count: 0 })) },
   },
 }));
@@ -44,7 +44,7 @@ vi.mock("~/utils/offline-admin.server", () => ({
 import { verifyWebhookRequest } from "~/utils/webhook-auth.server";
 import { action as uninstalled } from "~/routes/webhooks.app-uninstalled";
 
-const BODY = JSON.stringify({ id: 1 });
+const BODY = JSON.stringify({ id: 1, myshopify_domain: "gone.myshopify.com" });
 const sign = (body: string, secret = "test-secret") => createHmac("sha256", secret).update(body, "utf8").digest("base64");
 
 function req(opts: { body?: string; signedBody?: string; secret?: string; omit?: string[]; method?: string } = {}) {
@@ -76,7 +76,7 @@ beforeEach(() => vi.clearAllMocks());
 describe("verifyWebhookRequest (real HMAC validation)", () => {
   it("accepts a correctly signed request and returns the validated data", async () => {
     const ctx = await verifyWebhookRequest(req());
-    expect(ctx).toMatchObject({ shop: "gone.myshopify.com", webhookId: "w1", payload: { id: 1 } });
+    expect(ctx).toMatchObject({ shop: "gone.myshopify.com", webhookId: "w1", payload: { id: 1, myshopify_domain: "gone.myshopify.com" } });
     expect(ctx.topic).toBeTruthy();
   });
 
