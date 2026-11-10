@@ -43,7 +43,9 @@ function runSilent(command) {
     const output = execSync(command, { stdio: 'pipe', encoding: 'utf-8' });
     return { success: true, output };
   } catch (e) {
-    return { success: false, output: e.stderr?.toString() || e.message || '' };
+    // Keep stdout too: it lists the migrations applied before the failure.
+    const out = `${e.stdout?.toString() ?? ''}${e.stderr?.toString() ?? ''}`;
+    return { success: false, output: out || e.message || '' };
   }
 }
 

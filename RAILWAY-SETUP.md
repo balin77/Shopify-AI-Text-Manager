@@ -897,6 +897,8 @@ railway connect Postgres
   startet der Container trotzdem und loggt `MIGRATE_DEPLOY_FAILED_BUT_SCHEMA_CURRENT` mit dem Namen der fehlgeschlagenen
   Migration. Der alte Container läuft also weiter, solange seine eigenen Migrationen angewendet sind, und gerät nach einem
   fehlgeschlagenen Deploy nicht in eine Absturzschleife.
+  Achtung: Ist die neuere Migration nur zum Teil durchgelaufen, arbeitet der alte Container auf einem teilweise
+  geänderten Schema. Das ist nur sicher, solange Migrationen rückwärtsverträglich sind (erst hinzufügen, später entfernen).
 - Fehlt dem Image eine Migration, ist sie fehlgeschlagen oder lässt sich der Stand nicht lesen, bricht das Deploy mit
   Exit-Code 1 ab (Log: `MIGRATE_DEPLOY_FAILED`) und der alte Container bleibt aktiv.
 

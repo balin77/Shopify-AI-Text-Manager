@@ -22,15 +22,15 @@ export function payloadMatchesShop(payload: Record<string, unknown> | undefined,
   return !!primary && primary === wanted;
 }
 
+/** Shopify's clock and ours may differ; only a clearly older delivery is skipped. */
+export const CLOCK_SKEW_MS = 5_000;
+
 /**
  * A late redelivery of an old uninstall (Shopify retries for up to 48 h) must
  * not delete the sessions of a reinstall that happened since. True when the
  * header says the event is OLDER than the shop's last sign-in. A missing or
  * unparseable header, or an unknown sign-in, keeps the current behaviour.
  */
-/** Shopify's clock and ours may differ; only a clearly older delivery is skipped. */
-export const CLOCK_SKEW_MS = 5_000;
-
 export function isStaleUninstall(triggeredAtHeader: string | null, lastAuthAt: Date | null | undefined): boolean {
   if (!triggeredAtHeader || !lastAuthAt) return false;
   const triggered = Date.parse(triggeredAtHeader);
