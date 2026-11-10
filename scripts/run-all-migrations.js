@@ -11,6 +11,7 @@
  */
 
 import { execSync } from 'child_process';
+import { decideAfterMigrateDeploy } from './migrate-deploy-decision.js';
 
 const colors = {
   reset: '\x1b[0m',
@@ -136,10 +137,14 @@ async function main() {
     'Prisma Schema Migrations'
   );
 
-  if (!migrateSuccess) {
-    log('⚠️  prisma migrate deploy failed, trying db push as fallback...', 'yellow');
-    // No --accept-data-loss: db push still applies additive changes, but aborts
-    // (non-zero) instead of silently DROPping columns/tables in production.
+  const decision = decideAfterMigrateDeploy(migrateSuccess, process.env);
+  if (decision.action === 'abort') {
+    log(`❌ ${decision.message}`, 'red');
+    process.exit(1);
+  }
+  if (decision.action === 'db-push-fallback') {
+    log(`⚠️  ${decision.message}`, 'yellow');
+    // No --accept-data-loss: db push aborts (non-zero) instead of DROPping data.
     const pushSuccess = runCommand(
       'npx prisma db push --skip-generate',
       'Prisma DB Push (Fallback)'

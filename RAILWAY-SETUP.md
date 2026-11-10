@@ -13,7 +13,7 @@ je Service unter Settings → Config-as-Code hinterlegt.
 
 | Service | Config-Datei | Inhalt |
 |---|---|---|
-| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health`, `drainingSeconds` 15 |
+| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` (Timeout 900 s, damit ein langer Index-Build beim Start nicht abgebrochen wird), `drainingSeconds` 15 |
 | Db Space Checker (Cron, nur production) | [railway.dbalert.json](railway.dbalert.json) | Dockerfile-Builder, `node scripts/db-alert.mjs`, alle 15 Min, kein Restart |
 | Db Backup (Cron, production **und** development) | [railway.dbbackup.json](railway.dbbackup.json) | Dockerfile-Builder, `node scripts/db-backup.mjs`, täglich 02:00 UTC, kein Restart |
 
@@ -886,6 +886,31 @@ railway connect Postgres
 7. **Rollback**: Bei Problemen in Railway auf vorherige Deployment Version zurück
 
 ## Troubleshooting
+
+### Fehlgeschlagene Migration beheben
+
+`scripts/run-all-migrations.js` läuft vor dem Serverstart (`npm run start:production`). Schlägt
+`prisma migrate deploy` fehl (typisch: P3009 nach einem abgebrochenen `CREATE INDEX CONCURRENTLY`),
+bricht das Deploy mit Exit-Code 1 ab und der alte Container bleibt aktiv. Im Log nach
+`MIGRATE_DEPLOY_FAILED` suchen. Es gibt bewusst **keinen** stillen Wechsel auf `prisma db push`:
+der liesse ungültige (INVALID) Indizes und fehlgeschlagene Migrationszeilen für immer stehen,
+würde spätere SQL-Backfills überspringen und spätere Indizes ohne `CONCURRENTLY` bauen.
+
+Manuelle Behebung:
+
+1. Fehlgeschlagene Migration finden:
+   `SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL;`
+2. Ungültigen Index finden und entfernen (ausserhalb einer Transaktion):
+   `SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;` dann
+   `DROP INDEX CONCURRENTLY IF EXISTS "<indexname>";`
+3. Migration als zurückgerollt markieren:
+   `npx prisma migrate resolve --rolled-back <migrationsname>`
+4. Neu deployen (Redeploy), die Migration läuft dann erneut.
+
+Notfall-Schalter: `ALLOW_DB_PUSH_FALLBACK=true` (genau dieser Wert) erlaubt nach einem
+fehlgeschlagenen `migrate deploy` den Fallback auf `prisma db push`. Nur setzen, wenn bewusst
+in Kauf genommen wird, dass die oben genannten Altlasten bleiben; danach wieder entfernen.
+
 
 ### Build Fails:
 - Checke Logs im Railway Dashboard
