@@ -288,10 +288,14 @@ export async function liftBlockOnAccessEvidence(
       if (session.expires && session.expires.getTime() <= Date.now()) return false;
     }
     if (!evidence.answered && !evidence.admin) return false;
-    const now = Date.now();
-    const last = accessEvidenceChecked.get(shop);
-    if (last !== undefined && now - last < ACCESS_EVIDENCE_INTERVAL_MS) return false;
-    accessEvidenceChecked.set(shop, now);
+    // The throttle limits the LIVE test calls only: a real background answer
+    // (`answered`) costs no call and must not be swallowed by a failed visit.
+    if (!evidence.answered) {
+      const now = Date.now();
+      const last = accessEvidenceChecked.get(shop);
+      if (last !== undefined && now - last < ACCESS_EVIDENCE_INTERVAL_MS) return false;
+      accessEvidenceChecked.set(shop, now);
+    }
     const block = await getConnectionBlock(shop);
     if (!block || block.state !== "needs_reauth") return false;
     if (block.since && startedAt.getTime() <= block.since.getTime()) return false;
@@ -314,7 +318,10 @@ function startCatchUpAfterLift(shop: string, admin: AccessEvidence["admin"]): vo
     try {
       const { runWebhookCatchUp, isCatchUpInFlight } = await import("../services/webhook-catchup.server");
       if (isCatchUpInFlight(shop)) return;
-      await runWebhookCatchUp(shop, admin as never);
+      // The catch-up outlives the request (CLAUDE.md "Auth / boundaries"): hold
+      // the background client, never the captured one.
+      const { backgroundAdmin } = await import("./offline-admin.server");
+      await runWebhookCatchUp(shop, backgroundAdmin(shop, admin) as never);
     } catch {
       /* the scheduler and the sweep still owe it */
     }
