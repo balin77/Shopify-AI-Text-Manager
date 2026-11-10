@@ -32,6 +32,7 @@ vi.mock("~/utils/shop-connection-block.server", () => ({
   blockShopConnection: (...a: any[]) => h.block(...a),
   noteUnauthorized: vi.fn(),
   noteSuccessfulCall: vi.fn(async () => undefined),
+  liftBlockOnAccessEvidence: vi.fn(async () => false),
 }));
 vi.mock("~/utils/shop-connection-state.server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/utils/shop-connection-state.server")>();

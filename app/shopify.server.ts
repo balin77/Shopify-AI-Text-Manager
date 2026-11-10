@@ -25,7 +25,7 @@ import {
   type ShopifyApiVersionString,
 } from "./utils/api-version";
 import { expiringOfflineTokensEnabled, migrateToExpiringTokensEnabled } from "./utils/offline-token-flags.server";
-import { liftConnectionBlockAfterAuth } from "./utils/shop-connection-block.server";
+import { liftBlockOnAccessEvidence, liftConnectionBlockAfterAuth } from "./utils/shop-connection-block.server";
 import {
   configureOfflineAdmin,
   forgetOfflineTokenMigration,
@@ -319,6 +319,8 @@ const enhancedAuthenticate = {
     // becomes a 400, for every route at once; every other throw passes through
     // unchanged. See shopify-host-param.server.ts.
     let authenticated: Awaited<ReturnType<typeof originalAuthenticateAdmin>>;
+    // The fence for lifting a connection block below: when this request BEGAN.
+    const requestStartedAt = new Date();
     try {
       authenticated = await originalAuthenticateAdmin(request);
     } catch (error) {
@@ -327,6 +329,13 @@ const enhancedAuthenticate = {
       throw hostParamRejection(error, request) ?? apiAuthBounceRejection(error, request) ?? error;
     }
     const { admin, session } = authenticated;
+
+    // The merchant is in the app with a working session: a connection block
+    // (set on evidence that may have been wrong, or since healed) is lifted now
+    // instead of at the next probe. BEFORE the scheduler starts below, so its
+    // first cycle sees an unblocked shop and runs the owed catch-up. Throttled,
+    // fenced, never throws.
+    await liftBlockOnAccessEvidence(session.shop, requestStartedAt, session);
 
     // The lazy token migration is deliberately NOT fired from here: this
     // request's captured admin/session still holds the old token, and a 401 on

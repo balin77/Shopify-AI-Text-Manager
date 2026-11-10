@@ -47,7 +47,7 @@ import {
 
 export type { ConnectionBlockState } from "../services/shop-connection-status.shared";
 
-export type ConnectionClearCause = "reauth" | "reinstall" | "probe_ok" | "uninstalled";
+export type ConnectionClearCause = "reauth" | "reinstall" | "probe_ok" | "uninstalled" | "session_ok";
 
 export interface ConnectionBlock {
   state: ConnectionBlockState;
@@ -264,7 +264,7 @@ export interface ClearBlockResult {
 export async function clearConnectionBlock(
   shop: string,
   cause: ConnectionClearCause,
-  opts: { onlyIfReason?: string; sinceAtOrBefore?: Date } = {},
+  opts: { onlyIfReason?: string; onlyState?: ConnectionBlockState; sinceAtOrBefore?: Date } = {},
 ): Promise<ClearBlockResult> {
   const none: ClearBlockResult = { cleared: false, droppedWebhookCount: 0, resyncRequiredSince: null };
   try {
@@ -278,7 +278,7 @@ export async function clearConnectionBlock(
     const lifted = await db.shopInstallState.updateMany({
       where: {
         shop,
-        ...(opts.onlyIfReason ? { connectionState: "needs_reauth", connectionStateReason: opts.onlyIfReason } : { connectionState: { not: null } }),
+        ...(opts.onlyIfReason ? { connectionState: "needs_reauth", connectionStateReason: opts.onlyIfReason } : { connectionState: opts.onlyState ?? { not: null } }),
         // The probe's lift: only a block that already stood when the probe
         // began (a block set after it says something the probe did not see).
         ...(opts.sinceAtOrBefore
@@ -293,7 +293,7 @@ export async function clearConnectionBlock(
         connectionClearedCause: cause,
       },
     });
-    if (lifted.count === 0 && (opts.onlyIfReason || opts.sinceAtOrBefore)) {
+    if (lifted.count === 0 && (opts.onlyIfReason || opts.onlyState || opts.sinceAtOrBefore)) {
       // A conditional clear that found another block (or none): leave the row
       // and the fence alone, and let the next read decide.
       bump(shop);

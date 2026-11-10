@@ -74,6 +74,7 @@ import {
   __resetConnectionBlockForTests,
   blockOnAdmin401Enabled,
   blockShopConnection,
+  liftBlockOnAccessEvidence,
   liftConnectionBlockAfterAuth,
   noteSuccessfulCall,
   noteUnauthorized,
@@ -366,5 +367,81 @@ describe("lifting", () => {
     shopInstallState.findUnique.mockClear();
     for (let i = 0; i < 20; i++) await noteSuccessfulCall(SHOP, new Date());
     expect(shopInstallState.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("liftBlockOnAccessEvidence (the merchant uses the app / a background call worked)", () => {
+  const goodSession = () => ({ accessToken: "tok", expires: null, isOnline: false });
+  const blockedWithOwedCatchUp = async (reason = "no_token") => {
+    store.set(SHOP, row({ resyncRequiredSince: new Date("2026-11-01T00:00:00Z"), droppedWebhookCount: 4 }));
+    await blockShopConnection(SHOP, reason, { observedAt: new Date() });
+  };
+
+  it("lifts a needs_reauth block within the request and keeps the owed catch-up for the scheduler / sweep", async () => {
+    await blockedWithOwedCatchUp();
+    expect(await liftBlockOnAccessEvidence(SHOP, new Date(Date.now() + 1_000), goodSession())).toBe(true);
+    expect(store.get(SHOP)).toMatchObject({
+      connectionState: null,
+      connectionClearedCause: "session_ok",
+      droppedWebhookCount: 4,
+    });
+    // the catch-up queries select unblocked shops with this flag set
+    expect(store.get(SHOP)!.resyncRequiredSince).toBeInstanceOf(Date);
+    expect(await getConnectionBlock(SHOP)).toBeNull();
+  });
+
+  it("is throttled per shop: a second call within a minute does not read or lift anything", async () => {
+    await liftBlockOnAccessEvidence(SHOP, new Date(), goodSession());
+    await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() });
+    expect(await liftBlockOnAccessEvidence(SHOP, new Date(Date.now() + 1_000), goodSession())).toBe(false);
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+  });
+
+  it("the throttle lets the next minute through", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-10T10:00:00Z"));
+    await liftBlockOnAccessEvidence(SHOP, new Date(), goodSession());
+    await blockShopConnection(SHOP, "no_token", { observedAt: new Date() });
+    vi.setSystemTime(new Date("2026-11-10T10:01:05Z"));
+    expect(await liftBlockOnAccessEvidence(SHOP, new Date(), goodSession())).toBe(true);
+  });
+
+  it("the fence: a block newer than the request start is not lifted", async () => {
+    const requestStart = new Date(Date.now() - 5_000);
+    await blockShopConnection(SHOP, "no_token", { observedAt: new Date() }); // set AFTER the request began
+    expect(await liftBlockOnAccessEvidence(SHOP, requestStart, goodSession())).toBe(false);
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+  });
+
+  it("the fence also holds in the database when the cache is behind", async () => {
+    await blockShopConnection(SHOP, "no_token", { observedAt: new Date() });
+    const started = new Date(Date.now() + 1_000);
+    expect(await getConnectionBlock(SHOP)).toBeTruthy(); // cache: blocked, older than the request
+    // a newer block replaces it behind the cache's back
+    store.get(SHOP)!.connectionStateSince = new Date(Date.now() + 5_000);
+    expect(await liftBlockOnAccessEvidence(SHOP, started, goodSession())).toBe(false);
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+  });
+
+  it.each([
+    ["an empty token", { accessToken: "", expires: null, isOnline: false }],
+    ["an expired token", { accessToken: "t", expires: new Date(Date.now() - 1_000), isOnline: false }],
+    ["an online session", { accessToken: "t", expires: null, isOnline: true }],
+  ])("%s is no evidence", async (_n, sess) => {
+    await blockShopConnection(SHOP, "no_token", { observedAt: new Date() });
+    expect(await liftBlockOnAccessEvidence(SHOP, new Date(Date.now() + 1_000), sess)).toBe(false);
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+  });
+
+  it("leaves a final kind (access_denied) to the probe", async () => {
+    store.set(SHOP, row({ connectionState: "access_denied", connectionStateSince: new Date(Date.now() - 60_000), connectionStateReason: "token_endpoint_403" }));
+    expect(await liftBlockOnAccessEvidence(SHOP, new Date(), goodSession())).toBe(false);
+    expect(store.get(SHOP)!.connectionState).toBe("access_denied");
+  });
+
+  it("never throws", async () => {
+    shopInstallState.findUnique.mockRejectedValueOnce(new Error("db down"));
+    invalidateConnectionCache();
+    await expect(liftBlockOnAccessEvidence(SHOP, new Date(), goodSession())).resolves.toBe(false);
   });
 });

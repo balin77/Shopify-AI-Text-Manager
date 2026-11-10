@@ -60,7 +60,7 @@ import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { logger } from "./logger.server";
 import { expiringOfflineTokensEnabled, migrateToExpiringTokensEnabled } from "./offline-token-flags.server";
 import * as migrationStore from "./offline-token-migration-store.server";
-import { blockShopConnection, noteSuccessfulCall, noteUnauthorized } from "./shop-connection-block.server";
+import { blockShopConnection, liftBlockOnAccessEvidence, noteSuccessfulCall, noteUnauthorized } from "./shop-connection-block.server";
 import { notifyOps } from "../services/ops-alert.server";
 import {
   __resetForbiddenForTests,
@@ -678,6 +678,7 @@ export function createRefreshingAdmin(shop: string): AdminApiContext {
       const result = await (admin.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
       noteApiSuccess(shop);
       void noteSuccessfulCall(shop, startedAt);
+      void liftBlockOnAccessEvidence(shop, startedAt, session);
       return result;
     } catch (error) {
       if (!isUnauthorizedError(error)) {
@@ -694,6 +695,7 @@ export function createRefreshingAdmin(shop: string): AdminApiContext {
         const retried = await (fresh.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
         noteApiSuccess(shop);
         void noteSuccessfulCall(shop, startedAt);
+        void liftBlockOnAccessEvidence(shop, startedAt, freshSession);
         return retried;
       } catch (second) {
         // A SECOND 401 with the very token the first one refused: the stored

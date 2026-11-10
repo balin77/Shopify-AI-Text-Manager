@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   block: vi.fn(async (..._a: any[]): Promise<any> => ({ state: "needs_reauth", since: new Date("2026-11-09T09:00:00Z"), reason: "stored_reason" })),
   noteUnauthorized: vi.fn(),
   noteSuccess: vi.fn(async (..._a: any[]) => undefined),
+  lift: vi.fn(async (..._a: any[]) => false),
   clear: vi.fn(async (..._a: any[]) => ({ cleared: false, droppedWebhookCount: 0, resyncRequiredSince: null })),
   getBlock: vi.fn<(shop: string) => Promise<any>>(async () => null),
 }));
@@ -33,6 +34,7 @@ vi.mock("~/utils/shop-connection-block.server", () => ({
   blockShopConnection: (...a: any[]) => h.block(...a),
   noteUnauthorized: (...a: any[]) => h.noteUnauthorized(...a),
   noteSuccessfulCall: (...a: any[]) => h.noteSuccess(...a),
+  liftBlockOnAccessEvidence: (...a: any[]) => h.lift(...a),
 }));
 vi.mock("~/utils/shop-connection-state.server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/utils/shop-connection-state.server")>();
@@ -81,6 +83,7 @@ beforeEach(() => {
   h.block.mockReset().mockResolvedValue({ state: "needs_reauth", since: new Date("2026-11-09T09:00:00Z"), reason: "stored_reason" });
   h.noteUnauthorized.mockReset();
   h.noteSuccess.mockReset();
+  h.lift.mockReset().mockResolvedValue(false);
   h.clear.mockReset().mockResolvedValue({ cleared: false, droppedWebhookCount: 0, resyncRequiredSince: null });
   h.getBlock.mockReset().mockResolvedValue(null);
   vi.mocked(logger.error).mockClear();
@@ -133,8 +136,11 @@ describe("library client (createRefreshingAdmin): a SECOND 401 with the same sto
     const admin = createRefreshingAdmin(SHOP);
     await (admin.graphql as any)("q");
     expect(h.noteSuccess).toHaveBeenCalledTimes(1);
+    // a successful scheduler call is also access evidence (with the session it used)
+    expect(h.lift).toHaveBeenCalledWith(SHOP, expect.any(Date), expect.objectContaining({ accessToken: "tok-1" }));
     await (admin.graphql as any)("q").catch(() => undefined);
     expect(h.noteSuccess).toHaveBeenCalledTimes(1);
+    expect(h.lift).toHaveBeenCalledTimes(1);
   });
 
   it("a second 401 with a DIFFERENT (freshly stored) token does not block", async () => {

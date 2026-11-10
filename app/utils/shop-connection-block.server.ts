@@ -66,6 +66,9 @@ const recentUnauthorized = new Map<string, number>();
 let suppress401Until = 0;
 const noRowLogged = new Set<string>();
 const successChecked = new Map<string, number>();
+const accessEvidenceChecked = new Map<string, number>();
+/** liftBlockOnAccessEvidence looks at a shop at most this often. */
+export const ACCESS_EVIDENCE_INTERVAL_MS = 60_000;
 /** noteSuccessfulCall looks at a shop at most this often. */
 export const SUCCESS_CHECK_INTERVAL_MS = 30_000;
 
@@ -75,6 +78,7 @@ export function __resetConnectionBlockForTests(): void {
   suppress401Until = 0;
   noRowLogged.clear();
   successChecked.clear();
+  accessEvidenceChecked.clear();
 }
 
 /**
@@ -209,6 +213,57 @@ export async function noteSuccessfulCall(shop: string, startedAt: Date): Promise
     await clearConnectionBlock(shop, "probe_ok", { onlyIfReason: "admin_api_401" });
   } catch {
     /* never throws */
+  }
+}
+
+/**
+ * The shop DEMONSTRABLY has working access right now: the merchant's request
+ * passed `authenticate.admin` with a non-empty, unexpired offline session, or a
+ * background `graphql()` through the refreshing client succeeded. A block of the
+ * `needs_reauth` kind is lifted at once instead of waiting for the next probe
+ * (10 min up to 6 h later) -- a merchant using the app must not be shown a
+ * "disconnected" shop, and the lift makes the owed webhook catch-up eligible
+ * (the scheduler's incremental path and the sweep both read `resyncRequiredSince`
+ * of an UNBLOCKED shop). Rules:
+ *  - throttled per shop (in process, ACCESS_EVIDENCE_INTERVAL_MS): a busy shop
+ *    costs at most one block read a minute;
+ *  - the fence: `startedAt` is when the request / call BEGAN. A block set after
+ *    it says something this evidence did not see and stays. The comparison runs
+ *    on the cached read AND again in the database (`sinceAtOrBefore`);
+ *  - only `needs_reauth` (state-conditional in the database). The final kinds
+ *    shop_not_found / access_denied have a 24 h verdict behind them and are
+ *    left to the probe;
+ *  - whether the session's token is the very one the block was set on is not
+ *    knowable (the block stores a reason, not a token), so ANY such success
+ *    counts. If the library handed out a stored token that is in fact dead, the
+ *    next double 401 re-blocks it, at the cost of a flap.
+ * Never throws; resolves to whether a block was lifted.
+ */
+export async function liftBlockOnAccessEvidence(
+  shop: string,
+  startedAt: Date,
+  session?: { accessToken?: string | null; expires?: Date | null; isOnline?: boolean } | null,
+): Promise<boolean> {
+  try {
+    if (session) {
+      if (session.isOnline) return false;
+      if (!session.accessToken) return false;
+      if (session.expires && session.expires.getTime() <= Date.now()) return false;
+    }
+    const now = Date.now();
+    const last = accessEvidenceChecked.get(shop);
+    if (last !== undefined && now - last < ACCESS_EVIDENCE_INTERVAL_MS) return false;
+    accessEvidenceChecked.set(shop, now);
+    const block = await getConnectionBlock(shop);
+    if (!block || block.state !== "needs_reauth") return false;
+    if (block.since && startedAt.getTime() <= block.since.getTime()) return false;
+    const res = await clearConnectionBlock(shop, "session_ok", {
+      onlyState: "needs_reauth",
+      sinceAtOrBefore: startedAt,
+    });
+    return res.cleared;
+  } catch {
+    return false;
   }
 }
 
