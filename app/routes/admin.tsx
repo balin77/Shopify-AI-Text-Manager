@@ -20,21 +20,22 @@
  * „alle Daten eines Shops löschen" gibt.
  */
 
-import { useState } from 'react';
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { data as json, redirect } from "react-router";
-import { useLoaderData, useActionData, Form, useNavigation, useFetcher } from "react-router";
-import { db } from '~/db.server';
+import { useLoaderData, useActionData, Form, useFetcher } from "react-router";
 import { redactShopData } from '~/services/gdpr.service';
 import {
   loadAuditDetail,
   loadAuditRows,
-  loadShopRows,
-  loadShopStorage,
+  loadShopDetail,
+  loadShopOverview,
   type AuditDetail,
   type AuditRow,
+  type OverviewHeader,
   type ShopRow,
 } from '~/services/admin/shop-overview.server';
+import { ShopOverviewTable } from '~/components/admin/ShopOverviewTable';
+import { LOGIN_WIDTH, PAGE, TD, TH } from '~/components/admin/admin-styles';
 import { logger } from '~/utils/logger.server';
 import { adminLoginLimiter, clientIpFromRequest } from '~/utils/admin-login-limiter.server';
 import {
@@ -93,13 +94,13 @@ function isDocumentRequest(request: Request): boolean {
 
 type LoaderData =
   | { authed: false; configured: boolean; tooShort: boolean; noSecret: boolean; minLength: number }
-  | { authed: true; rows: ShopRow[]; audits: AuditRow[] };
+  | { authed: true; now: string; rows: ShopRow[]; header: OverviewHeader; audits: AuditRow[] };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   // The on-demand detail is answered to the page's fetcher only; a direct
   // visit (link, reload) goes back to the plain page.
   const params = new URL(request.url).searchParams;
-  const isDetail = params.has('audit') || params.has('storage');
+  const isDetail = params.has('audit') || params.has('detail');
   if (isDetail && isDocumentRequest(request)) {
     return redirect('/admin', { headers: baseHeaders() });
   }
@@ -118,18 +119,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       { headers: baseHeaders() },
     );
   }
-  const storageShop = params.get('storage');
-  if (storageShop !== null) {
-    if (!storageShop) {
+  const detailShop = params.get('detail');
+  if (detailShop !== null) {
+    if (!detailShop) {
       return json({ error: 'Kein Shop angegeben.' }, { status: 400, headers: baseHeaders() });
     }
-    // NOTE: the per-shop detail view (plan section 3.5, `?detail=<shop>`) is meant
-    // to absorb this branch, so two detail doors do not stay side by side.
-    const storage = await loadShopStorage(storageShop);
-    if (!storage) {
+    // Per-shop detail view (plan 3.5): reasons, facts, usage, storage, timeline.
+    // It replaced the older `?storage=` door; customer data is NOT in it.
+    const detail = await loadShopDetail(detailShop);
+    if (!detail) {
       return json({ error: 'Shop nicht gefunden.' }, { status: 404, headers: baseHeaders() });
     }
-    return json({ storage }, { headers: baseHeaders() });
+    return json({ detail }, { headers: baseHeaders() });
   }
   const auditId = params.get('audit');
   if (auditId !== null) {
@@ -139,8 +140,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
     return json({ detail }, { headers: baseHeaders() });
   }
-  const [rows, audits] = await Promise.all([loadShopRows(), loadAuditRows()]);
-  return json<LoaderData>({ authed: true, rows, audits }, { headers: baseHeaders() });
+  const [overview, audits] = await Promise.all([loadShopOverview(), loadAuditRows()]);
+  return json<LoaderData>(
+    { authed: true, now: overview.now, rows: overview.rows, header: overview.header, audits },
+    { headers: baseHeaders() },
+  );
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -237,33 +241,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return json({ error: 'Unbekannte Aktion.' }, { status: 400, headers: baseHeaders() });
 };
 
-const TD: React.CSSProperties = {
-  padding: '8px 10px',
-  borderBottom: '1px solid #e1e3e5',
-  fontSize: 13,
-  whiteSpace: 'nowrap',
-};
-const TH: React.CSSProperties = {
-  ...TD,
-  textAlign: 'left',
-  background: '#f6f6f7',
-  fontWeight: 600,
-  position: 'sticky',
-  top: 0,
-};
-const PAGE: React.CSSProperties = {
-  fontFamily:
-    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-  padding: 24,
-  maxWidth: 1200,
-  margin: '0 auto',
-  color: '#202223',
-};
-
 function LoginView({ configured, tooShort, noSecret, minLength }: { configured: boolean; tooShort: boolean; noSecret: boolean; minLength: number }) {
   const actionData = useActionData<typeof action>();
   return (
-    <div style={{ ...PAGE, maxWidth: 380 }}>
+    <div style={{ ...PAGE, maxWidth: LOGIN_WIDTH }}>
       <h1 style={{ fontSize: 20 }}>ContentPilot — Admin</h1>
       {!configured && (
         <div
@@ -334,128 +315,6 @@ function LoginView({ configured, tooShort, noSecret, minLength }: { configured: 
         </Form>
       )}
     </div>
-  );
-}
-
-function ShopRowView({ row }: { row: ShopRow }) {
-  const [open, setOpen] = useState(false);
-  const nav = useNavigation();
-  const busy = nav.state !== 'idle' && nav.formData?.get('shop') === row.shop;
-  // Storage is detail data: loaded on click through the page's own loader.
-  const storage = useFetcher<{ storage?: { storageMB: number }; error?: string }>();
-  const storageLoading = storage.state !== 'idle';
-
-  return (
-    <>
-      <tr>
-        <td style={TD}>
-          <strong>{row.shop}</strong>
-          {!row.hasSession && (
-            <span style={{ color: '#8a6116', marginLeft: 6 }}>
-              (keine Session)
-            </span>
-          )}
-          {row.uninstalledAt && (
-            <span style={{ color: '#bf0711', marginLeft: 6 }}>
-              deinstalliert {row.uninstalledAt.slice(0, 10)}
-            </span>
-          )}
-        </td>
-        <td style={TD}>
-          {row.plan}
-          {row.devForcedPlan && (
-            <span style={{ color: '#5c5f62' }}> (forced: {row.devForcedPlan})</span>
-          )}
-        </td>
-        <td style={TD}>{row.products}</td>
-        <td style={TD}>{row.collections}</td>
-        <td style={TD}>{row.articles}</td>
-        <td style={TD}>{row.pages}</td>
-        <td style={TD}>{row.tasks}</td>
-        <td style={TD}>{row.initialSyncCompletedAt ? '✓' : '—'}</td>
-        <td style={TD}>
-          <button
-            type="button"
-            disabled={storageLoading}
-            onClick={() => storage.load(`/admin?storage=${encodeURIComponent(row.shop)}`)}
-            style={{
-              padding: '5px 10px',
-              border: '1px solid #babfc3',
-              background: 'white',
-              borderRadius: 4,
-              cursor: storageLoading ? 'default' : 'pointer',
-              fontSize: 12,
-              marginRight: 6,
-            }}
-          >
-            {storageLoading
-              ? 'Lade…'
-              : storage.data?.storage
-                ? `${storage.data.storage.storageMB} MB`
-                : storage.data?.error
-                  ? storage.data.error
-                  : 'Speicher'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            style={{
-              padding: '5px 10px',
-              border: '1px solid #bf0711',
-              color: '#bf0711',
-              background: 'white',
-              borderRadius: 4,
-              cursor: 'pointer',
-              fontSize: 12,
-            }}
-          >
-            Alle Daten löschen…
-          </button>
-        </td>
-      </tr>
-      {open && (
-        <tr>
-          <td style={{ ...TD, background: '#fff4f4' }} colSpan={9}>
-            <Form method="post" replace>
-              <input type="hidden" name="intent" value="delete-shop" />
-              <input type="hidden" name="shop" value={row.shop} />
-              <div style={{ fontSize: 13, marginBottom: 6 }}>
-                Unwiderruflich. Zum Bestätigen die Shop-Domain exakt eintippen:{' '}
-                <code>{row.shop}</code>
-              </div>
-              <input
-                name="confirm"
-                placeholder={row.shop}
-                autoComplete="off"
-                style={{
-                  padding: '6px 8px',
-                  border: '1px solid #babfc3',
-                  borderRadius: 4,
-                  fontSize: 13,
-                  width: 320,
-                  marginRight: 8,
-                }}
-              />
-              <button
-                type="submit"
-                disabled={busy}
-                style={{
-                  padding: '6px 12px',
-                  border: 'none',
-                  background: busy ? '#9b9b9b' : '#bf0711',
-                  color: 'white',
-                  borderRadius: 4,
-                  cursor: busy ? 'default' : 'pointer',
-                  fontSize: 13,
-                }}
-              >
-                {busy ? 'Lösche…' : 'Endgültig löschen'}
-              </button>
-            </Form>
-          </td>
-        </tr>
-      )}
-    </>
   );
 }
 
@@ -554,7 +413,7 @@ export default function AdminPage() {
     return <LoginView configured={data.configured} tooShort={data.tooShort} noSecret={data.noSecret} minLength={data.minLength} />;
   }
 
-  const { rows, audits } = data;
+  const { rows, header, now, audits } = data;
   return (
     <div style={PAGE}>
       <div
@@ -619,40 +478,7 @@ export default function AdminPage() {
         </div>
       )}
 
-      <div
-        style={{
-          overflowX: 'auto',
-          border: '1px solid #e1e3e5',
-          borderRadius: 6,
-        }}
-      >
-        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-          <thead>
-            <tr>
-              <th style={TH}>Shop</th>
-              <th style={TH}>Plan</th>
-              <th style={TH}>Produkte</th>
-              <th style={TH}>Collections</th>
-              <th style={TH}>Artikel</th>
-              <th style={TH}>Seiten</th>
-              <th style={TH}>Tasks</th>
-              <th style={TH}>Sync</th>
-              <th style={TH}>Aktion</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td style={TD} colSpan={9}>
-                  Keine Shops gefunden.
-                </td>
-              </tr>
-            ) : (
-              rows.map((r) => <ShopRowView key={r.shop} row={r} />)
-            )}
-          </tbody>
-        </table>
-      </div>
+      <ShopOverviewTable rows={rows} header={header} now={now} />
 
       <h2 style={{ fontSize: 18, margin: '28px 0 4px' }}>
         GDPR-Audit-Log

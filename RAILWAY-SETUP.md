@@ -163,6 +163,10 @@ Instanzen`. Zweitens ist der Circuit Breaker des Failovers ein **fünfter**
 prozesslokaler Zustand — zwei Instanzen probieren einen ausgefallenen Anbieter
 doppelt so oft und zahlen die Fehlversuche doppelt.
 
+### `/admin` (Shop-Übersicht) — Betrieb
+
+Keine neuen Env-Variablen und keine neuen Logzeilen. Die Seite braucht weiter `ADMIN_PASSWORD` (mindestens 16 Zeichen) und `SHOPIFY_API_SECRET`; ein Passwortwechsel macht alle Sitzungen ungültig. Erfolgreiche Anmeldungen erscheinen als `[ADMIN] Erfolgreiche Anmeldung` (mit Client-IP), Fehlversuche als `[ADMIN] Falsches Passwort`. Die Tabelle liest aus der Datenbank mit einer festen Zahl von Abfragen; die Detailansicht und die DSGVO-Einträge laden erst auf Klick.
+
 ### Env-Variablen für Managed AI
 
 Alle sind **optional**: ohne `MANAGED_AI_ENABLED=true` ist das Feature aus, und

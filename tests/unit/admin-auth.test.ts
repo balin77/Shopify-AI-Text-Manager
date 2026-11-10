@@ -27,7 +27,11 @@ const auditRow = {
 };
 vi.mock("~/db.server", () => ({
   db: {
-    session: { findMany: vi.fn(async () => []) },
+    offlineTokenMigration: { findMany: vi.fn(async () => []) },
+    webhookLog: { groupBy: vi.fn(async () => []) },
+    webhookRetry: { groupBy: vi.fn(async () => []) },
+    imageOperationCounter: { findMany: vi.fn(async () => []) },
+    managedAiGlobalCounter: { findMany: vi.fn(async () => []) },
     shopInstallState: { findMany: vi.fn(async () => []) },
     aISettings: { findMany: vi.fn(async () => []) },
     product: { groupBy: vi.fn(async () => []) },
@@ -35,7 +39,7 @@ vi.mock("~/db.server", () => ({
     article: { groupBy: vi.fn(async () => []) },
     page: { groupBy: vi.fn(async () => []) },
     task: { groupBy: vi.fn(async () => []) },
-    $queryRaw: vi.fn(async () => [{ bytes: BigInt(0) }]),
+    $queryRaw: vi.fn(async () => []),
     gdprAuditLog: {
       // Mimic `select`: only the selected columns come back.
       findMany: vi.fn(async (args: { select: Record<string, boolean> }) =>
