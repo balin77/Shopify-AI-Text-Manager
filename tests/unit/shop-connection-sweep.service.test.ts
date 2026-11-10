@@ -123,9 +123,27 @@ describe("probe of blocked shops", () => {
     const stats = await sweep().tick(NOW, { pauseMs: 0 });
     expect(stats.probed).toBe(1);
     expect(stats.probeLifted).toBe(1);
-    expect(h.clear).toHaveBeenCalledWith("a.myshopify.com", "probe_ok", { sinceAtOrBefore: NOW });
+    const fence = (h.clear.mock.calls[0][2] as { sinceAtOrBefore: Date }).sinceAtOrBefore;
+    expect(h.clear.mock.calls[0].slice(0, 2)).toEqual(["a.myshopify.com", "probe_ok"]);
+    expect(fence.getTime()).toBeGreaterThanOrEqual(NOW.getTime());
     expect(installOf("a.myshopify.com").lastProbeAt).toBeInstanceOf(Date);
     expect(installOf("a.myshopify.com").lastApiOkAt).toBeInstanceOf(Date);
+  });
+
+  it("the lift fence is a fresh instant, not the tick's start: a block the same tick set later is liftable", async () => {
+    // The boot backfill stores a later `new Date()` than the tick's `now`; with
+    // the tick's start as the fence `connectionStateSince <= startedAt` failed.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(NOW.getTime() + 20_000));
+      blockedShop("late.myshopify.com", { connectionStateSince: new Date(NOW.getTime() + 5_000) });
+      await sweep().tick(NOW, { pauseMs: 0 });
+      const fence = (h.clear.mock.calls[0][2] as { sinceAtOrBefore: Date }).sinceAtOrBefore;
+      expect(fence.getTime()).toBe(NOW.getTime() + 20_000);
+      expect(fence.getTime()).toBeGreaterThanOrEqual(new Date(NOW.getTime() + 5_000).getTime());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("drops a stale 404 / 403 migration record of the shop that just proved it works, and only that kind", async () => {
