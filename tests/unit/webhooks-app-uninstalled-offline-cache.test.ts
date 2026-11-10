@@ -16,7 +16,12 @@ vi.mock("~/utils/shop-connection-state.server", () => ({
 }));
 
 vi.mock("~/utils/webhook-auth.server", () => ({
-  verifyWebhookRequest: vi.fn(async () => ({ shop: "gone.myshopify.com" })),
+  verifyWebhookRequest: vi.fn(async () => ({
+    shop: "gone.myshopify.com",
+    topic: "app/uninstalled",
+    webhookId: "w1",
+    payload: { myshopify_domain: "gone.myshopify.com" },
+  })),
 }));
 vi.mock("~/db.server", () => ({
   db: {
@@ -26,7 +31,7 @@ vi.mock("~/db.server", () => ({
         return { count: 1 };
       }),
     },
-    shopInstallState: { upsert: vi.fn(async () => ({})), updateMany: vi.fn(async () => ({ count: 1 })) },
+    shopInstallState: { findUnique: vi.fn(async () => null), upsert: vi.fn(async () => ({})), updateMany: vi.fn(async () => ({ count: 1 })) },
     aISettings: { updateMany: vi.fn(async () => ({ count: 0 })) },
   },
 }));

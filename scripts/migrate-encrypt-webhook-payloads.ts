@@ -54,6 +54,14 @@ function validateEnvironment(): void {
   console.log(`📊 Database: ${process.env.DATABASE_URL.split('@')[1] || 'configured'}\n`);
 }
 
+// Individual error lines are bounded; the summary carries the total count.
+const MAX_ERROR_LINES = 10;
+
+function logError(message: string, stats: MigrationStats): void {
+  if (stats.errors <= MAX_ERROR_LINES) console.error(`  ❌ ${message}`);
+  else if (stats.errors === MAX_ERROR_LINES + 1) console.error('  ❌ (further errors suppressed, see error count in summary)');
+}
+
 /**
  * Encrypt a single webhook's payload
  */
@@ -65,14 +73,12 @@ async function encryptWebhook(webhook: any, dryRun: boolean, stats: MigrationSta
       return;
     }
 
-    console.log(`  Processing webhook: ${webhook.id} (topic: ${webhook.topic}, shop: ${webhook.shop})`);
-
     // Encrypt payload
     const encryptedPayload = encryptPayload(webhook.payload);
 
     if (!encryptedPayload) {
-      console.warn(`    ⚠️  Failed to encrypt payload for webhook ${webhook.id}`);
       stats.errors++;
+      logError(`Failed to encrypt payload for webhook ${webhook.id}`, stats);
       return;
     }
 
@@ -84,12 +90,11 @@ async function encryptWebhook(webhook: any, dryRun: boolean, stats: MigrationSta
       });
     }
 
-    console.log(`    ✅ Payload encrypted${dryRun ? ' (DRY RUN)' : ''}`);
     stats.webhooksEncrypted++;
     stats.webhooksProcessed++;
   } catch (error) {
     stats.errors++;
-    console.error(`    ❌ Error encrypting webhook ${webhook.id}:`, error instanceof Error ? error.message : error);
+    logError(`Error encrypting webhook ${webhook.id}: ${error instanceof Error ? error.message : error}`, stats);
   }
 }
 
@@ -119,7 +124,7 @@ async function migrate(dryRun: boolean = true): Promise<MigrationStats> {
     const BATCH_SIZE = 100;
     let skip = 0;
 
-    console.log(`🔄 Processing webhooks in batches of ${BATCH_SIZE}...\n`);
+    console.log(`🔄 Processing webhooks in batches of ${BATCH_SIZE} (summary only, no per-webhook lines)...\n`);
 
     while (skip < stats.totalWebhooks) {
       const webhooks = await db.webhookLog.findMany({
@@ -135,8 +140,6 @@ async function migrate(dryRun: boolean = true): Promise<MigrationStats> {
 
       if (webhooks.length === 0) break;
 
-      console.log(`📦 Batch ${Math.floor(skip / BATCH_SIZE) + 1}: Processing ${webhooks.length} webhooks...`);
-
       // Process each webhook in the batch
       for (const webhook of webhooks) {
         await encryptWebhook(webhook, dryRun, stats);
@@ -144,9 +147,6 @@ async function migrate(dryRun: boolean = true): Promise<MigrationStats> {
 
       skip += BATCH_SIZE;
 
-      // Progress update
-      const progress = Math.min(100, Math.round((skip / stats.totalWebhooks) * 100));
-      console.log(`  Progress: ${progress}% (${skip}/${stats.totalWebhooks})\n`);
     }
 
     return stats;

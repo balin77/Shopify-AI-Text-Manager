@@ -96,6 +96,20 @@ describe("markConnectionBlocked / clearConnectionBlock", () => {
     expect(logs.warn).toHaveLength(2);
   });
 
+  it("needs_reauth never replaces a block: a final kind stays even when the caller's cache said 'not blocked'", async () => {
+    await markConnectionBlocked(SHOP, "access_denied", "token_endpoint_403", { observedAt: new Date() });
+    const since = store.get(SHOP)!.connectionStateSince;
+    for (const reason of ["no_token", "admin_api_401", "invalid_subject_token"]) {
+      expect(await markConnectionBlocked(SHOP, "needs_reauth", reason, { observedAt: new Date() })).toEqual({ changed: false, why: "unchanged" });
+    }
+    expect(store.get(SHOP)).toMatchObject({ connectionState: "access_denied", connectionStateReason: "token_endpoint_403" });
+    expect(store.get(SHOP)!.connectionStateSince).toBe(since);
+    // shop_not_found likewise; and the final kinds may still replace each other
+    await markConnectionBlocked(SHOP, "shop_not_found", "token_endpoint_404", { observedAt: new Date() });
+    expect((await markConnectionBlocked(SHOP, "needs_reauth", "no_token", { observedAt: new Date() })).changed).toBe(false);
+    expect(store.get(SHOP)!.connectionState).toBe("shop_not_found");
+  });
+
   it("stores a code, never a sentence or token-like text", async () => {
     await markConnectionBlocked(SHOP, "needs_reauth", "Token shpat_ABC123 rejected!", { observedAt: new Date() });
     expect(store.get(SHOP)!.connectionStateReason).toMatch(/^[a-z0-9_]+$/);

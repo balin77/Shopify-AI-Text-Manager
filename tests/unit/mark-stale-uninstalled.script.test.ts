@@ -85,7 +85,7 @@ describe("mark-stale-uninstalled", () => {
     const a = io();
     expect(await runMarkStaleUninstalled(["--shop", SHOP, "--apply"], a.io, NOW)).toBe(0);
     expect(h.mark).toHaveBeenCalledTimes(1);
-    expect(h.mark).toHaveBeenCalledWith(SHOP, { source: "operator", ifBlockedSince: expect.any(Date) });
+    expect(h.mark).toHaveBeenCalledWith(SHOP, { source: "operator", ifBlockedSince: expect.any(Date), failure: {} });
   });
 
   it("refuses (exit 2) without evidence, also with --apply", async () => {

@@ -32,6 +32,7 @@ import {
   type ConnectionSessionFacts,
   type ConnectionStatusResult,
 } from "./shop-connection-status.shared";
+import type { MarkRefusal, UninstallEvidence, UninstallReviewView } from "./admin/uninstall-review.shared";
 
 /** Shops marked by one automatic run at most. */
 export const STALE_AUTO_MARK_PER_RUN = 5;
@@ -107,6 +108,83 @@ export async function reviewStaleInstall(shop: string, now: Date = new Date()): 
     presumedUninstalled: isPresumedUninstalled(install, now),
     autoMarkEligible: isStaleAutoMarkCandidate(install, now),
   };
+}
+
+/**
+ * THE evidence rule of the operator marking, shared by the script and the
+ * /admin button. First refusal wins; null means "may be marked". A session that
+ * still holds a token refuses unless `forceWithToken` (script only).
+ */
+export function judgeStaleMark(review: StaleInstallReview, opts: { forceWithToken?: boolean } = {}): MarkRefusal | null {
+  if (!review.found) return "unknown_shop";
+  if (review.alreadyUninstalled) return "already_uninstalled";
+  if (!review.presumedUninstalled) return "no_evidence";
+  if (review.sessions.withToken > 0 && !opts.forceWithToken) return "token_present";
+  return null;
+}
+
+const isoOrNull = (d: unknown): string | null => {
+  if (d === null || d === undefined) return null;
+  const t = d instanceof Date ? d : new Date(d as string | number);
+  return Number.isNaN(t.getTime()) ? null : t.toISOString();
+};
+
+/** The panel's view of a review: verdict plus evidence, no secret of any kind. */
+export function uninstallReviewView(review: StaleInstallReview): UninstallReviewView {
+  const refusal = judgeStaleMark(review);
+  const i = review.install;
+  return {
+    shop: review.shop,
+    eligible: refusal === null,
+    refusal,
+    evidence: i
+      ? {
+          connectionState: i.connectionState ?? null,
+          connectionStateReason: i.connectionStateReason ?? null,
+          connectionStateSince: isoOrNull(i.connectionStateSince),
+          derivedStatus: review.status?.status ?? null,
+          lastWebhookAt: isoOrNull(i.lastWebhookAt),
+          lastApiOkAt: isoOrNull(i.lastApiOkAt),
+          lastActivityAt: isoOrNull(i.lastActivityAt),
+          lastAuthAt: isoOrNull(i.lastAuthAt),
+          reinstallEvidenceAt: isoOrNull(i.reinstallEvidenceAt),
+          sessionsTotal: review.sessions.total,
+          hasToken: review.sessions.withToken > 0,
+          hasRefreshToken: review.sessions.withRefreshToken > 0,
+          migration: review.migration ? `${review.migration.status}, ${review.migration.attempts} Versuch(e)` : null,
+        }
+      : null,
+  };
+}
+
+export type MarkStaleResult = { ok: true } | { ok: false; reason: MarkRefusal | "changed" | "error" };
+
+/**
+ * Mark ONE shop uninstalled (source "operator") after RE-READING the facts and
+ * re-judging them: nothing a caller claimed counts. The write itself is
+ * conditional on the reviewed block (`ifBlockedSince`). Logs one line without
+ * any token. `via` only names the entrance in that line.
+ */
+export async function markStaleShopUninstalled(
+  shop: string,
+  opts: { forceWithToken?: boolean; via: "script" | "admin_ui"; now?: Date },
+): Promise<MarkStaleResult> {
+  const review = await reviewStaleInstall(shop, opts.now ?? new Date());
+  const refusal = judgeStaleMark(review, { forceWithToken: opts.forceWithToken });
+  if (refusal) return { ok: false, reason: refusal };
+  const since = review.install?.connectionStateSince;
+  // Never write unconditionally from this path: without the reviewed block start
+  // there is nothing to condition on, so it is no evidence.
+  if (!since) return { ok: false, reason: "no_evidence" };
+  const { markShopUninstalled } = await import("./shop-uninstall.server");
+  const failure: { reason?: "changed" | "error" } = {};
+  const done = await markShopUninstalled(shop, { source: "operator", ifBlockedSince: new Date(since), failure });
+  if (done === false) return { ok: false, reason: failure.reason ?? "changed" };
+  logger.info(
+    `[StaleInstall] OPERATOR_MARKED_UNINSTALLED shop=${shop} via=${opts.via} state=${review.install?.connectionState ?? "none"} ` +
+      `reason=${review.install?.connectionStateReason ?? "unknown"} since=${isoOrNull(since) ?? "unknown"}`,
+  );
+  return { ok: true };
 }
 
 export interface AutoMarkResult {
@@ -198,10 +276,12 @@ export async function autoMarkStaleInstalls(
       const shop = review.shop;
       try {
         const since = review.install?.connectionStateSince;
+        // Never an unconditional write: without a block start there is no claim to make.
+        if (!since) continue;
         const { markShopUninstalled } = await import("./shop-uninstall.server");
         const done = await markShopUninstalled(shop, {
           source: "stale_auto",
-          ifBlockedSince: since ? new Date(since) : undefined,
+          ifBlockedSince: new Date(since),
         });
         if (done === false) continue;
         result.marked.push(shop);

@@ -11,6 +11,8 @@
  */
 
 import { execSync } from 'child_process';
+import { readdirSync, statSync } from 'fs';
+import { decideAfterMigrateDeploy, isTransientDbError, retryDelayMs } from './migrate-deploy-decision.js';
 
 const colors = {
   reset: '\x1b[0m',
@@ -41,7 +43,9 @@ function runSilent(command) {
     const output = execSync(command, { stdio: 'pipe', encoding: 'utf-8' });
     return { success: true, output };
   } catch (e) {
-    return { success: false, output: e.stderr?.toString() || e.message || '' };
+    // Keep stdout too: it lists the migrations applied before the failure.
+    const out = `${e.stdout?.toString() ?? ''}${e.stderr?.toString() ?? ''}`;
+    return { success: false, output: out || e.message || '' };
   }
 }
 
@@ -131,15 +135,54 @@ async function main() {
 
   // 3. Run Prisma Schema Migrations
   log('\n📦 Running Prisma Schema Migrations...', 'blue');
-  const migrateSuccess = runCommand(
-    'npx prisma migrate deploy',
-    'Prisma Schema Migrations'
-  );
+  // Retry only while the database is not reachable yet (P1001/P1002/ECONNREFUSED...).
+  const MAX_ATTEMPTS = 4;
+  let migrateSuccess = false;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const r = runSilent('npx prisma migrate deploy');
+    if (r.output) console.log(r.output);
+    if (r.success) { migrateSuccess = true; log('✅ Prisma Schema Migrations completed', 'green'); break; }
+    log('❌ Prisma Schema Migrations failed', 'red');
+    if (attempt < MAX_ATTEMPTS && isTransientDbError(r.output)) {
+      const wait = retryDelayMs(attempt);
+      log(`⚠️  Database not reachable yet, retry ${attempt}/${MAX_ATTEMPTS - 1} in ${wait / 1000}s`, 'yellow');
+      await new Promise((res) => setTimeout(res, wait));
+      continue;
+    }
+    break;
+  }
 
+  // On failure: is the schema this image needs nevertheless fully applied?
+  let schemaState = null;
   if (!migrateSuccess) {
-    log('⚠️  prisma migrate deploy failed, trying db push as fallback...', 'yellow');
-    // No --accept-data-loss: db push still applies additive changes, but aborts
-    // (non-zero) instead of silently DROPping columns/tables in production.
+    try {
+      const localMigrations = readdirSync('prisma/migrations').filter((n) =>
+        statSync(`prisma/migrations/${n}`).isDirectory());
+      const { PrismaClient } = await import('@prisma/client');
+      const prisma = new PrismaClient();
+      try {
+        const dbRows = await prisma.$queryRawUnsafe(
+          'SELECT "migration_name", "finished_at", "rolled_back_at" FROM "_prisma_migrations"');
+        schemaState = { localMigrations, dbRows };
+      } finally {
+        await prisma.$disconnect();
+      }
+    } catch (e) {
+      log(`  ↳ Schema state check failed: ${e.message?.substring(0, 120)}`, 'yellow');
+    }
+  }
+
+  const decision = decideAfterMigrateDeploy(migrateSuccess, process.env, schemaState);
+  if (decision.action === 'abort') {
+    log(`❌ ${decision.message}`, 'red');
+    process.exit(1);
+  }
+  if (decision.action === 'continue-schema-current') {
+    log(`⚠️  ${decision.message}`, 'yellow');
+  }
+  if (decision.action === 'db-push-fallback') {
+    log(`⚠️  ${decision.message}`, 'yellow');
+    // No --accept-data-loss: db push aborts (non-zero) instead of DROPping data.
     const pushSuccess = runCommand(
       'npx prisma db push --skip-generate',
       'Prisma DB Push (Fallback)'

@@ -172,6 +172,18 @@ describe('runInitialFullSync — R1 completion marker', () => {
     expect(m.sisUpdateMany).not.toHaveBeenCalled();
   });
 
+  it('keeps the owed catch-up flag when some PRODUCTS failed to save', async () => {
+    m.sisFindUnique.mockResolvedValue({ initialSyncCompletedAt: null, resyncRequiredSince: new Date(), droppedWebhookCount: 1 });
+    m.syncAllProducts.mockImplementation(async (opts: { result?: { failed: number } }) => {
+      if (opts.result) opts.result.failed = 2;
+      return 10;
+    });
+    const res = await runInitialFullSync(admin, shop);
+    expect(res.completed).toBe(true);
+    expect(m.sisUpdateMany).not.toHaveBeenCalled();
+    m.syncAllProducts.mockReset().mockResolvedValue(0);
+  });
+
   it('a failed initial sync does not touch the catch-up flag', async () => {
     m.sisFindUnique.mockResolvedValue({ initialSyncCompletedAt: null, resyncRequiredSince: new Date(), droppedWebhookCount: 1 });
     m.syncAllCollections.mockRejectedValue(new Error('API error'));

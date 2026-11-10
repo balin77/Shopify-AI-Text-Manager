@@ -35,10 +35,24 @@ export type UninstallSource = "webhook" | "operator" | "stale_auto";
  */
 export async function markShopUninstalled(
   shop: string,
-  opts: { source: UninstallSource; ifBlockedSince?: Date },
+  opts: {
+    source: UninstallSource;
+    ifBlockedSince?: Date;
+    /** Out-parameter for a conditional mark that returned false: why. */
+    failure?: { reason?: "changed" | "error" };
+  },
 ): Promise<boolean> {
   const { source } = opts;
   const tag = `[APP_UNINSTALLED]`;
+
+  // A caller that NAMES the claim but hands in nothing (`ifBlockedSince:
+  // undefined`, e.g. from a shop with no recorded block start) must not fall
+  // through to the unconditional mark below.
+  if ("ifBlockedSince" in opts && !opts.ifBlockedSince) {
+    logger.error(`${tag} Refusing to mark ${shop}: a conditional mark came without the reviewed block start`);
+    if (opts.failure) opts.failure.reason = "error";
+    return false;
+  }
 
   if (opts.ifBlockedSince) {
     try {
@@ -48,15 +62,27 @@ export async function markShopUninstalled(
           uninstalledAt: null,
           connectionState: { not: null },
           connectionStateSince: opts.ifBlockedSince,
+          // No sign of life since the block began (mirrors blockedWithoutLifeSince):
+          // a webhook, visit, sign-in, API success or reinstall evidence that landed
+          // after the review makes the claim fail.
+          AND: [
+            "lastWebhookAt",
+            "lastActivityAt",
+            "lastAuthAt",
+            "lastApiOkAt",
+            "reinstallEvidenceAt",
+          ].map((f) => ({ OR: [{ [f]: null }, { [f]: { lt: opts.ifBlockedSince } }] })),
         },
         data: { uninstalledAt: new Date(), uninstallSource: source },
       });
       if (claim.count === 0) {
         logger.info(`${tag} Not marking ${shop}: its state changed since it was reviewed`);
+        if (opts.failure) opts.failure.reason = "changed";
         return false;
       }
     } catch (error) {
       logger.error(`${tag} Claim for ${shop} failed:`, error instanceof Error ? error.message : String(error));
+      if (opts.failure) opts.failure.reason = "error";
       return false;
     }
   }

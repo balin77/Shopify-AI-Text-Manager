@@ -13,7 +13,7 @@ je Service unter Settings → Config-as-Code hinterlegt.
 
 | Service | Config-Datei | Inhalt |
 |---|---|---|
-| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health`, `drainingSeconds` 15 |
+| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` (Timeout 900 s, damit ein langer Index-Build beim Start nicht abgebrochen wird), `drainingSeconds` 15 |
 | Db Space Checker (Cron, nur production) | [railway.dbalert.json](railway.dbalert.json) | Dockerfile-Builder, `node scripts/db-alert.mjs`, alle 15 Min, kein Restart |
 | Db Backup (Cron, production **und** development) | [railway.dbbackup.json](railway.dbbackup.json) | Dockerfile-Builder, `node scripts/db-backup.mjs`, täglich 02:00 UTC, kein Restart |
 
@@ -394,6 +394,10 @@ Webhook `app/uninstalled` nie an, steht ein Shop ohne `uninstalledAt` da; Markie
   gefunden», ohne Webhook, Besuch, Anmeldung, API-Erfolg oder Beleg seit Beginn der Sperre),
   unbekannt oder schon deinstalliert ist, oder wenn noch eine Session ein Token hält
   (dann nur mit `--force-with-token`). Fehlen die App-Quellen, meldet es das klar.
+  **Dieselbe Prüfung gibt es als Knopf** in `/admin` (Details eines Shops → «Als deinstalliert
+  markieren»): aktiv nur mit Beleg, zeigt vorher die Belege, verlangt die exakt getippte
+  Shop-Domain und liest die Fakten auf dem Server neu. Ein Shop, dessen Session noch ein
+  Token hält, lässt sich dort **nicht** markieren (nur per Skript mit `--force-with-token`).
 - **Automatisches Markieren** `STALE_INSTALL_AUTO_MARK`: nur der exakte Wert `true` schaltet
   an, **standardmässig AUS**. Der Verbindungs-Sweep prüft dann höchstens stündlich und
   markiert (Quelle `stale_auto`) Shops, die seit mindestens 90 Tagen (14 bei «Shop nicht
@@ -882,6 +886,44 @@ railway connect Postgres
 7. **Rollback**: Bei Problemen in Railway auf vorherige Deployment Version zurück
 
 ## Troubleshooting
+
+### Fehlgeschlagene Migration beheben
+
+`scripts/run-all-migrations.js` läuft vor dem Serverstart (`npm run start:production`), also bei **jedem** Containerstart. Schlägt
+`prisma migrate deploy` fehl (typisch: P3009 nach einem abgebrochenen `CREATE INDEX CONCURRENTLY`), gilt:
+
+- Verbindungsfehler (P1001, P1002, ECONNREFUSED) werden bis zu 3-mal mit Wartezeit wiederholt, andere Fehler nie.
+- Sind **alle** Migrationen des Images trotzdem sauber angewendet (die fehlgeschlagene gehört zu einem neueren Image),
+  startet der Container trotzdem und loggt `MIGRATE_DEPLOY_FAILED_BUT_SCHEMA_CURRENT` mit dem Namen der fehlgeschlagenen
+  Migration. Der alte Container läuft also weiter, solange seine eigenen Migrationen angewendet sind, und gerät nach einem
+  fehlgeschlagenen Deploy nicht in eine Absturzschleife.
+  Achtung: Ist die neuere Migration nur zum Teil durchgelaufen, arbeitet der alte Container auf einem teilweise
+  geänderten Schema. Das ist nur sicher, solange Migrationen rückwärtsverträglich sind (erst hinzufügen, später entfernen).
+- Fehlt dem Image eine Migration, ist sie fehlgeschlagen oder lässt sich der Stand nicht lesen, bricht das Deploy mit
+  Exit-Code 1 ab (Log: `MIGRATE_DEPLOY_FAILED`) und der alte Container bleibt aktiv.
+
+Es gibt bewusst **keinen** stillen Wechsel auf `prisma db push`: der liesse ungültige (INVALID) Indizes und
+fehlgeschlagene Migrationszeilen für immer stehen, würde spätere SQL-Backfills überspringen und spätere Indizes ohne
+`CONCURRENTLY` bauen.
+
+Manuelle Behebung (die Befehle laufen gegen die Produktionsdatenbank, z. B. mit `railway run <befehl>` aus dem
+verknüpften Projekt oder mit gesetztem produktivem `DATABASE_URL`):
+
+1. Fehlgeschlagene Migration finden:
+   `SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL;`
+2. Ungültigen Index finden: `SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;`
+   Achtung: Die Abfrage listet auch einen Index, der **gerade aufgebaut wird**. Nichts löschen, solange ein Deploy oder
+   eine Migration läuft. Danach den ausgegebenen Namen unverändert (ohne zusätzliche Anführungszeichen) verwenden:
+   `DROP INDEX CONCURRENTLY IF EXISTS <ausgegebener_name>;` (ausserhalb einer Transaktion).
+3. Enthält die Migration mehrere Statements mit `CONCURRENTLY`, bleiben die früheren Statements angewendet. Vor dem
+   erneuten Lauf prüfen, was schon existiert, und Reste löschen; die Migration sollte `IF NOT EXISTS` verwenden.
+4. Migration als zurückgerollt markieren:
+   `npx prisma migrate resolve --rolled-back <migrationsname>`
+5. Neu deployen (Redeploy), die Migration läuft dann erneut.
+
+Notfall-Schalter: `ALLOW_DB_PUSH_FALLBACK=true` (genau dieser Wert) erlaubt nach einem
+fehlgeschlagenen `migrate deploy` mit unvollständigem Schema den Fallback auf `prisma db push`. Nur setzen, wenn bewusst
+in Kauf genommen wird, dass die oben genannten Altlasten bleiben; danach wieder entfernen.
 
 ### Build Fails:
 - Checke Logs im Railway Dashboard

@@ -66,10 +66,10 @@ export async function runMarkStaleUninstalled(
     return 1;
   }
   let reviewStaleInstall: typeof import("../app/services/stale-install.server").reviewStaleInstall;
-  let markShopUninstalled: typeof import("../app/services/shop-uninstall.server").markShopUninstalled;
+  let judgeStaleMark: typeof import("../app/services/stale-install.server").judgeStaleMark;
+  let markStaleShopUninstalled: typeof import("../app/services/stale-install.server").markStaleShopUninstalled;
   try {
-    ({ reviewStaleInstall } = await import("../app/services/stale-install.server"));
-    ({ markShopUninstalled } = await import("../app/services/shop-uninstall.server"));
+    ({ reviewStaleInstall, judgeStaleMark, markStaleShopUninstalled } = await import("../app/services/stale-install.server"));
   } catch (error) {
     io.error(
       "FAILED: the app sources or their dependencies could not be loaded (" +
@@ -97,18 +97,19 @@ export async function runMarkStaleUninstalled(
   io.log(`  token migration:       ${review.migration ? `${review.migration.status}, ${review.migration.attempts} attempt(s)` : "none"}`);
   io.log(`  presumed uninstalled:  ${review.presumedUninstalled ? "yes" : "no"}`);
 
-  if (review.alreadyUninstalled) {
+  const refusal = judgeStaleMark(review, { forceWithToken });
+  if (refusal === "already_uninstalled") {
     io.error("REFUSED: the shop is already marked uninstalled.");
     return 2;
   }
-  if (!review.presumedUninstalled) {
+  if (refusal === "no_evidence") {
     io.error(
       "REFUSED: no evidence that the shop is gone (needs a block of at least 30 days, 7 for a 404, " +
         "and no webhook, visit, sign-in, API success or reinstall evidence since).",
     );
     return 2;
   }
-  if (review.sessions.withToken > 0 && !forceWithToken) {
+  if (refusal === "token_present") {
     io.error(
       `REFUSED: the shop still has ${review.sessions.withToken} offline session(s) holding a token, which may be a live access. ` +
         "Check the shop first; to mark it anyway pass --force-with-token.",
@@ -119,16 +120,19 @@ export async function runMarkStaleUninstalled(
     io.log("DRY RUN: nothing was changed. Run again with --apply to mark the shop uninstalled (source operator).");
     return 0;
   }
-  // Re-read right before writing: a webhook or sign-in may have landed meanwhile.
-  const again = await reviewStaleInstall(shop, now);
-  if (!again.found || again.alreadyUninstalled || !again.presumedUninstalled || (again.sessions.withToken > 0 && !forceWithToken)) {
-    io.error("REFUSED: the evidence changed while the script ran; nothing was marked.");
-    return 2;
+  // The shared function re-reads the facts right before writing: a webhook or
+  // sign-in may have landed meanwhile.
+  const done = await markStaleShopUninstalled(shop, { forceWithToken, via: "script", now });
+  if (!done.ok && done.reason === "error") {
+    io.error("FAILED: the database write failed; nothing was confirmed as marked. Check the shop and try again.");
+    return 1;
   }
-  const since = again.install?.connectionStateSince;
-  const done = await markShopUninstalled(shop, { source: "operator", ifBlockedSince: since ? new Date(since) : undefined });
-  if (done === false) {
-    io.error("REFUSED: the shop's state changed while the script ran; nothing was marked.");
+  if (!done.ok) {
+    io.error(
+      done.reason === "changed"
+        ? "REFUSED: the shop's state changed while the script ran; nothing was marked."
+        : "REFUSED: the evidence changed while the script ran; nothing was marked.",
+    );
     return 2;
   }
   io.log(`MARKED: ${shop} is now uninstalled (source operator). The data reaper handles it after its retention window.`);

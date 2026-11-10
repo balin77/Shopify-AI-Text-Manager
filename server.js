@@ -227,10 +227,14 @@ app.use((req, res, next) => {
   next();
 });
 
+const { serverReferrerPolicy } = require("./app/middleware/referrer-policy.cjs");
+
 // Basic security headers (CSP removed - causes issues with Shopify App Bridge)
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // /admin sets its own (no-referrer); a second value here made two headers.
+  const referrerPolicy = serverReferrerPolicy(req.path);
+  if (referrerPolicy) res.setHeader('Referrer-Policy', referrerPolicy);
   res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   next();

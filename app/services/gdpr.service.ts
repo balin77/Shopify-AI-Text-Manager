@@ -659,7 +659,7 @@ export async function redactShopData(
  */
 export async function logGDPRRequest(
   shop: string,
-  requestType: 'data_request' | 'customer_redact' | 'shop_redact',
+  requestType: 'data_request' | 'customer_redact' | 'shop_redact' | 'admin_redact',
   customerId?: number | string | null,
   customerEmail?: string,
   dataExported?: unknown,

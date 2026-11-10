@@ -28,6 +28,8 @@ export interface VerifiedWebhook {
   shop: string;
   topic: string;
   webhookId: string;
+  /** Delivery time Shopify stamped on the event (header), when it sent one. */
+  triggeredAt?: string;
   payload: Record<string, unknown>;
 }
 
@@ -65,5 +67,6 @@ export async function verifyWebhookRequest(request: Request): Promise<VerifiedWe
     refuse(400, "Bad Request", "body_not_json", request);
   }
 
-  return { shop: check.domain, topic: check.topic, webhookId: check.webhookId, payload };
+  const triggeredAt = (check as { triggeredAt?: string }).triggeredAt;
+  return { shop: check.domain, topic: check.topic, webhookId: check.webhookId, payload, ...(triggeredAt ? { triggeredAt } : {}) };
 }

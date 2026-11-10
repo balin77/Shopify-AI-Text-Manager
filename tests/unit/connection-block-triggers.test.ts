@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   block: vi.fn(async (..._a: any[]): Promise<any> => ({ state: "needs_reauth", since: new Date("2026-11-09T09:00:00Z"), reason: "stored_reason" })),
   noteUnauthorized: vi.fn(),
   noteSuccess: vi.fn(async (..._a: any[]) => undefined),
+  lift: vi.fn(async (..._a: any[]) => false),
   clear: vi.fn(async (..._a: any[]) => ({ cleared: false, droppedWebhookCount: 0, resyncRequiredSince: null })),
   getBlock: vi.fn<(shop: string) => Promise<any>>(async () => null),
 }));
@@ -33,6 +34,7 @@ vi.mock("~/utils/shop-connection-block.server", () => ({
   blockShopConnection: (...a: any[]) => h.block(...a),
   noteUnauthorized: (...a: any[]) => h.noteUnauthorized(...a),
   noteSuccessfulCall: (...a: any[]) => h.noteSuccess(...a),
+  liftBlockOnAccessEvidence: (...a: any[]) => h.lift(...a),
 }));
 vi.mock("~/utils/shop-connection-state.server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/utils/shop-connection-state.server")>();
@@ -81,6 +83,7 @@ beforeEach(() => {
   h.block.mockReset().mockResolvedValue({ state: "needs_reauth", since: new Date("2026-11-09T09:00:00Z"), reason: "stored_reason" });
   h.noteUnauthorized.mockReset();
   h.noteSuccess.mockReset();
+  h.lift.mockReset().mockResolvedValue(false);
   h.clear.mockReset().mockResolvedValue({ cleared: false, droppedWebhookCount: 0, resyncRequiredSince: null });
   h.getBlock.mockReset().mockResolvedValue(null);
   vi.mocked(logger.error).mockClear();
@@ -133,8 +136,15 @@ describe("library client (createRefreshingAdmin): a SECOND 401 with the same sto
     const admin = createRefreshingAdmin(SHOP);
     await (admin.graphql as any)("q");
     expect(h.noteSuccess).toHaveBeenCalledTimes(1);
+    // a successful scheduler call is also access evidence (with the session it used)
+    expect(h.lift).toHaveBeenCalledWith(
+      SHOP,
+      expect.any(Date),
+      expect.objectContaining({ answered: true, session: expect.objectContaining({ accessToken: "tok-1" }) }),
+    );
     await (admin.graphql as any)("q").catch(() => undefined);
     expect(h.noteSuccess).toHaveBeenCalledTimes(1);
+    expect(h.lift).toHaveBeenCalledTimes(1);
   });
 
   it("a second 401 with a DIFFERENT (freshly stored) token does not block", async () => {
@@ -291,6 +301,25 @@ describe("acquisition (getOfflineAdmin): only terminal evidence blocks", () => {
     expect(h.block.mock.calls[0][1]).toBe("no_token");
     expect((h.block.mock.calls[0][2] as { observedAt: Date }).observedAt.toISOString()).toBe("2026-11-09T10:00:00.000Z");
     expect(logger.error).not.toHaveBeenCalled(); // BLOCKED replaces it
+  });
+
+  it("the FIRST failure that blocks the shop throws the quiet blocked error, not the raw one", async () => {
+    vi.useFakeTimers();
+    h.getBlock.mockResolvedValue({ state: "needs_reauth", since: new Date("2026-11-09T10:00:00Z"), reason: "no_token" });
+    configureOfflineAdmin(deps({ unauthenticatedAdmin: vi.fn(async () => ({ session: session(""), admin: {} as never })) }));
+    const err = await getOfflineAdmin(SHOP).catch((e) => e);
+    expect(isShopConnectionBlockedError(err)).toBe(true);
+    expect(err).toMatchObject({ reason: "no_token", state: "needs_reauth" });
+    expect(h.block).toHaveBeenCalledTimes(1);
+  });
+
+  it("the re-read path (permanent refresh failure) also ends in the quiet blocked error", async () => {
+    vi.useFakeTimers();
+    h.getBlock.mockResolvedValue({ state: "needs_reauth", since: new Date(), reason: "invalid_subject_token" });
+    const invalid = Object.assign(new Error("bad"), { response: { code: 400, body: { error: "invalid_subject_token" } } });
+    configureOfflineAdmin(deps({ unauthenticatedAdmin: vi.fn(async () => Promise.reject(invalid)) }));
+    expect(isShopConnectionBlockedError(await failure())).toBe(true);
+    expect(logger.error).not.toHaveBeenCalled();
   });
 
   it("no_session (no offline session at all) does not block", async () => {

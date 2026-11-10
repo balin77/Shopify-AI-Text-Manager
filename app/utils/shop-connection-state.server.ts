@@ -47,7 +47,7 @@ import {
 
 export type { ConnectionBlockState } from "../services/shop-connection-status.shared";
 
-export type ConnectionClearCause = "reauth" | "reinstall" | "probe_ok" | "uninstalled";
+export type ConnectionClearCause = "reauth" | "reinstall" | "probe_ok" | "uninstalled" | "session_ok";
 
 export interface ConnectionBlock {
   state: ConnectionBlockState;
@@ -225,7 +225,13 @@ export async function markConnectionBlocked(
     const res = await db.shopInstallState.updateMany({
       where: {
         shop,
-        OR: [{ connectionState: null }, { connectionState: { not: state } }],
+        // needs_reauth is the WEAKEST kind: it may only create a block, never
+        // replace one (a final shop_not_found / access_denied stays, whatever
+        // the 30 s cache of the caller believed). The final kinds may replace
+        // each other and needs_reauth (the kind change restarts the clock).
+        ...(state === "needs_reauth"
+          ? { connectionState: null }
+          : { OR: [{ connectionState: null }, { connectionState: { not: state } }] }),
         AND: [{ OR: [{ connectionClearedAt: null }, { connectionClearedAt: { lte: observedAt } }] }],
       },
       data: { connectionState: state, connectionStateSince: now, connectionStateReason: code },
@@ -242,6 +248,12 @@ export async function markConnectionBlocked(
     });
     if (!row) return { changed: false, why: "no_row" };
     if (row.connectionState === state) return { changed: false, why: "unchanged" };
+    // A weaker kind found a block (of any kind) standing: it is blocked, nothing to add.
+    if (state === "needs_reauth" && row.connectionState) {
+      // The caller's cache did not know about that block: let the next read see it.
+      invalidateConnectionCache(shop);
+      return { changed: false, why: "unchanged" };
+    }
     return { changed: false, why: "fenced" };
   } catch (error) {
     logger.debug(`[ConnectionState] mark failed for ${shop}: ${error instanceof Error ? error.name : "error"}`);
@@ -264,7 +276,7 @@ export interface ClearBlockResult {
 export async function clearConnectionBlock(
   shop: string,
   cause: ConnectionClearCause,
-  opts: { onlyIfReason?: string; sinceAtOrBefore?: Date } = {},
+  opts: { onlyIfReason?: string; onlyState?: ConnectionBlockState; sinceAtOrBefore?: Date } = {},
 ): Promise<ClearBlockResult> {
   const none: ClearBlockResult = { cleared: false, droppedWebhookCount: 0, resyncRequiredSince: null };
   try {
@@ -278,7 +290,7 @@ export async function clearConnectionBlock(
     const lifted = await db.shopInstallState.updateMany({
       where: {
         shop,
-        ...(opts.onlyIfReason ? { connectionState: "needs_reauth", connectionStateReason: opts.onlyIfReason } : { connectionState: { not: null } }),
+        ...(opts.onlyIfReason ? { connectionState: "needs_reauth", connectionStateReason: opts.onlyIfReason } : { connectionState: opts.onlyState ?? { not: null } }),
         // The probe's lift: only a block that already stood when the probe
         // began (a block set after it says something the probe did not see).
         ...(opts.sinceAtOrBefore
@@ -293,7 +305,7 @@ export async function clearConnectionBlock(
         connectionClearedCause: cause,
       },
     });
-    if (lifted.count === 0 && (opts.onlyIfReason || opts.sinceAtOrBefore)) {
+    if (lifted.count === 0 && (opts.onlyIfReason || opts.onlyState || opts.sinceAtOrBefore)) {
       // A conditional clear that found another block (or none): leave the row
       // and the fence alone, and let the next read decide.
       bump(shop);
@@ -329,14 +341,15 @@ export async function clearConnectionBlock(
 
 /**
  * A webhook of a blocked shop was accepted but not processed: count it and owe a
- * catch-up. Never creates a row, never throws, logs at debug only.
+ * catch-up. `count` = how many deliveries were dropped (a purged retry queue
+ * drops several). Never creates a row, never throws, logs at debug only.
  */
-export async function noteDroppedWebhook(shop: string): Promise<void> {
+export async function noteDroppedWebhook(shop: string, count = 1): Promise<void> {
   try {
     const db = await dbClient();
     const res = await db.shopInstallState.updateMany({
       where: { shop },
-      data: { droppedWebhookCount: { increment: 1 } },
+      data: { droppedWebhookCount: { increment: Math.max(1, Math.floor(count) || 1) } },
     });
     if (res.count === 0) return;
     await db.shopInstallState.updateMany({

@@ -136,3 +136,67 @@ export function applyDocumentSecurityHeaders(
     responseHeaders.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
   }
 }
+
+/**
+ * Same-origin guard for the admin's state-changing actions that go beyond the
+ * SameSite=Lax cookie: a browser tells us where the request came from
+ * (`Sec-Fetch-Site`, else `Origin`). A request that names a foreign origin is
+ * refused; one that names none (a non-browser client with a valid cookie) passes,
+ * because it cannot be a cross-site form post.
+ */
+export function isSameOriginAdminRequest(request: Request): boolean {
+  const site = request.headers.get("Sec-Fetch-Site");
+  if (site) return site === "same-origin" || site === "none";
+  const origin = request.headers.get("Origin");
+  if (!origin) return true;
+  try {
+    const hosts = [new URL(request.url).host, request.headers.get("X-Forwarded-Host"), request.headers.get("Host")];
+    return hosts.some((h) => !!h && h === new URL(origin).host);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Strict variant for the DESTRUCTIVE intents (delete-shop, mark-uninstalled).
+ * SameSite=Lax alone is not enough on a custom domain: a sibling subdomain is
+ * "same-site" and its form post carries the cookie. So here a request must
+ * NAME its origin, and that origin must be the app's own: the host of
+ * SHOPIFY_APP_URL, or the host the browser used to reach us (Host /
+ * X-Forwarded-Host / request URL). A missing, `null` or foreign Origin is
+ * refused; a `Sec-Fetch-Site` that is present must say same-origin. Other
+ * admin intents keep the lenient `isSameOriginAdminRequest`.
+ */
+export function isStrictSameOriginAdminRequest(request: Request): boolean {
+  const site = request.headers.get("Sec-Fetch-Site");
+  if (site && site !== "same-origin") return false;
+  const origin = request.headers.get("Origin");
+  if (!origin) return false;
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return false;
+  }
+  if (!originHost) return false;
+  const own = new Set<string>();
+  const add = (h: string | null | undefined) => {
+    if (h) own.add(h.trim().toLowerCase());
+  };
+  try {
+    add(new URL(request.url).host);
+  } catch {
+    /* ignore */
+  }
+  add(request.headers.get("X-Forwarded-Host")?.split(",")[0]);
+  add(request.headers.get("Host"));
+  const appUrl = process.env.SHOPIFY_APP_URL?.trim();
+  if (appUrl) {
+    try {
+      add(new URL(appUrl).host);
+    } catch {
+      /* ignore */
+    }
+  }
+  return own.has(originHost.toLowerCase());
+}

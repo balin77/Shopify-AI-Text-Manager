@@ -90,6 +90,8 @@ export async function runInitialFullSync(
   let firstPhaseError: string | null = null;
   /** A phase that synced some items but reported failed > 0: the setup is done, a missed-webhook catch-up is not. */
   let partialFailure = false;
+  /** Filled by syncAllProducts: products it could not write. */
+  const productRun = { failed: 0 };
   /** Items to sync, and not one of them got through — see the emit sites. */
   const totalFailure = (run: { synced: number; failed: number }) => run.failed > 0 && run.synced === 0;
   const recordPhaseFailure = (phase: string, err: unknown): string => {
@@ -182,6 +184,7 @@ export async function runInitialFullSync(
     } else {
       const productSyncService = new ProductSyncService(admin, shop);
       stats.products = await productSyncService.syncAllProducts({
+        result: productRun,
         maxProducts: scope.products.max ?? planLimits.maxProducts,
         cacheProductImages: planLimits.cacheEnabled.productImages,
         signal,
@@ -228,6 +231,7 @@ export async function runInitialFullSync(
     assertNotAborted();
     const productSyncService = new ProductSyncService(admin, shop);
     stats.products = await productSyncService.syncAllProducts({
+      result: productRun,
       maxProducts: planLimits.maxProducts === Infinity ? 10000 : planLimits.maxProducts,
       cacheProductImages: planLimits.cacheEnabled.productImages,
       signal,
@@ -240,6 +244,13 @@ export async function runInitialFullSync(
         });
       },
     });
+  }
+
+  // Products that could not be written: the setup is done, a missed-webhook
+  // catch-up debt is not settled (same rule as collections / articles below).
+  if (productRun.failed > 0) {
+    partialFailure = true;
+    emit('products', 100, `Synced ${stats.products} products, ${productRun.failed} failed`);
   }
 
   // ==========================================

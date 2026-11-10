@@ -430,20 +430,26 @@ export class ShopConnectionSweepService {
    * Probe ONE blocked shop. Public for tests. Never throws. Uses the stored
    * access directly (getOfflineAdmin), not createAdminClientFromShop: that one
    * refuses a blocked shop, and the probe exists to find out whether it still
-   * should. `startedAt` is when the probe BEGAN (the tick's start in practice):
-   * it is the stamp, and a block set after it is not lifted.
+   * should. `startedAt` is the STAMP written to lastProbeAt (the tick's start in
+   * practice). The FENCE of the lift is a fresh instant taken right before this
+   * probe's own request: the tick's start predates blocks the same tick set (the
+   * boot backfill stores a later `new Date()`), so fencing on it could never lift
+   * them, and the shop would wait a full probe interval. A block that stood
+   * before the request went out is lifted by a success; one set after it began is
+   * not (it says something this probe did not see).
    */
   async probeShop(shop: string, startedAt: Date = new Date()): Promise<ProbeOutcome> {
     try {
       const install = await db.shopInstallState.findUnique({ where: { shop }, select: { uninstalledAt: true } });
       if (install?.uninstalledAt) return "uninstalled";
       let response: unknown;
+      const fenceAt = new Date(Math.max(startedAt.getTime(), Date.now()));
       try {
         const { admin } = await getOfflineAdmin(shop);
         response = await (admin.graphql as (q: string) => Promise<unknown>)("query ConnectionProbe { shop { id } }");
       } catch (error) {
         await this.stampProbe(shop, startedAt);
-        if (error instanceof OfflineAdminUnavailableError) return "unavailable";
+        if (error instanceof OfflineAdminUnavailableError || (error as { code?: unknown } | null)?.code === "SHOP_CONNECTION_BLOCKED") return "unavailable";
         if (isUnauthorizedError(error)) return "unauthorized";
         // record:false -- the shop is blocked already, so its own 403s say
         // nothing about our address and must not feed the allowlist suspicion.
@@ -465,7 +471,7 @@ export class ShopConnectionSweepService {
       noteApiSuccess(shop);
       // Conditional in the database: only a block that already stood when the
       // probe began is lifted (one set after it says something it did not see).
-      const lifted = await clearConnectionBlock(shop, "probe_ok", { sinceAtOrBefore: startedAt });
+      const lifted = await clearConnectionBlock(shop, "probe_ok", { sinceAtOrBefore: fenceAt });
       await this.stampProbe(shop, startedAt, true);
       if (!lifted.cleared) return "still_blocked";
       // The shop works, so a 404 / shop-specific 403 of the token endpoint is

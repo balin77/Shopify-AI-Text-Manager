@@ -23,7 +23,8 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { data as json, redirect } from "react-router";
 import { useLoaderData, useActionData, Form, useFetcher } from "react-router";
-import { redactShopData } from '~/services/gdpr.service';
+import { redactShopData, logGDPRRequest } from '~/services/gdpr.service';
+import { INSTALLED_REFUSAL_TEXT, isForceTicked, isShopInstalled } from '~/services/admin/delete-shop-guard.server';
 import {
   loadAuditDetail,
   loadAuditRows,
@@ -37,6 +38,8 @@ import {
 import { ShopOverviewTable } from '~/components/admin/ShopOverviewTable';
 import { LOGIN_WIDTH, PAGE, TD, TH } from '~/components/admin/admin-styles';
 import { logger } from '~/utils/logger.server';
+import { markStaleShopUninstalled, reviewStaleInstall, uninstallReviewView } from '~/services/stale-install.server';
+import { SHOP_DOMAIN_RE, markRefusalText } from '~/services/admin/uninstall-review.shared';
 import { adminLoginLimiter, clientIpFromRequest } from '~/utils/admin-login-limiter.server';
 import {
   ADMIN_PASSWORD_MIN_LENGTH,
@@ -45,6 +48,7 @@ import {
   adminPasswordState,
   constantTimeEqual,
   isAdminAuthenticated,
+  isStrictSameOriginAdminRequest,
   serializeAdminLogout,
   serializeAdminSession,
 } from '~/utils/admin-auth.server';
@@ -130,7 +134,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (!detail) {
       return json({ error: 'Shop nicht gefunden.' }, { status: 404, headers: baseHeaders() });
     }
-    return json({ detail }, { headers: baseHeaders() });
+    // Evidence for "Als deinstalliert markieren" (facts and flags, no token).
+    let uninstall = null;
+    try {
+      uninstall = uninstallReviewView(await reviewStaleInstall(detailShop));
+    } catch (error) {
+      logger.warn(`[ADMIN] uninstall review failed: ${error instanceof Error ? error.name : 'error'}`);
+    }
+    return json({ detail, uninstall }, { headers: baseHeaders() });
   }
   const auditId = params.get('audit');
   if (auditId !== null) {
@@ -146,6 +157,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     { headers: baseHeaders() },
   );
 };
+
+/**
+ * Durable trail of a manual delete (GdprAuditLog survives the redaction it
+ * records, 3-year retention). Never throws: the delete has already happened.
+ * The client IP goes to the log only; the table has no column for it.
+ */
+async function writeAdminRedactAudit(shop: string, error: string | undefined): Promise<void> {
+  try {
+    await logGDPRRequest(shop, 'admin_redact', null, undefined, undefined, error);
+  } catch (auditError) {
+    logger.error('[ADMIN] Audit-Eintrag für manuelles Löschen fehlgeschlagen', {
+      shop,
+      error: auditError instanceof Error ? auditError.message : String(auditError),
+    });
+  }
+}
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const form = await request.formData();
@@ -205,12 +232,57 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ error: 'Nicht angemeldet.' }, { status: 401, headers: baseHeaders() });
   }
 
+  // --- Als deinstalliert markieren (Operator, nur mit Beleg) ---
+  if (intent === 'mark-uninstalled') {
+    if (!isStrictSameOriginAdminRequest(request)) {
+      return json({ error: 'Anfrage von fremdem Ursprung abgelehnt.' }, { status: 403, headers: baseHeaders() });
+    }
+    const shop = String(form.get('shop') ?? '').trim().toLowerCase();
+    const confirm = String(form.get('confirm') ?? '');
+    if (!SHOP_DOMAIN_RE.test(shop)) {
+      return json({ error: 'Ungültige Shop-Domain.' }, { status: 400, headers: baseHeaders() });
+    }
+    if (confirm !== shop) {
+      return json(
+        { error: `Bestätigung stimmt nicht. Tippe exakt "${shop}" ins Bestätigungsfeld.` },
+        { status: 400, headers: baseHeaders() },
+      );
+    }
+    try {
+      // Facts are re-read and re-judged here; nothing the client showed counts.
+      // No force option: a shop whose session still holds a token is refused.
+      const result = await markStaleShopUninstalled(shop, { via: 'admin_ui' });
+      if (!result.ok) {
+        const text =
+          result.reason === 'changed'
+            ? 'Der Zustand des Shops hat sich geändert, nichts wurde markiert. Bitte neu laden und prüfen.'
+            : result.reason === 'error'
+              ? 'Fehler beim Speichern, bitte erneut versuchen.'
+              : markRefusalText(result.reason);
+        return json({ error: text }, { status: result.reason === 'error' ? 500 : 409, headers: baseHeaders() });
+      }
+      return json({ ok: `${shop} ist als deinstalliert markiert.` }, { headers: baseHeaders() });
+    } catch (error) {
+      logger.error('[ADMIN] Markieren fehlgeschlagen', {
+        shop,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return json({ error: 'Markieren fehlgeschlagen.' }, { status: 500, headers: baseHeaders() });
+    }
+  }
+
   // --- Shop-Daten löschen ---
   if (intent === 'delete-shop') {
-    const shop = String(form.get('shop') ?? '');
+    if (!isStrictSameOriginAdminRequest(request)) {
+      return json({ error: 'Anfrage von fremdem Ursprung abgelehnt.' }, { status: 403, headers: baseHeaders() });
+    }
+    const shop = String(form.get('shop') ?? '').trim().toLowerCase();
     const confirm = String(form.get('confirm') ?? '');
     if (!shop) {
       return json({ error: 'Kein Shop angegeben.' }, { status: 400, headers: baseHeaders() });
+    }
+    if (!SHOP_DOMAIN_RE.test(shop)) {
+      return json({ error: 'Ungültige Shop-Domain.' }, { status: 400, headers: baseHeaders() });
     }
     if (confirm !== shop) {
       return json(
@@ -220,21 +292,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         { status: 400, headers: baseHeaders() },
       );
     }
+    const force = isForceTicked(form.get('force'));
+    const clientIp = clientIpFromRequest(request);
     try {
-      logger.warn(`[ADMIN] Manuelles vollständiges Löschen aller Daten für ${shop}`);
+      if (!force && (await isShopInstalled(shop))) {
+        logger.warn(`[ADMIN] Löschen von ${shop} verweigert: Shop ist installiert (ip=${clientIp})`);
+        return json({ error: INSTALLED_REFUSAL_TEXT }, { status: 409, headers: baseHeaders() });
+      }
+      logger.warn(`[ADMIN] Manuelles vollständiges Löschen aller Daten für ${shop} (ip=${clientIp}, force=${force})`);
       await redactShopData({ shop_id: 0, shop_domain: shop });
+      await writeAdminRedactAudit(shop, undefined);
       return json({ ok: `Alle Daten für ${shop} wurden gelöscht.` }, { headers: baseHeaders() });
     } catch (error) {
-      logger.error('[ADMIN] Löschen fehlgeschlagen', {
-        shop,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return json(
-        {
-          error: `Löschen fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`,
-        },
-        { status: 500, headers: baseHeaders() },
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('[ADMIN] Löschen fehlgeschlagen', { shop, ip: clientIp, error: message });
+      await writeAdminRedactAudit(shop, message);
+      return json({ error: 'Löschen fehlgeschlagen. Details stehen im Server-Log.' }, { status: 500, headers: baseHeaders() });
     }
   }
 

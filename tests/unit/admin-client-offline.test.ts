@@ -20,6 +20,11 @@ vi.mock("~/shopify.server", () => ({
   apiVersion: "2026-07",
   sessionStorage: { findSessionsByShop: h.findSessionsByShop },
 }));
+// No DB in unit tests: getConnectionBlock would import the real db.server.
+vi.mock("~/utils/shop-connection-state.server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/utils/shop-connection-state.server")>();
+  return { ...actual, getConnectionBlock: vi.fn(async () => null) };
+});
 vi.mock("~/utils/offline-admin.server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/utils/offline-admin.server")>();
   return {

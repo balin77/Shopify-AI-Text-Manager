@@ -66,14 +66,21 @@ vi.mock("../../app/utils/logger.server", () => ({
   },
 }));
 
+const catchUp = vi.hoisted(() => vi.fn(async () => "done"));
+vi.mock("../../app/services/webhook-catchup.server", () => ({
+  runWebhookCatchUp: (...a: unknown[]) => catchUp(...(a as [])),
+  isCatchUpInFlight: () => false,
+}));
 vi.mock("../../app/services/ops-alert.server", () => ({ notifyOps: (...a: unknown[]) => opsAlerts.push(a) }));
 
 import {
+  ACCESS_LIVE_CHECK_TIMEOUT_MS,
   MASS_401_SUPPRESS_MS,
   MASS_401_WINDOW_MS,
   __resetConnectionBlockForTests,
   blockOnAdmin401Enabled,
   blockShopConnection,
+  liftBlockOnAccessEvidence,
   liftConnectionBlockAfterAuth,
   noteSuccessfulCall,
   noteUnauthorized,
@@ -113,6 +120,15 @@ describe("blockShopConnection", () => {
     store.set(SHOP, row({ connectionState: "access_denied", connectionStateReason: "token_endpoint_403" }));
     expect(await blockShopConnection(SHOP, "no_token", { observedAt: new Date() })).toBeTruthy();
     expect(store.get(SHOP)!.connectionState).toBe("access_denied");
+  });
+
+  it("a stale cache cannot let needs_reauth overwrite a final kind (the write is conditional in the database)", async () => {
+    expect(await getConnectionBlock(SHOP)).toBeNull(); // cache: not blocked
+    // the final kind lands behind the cache's back (another instance)
+    store.set(SHOP, row({ connectionState: "shop_not_found", connectionStateSince: new Date(), connectionStateReason: "token_endpoint_404" }));
+    const blocked = await blockShopConnection(SHOP, "no_token", { observedAt: new Date() });
+    expect(blocked).toMatchObject({ state: "shop_not_found" });
+    expect(store.get(SHOP)).toMatchObject({ connectionState: "shop_not_found", connectionStateReason: "token_endpoint_404" });
   });
 
   it("the fence: a failure that began before the last re-authorisation does not block", async () => {
@@ -366,5 +382,134 @@ describe("lifting", () => {
     shopInstallState.findUnique.mockClear();
     for (let i = 0; i < 20; i++) await noteSuccessfulCall(SHOP, new Date());
     expect(shopInstallState.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("liftBlockOnAccessEvidence (a real Shopify answer, not a session that merely exists)", () => {
+  const goodSession = () => ({ accessToken: "tok", expires: null, isOnline: false });
+  const shopAnswer = () => ({ ok: true, json: async () => ({ data: { shop: { id: "gid://shopify/Shop/1" } } }) });
+  const adminAnswering = () => ({ graphql: vi.fn(async () => shopAnswer()) });
+  const adminRefused = () => ({ graphql: vi.fn(async () => { throw Object.assign(new Error("Unauthorized"), { response: { code: 401 } }); }) });
+  // a stored, NON-blank token that Shopify refuses: the states where the old session check was wrong
+  const blockedWithOwedCatchUp = async (reason = "backfill_migration_needs_reauth") => {
+    store.set(SHOP, row({ resyncRequiredSince: new Date("2026-11-01T00:00:00Z"), droppedWebhookCount: 4 }));
+    await blockShopConnection(SHOP, reason, { observedAt: new Date() });
+  };
+  const later = () => new Date(Date.now() + 1_000);
+
+  it("a refused token (live call fails) is NO evidence: the block stays", async () => {
+    await blockedWithOwedCatchUp("admin_api_401");
+    const admin = adminRefused();
+    expect(await liftBlockOnAccessEvidence(SHOP, later(), { session: goodSession(), admin })).toBe(false);
+    expect(admin.graphql).toHaveBeenCalledTimes(1);
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+    expect(catchUp).not.toHaveBeenCalled();
+  });
+
+  it("a live call that answers with the shop lifts the block, keeps the owed catch-up and starts it", async () => {
+    await blockedWithOwedCatchUp();
+    const admin = adminAnswering();
+    expect(await liftBlockOnAccessEvidence(SHOP, later(), { session: goodSession(), admin })).toBe(true);
+    expect(store.get(SHOP)).toMatchObject({ connectionState: null, connectionClearedCause: "session_ok", droppedWebhookCount: 4 });
+    expect(store.get(SHOP)!.resyncRequiredSince).toBeInstanceOf(Date);
+    await vi.waitFor(() => expect(catchUp).toHaveBeenCalledWith(SHOP, admin));
+  });
+
+  it("an answer without a shop (errors, empty data, not ok) is no evidence", async () => {
+    for (const bad of [
+      { ok: true, json: async () => ({ errors: [{ message: "x" }] }) },
+      { ok: true, json: async () => ({ data: { shop: null } }) },
+      { ok: false, json: async () => ({ data: { shop: { id: "gid://shopify/Shop/1" } } }) },
+    ]) {
+      __resetConnectionBlockForTests();
+      invalidateConnectionCache();
+      await blockedWithOwedCatchUp();
+      expect(await liftBlockOnAccessEvidence(SHOP, later(), { session: goodSession(), admin: { graphql: vi.fn(async () => bad) } })).toBe(false);
+      expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+    }
+  });
+
+  it("a hanging live call times out and lifts nothing", async () => {
+    vi.useFakeTimers();
+    await blockedWithOwedCatchUp();
+    const admin = { graphql: vi.fn(() => new Promise<never>(() => undefined)) };
+    const p = liftBlockOnAccessEvidence(SHOP, new Date(Date.now() + 1_000), { session: goodSession(), admin });
+    await vi.advanceTimersByTimeAsync(ACCESS_LIVE_CHECK_TIMEOUT_MS + 100);
+    expect(await p).toBe(false);
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+  });
+
+  it("a successful call through the refreshing client (answered) needs no extra call", async () => {
+    await blockedWithOwedCatchUp();
+    const admin = adminAnswering();
+    expect(await liftBlockOnAccessEvidence(SHOP, later(), { session: goodSession(), answered: true, admin })).toBe(true);
+    expect(admin.graphql).not.toHaveBeenCalled();
+  });
+
+  it("no live client and no answer: nothing happens, not even a read", async () => {
+    await blockedWithOwedCatchUp();
+    expect(await liftBlockOnAccessEvidence(SHOP, later(), { session: goodSession() })).toBe(false);
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+  });
+
+  it("is throttled per shop, failed attempts included: one live call a minute", async () => {
+    await blockedWithOwedCatchUp("admin_api_401");
+    const admin = adminRefused();
+    await liftBlockOnAccessEvidence(SHOP, later(), { session: goodSession(), admin });
+    await liftBlockOnAccessEvidence(SHOP, later(), { session: goodSession(), admin });
+    await liftBlockOnAccessEvidence(SHOP, later(), { session: goodSession(), admin });
+    expect(admin.graphql).toHaveBeenCalledTimes(1);
+  });
+
+  it("the throttle lets the next minute through", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-10T10:00:00Z"));
+    await blockedWithOwedCatchUp();
+    const refused = adminRefused();
+    await liftBlockOnAccessEvidence(SHOP, new Date(), { session: goodSession(), admin: refused });
+    vi.setSystemTime(new Date("2026-11-10T10:01:05Z"));
+    expect(await liftBlockOnAccessEvidence(SHOP, new Date(), { session: goodSession(), admin: adminAnswering() })).toBe(true);
+  });
+
+  it("the fence: a block newer than the request start is not lifted, and no live call is made", async () => {
+    const requestStart = new Date(Date.now() - 5_000);
+    await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() }); // set AFTER the request began
+    const admin = adminAnswering();
+    expect(await liftBlockOnAccessEvidence(SHOP, requestStart, { session: goodSession(), admin })).toBe(false);
+    expect(admin.graphql).not.toHaveBeenCalled();
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+  });
+
+  it("the fence also holds in the database when the cache is behind", async () => {
+    await blockShopConnection(SHOP, "admin_api_401", { observedAt: new Date() });
+    const started = later();
+    expect(await getConnectionBlock(SHOP)).toBeTruthy();
+    store.get(SHOP)!.connectionStateSince = new Date(Date.now() + 5_000);
+    expect(await liftBlockOnAccessEvidence(SHOP, started, { session: goodSession(), admin: adminAnswering() })).toBe(false);
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+  });
+
+  it.each([
+    ["an empty token", { accessToken: "", expires: null, isOnline: false }],
+    ["an expired token", { accessToken: "t", expires: new Date(Date.now() - 1_000), isOnline: false }],
+    ["an online session", { accessToken: "t", expires: null, isOnline: true }],
+  ])("%s is no evidence (no live call)", async (_n, sess) => {
+    await blockShopConnection(SHOP, "backfill_migration_needs_reauth", { observedAt: new Date() });
+    const admin = adminAnswering();
+    expect(await liftBlockOnAccessEvidence(SHOP, later(), { session: sess, admin })).toBe(false);
+    expect(admin.graphql).not.toHaveBeenCalled();
+    expect(store.get(SHOP)!.connectionState).toBe("needs_reauth");
+  });
+
+  it("leaves a final kind (access_denied) to the probe", async () => {
+    store.set(SHOP, row({ connectionState: "access_denied", connectionStateSince: new Date(Date.now() - 60_000), connectionStateReason: "token_endpoint_403" }));
+    expect(await liftBlockOnAccessEvidence(SHOP, new Date(), { session: goodSession(), admin: adminAnswering() })).toBe(false);
+    expect(store.get(SHOP)!.connectionState).toBe("access_denied");
+  });
+
+  it("never throws", async () => {
+    shopInstallState.findUnique.mockRejectedValueOnce(new Error("db down"));
+    invalidateConnectionCache();
+    await expect(liftBlockOnAccessEvidence(SHOP, new Date(), { session: goodSession(), admin: adminAnswering() })).resolves.toBe(false);
   });
 });

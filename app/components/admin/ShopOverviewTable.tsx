@@ -29,6 +29,7 @@ import {
 import { COLOR_LABELS, type ShopStatusColor } from '~/services/admin/shop-status.shared';
 import { BUTTON, DANGER, MUTED, STATUS_DOT, STATUS_TINT, TD, TH } from './admin-styles';
 import { ShopDetailPanel } from './ShopDetailPanel';
+import type { UninstallReviewView } from '~/services/admin/uninstall-review.shared';
 
 const COLORS: ShopStatusColor[] = ['red', 'yellow', 'green', 'grey'];
 
@@ -72,11 +73,12 @@ function installText(row: ShopRow): string {
 
 function ShopRowView({ row, nowMs, cols }: { row: ShopRow; nowMs: number; cols: number }) {
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [forceDelete, setForceDelete] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const nav = useNavigation();
   const busy = nav.state !== 'idle' && nav.formData?.get('shop') === row.shop;
   // The detail is loaded on click through the page's own loader (`?detail=`).
-  const detail = useFetcher<{ detail?: ShopDetail; error?: string }>();
+  const detail = useFetcher<{ detail?: ShopDetail; uninstall?: UninstallReviewView | null; error?: string }>();
   const detailLoading = detail.state !== 'idle';
   const lastOpened = row.status.lastOpenedMs;
 
@@ -123,7 +125,7 @@ function ShopRowView({ row, nowMs, cols }: { row: ShopRow; nowMs: number; cols: 
           <button type="button" onClick={toggleDetail} style={{ ...BUTTON, marginRight: 6 }} aria-expanded={detailOpen}>
             {detailLoading ? 'Lade…' : detailOpen ? 'Details zu' : 'Details'}
           </button>
-          <button type="button" onClick={() => setDeleteOpen((v) => !v)} style={{ ...BUTTON, border: `1px solid ${DANGER}`, color: DANGER }}>
+          <button type="button" onClick={() => { setDeleteOpen((v) => !v); setForceDelete(false); }} style={{ ...BUTTON, border: `1px solid ${DANGER}`, color: DANGER }}>
             Alle Daten löschen…
           </button>
         </td>
@@ -133,7 +135,7 @@ function ShopRowView({ row, nowMs, cols }: { row: ShopRow; nowMs: number; cols: 
           <td style={{ ...TD, whiteSpace: 'normal', background: '#f6f6f7' }} colSpan={cols}>
             {detail.data?.error && <span style={{ color: DANGER }}>{detail.data.error}</span>}
             {detail.data?.detail ? (
-              <ShopDetailPanel detail={detail.data.detail} />
+              <ShopDetailPanel detail={detail.data.detail} uninstall={detail.data.uninstall ?? null} />
             ) : (
               !detail.data?.error && <span>Lade…</span>
             )}
@@ -148,6 +150,10 @@ function ShopRowView({ row, nowMs, cols }: { row: ShopRow; nowMs: number; cols: 
               <input type="hidden" name="shop" value={row.shop} />
               <div style={{ fontSize: 13, marginBottom: 6 }}>
                 Unwiderruflich. Zum Bestätigen die Shop-Domain exakt eintippen: <code>{row.shop}</code>
+              </div>
+              <input type="hidden" name="force" value={forceDelete ? 'on' : ''} />
+              <div style={{ marginBottom: 8 }}>
+                <ToggleLine label="trotzdem löschen (auch wenn der Shop noch installiert ist)" checked={forceDelete} onChange={setForceDelete} />
               </div>
               <input
                 name="confirm"
