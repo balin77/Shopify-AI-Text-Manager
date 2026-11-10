@@ -49,6 +49,22 @@ describe("webhook retry: unavailable offline admin is treated like a 401", () =>
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("owes a catch-up when scheduling is skipped for an auth-dead error", async () => {
+    await webhookRetryService.scheduleRetry("a.myshopify.com", "PRODUCTS_UPDATE", {}, unavailable("no_token"));
+    expect(noteDropped).toHaveBeenCalledWith("a.myshopify.com");
+  });
+
+  it("owes a catch-up when the shop's queue is dropped for an auth-dead error", async () => {
+    webhookRetryService.registerHandler("TEST_TOPIC_NOTE", async () => {
+      throw unavailable("no_token");
+    });
+    await (webhookRetryService as any).processRetry({
+      id: "rn", shop: "a.myshopify.com", topic: "TEST_TOPIC_NOTE", payload: "{}",
+      attempt: 0, maxAttempts: 5, nextRetry: new Date(), lastError: null,
+    });
+    expect(noteDropped).toHaveBeenCalledWith("a.myshopify.com");
+  });
+
   it("schedules no retry row for a terminal refresh failure (permanent flag)", async () => {
     await webhookRetryService.scheduleRetry("a.myshopify.com", "PRODUCTS_UPDATE", { productId: "1" }, unavailable("refresh_failed", true));
     expect(create).not.toHaveBeenCalled();

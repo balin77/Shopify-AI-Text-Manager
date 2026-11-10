@@ -70,7 +70,7 @@ import {
   noteApiSuccess,
   reportForbidden,
 } from "./shopify-forbidden.server";
-import { clearConnectionBlock, ShopConnectionBlockedError } from "./shop-connection-state.server";
+import { clearConnectionBlock, getConnectionBlock, ShopConnectionBlockedError } from "./shop-connection-state.server";
 
 export interface OfflineAdminContext {
   session: Session;
@@ -364,8 +364,7 @@ function startAcquisition(shop: string): Promise<OfflineAdminContext> {
     } catch (error) {
       if (!(error instanceof OfflineAdminUnavailableError) || error.reason !== "refresh_failed") {
         cache.delete(shop);
-        await blockOnTerminalEvidence(shop, error, startedAtDate, startedGeneration);
-        throw error;
+        throw await blockedOrOriginal(shop, error, await blockOnTerminalEvidence(shop, error, startedAtDate, startedGeneration));
       }
       // Shopify does not retire a refresh token the moment it is used, but a
       // refresh and a token acquisition (token exchange) for the same store
@@ -391,7 +390,8 @@ function startAcquisition(shop: string): Promise<OfflineAdminContext> {
         }
         // The BLOCKED line replaces the error line for a shop that is (now)
         // blocked on terminal evidence; anything else keeps the old log.
-        if (!(await blockOnTerminalEvidence(shop, second, startedAtDate, startedGeneration))) {
+        const blockedNow = await blockOnTerminalEvidence(shop, second, startedAtDate, startedGeneration);
+        if (!blockedNow) {
           logger.error("[OfflineAdmin] Offline token unavailable — the shop must open the app to re-authenticate", {
             shop,
             error: describe(second),
@@ -408,7 +408,7 @@ function startAcquisition(shop: string): Promise<OfflineAdminContext> {
             refreshFailed.set(shop, { at: Date.now(), error: second });
           }
         }
-        throw second;
+        throw await blockedOrOriginal(shop, second, blockedNow);
       }
     }
     // An invalidation (uninstall, reinstall, 401) that landed while this
@@ -420,6 +420,23 @@ function startAcquisition(shop: string): Promise<OfflineAdminContext> {
   });
   inflight.set(shop, promise);
   return promise;
+}
+
+/**
+ * When this very failure blocked the shop, the caller gets the quiet
+ * ShopConnectionBlockedError (skipped like every later call of that shop)
+ * instead of the raw acquisition error, so the FIRST webhook of a dead shop
+ * takes the same quiet path as the second. Otherwise the original error.
+ */
+async function blockedOrOriginal(shop: string, original: unknown, blocked: boolean): Promise<unknown> {
+  if (!blocked) return original;
+  try {
+    const block = await getConnectionBlock(shop);
+    if (block) return new ShopConnectionBlockedError(shop, block);
+  } catch {
+    /* keep the original error */
+  }
+  return original;
 }
 
 /**

@@ -159,6 +159,8 @@ class WebhookRetryService {
           topic,
           error: errorMessage,
         });
+        // The change is lost: owe a catch-up, as the blocked branch does.
+        await noteDroppedWebhook(shop);
         return;
       }
 
@@ -389,6 +391,8 @@ class WebhookRetryService {
           purgedCount: purged.count,
           hint: 'Offline access token is dead. The merchant needs to re-open the app to refresh the session.',
         });
+        // The dropped rows were missed changes: owe a catch-up.
+        await noteDroppedWebhook(retry.shop);
         return;
       }
 

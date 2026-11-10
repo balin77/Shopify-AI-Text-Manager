@@ -293,6 +293,25 @@ describe("acquisition (getOfflineAdmin): only terminal evidence blocks", () => {
     expect(logger.error).not.toHaveBeenCalled(); // BLOCKED replaces it
   });
 
+  it("the FIRST failure that blocks the shop throws the quiet blocked error, not the raw one", async () => {
+    vi.useFakeTimers();
+    h.getBlock.mockResolvedValue({ state: "needs_reauth", since: new Date("2026-11-09T10:00:00Z"), reason: "no_token" });
+    configureOfflineAdmin(deps({ unauthenticatedAdmin: vi.fn(async () => ({ session: session(""), admin: {} as never })) }));
+    const err = await getOfflineAdmin(SHOP).catch((e) => e);
+    expect(isShopConnectionBlockedError(err)).toBe(true);
+    expect(err).toMatchObject({ reason: "no_token", state: "needs_reauth" });
+    expect(h.block).toHaveBeenCalledTimes(1);
+  });
+
+  it("the re-read path (permanent refresh failure) also ends in the quiet blocked error", async () => {
+    vi.useFakeTimers();
+    h.getBlock.mockResolvedValue({ state: "needs_reauth", since: new Date(), reason: "invalid_subject_token" });
+    const invalid = Object.assign(new Error("bad"), { response: { code: 400, body: { error: "invalid_subject_token" } } });
+    configureOfflineAdmin(deps({ unauthenticatedAdmin: vi.fn(async () => Promise.reject(invalid)) }));
+    expect(isShopConnectionBlockedError(await failure())).toBe(true);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
   it("no_session (no offline session at all) does not block", async () => {
     configureOfflineAdmin(
       deps({ unauthenticatedAdmin: vi.fn(async () => Promise.reject(Object.assign(new Error("Could not find a session"), { name: "SessionNotFoundError" }))) }),
