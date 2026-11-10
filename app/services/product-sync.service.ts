@@ -239,8 +239,16 @@ export class ProductSyncService {
       message: string;
     }) => void;
     signal?: AbortSignal;
+    /**
+     * Out-parameter: how many products could not be written (the return value
+     * stays the count that was). The initial sync reads it, because a catch-up
+     * debt may only be settled by a run that lost no item.
+     */
+    result?: { failed: number };
   }): Promise<number> {
     const { maxProducts, cacheProductImages, onProgress, signal } = options;
+    let failedProducts = 0;
+    if (options.result) options.result.failed = 0;
     const { db, upsertProductMetafields } = await import("../db.server");
 
     const checkAborted = () => {
@@ -585,6 +593,8 @@ export class ProductSyncService {
           } catch (err: unknown) {
             if (err instanceof DOMException && err.name === "AbortError") throw err;
             logger.error(`[ProductSync] Failed to save product ${product.id}`, { error: err instanceof Error ? err.message : String(err) });
+            failedProducts++;
+            if (options.result) options.result.failed = failedProducts;
           }
         }
       }
