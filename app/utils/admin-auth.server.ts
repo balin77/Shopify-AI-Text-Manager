@@ -156,3 +156,47 @@ export function isSameOriginAdminRequest(request: Request): boolean {
     return false;
   }
 }
+
+/**
+ * Strict variant for the DESTRUCTIVE intents (delete-shop, mark-uninstalled).
+ * SameSite=Lax alone is not enough on a custom domain: a sibling subdomain is
+ * "same-site" and its form post carries the cookie. So here a request must
+ * NAME its origin, and that origin must be the app's own: the host of
+ * SHOPIFY_APP_URL, or the host the browser used to reach us (Host /
+ * X-Forwarded-Host / request URL). A missing, `null` or foreign Origin is
+ * refused; a `Sec-Fetch-Site` that is present must say same-origin. Other
+ * admin intents keep the lenient `isSameOriginAdminRequest`.
+ */
+export function isStrictSameOriginAdminRequest(request: Request): boolean {
+  const site = request.headers.get("Sec-Fetch-Site");
+  if (site && site !== "same-origin") return false;
+  const origin = request.headers.get("Origin");
+  if (!origin) return false;
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return false;
+  }
+  if (!originHost) return false;
+  const own = new Set<string>();
+  const add = (h: string | null | undefined) => {
+    if (h) own.add(h.trim().toLowerCase());
+  };
+  try {
+    add(new URL(request.url).host);
+  } catch {
+    /* ignore */
+  }
+  add(request.headers.get("X-Forwarded-Host")?.split(",")[0]);
+  add(request.headers.get("Host"));
+  const appUrl = process.env.SHOPIFY_APP_URL?.trim();
+  if (appUrl) {
+    try {
+      add(new URL(appUrl).host);
+    } catch {
+      /* ignore */
+    }
+  }
+  return own.has(originHost.toLowerCase());
+}

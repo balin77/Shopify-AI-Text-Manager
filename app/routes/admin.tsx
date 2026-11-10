@@ -23,7 +23,8 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { data as json, redirect } from "react-router";
 import { useLoaderData, useActionData, Form, useFetcher } from "react-router";
-import { redactShopData } from '~/services/gdpr.service';
+import { redactShopData, logGDPRRequest } from '~/services/gdpr.service';
+import { INSTALLED_REFUSAL_TEXT, isForceTicked, isShopInstalled } from '~/services/admin/delete-shop-guard.server';
 import {
   loadAuditDetail,
   loadAuditRows,
@@ -47,7 +48,7 @@ import {
   adminPasswordState,
   constantTimeEqual,
   isAdminAuthenticated,
-  isSameOriginAdminRequest,
+  isStrictSameOriginAdminRequest,
   serializeAdminLogout,
   serializeAdminSession,
 } from '~/utils/admin-auth.server';
@@ -157,6 +158,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   );
 };
 
+/**
+ * Durable trail of a manual delete (GdprAuditLog survives the redaction it
+ * records, 3-year retention). Never throws: the delete has already happened.
+ * The client IP goes to the log only; the table has no column for it.
+ */
+async function writeAdminRedactAudit(shop: string, error: string | undefined): Promise<void> {
+  try {
+    await logGDPRRequest(shop, 'admin_redact', null, undefined, undefined, error);
+  } catch (auditError) {
+    logger.error('[ADMIN] Audit-Eintrag für manuelles Löschen fehlgeschlagen', {
+      shop,
+      error: auditError instanceof Error ? auditError.message : String(auditError),
+    });
+  }
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const form = await request.formData();
   const intent = form.get('intent');
@@ -217,7 +234,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // --- Als deinstalliert markieren (Operator, nur mit Beleg) ---
   if (intent === 'mark-uninstalled') {
-    if (!isSameOriginAdminRequest(request)) {
+    if (!isStrictSameOriginAdminRequest(request)) {
       return json({ error: 'Anfrage von fremdem Ursprung abgelehnt.' }, { status: 403, headers: baseHeaders() });
     }
     const shop = String(form.get('shop') ?? '').trim().toLowerCase();
@@ -256,7 +273,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // --- Shop-Daten löschen ---
   if (intent === 'delete-shop') {
-    if (!isSameOriginAdminRequest(request)) {
+    if (!isStrictSameOriginAdminRequest(request)) {
       return json({ error: 'Anfrage von fremdem Ursprung abgelehnt.' }, { status: 403, headers: baseHeaders() });
     }
     const shop = String(form.get('shop') ?? '').trim().toLowerCase();
@@ -275,15 +292,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         { status: 400, headers: baseHeaders() },
       );
     }
+    const force = isForceTicked(form.get('force'));
+    const clientIp = clientIpFromRequest(request);
     try {
-      logger.warn(`[ADMIN] Manuelles vollständiges Löschen aller Daten für ${shop}`);
+      if (!force && (await isShopInstalled(shop))) {
+        logger.warn(`[ADMIN] Löschen von ${shop} verweigert: Shop ist installiert (ip=${clientIp})`);
+        return json({ error: INSTALLED_REFUSAL_TEXT }, { status: 409, headers: baseHeaders() });
+      }
+      logger.warn(`[ADMIN] Manuelles vollständiges Löschen aller Daten für ${shop} (ip=${clientIp}, force=${force})`);
       await redactShopData({ shop_id: 0, shop_domain: shop });
+      await writeAdminRedactAudit(shop, undefined);
       return json({ ok: `Alle Daten für ${shop} wurden gelöscht.` }, { headers: baseHeaders() });
     } catch (error) {
-      logger.error('[ADMIN] Löschen fehlgeschlagen', {
-        shop,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('[ADMIN] Löschen fehlgeschlagen', { shop, ip: clientIp, error: message });
+      await writeAdminRedactAudit(shop, message);
       return json({ error: 'Löschen fehlgeschlagen. Details stehen im Server-Log.' }, { status: 500, headers: baseHeaders() });
     }
   }

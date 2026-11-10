@@ -73,6 +73,7 @@ function installText(row: ShopRow): string {
 
 function ShopRowView({ row, nowMs, cols }: { row: ShopRow; nowMs: number; cols: number }) {
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [forceDelete, setForceDelete] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const nav = useNavigation();
   const busy = nav.state !== 'idle' && nav.formData?.get('shop') === row.shop;
@@ -149,6 +150,10 @@ function ShopRowView({ row, nowMs, cols }: { row: ShopRow; nowMs: number; cols: 
               <input type="hidden" name="shop" value={row.shop} />
               <div style={{ fontSize: 13, marginBottom: 6 }}>
                 Unwiderruflich. Zum Bestätigen die Shop-Domain exakt eintippen: <code>{row.shop}</code>
+              </div>
+              <input type="hidden" name="force" value={forceDelete ? 'on' : ''} />
+              <div style={{ marginBottom: 8 }}>
+                <ToggleLine label="trotzdem löschen (auch wenn der Shop noch installiert ist)" checked={forceDelete} onChange={setForceDelete} />
               </div>
               <input
                 name="confirm"

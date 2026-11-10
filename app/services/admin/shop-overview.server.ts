@@ -206,7 +206,7 @@ export async function loadAuditRows(): Promise<AuditRow[]> {
 }
 
 export async function loadAuditDetail(id: string): Promise<AuditDetail | null> {
-  return db.gdprAuditLog.findUnique({
+  const row = await db.gdprAuditLog.findUnique({
     where: { id },
     select: {
       id: true,
@@ -217,6 +217,9 @@ export async function loadAuditDetail(id: string): Promise<AuditDetail | null> {
       webhookId: true,
     },
   });
+  // A stored error line is "never a token" by contract; sanitizeText is the
+  // belt to that suspender before it reaches the page.
+  return row ? { ...row, error: row.error ? sanitizeText(row.error) : null } : null;
 }
 
 // ---- the overview --------------------------------------------------------

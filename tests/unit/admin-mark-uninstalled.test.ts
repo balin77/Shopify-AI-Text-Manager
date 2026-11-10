@@ -29,7 +29,7 @@ vi.mock("~/db.server", async () => {
 vi.mock("~/services/shop-uninstall.server", () => ({
   markShopUninstalled: (...a: any[]) => h.mark(...a),
 }));
-vi.mock("~/services/gdpr.service", () => ({ redactShopData: vi.fn() }));
+vi.mock("~/services/gdpr.service", () => ({ redactShopData: vi.fn(), logGDPRRequest: vi.fn(async () => undefined) }));
 
 import { logger } from "~/utils/logger.server";
 import * as route from "../../app/routes/admin";
@@ -50,7 +50,9 @@ function install(over: Record<string, any> = {}) {
 }
 
 async function post(fields: Record<string, string>, opts: { auth?: boolean; headers?: Record<string, string> } = {}) {
-  const headers: Record<string, string> = { ...(opts.headers ?? {}) };
+  // A destructive intent needs an Origin of the app itself; tests override it.
+  const headers: Record<string, string> = { Origin: "https://admin.test", ...(opts.headers ?? {}) };
+  for (const k of Object.keys(headers)) if (headers[k] === "") delete headers[k];
   if (opts.auth !== false) headers.Cookie = (await serializeAdminSession(Date.now())).split(";")[0];
   const request = new Request("https://admin.test/admin", {
     method: "POST",
