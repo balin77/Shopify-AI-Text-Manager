@@ -22,6 +22,7 @@ vi.mock("~/services/billing.server", () => ({ checkAndSyncSubscription: h.sync }
 vi.mock("~/utils/shop-connection-state.server", () => ({
   recordWebhookSeen: vi.fn(async () => undefined),
   getConnectionBlock: h.block,
+  isShopConnectionBlockedError: (e: unknown) => (e as { code?: unknown } | null)?.code === "SHOP_CONNECTION_BLOCKED",
 }));
 vi.mock("~/utils/offline-admin.server", () => ({ getOfflineAdmin: h.offline }));
 
@@ -62,6 +63,15 @@ describe("webhooks.subscription", () => {
     const r = await run(req());
     expect(r.status).toBe(200);
     expect(h.sync).toHaveBeenCalledWith(admin, SHOP);
+  });
+
+  it("library failure whose own door THROWS the blocked error (the failure that just blocked the shop): 200, not 500", async () => {
+    h.libAuth.mockRejectedValue(new Error("refresh failed"));
+    h.block.mockResolvedValue(null); // the read ran before the block was set
+    h.offline.mockRejectedValue(Object.assign(new Error("blocked"), { code: "SHOP_CONNECTION_BLOCKED" }));
+    const r = await run(req());
+    expect(r.status).toBe(200);
+    expect(h.sync).not.toHaveBeenCalled();
   });
 
   it("library failure + blocked shop: 200 with a warn, nothing synced", async () => {

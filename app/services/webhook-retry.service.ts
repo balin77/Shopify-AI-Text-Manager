@@ -350,9 +350,9 @@ class WebhookRetryService {
       // The shop got blocked since the row was queued: drop its whole queue
       // quietly (the same shape as the auth-dead path below, without its logs).
       if (isBlockedConnectionError(error)) {
-        await db.webhookRetry.deleteMany({ where: { shop: retry.shop } }).catch(() => undefined);
-        // The dropped rows were missed changes: owe a catch-up (counted once per drop).
-        await noteDroppedWebhook(retry.shop);
+        const dropped = await db.webhookRetry.deleteMany({ where: { shop: retry.shop } }).catch(() => undefined);
+        // The dropped rows were missed changes: owe a catch-up (one per row).
+        await noteDroppedWebhook(retry.shop, dropped?.count ?? 1);
         logger.debug('Webhook retry dropped — the shop connection is blocked', {
           context: 'WebhookRetry',
           retryId: retry.id,
@@ -391,8 +391,8 @@ class WebhookRetryService {
           purgedCount: purged.count,
           hint: 'Offline access token is dead. The merchant needs to re-open the app to refresh the session.',
         });
-        // The dropped rows were missed changes: owe a catch-up.
-        await noteDroppedWebhook(retry.shop);
+        // The dropped rows were missed changes: owe a catch-up (one per row).
+        await noteDroppedWebhook(retry.shop, purged.count);
         return;
       }
 

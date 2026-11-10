@@ -678,7 +678,7 @@ export function createRefreshingAdmin(shop: string): AdminApiContext {
       const result = await (admin.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
       noteApiSuccess(shop);
       void noteSuccessfulCall(shop, startedAt);
-      void liftBlockOnAccessEvidence(shop, startedAt, session);
+      void liftBlockOnAccessEvidence(shop, startedAt, { session, answered: true, admin: admin as never });
       return result;
     } catch (error) {
       if (!isUnauthorizedError(error)) {
@@ -695,7 +695,7 @@ export function createRefreshingAdmin(shop: string): AdminApiContext {
         const retried = await (fresh.graphql as (q: unknown, o?: unknown) => Promise<unknown>)(query, options);
         noteApiSuccess(shop);
         void noteSuccessfulCall(shop, startedAt);
-        void liftBlockOnAccessEvidence(shop, startedAt, freshSession);
+        void liftBlockOnAccessEvidence(shop, startedAt, { session: freshSession, answered: true, admin: fresh as never });
         return retried;
       } catch (second) {
         // A SECOND 401 with the very token the first one refused: the stored

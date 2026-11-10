@@ -22,7 +22,7 @@ import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from '~/shopify.server';
 import { checkAndSyncSubscription } from '~/services/billing.server';
 import { verifyWebhookRequest } from '~/utils/webhook-auth.server';
-import { getConnectionBlock, recordWebhookSeen } from '~/utils/shop-connection-state.server';
+import { getConnectionBlock, isShopConnectionBlockedError, recordWebhookSeen } from '~/utils/shop-connection-state.server';
 import { getOfflineAdmin } from '~/utils/offline-admin.server';
 import { logger } from '~/utils/logger.server';
 
@@ -35,6 +35,9 @@ async function failureIsTerminal(shop: string): Promise<boolean> {
     await getOfflineAdmin(shop);
     return false; // our own door works: the library failure looks transient
   } catch (e) {
+    // getOfflineAdmin throws the quiet blocked error for the failure that BLOCKS the shop:
+    // the first delivery of a newly blocked shop is terminal too (ack, not 500).
+    if (isShopConnectionBlockedError(e)) return true;
     const err = e as { code?: unknown; permanent?: unknown };
     return err?.code === "OFFLINE_ADMIN_UNAVAILABLE" && err.permanent === true;
   }

@@ -449,7 +449,7 @@ export class ShopConnectionSweepService {
         response = await (admin.graphql as (q: string) => Promise<unknown>)("query ConnectionProbe { shop { id } }");
       } catch (error) {
         await this.stampProbe(shop, startedAt);
-        if (error instanceof OfflineAdminUnavailableError) return "unavailable";
+        if (error instanceof OfflineAdminUnavailableError || (error as { code?: unknown } | null)?.code === "SHOP_CONNECTION_BLOCKED") return "unavailable";
         if (isUnauthorizedError(error)) return "unauthorized";
         // record:false -- the shop is blocked already, so its own 403s say
         // nothing about our address and must not feed the allowlist suspicion.

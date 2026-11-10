@@ -137,7 +137,11 @@ describe("library client (createRefreshingAdmin): a SECOND 401 with the same sto
     await (admin.graphql as any)("q");
     expect(h.noteSuccess).toHaveBeenCalledTimes(1);
     // a successful scheduler call is also access evidence (with the session it used)
-    expect(h.lift).toHaveBeenCalledWith(SHOP, expect.any(Date), expect.objectContaining({ accessToken: "tok-1" }));
+    expect(h.lift).toHaveBeenCalledWith(
+      SHOP,
+      expect.any(Date),
+      expect.objectContaining({ answered: true, session: expect.objectContaining({ accessToken: "tok-1" }) }),
+    );
     await (admin.graphql as any)("q").catch(() => undefined);
     expect(h.noteSuccess).toHaveBeenCalledTimes(1);
     expect(h.lift).toHaveBeenCalledTimes(1);

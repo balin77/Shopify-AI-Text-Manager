@@ -216,40 +216,78 @@ export async function noteSuccessfulCall(shop: string, startedAt: Date): Promise
   }
 }
 
+/** Longest the live check may take; a slow answer is no answer. */
+export const ACCESS_LIVE_CHECK_TIMEOUT_MS = 4_000;
+
+export interface AccessEvidence {
+  /** The offline session the request / call used: blank or expired is no evidence. */
+  session?: { accessToken?: string | null; expires?: Date | null; isOnline?: boolean } | null;
+  /**
+   * The evidence IS a real Shopify answer already (a `graphql()` call through the
+   * refreshing client just succeeded): no extra call is made.
+   */
+  answered?: boolean;
+  /**
+   * Otherwise a client to make ONE live `{ shop { id } }` call with. A session
+   * that merely EXISTS proves nothing: `authenticate.admin` never sends the
+   * stored token to Shopify, and the blocks that still have a non-blank stored
+   * token are exactly those where that token may be the dead one.
+   */
+  admin?: { graphql: (query: string) => Promise<unknown> } | null;
+}
+
+async function liveAnswerHasShop(admin: NonNullable<AccessEvidence["admin"]>): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("timeout")), ACCESS_LIVE_CHECK_TIMEOUT_MS);
+    });
+    const response = await Promise.race([admin.graphql("query ConnectionLiveCheck { shop { id } }"), timeout]);
+    const r = response as { ok?: boolean; json?: () => Promise<unknown> } | null;
+    if (r && r.ok === false) return false;
+    const body = (typeof r?.json === "function" ? await Promise.race([r.json(), timeout]) : response) as {
+      data?: { shop?: { id?: unknown } };
+      errors?: unknown;
+    } | null;
+    return !!body && !body.errors && typeof body.data?.shop?.id === "string" && body.data.shop.id.length > 0;
+  } catch {
+    return false;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /**
- * The shop DEMONSTRABLY has working access right now: the merchant's request
- * passed `authenticate.admin` with a non-empty, unexpired offline session, or a
- * background `graphql()` through the refreshing client succeeded. A block of the
- * `needs_reauth` kind is lifted at once instead of waiting for the next probe
- * (10 min up to 6 h later) -- a merchant using the app must not be shown a
- * "disconnected" shop, and the lift makes the owed webhook catch-up eligible
- * (the scheduler's incremental path and the sweep both read `resyncRequiredSince`
- * of an UNBLOCKED shop). Rules:
- *  - throttled per shop (in process, ACCESS_EVIDENCE_INTERVAL_MS): a busy shop
- *    costs at most one block read a minute;
- *  - the fence: `startedAt` is when the request / call BEGAN. A block set after
- *    it says something this evidence did not see and stays. The comparison runs
- *    on the cached read AND again in the database (`sinceAtOrBefore`);
- *  - only `needs_reauth` (state-conditional in the database). The final kinds
- *    shop_not_found / access_denied have a 24 h verdict behind them and are
+ * The shop has WORKING access right now, shown by a real Shopify answer: a
+ * `graphql()` through the refreshing client succeeded (`answered`), or, on the
+ * request path, ONE live `{ shop { id } }` call with the request's admin client
+ * answered with the shop. A block of the `needs_reauth` kind is then lifted
+ * instead of waiting for the next probe (10 min up to 6 h), and the owed
+ * webhook catch-up starts at once (single-flight, never throws).
+ *  - throttled per shop (ACCESS_EVIDENCE_INTERVAL_MS), failed attempts
+ *    included: a refused token costs one live call a minute, not one per request;
+ *    a shop with no block costs one cached read;
+ *  - the fence: `startedAt` is when the request / call BEGAN; a block set after
+ *    it stays (checked on the cached read and again in the database);
+ *  - only `needs_reauth`; the final kinds shop_not_found / access_denied are
  *    left to the probe;
- *  - whether the session's token is the very one the block was set on is not
- *    knowable (the block stores a reason, not a token), so ANY such success
- *    counts. If the library handed out a stored token that is in fact dead, the
- *    next double 401 re-blocks it, at the cost of a flap.
+ *  - bounded: the live call has ACCESS_LIVE_CHECK_TIMEOUT_MS, and the caller
+ *    runs this detached on the request path.
  * Never throws; resolves to whether a block was lifted.
  */
 export async function liftBlockOnAccessEvidence(
   shop: string,
   startedAt: Date,
-  session?: { accessToken?: string | null; expires?: Date | null; isOnline?: boolean } | null,
+  evidence: AccessEvidence = {},
 ): Promise<boolean> {
   try {
+    const session = evidence.session;
     if (session) {
       if (session.isOnline) return false;
       if (!session.accessToken) return false;
       if (session.expires && session.expires.getTime() <= Date.now()) return false;
     }
+    if (!evidence.answered && !evidence.admin) return false;
     const now = Date.now();
     const last = accessEvidenceChecked.get(shop);
     if (last !== undefined && now - last < ACCESS_EVIDENCE_INTERVAL_MS) return false;
@@ -257,14 +295,30 @@ export async function liftBlockOnAccessEvidence(
     const block = await getConnectionBlock(shop);
     if (!block || block.state !== "needs_reauth") return false;
     if (block.since && startedAt.getTime() <= block.since.getTime()) return false;
+    if (!evidence.answered && !(await liveAnswerHasShop(evidence.admin!))) return false;
     const res = await clearConnectionBlock(shop, "session_ok", {
       onlyState: "needs_reauth",
       sinceAtOrBefore: startedAt,
     });
+    if (res.cleared) startCatchUpAfterLift(shop, evidence.admin);
     return res.cleared;
   } catch {
     return false;
   }
+}
+
+/** Detached, single-flight (runWebhookCatchUp refuses a second run), never throws. */
+function startCatchUpAfterLift(shop: string, admin: AccessEvidence["admin"]): void {
+  if (!admin) return;
+  void (async () => {
+    try {
+      const { runWebhookCatchUp, isCatchUpInFlight } = await import("../services/webhook-catchup.server");
+      if (isCatchUpInFlight(shop)) return;
+      await runWebhookCatchUp(shop, admin as never);
+    } catch {
+      /* the scheduler and the sweep still owe it */
+    }
+  })();
 }
 
 /**

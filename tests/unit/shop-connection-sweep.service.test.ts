@@ -213,6 +213,13 @@ describe("probe of blocked shops", () => {
     expect(h.clear).not.toHaveBeenCalled();
   });
 
+  it("the quiet blocked error from getOfflineAdmin counts as unavailable, not as an error", async () => {
+    blockedShop("a.myshopify.com");
+    h.getAdmin.mockRejectedValue(Object.assign(new Error("blocked"), { code: "SHOP_CONNECTION_BLOCKED" }));
+    expect(await sweep().probeShop("a.myshopify.com")).toBe("unavailable");
+    expect(h.clear).not.toHaveBeenCalled();
+  });
+
   it("never probes an uninstalled shop", async () => {
     blockedShop("gone.myshopify.com", { uninstalledAt: new Date(NOW.getTime() - 24 * HOUR) });
     const stats = await sweep().tick(NOW, { pauseMs: 0 });

@@ -62,7 +62,7 @@ describe("webhook retry: unavailable offline admin is treated like a 401", () =>
       id: "rn", shop: "a.myshopify.com", topic: "TEST_TOPIC_NOTE", payload: "{}",
       attempt: 0, maxAttempts: 5, nextRetry: new Date(), lastError: null,
     });
-    expect(noteDropped).toHaveBeenCalledWith("a.myshopify.com");
+    expect(noteDropped).toHaveBeenCalledWith("a.myshopify.com", 3); // the purged rows (mock count)
   });
 
   it("schedules no retry row for a terminal refresh failure (permanent flag)", async () => {
@@ -171,7 +171,7 @@ describe("webhook retry: a blocked shop connection is a quiet skip", () => {
     });
     expect(deleteMany).toHaveBeenCalledWith({ where: { shop: "a.myshopify.com" } });
     expect(update).not.toHaveBeenCalled();
-    expect(noteDropped).toHaveBeenCalledWith("a.myshopify.com");
+    expect(noteDropped).toHaveBeenCalledWith("a.myshopify.com", 3);
     expect(logger.warn).not.toHaveBeenCalled();
     expect(logger.error).not.toHaveBeenCalled();
   });

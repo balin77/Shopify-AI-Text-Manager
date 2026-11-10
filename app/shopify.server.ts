@@ -330,12 +330,14 @@ const enhancedAuthenticate = {
     }
     const { admin, session } = authenticated;
 
-    // The merchant is in the app with a working session: a connection block
-    // (set on evidence that may have been wrong, or since healed) is lifted now
-    // instead of at the next probe. BEFORE the scheduler starts below, so its
-    // first cycle sees an unblocked shop and runs the owed catch-up. Throttled,
-    // fenced, never throws.
-    await liftBlockOnAccessEvidence(session.shop, requestStartedAt, session);
+    // A connection block that may be stale is checked with ONE live call and
+    // lifted on a real answer (liftBlockOnAccessEvidence). DETACHED: the live
+    // call must not delay the request (it has its own short timeout), and it is
+    // throttled to once a minute per shop. Consequence for the scheduler start
+    // below: it no longer waits for the lift. The lift starts the catch-up
+    // itself, and the scheduler's later cycles and the sweep see the unblocked
+    // shop; an unlifted block simply keeps the old probe timing.
+    void liftBlockOnAccessEvidence(session.shop, requestStartedAt, { session, admin });
 
     // The lazy token migration is deliberately NOT fired from here: this
     // request's captured admin/session still holds the old token, and a 401 on

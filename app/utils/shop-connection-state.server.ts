@@ -341,14 +341,15 @@ export async function clearConnectionBlock(
 
 /**
  * A webhook of a blocked shop was accepted but not processed: count it and owe a
- * catch-up. Never creates a row, never throws, logs at debug only.
+ * catch-up. `count` = how many deliveries were dropped (a purged retry queue
+ * drops several). Never creates a row, never throws, logs at debug only.
  */
-export async function noteDroppedWebhook(shop: string): Promise<void> {
+export async function noteDroppedWebhook(shop: string, count = 1): Promise<void> {
   try {
     const db = await dbClient();
     const res = await db.shopInstallState.updateMany({
       where: { shop },
-      data: { droppedWebhookCount: { increment: 1 } },
+      data: { droppedWebhookCount: { increment: Math.max(1, Math.floor(count) || 1) } },
     });
     if (res.count === 0) return;
     await db.shopInstallState.updateMany({
