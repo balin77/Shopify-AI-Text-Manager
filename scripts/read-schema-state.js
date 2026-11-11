@@ -5,7 +5,19 @@
  * deploy by the same evidence. Returns null when it cannot be read (= "cannot
  * tell", which the decision treats as abort).
  */
-import { readdirSync, statSync } from 'fs';
+import { readdirSync, readFileSync, statSync } from 'fs';
+
+const CREATE_INDEX_RE =
+  /CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(?:"([^"]+)"|([A-Za-z0-9_]+))/gi;
+
+/** Lower-case names of all indexes the given migration.sql texts create. */
+export function indexNamesFromSql(texts) {
+  const names = new Set();
+  for (const t of texts) {
+    for (const m of t.matchAll(CREATE_INDEX_RE)) names.add((m[1] ?? m[2]).toLowerCase());
+  }
+  return [...names];
+}
 
 export async function readSchemaState({
   makePrisma = async () => {
@@ -14,10 +26,13 @@ export async function readSchemaState({
   },
   listDir = readdirSync,
   isDir = (p) => statSync(p).isDirectory(),
+  readText = (p) => readFileSync(p, 'utf8'),
   log = () => {},
 } = {}) {
   try {
     const localMigrations = listDir('prisma/migrations').filter((n) => isDir(`prisma/migrations/${n}`));
+    const localIndexNames = indexNamesFromSql(
+      localMigrations.map((n) => readText(`prisma/migrations/${n}/migration.sql`)));
     const prisma = await makePrisma();
     try {
       const dbRows = await prisma.$queryRawUnsafe(
@@ -27,12 +42,15 @@ export async function readSchemaState({
       let invalidIndexes = null;
       try {
         const idx = await prisma.$queryRawUnsafe(
-          'SELECT indexrelid::regclass::text AS index_name FROM pg_index WHERE NOT indisvalid');
+          'SELECT c.relname AS index_name FROM pg_index i ' +
+          'JOIN pg_class c ON c.oid = i.indexrelid ' +
+          'JOIN pg_namespace n ON n.oid = c.relnamespace ' +
+          'WHERE NOT i.indisvalid AND n.nspname = current_schema()');
         invalidIndexes = idx.map((r) => String(r.index_name));
       } catch (e) {
         log(`  ↳ pg_index check failed: ${e.message?.substring(0, 120)}`);
       }
-      return { localMigrations, dbRows, invalidIndexes };
+      return { localMigrations, dbRows, invalidIndexes, localIndexNames };
     } finally {
       await prisma.$disconnect();
     }

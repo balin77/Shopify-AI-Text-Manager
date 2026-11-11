@@ -913,13 +913,19 @@ railway connect Postgres
   fehlgeschlagenen Deploy nicht in eine Absturzschleife.
   Achtung: Ist die neuere Migration nur zum Teil durchgelaufen, arbeitet der alte Container auf einem teilweise
   geänderten Schema. Das ist nur sicher, solange Migrationen rückwärtsverträglich sind (erst hinzufügen, später entfernen).
-- Zusätzlich muss die Datenbank frei von **ungültigen Indizes** sein (`SELECT indexrelid::regclass FROM pg_index WHERE NOT
-  indisvalid`). Sonst bricht der Start ab (Log: `MIGRATE_DEPLOY_FAILED_INVALID_INDEX` mit den Indexnamen), auch wenn alle
-  Migrationszeilen sauber aussehen: eine von Hand mit `--applied` markierte Zeile kann auf einem kaputten Index sitzen.
-  Lässt sich `pg_index` nicht lesen, gilt das als «nicht feststellbar» und ebenfalls als Abbruch. Ein Index, den ein
-  **anderer Container gerade aufbaut**, erscheint ebenfalls als ungültig. Das wird bewusst als Abbruch behandelt (sichere
-  Richtung: der alte Container bleibt aktiv, der Neustart prüft erneut, wenn der Aufbau fertig ist). Der Notfall-Schalter
-  `ALLOW_DB_PUSH_FALLBACK` hebt diese Prüfung nicht auf, denn `db push` repariert keinen ungültigen Index.
+- Zusätzlich prüft der Start `pg_index` auf **ungültige Indizes** (nur im aktuellen Schema, mit blossem Indexnamen). Nur ein
+  ungültiger Index, den eine **Migration dieses Images** anlegt (Name kommt in einem lokalen `migration.sql` als
+  `CREATE [UNIQUE] INDEX [CONCURRENTLY] [IF NOT EXISTS] <name>` vor, Gross-/Kleinschreibung egal), bricht den Start ab
+  (Log: `MIGRATE_DEPLOY_FAILED_INVALID_INDEX` mit den Namen): eine von Hand mit `--applied` markierte Zeile kann auf einem
+  kaputten Index sitzen. Ein Index, den ein **anderer Container gerade aufbaut**, erscheint ebenfalls als ungültig; gehört er
+  zu diesem Image, wird das bewusst als Abbruch behandelt (sichere Richtung: der alte Container bleibt aktiv, der Neustart
+  prüft erneut). Jeder **andere** ungültige Index (Index einer neueren Migration, anderer Besitzer, Rest eines
+  `REINDEX CONCURRENTLY`) blockiert nicht: Der Start läuft weiter und loggt `MIGRATE_INVALID_INDEX_NOT_OURS names=...`.
+  Sonst würde der alte Container nach einem abgebrochenen `CREATE INDEX CONCURRENTLY` eines neueren Deploys («Redeploy
+  previous») dauerhaft abstürzen. Lässt sich `pg_index` nicht lesen: Gehört die fehlgeschlagene Migration zu einem neueren
+  Image, läuft der Start weiter (Log `MIGRATE_INVALID_INDEX_UNKNOWN`), sonst gilt «nicht feststellbar» als Abbruch.
+  Der Notfall-Schalter `ALLOW_DB_PUSH_FALLBACK` hebt die Abbruchprüfung nicht auf, denn `db push` repariert keinen
+  ungültigen Index.
 - Fehlt dem Image eine Migration, ist sie fehlgeschlagen oder lässt sich der Stand nicht lesen, bricht das Deploy mit
   Exit-Code 1 ab (Log: `MIGRATE_DEPLOY_FAILED`) und der alte Container bleibt aktiv.
 

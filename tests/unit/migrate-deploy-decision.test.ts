@@ -33,19 +33,33 @@ describe("schema-current continuation", () => {
     expect(d.message).toContain("MIGRATE_DEPLOY_FAILED_BUT_SCHEMA_CURRENT");
     expect(d.message).toContain("c");
   });
-  it("aborts, naming the indexes, when an INVALID index exists (even with the push flag)", () => {
-    const st = { localMigrations: local, dbRows: [ok("a"), ok("b")], invalidIndexes: ["idx_a", "idx_b"] };
+  it("aborts, naming them, when an INVALID index owned by a local migration exists (even with the push flag)", () => {
+    const st = { localMigrations: local, dbRows: [ok("a"), ok("b")], invalidIndexes: ["Idx_A", "idx_b", "zz_unowned"], localIndexNames: ["idx_a", "idx_b"] };
     for (const env of [{}, { ALLOW_DB_PUSH_FALLBACK: "true" }]) {
       const d = decideAfterMigrateDeploy(false, env, st);
       expect(d.action).toBe("abort");
-      expect(d.message).toContain("idx_a, idx_b");
+      expect(d.message).toContain("Idx_A, idx_b");
+      expect(d.message).not.toContain("zz_unowned");
     }
   });
-  it("aborts when pg_index could not be read (null or missing)", () => {
+  it("continues with a warning when the invalid index belongs to a newer (foreign) migration", () => {
+    const st = { localMigrations: local, dbRows: [ok("a"), ok("b"), failed("c")], invalidIndexes: ["idx_c"], localIndexNames: ["idx_a"] };
+    const d = decideAfterMigrateDeploy(false, {}, st);
+    expect(d.action).toBe("continue-schema-current");
+    expect(d.message).toContain("MIGRATE_INVALID_INDEX_NOT_OURS names=idx_c");
+  });
+  it("aborts on an invalid index whose owner cannot be determined", () => {
+    const st = { localMigrations: local, dbRows: [ok("a"), ok("b")], invalidIndexes: ["x"] } as any;
+    expect(decideAfterMigrateDeploy(false, {}, st).action).toBe("abort");
+  });
+  it("pg_index unreadable: aborts when nothing foreign failed, continues when the failure is a newer image's", () => {
     for (const invalidIndexes of [null, undefined]) {
       const d = decideAfterMigrateDeploy(false, {}, { localMigrations: local, dbRows: [ok("a"), ok("b")], invalidIndexes } as any);
       expect(d.action).toBe("abort");
       expect(d.message).toContain("pg_index");
+      const f = decideAfterMigrateDeploy(false, {}, { localMigrations: local, dbRows: [ok("a"), ok("b"), failed("c")], invalidIndexes } as any);
+      expect(f.action).toBe("continue-schema-current");
+      expect(f.message).toContain("MIGRATE_INVALID_INDEX_UNKNOWN");
     }
   });
   it("aborts when a local migration is failed or missing", () => {

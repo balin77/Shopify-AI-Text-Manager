@@ -64,7 +64,7 @@ describe("start.js", () => {
 
 const local = ["m1", "m2"];
 const done = (n: string) => ({ migration_name: n, finished_at: new Date(), rolled_back_at: null });
-const current = { localMigrations: local, dbRows: [done("m1"), done("m2"), { migration_name: "m3", finished_at: null, rolled_back_at: null }], invalidIndexes: [] };
+const current = { localMigrations: local, dbRows: [done("m1"), done("m2"), { migration_name: "m3", finished_at: null, rolled_back_at: null }], invalidIndexes: [], localIndexNames: [] };
 const notCurrent = { localMigrations: local, dbRows: [done("m1")] };
 
 async function runWith(opts: { deploy: boolean; env?: Record<string, string>; state: any }) {
@@ -100,7 +100,7 @@ describe("run-migration.js after a failed migrate deploy", () => {
   });
   it("schema current but an INVALID index: aborts, never db push, even with the flag", async () => {
     for (const env of [{}, { ALLOW_DB_PUSH_FALLBACK: "true" }] as Record<string, string>[]) {
-      const { commands, exit } = await runWith({ deploy: false, state: { ...current, invalidIndexes: ["i"] }, env });
+      const { commands, exit } = await runWith({ deploy: false, state: { ...current, invalidIndexes: ["i"], localIndexNames: ["i"] }, env });
       expect(pushed(commands)).toBe(false);
       expect(exit).toHaveBeenCalledWith(1);
     }
@@ -131,6 +131,7 @@ describe("readSchemaState", () => {
     const s = await readSchemaState({
       listDir: () => ["a"],
       isDir: () => true,
+      readText: () => "",
       makePrisma: async () => {
         throw new Error("down");
       },
@@ -141,16 +142,21 @@ describe("readSchemaState", () => {
     const s = await readSchemaState({
       listDir: () => ["a", "b"],
       isDir: (p: string) => p.endsWith("/a"),
+      readText: () => 'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS "Idx_One" ON t(a); create index idx_two on t(b);',
       makePrisma: async () => ({ $queryRawUnsafe: async () => [1], $disconnect: async () => {} }),
     });
-    expect(s).toMatchObject({ localMigrations: ["a"], dbRows: [1] });
+    expect(s).toMatchObject({ localMigrations: ["a"], dbRows: [1], localIndexNames: ["idx_one", "idx_two"] });
   });
   it("lists invalid indexes; a failed pg_index read is null", async () => {
     const mk = (idx: () => Promise<any[]>) => async () => ({
       $queryRawUnsafe: async (q: string) => (q.includes("pg_index") ? idx() : []),
       $disconnect: async () => {},
     });
-    const base = { listDir: () => ["a"], isDir: () => true };
+    const base = { listDir: () => ["a"], isDir: () => true, readText: () => "" };
+    let sql = "";
+    await readSchemaState({ ...base, makePrisma: async () => ({ $queryRawUnsafe: async (q: string) => { if (q.includes("pg_index")) sql = q; return []; }, $disconnect: async () => {} }) });
+    expect(sql).toContain("current_schema()");
+    expect(sql).toContain("pg_namespace");
     expect((await readSchemaState({ ...base, makePrisma: mk(async () => [{ index_name: "x" }]) })).invalidIndexes).toEqual(["x"]);
     expect((await readSchemaState({ ...base, makePrisma: mk(async () => { throw new Error("no"); }) })).invalidIndexes).toBeNull();
   });
