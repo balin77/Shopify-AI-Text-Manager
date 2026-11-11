@@ -14,7 +14,9 @@ const CREATE_INDEX_RE =
 export function indexNamesFromSql(texts) {
   const names = new Set();
   for (const t of texts) {
-    for (const m of t.matchAll(CREATE_INDEX_RE)) names.add((m[1] ?? m[2]).toLowerCase());
+    // Strip line comments first: prose like "CREATE INDEX CONCURRENTLY for ..." is not an index.
+    const sql = String(t).replace(/--.*$/gm, '');
+    for (const m of sql.matchAll(CREATE_INDEX_RE)) names.add((m[1] ?? m[2]).toLowerCase());
   }
   return [...names];
 }

@@ -921,6 +921,7 @@ railway connect Postgres
   Image, läuft der Start weiter (Log `MIGRATE_INVALID_INDEX_UNKNOWN`), sonst gilt «nicht feststellbar» als Abbruch.
   Der Notfall-Schalter `ALLOW_DB_PUSH_FALLBACK` hebt die Abbruchprüfung nicht auf, denn `db push` repariert keinen
   ungültigen Index.
+- Baut eine neuere Migration einen Index unter demselben Namen neu, den auch eine ältere Migration anlegt (`DROP INDEX CONCURRENTLY` + `CREATE INDEX CONCURRENTLY`), und wird sie abgebrochen, gilt der ungültige Index für das alte Image als eigener: Es bricht bei jedem Neustart ab. Vor «Redeploy previous» muss dann der ungültige Index entfernt und neu angelegt (oder die Migration aufgelöst) werden. Neue Migrationen sollten neu gebaute Indizes deshalb unter einem neuen Namen anlegen.
 - Fehlt dem Image eine Migration, ist sie fehlgeschlagen oder lässt sich der Stand nicht lesen, bricht das Deploy mit
   Exit-Code 1 ab (Log: `MIGRATE_DEPLOY_FAILED`) und der alte Container bleibt aktiv.
 

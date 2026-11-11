@@ -49,8 +49,10 @@ export function assessSchema(localMigrations, dbRows) {
  * @param {boolean} migrateSuccess result of `prisma migrate deploy`
  * @param {Record<string, string | undefined>} env
  * @param {{ localMigrations: string[], dbRows: object[], invalidIndexes?: string[] | null, localIndexNames?: string[] } | null} [schemaState]
- *   null/undefined = the state could not be read, which always aborts; so does
- *   a missing/null invalidIndexes (pg_index unreadable) or a non-empty one.
+ *   null/undefined = the state could not be read, which always aborts. An
+ *   invalid index aborts only when a LOCAL migration creates it (localIndexNames);
+ *   any other invalid index is a warning. An unreadable pg_index (null) aborts
+ *   unless a foreign (newer) migration failed.
  * @returns {{ action: 'continue' | 'continue-schema-current' | 'abort' | 'db-push-fallback', message?: string }}
  */
 export function decideAfterMigrateDeploy(migrateSuccess, env = process.env, schemaState = null) {
