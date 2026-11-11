@@ -902,6 +902,13 @@ railway connect Postgres
 - Fehlt dem Image eine Migration, ist sie fehlgeschlagen oder lässt sich der Stand nicht lesen, bricht das Deploy mit
   Exit-Code 1 ab (Log: `MIGRATE_DEPLOY_FAILED`) und der alte Container bleibt aktiv.
 
+Die Migrationen laufen beim Containerstart **genau einmal**: `npm run start:production` setzt für `start.js` die Variable
+`MIGRATIONS_ALREADY_RUN=1` (direkt im Script, weil Umgebungsvariablen nicht zwischen den mit `&&` verketteten Prozessen
+weitergegeben werden), und `start.js` überspringt dann `scripts/run-migration.js`. Dieses zweite Skript gibt es nur noch für
+andere Startwege (`npm start`, Dockerfile-`CMD`); es nutzt dieselbe Entscheidung wie `run-all-migrations.js`
+(`scripts/migrate-deploy-decision.js`): nach einem fehlgeschlagenen `migrate deploy` ist `db push` ohne
+`ALLOW_DB_PUSH_FALLBACK=true` nirgends erreichbar, auch nicht bei aktuellem Schema.
+
 Es gibt bewusst **keinen** stillen Wechsel auf `prisma db push`: der liesse ungültige (INVALID) Indizes und
 fehlgeschlagene Migrationszeilen für immer stehen, würde spätere SQL-Backfills überspringen und spätere Indizes ohne
 `CONCURRENTLY` bauen.

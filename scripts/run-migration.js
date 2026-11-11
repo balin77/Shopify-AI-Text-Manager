@@ -8,10 +8,19 @@
  * 1. Generate Prisma Client
  * 2. Fix failed/orphaned migrations in _prisma_migrations table
  * 3. Run `prisma migrate deploy` (applies all formal migrations)
- * 4. If migrate deploy fails, fall back to `prisma db push`
+ * 4. If migrate deploy fails: decideAfterMigrateDeploy (same gate as
+ *    run-all-migrations.js). Continue only if the schema of this image is fully
+ *    applied; `prisma db push` ONLY with ALLOW_DB_PUSH_FALLBACK=true; else abort.
+ *
+ * Not run in the production chain (`npm run start:production` sets
+ * MIGRATIONS_ALREADY_RUN=1, start.js then skips this script); it stays for
+ * `npm start` / Dockerfile CMD callers.
  */
 
 import { execSync } from 'child_process';
+import { pathToFileURL } from 'url';
+import { decideAfterMigrateDeploy } from './migrate-deploy-decision.js';
+import { readSchemaState } from './read-schema-state.js';
 
 // ANSI color codes for terminal output
 const colors = {
@@ -107,50 +116,60 @@ async function fixFailedMigrations() {
   log('✅ Migration status resolved', 'green');
 }
 
-async function main() {
+export async function main(deps = {}) {
+  const {
+    run = runCommand,
+    env = process.env,
+    exit = (c) => process.exit(c),
+    readState = () => readSchemaState({ log: (m) => log(m, 'yellow') }),
+    fixFailed = fixFailedMigrations,
+  } = deps;
+
   log('🚀 Starting database migration...', 'blue');
 
-  if (!process.env.DATABASE_URL) {
+  if (!env.DATABASE_URL) {
     log('❌ ERROR: DATABASE_URL is not set!', 'red');
-    process.exit(1);
+    return exit(1);
   }
   log('✅ DATABASE_URL is configured', 'green');
 
   // 1. Generate Prisma Client
-  if (!runCommand('npx prisma generate', 'Generate Prisma Client')) {
+  if (!run('npx prisma generate', 'Generate Prisma Client')) {
     log('❌ Failed to generate Prisma Client — cannot continue', 'red');
-    process.exit(1);
+    return exit(1);
   }
 
   // 2. Fix any failed/orphaned migrations
-  await fixFailedMigrations();
+  await fixFailed();
 
   // 3. Run formal migrations
-  const migrateSuccess = runCommand(
-    'npx prisma migrate deploy',
-    'Prisma migrate deploy'
-  );
+  const migrateSuccess = run('npx prisma migrate deploy', 'Prisma migrate deploy');
 
-  if (!migrateSuccess) {
-    log('⚠️  migrate deploy failed, trying db push as fallback...', 'yellow');
-
+  const schemaState = migrateSuccess ? null : await readState();
+  const decision = decideAfterMigrateDeploy(migrateSuccess, env, schemaState);
+  if (decision.action === 'abort') {
+    log(`❌ ${decision.message}`, 'red');
+    return exit(1);
+  }
+  if (decision.action === 'continue-schema-current') {
+    log(`⚠️  ${decision.message}`, 'yellow');
+  }
+  if (decision.action === 'db-push-fallback') {
+    log(`⚠️  ${decision.message}`, 'yellow');
     // No --accept-data-loss: additive changes still apply, but destructive
     // drift aborts loudly instead of silently dropping production columns/tables.
-    const pushSuccess = runCommand(
-      'npx prisma db push --skip-generate',
-      'Prisma db push (fallback)'
-    );
-
-    if (!pushSuccess) {
+    if (!run('npx prisma db push --skip-generate', 'Prisma db push (fallback)')) {
       log('❌ Both migrate deploy and db push failed!', 'red');
-      process.exit(1);
+      return exit(1);
     }
   }
 
   log('✅ Database setup complete!', 'green');
 }
 
-main().catch((error) => {
-  log(`❌ Unexpected error: ${error.message}`, 'red');
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    log(`❌ Unexpected error: ${error.message}`, 'red');
+    process.exit(1);
+  });
+}
