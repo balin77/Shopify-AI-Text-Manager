@@ -48,7 +48,7 @@ export function assessSchema(localMigrations, dbRows) {
 /**
  * @param {boolean} migrateSuccess result of `prisma migrate deploy`
  * @param {Record<string, string | undefined>} env
- * @param {{ localMigrations: string[], dbRows: object[], invalidIndexes: string[] | null } | null} [schemaState]
+ * @param {{ localMigrations: string[], dbRows: object[], invalidIndexes?: string[] | null } | null} [schemaState]
  *   null/undefined = the state could not be read, which always aborts; so does
  *   a missing/null invalidIndexes (pg_index unreadable) or a non-empty one.
  * @returns {{ action: 'continue' | 'continue-schema-current' | 'abort' | 'db-push-fallback', message?: string }}

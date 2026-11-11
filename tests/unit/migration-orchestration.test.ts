@@ -1,14 +1,13 @@
 import { EventEmitter } from "events";
 import { readFileSync } from "fs";
 import { describe, expect, it, vi } from "vitest";
-// @ts-expect-error plain JS entry points
-import { main as startMain } from "../../start.js";
-// @ts-expect-error plain JS entry points
-import { main as runMigration } from "../../scripts/run-migration.js";
-// @ts-expect-error plain JS entry points
+import { main as startMainTyped } from "../../start.js";
+const startMain: any = startMainTyped;
+import { main as runMigrationTyped } from "../../scripts/run-migration.js";
+const runMigration: any = runMigrationTyped;
 import { migrationsAlreadyRun } from "../../scripts/start-plan.js";
-// @ts-expect-error plain JS entry points
-import { readSchemaState } from "../../scripts/read-schema-state.js";
+import { readSchemaState as readSchemaStateTyped } from "../../scripts/read-schema-state.js";
+const readSchemaState: any = readSchemaStateTyped;
 
 const quiet = () => vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -100,7 +99,7 @@ describe("run-migration.js after a failed migrate deploy", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
   it("schema current but an INVALID index: aborts, never db push, even with the flag", async () => {
-    for (const env of [{}, { ALLOW_DB_PUSH_FALLBACK: "true" }]) {
+    for (const env of [{}, { ALLOW_DB_PUSH_FALLBACK: "true" }] as Record<string, string>[]) {
       const { commands, exit } = await runWith({ deploy: false, state: { ...current, invalidIndexes: ["i"] }, env });
       expect(pushed(commands)).toBe(false);
       expect(exit).toHaveBeenCalledWith(1);
@@ -168,5 +167,13 @@ describe("no other start-path script falls back to db push", () => {
     ]) {
       expect(readFileSync(f, "utf8")).not.toMatch(/db push|migrate deploy/);
     }
+  });
+});
+
+describe("railway.json restart policy", () => {
+  it("bounds restarts of a broken deploy", () => {
+    const d = JSON.parse(readFileSync("railway.json", "utf8")).deploy;
+    expect(d.restartPolicyType).toBe("ON_FAILURE");
+    expect(d.restartPolicyMaxRetries).toBe(5);
   });
 });
