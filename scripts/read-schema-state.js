@@ -22,7 +22,17 @@ export async function readSchemaState({
     try {
       const dbRows = await prisma.$queryRawUnsafe(
         'SELECT "migration_name", "finished_at", "rolled_back_at" FROM "_prisma_migrations"');
-      return { localMigrations, dbRows };
+      // INVALID indexes (failed or still-running CREATE INDEX CONCURRENTLY). A failed
+      // read is null = "cannot tell", which the decision treats as abort.
+      let invalidIndexes = null;
+      try {
+        const idx = await prisma.$queryRawUnsafe(
+          'SELECT indexrelid::regclass::text AS index_name FROM pg_index WHERE NOT indisvalid');
+        invalidIndexes = idx.map((r) => String(r.index_name));
+      } catch (e) {
+        log(`  ↳ pg_index check failed: ${e.message?.substring(0, 120)}`);
+      }
+      return { localMigrations, dbRows, invalidIndexes };
     } finally {
       await prisma.$disconnect();
     }

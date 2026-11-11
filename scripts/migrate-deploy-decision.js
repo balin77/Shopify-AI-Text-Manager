@@ -48,8 +48,9 @@ export function assessSchema(localMigrations, dbRows) {
 /**
  * @param {boolean} migrateSuccess result of `prisma migrate deploy`
  * @param {Record<string, string | undefined>} env
- * @param {{ localMigrations: string[], dbRows: object[] } | null} [schemaState]
- *   null/undefined = the state could not be read, which always aborts.
+ * @param {{ localMigrations: string[], dbRows: object[], invalidIndexes: string[] | null } | null} [schemaState]
+ *   null/undefined = the state could not be read, which always aborts; so does
+ *   a missing/null invalidIndexes (pg_index unreadable) or a non-empty one.
  * @returns {{ action: 'continue' | 'continue-schema-current' | 'abort' | 'db-push-fallback', message?: string }}
  */
 export function decideAfterMigrateDeploy(migrateSuccess, env = process.env, schemaState = null) {
@@ -57,10 +58,32 @@ export function decideAfterMigrateDeploy(migrateSuccess, env = process.env, sche
   if (schemaState && Array.isArray(schemaState.localMigrations) && Array.isArray(schemaState.dbRows)) {
     const a = assessSchema(schemaState.localMigrations, schemaState.dbRows);
     if (a.current) {
+      // Rows alone prove too little: a row set to --applied by hand can sit on
+      // top of an INVALID index. No pg_index answer (null/missing) = cannot tell.
+      // Refuse in both cases and regardless of the db push flag (db push does not
+      // repair an invalid index). An index another container is building RIGHT NOW
+      // also reads as invalid: refusing is the safe direction, the restart retries.
+      if (!Array.isArray(schemaState.invalidIndexes)) {
+        return {
+          action: 'abort',
+          message:
+            'MIGRATE_DEPLOY_FAILED: every migration of this image is applied, but pg_index could not be read, so INVALID indexes cannot be ruled out. ' +
+            'Aborting deploy (exit 1), the old container keeps serving; the restart retries. See RAILWAY-SETUP.md "Fehlgeschlagene Migration beheben".',
+        };
+      }
+      if (schemaState.invalidIndexes.length > 0) {
+        return {
+          action: 'abort',
+          message:
+            `MIGRATE_DEPLOY_FAILED_INVALID_INDEX: every migration of this image is applied, but INVALID index(es) exist: ${schemaState.invalidIndexes.join(', ')}. ` +
+            'This is either a broken index left by a failed CREATE INDEX CONCURRENTLY, or an index another container is building right now; ' +
+            'aborting is the safe direction (exit 1, the old container keeps serving, the restart retries). See RAILWAY-SETUP.md "Fehlgeschlagene Migration beheben".',
+        };
+      }
       return {
         action: 'continue-schema-current',
         message:
-          'MIGRATE_DEPLOY_FAILED_BUT_SCHEMA_CURRENT: prisma migrate deploy failed, but every migration of this image is applied. ' +
+          'MIGRATE_DEPLOY_FAILED_BUT_SCHEMA_CURRENT: prisma migrate deploy failed, but every migration of this image is applied and no INVALID index exists. ' +
           `Failed migration(s) not in this image: ${a.failedForeign.join(', ') || 'none found'}. Starting anyway. ` +
           'Fix per RAILWAY-SETUP.md "Fehlgeschlagene Migration beheben".',
       };

@@ -65,7 +65,7 @@ describe("start.js", () => {
 
 const local = ["m1", "m2"];
 const done = (n: string) => ({ migration_name: n, finished_at: new Date(), rolled_back_at: null });
-const current = { localMigrations: local, dbRows: [done("m1"), done("m2"), { migration_name: "m3", finished_at: null, rolled_back_at: null }] };
+const current = { localMigrations: local, dbRows: [done("m1"), done("m2"), { migration_name: "m3", finished_at: null, rolled_back_at: null }], invalidIndexes: [] };
 const notCurrent = { localMigrations: local, dbRows: [done("m1")] };
 
 async function runWith(opts: { deploy: boolean; env?: Record<string, string>; state: any }) {
@@ -98,6 +98,13 @@ describe("run-migration.js after a failed migrate deploy", () => {
     const { commands, exit } = await runWith({ deploy: false, state: notCurrent });
     expect(pushed(commands)).toBe(false);
     expect(exit).toHaveBeenCalledWith(1);
+  });
+  it("schema current but an INVALID index: aborts, never db push, even with the flag", async () => {
+    for (const env of [{}, { ALLOW_DB_PUSH_FALLBACK: "true" }]) {
+      const { commands, exit } = await runWith({ deploy: false, state: { ...current, invalidIndexes: ["i"] }, env });
+      expect(pushed(commands)).toBe(false);
+      expect(exit).toHaveBeenCalledWith(1);
+    }
   });
   it("state unreadable, no flag: aborts, never db push", async () => {
     const { commands, exit } = await runWith({ deploy: false, state: null });
@@ -137,7 +144,16 @@ describe("readSchemaState", () => {
       isDir: (p: string) => p.endsWith("/a"),
       makePrisma: async () => ({ $queryRawUnsafe: async () => [1], $disconnect: async () => {} }),
     });
-    expect(s).toEqual({ localMigrations: ["a"], dbRows: [1] });
+    expect(s).toMatchObject({ localMigrations: ["a"], dbRows: [1] });
+  });
+  it("lists invalid indexes; a failed pg_index read is null", async () => {
+    const mk = (idx: () => Promise<any[]>) => async () => ({
+      $queryRawUnsafe: async (q: string) => (q.includes("pg_index") ? idx() : []),
+      $disconnect: async () => {},
+    });
+    const base = { listDir: () => ["a"], isDir: () => true };
+    expect((await readSchemaState({ ...base, makePrisma: mk(async () => [{ index_name: "x" }]) })).invalidIndexes).toEqual(["x"]);
+    expect((await readSchemaState({ ...base, makePrisma: mk(async () => { throw new Error("no"); }) })).invalidIndexes).toBeNull();
   });
 });
 
