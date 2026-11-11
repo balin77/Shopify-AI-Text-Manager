@@ -13,23 +13,18 @@ je Service unter Settings → Config-as-Code hinterlegt.
 
 | Service | Config-Datei | Inhalt |
 |---|---|---|
-| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` (Timeout 900 s, damit ein langer Index-Build beim Start nicht abgebrochen wird), `drainingSeconds` 15, Neustart bei Fehler höchstens 5-mal (`ON_FAILURE`, siehe unten) |
+| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` (Timeout 900 s, damit ein langer Index-Build beim Start nicht abgebrochen wird), `drainingSeconds` 15, Neustart bei Fehler `ON_FAILURE`, höchstens 10-mal (siehe unten) |
 | Db Space Checker (Cron, nur production) | [railway.dbalert.json](railway.dbalert.json) | Dockerfile-Builder, `node scripts/db-alert.mjs`, alle 15 Min, kein Restart |
 | Db Backup (Cron, production **und** development) | [railway.dbbackup.json](railway.dbbackup.json) | Dockerfile-Builder, `node scripts/db-backup.mjs`, täglich 02:00 UTC, kein Restart |
 
-**Neustart-Regel des Web-Services (`restartPolicyMaxRetries: 5`).** Ohne Angabe gilt Railways
-Standard (`ON_FAILURE`, 10 Versuche). Ein Deploy, dessen Start bei der Migration abbricht (Exit-Code 1, siehe
-«Fehlgeschlagene Migration beheben»), startet dann immer wieder neu, bis der Zähler aufgebraucht ist; Railway markiert
-das Deploy erst danach als fehlgeschlagen. Das Healthcheck-Timeout (900 s) gilt dafür nicht: es begrenzt nur das Warten
-auf ein laufendes, noch nicht gesundes Deploy. 5 ist ein Kompromiss: Ein deterministischer Migrationsfehler soll nach
-wenigen Versuchen sichtbar scheitern (der alte Container bleibt in der Zeit aktiv), ein vorübergehender Abbruch soll
-trotzdem noch Zeit zum Abklingen haben. Das betrifft vor allem den Fall aus der Migrationsprüfung: Baut ein anderer
-Container gerade einen Index, gilt dieser als ungültig, der Start bricht ab und der Neustart prüft erneut; mit 5 Versuchen
-und Railways ansteigender Wartezeit reicht das für einen kurzen Aufbau, ein sehr langer Aufbau führt zu einem
-fehlgeschlagenen Deploy (danach Redeploy). Nachteil: Der Zähler gilt auch für Abstürze im laufenden Betrieb (z. B.
-Speichermangel); nach 5 Abstürzen bleibt der Service stehen, bis er manuell neu gestartet wird. Nicht gemessen: ob und
-wann Railway den Zähler nach einem gesunden Lauf zurücksetzt, und die genaue Wartezeit zwischen den Versuchen. Die beiden
-Cron-Services behalten `NEVER`.
+**Neustart-Regel des Web-Services (`restartPolicyType: ON_FAILURE`, `restartPolicyMaxRetries: 10`).** Das ist
+Railways Standard; beides steht bewusst ausdrücklich in `railway.json`, damit die Entscheidung sichtbar ist. Ein niedrigerer
+Wert wurde erwogen und verworfen: Der Zähler gilt auch für Abstürze im **laufenden Betrieb** (z. B. Speichermangel), und
+wann Railway ihn nach einem gesunden Lauf zurücksetzt, ist nicht gemessen. Ein kleiner Wert könnte die Produktion nach
+einer Absturzserie dauerhaft stehen lassen. Gewonnen wäre wenig: Ein fehlgeschlagenes Deploy ersetzt den alten Container
+nie (er läuft weiter) und ist durch das Healthcheck-Timeout von 900 s ohnehin begrenzt. Das betrifft auch den Fall aus der
+Migrationsprüfung: Baut ein anderer Container gerade einen Index dieses Images, gilt er als ungültig, der Start bricht ab
+und der Neustart prüft erneut. Die beiden Cron-Services behalten `NEVER`.
 
 Beide Web-Environments sind identisch konfiguriert — deshalb braucht `railway.json`
 keine `environments`-Überschreibungen. Weichen sie irgendwann ab, kommt ein Block

@@ -180,6 +180,6 @@ describe("railway.json restart policy", () => {
   it("bounds restarts of a broken deploy", () => {
     const d = JSON.parse(readFileSync("railway.json", "utf8")).deploy;
     expect(d.restartPolicyType).toBe("ON_FAILURE");
-    expect(d.restartPolicyMaxRetries).toBe(5);
+    expect(d.restartPolicyMaxRetries).toBe(10);
   });
 });
