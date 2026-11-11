@@ -13,9 +13,18 @@ je Service unter Settings → Config-as-Code hinterlegt.
 
 | Service | Config-Datei | Inhalt |
 |---|---|---|
-| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` (Timeout 900 s, damit ein langer Index-Build beim Start nicht abgebrochen wird), `drainingSeconds` 15 |
+| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` (Timeout 900 s, damit ein langer Index-Build beim Start nicht abgebrochen wird), `drainingSeconds` 15, Neustart bei Fehler `ON_FAILURE`, höchstens 10-mal (siehe unten) |
 | Db Space Checker (Cron, nur production) | [railway.dbalert.json](railway.dbalert.json) | Dockerfile-Builder, `node scripts/db-alert.mjs`, alle 15 Min, kein Restart |
 | Db Backup (Cron, production **und** development) | [railway.dbbackup.json](railway.dbbackup.json) | Dockerfile-Builder, `node scripts/db-backup.mjs`, täglich 02:00 UTC, kein Restart |
+
+**Neustart-Regel des Web-Services (`restartPolicyType: ON_FAILURE`, `restartPolicyMaxRetries: 10`).** Das ist
+Railways Standard; beides steht bewusst ausdrücklich in `railway.json`, damit die Entscheidung sichtbar ist. Ein niedrigerer
+Wert wurde erwogen und verworfen: Der Zähler gilt auch für Abstürze im **laufenden Betrieb** (z. B. Speichermangel), und
+wann Railway ihn nach einem gesunden Lauf zurücksetzt, ist nicht gemessen. Ein kleiner Wert könnte die Produktion nach
+einer Absturzserie dauerhaft stehen lassen. Gewonnen wäre wenig: Ein fehlgeschlagenes Deploy ersetzt den alten Container
+nie (er läuft weiter) und ist durch das Healthcheck-Timeout von 900 s ohnehin begrenzt. Das betrifft auch den Fall aus der
+Migrationsprüfung: Baut ein anderer Container gerade einen Index dieses Images, gilt er als ungültig, der Start bricht ab
+und der Neustart prüft erneut. Die beiden Cron-Services behalten `NEVER`.
 
 Beide Web-Environments sind identisch konfiguriert — deshalb braucht `railway.json`
 keine `environments`-Überschreibungen. Weichen sie irgendwann ab, kommt ein Block
@@ -899,8 +908,29 @@ railway connect Postgres
   fehlgeschlagenen Deploy nicht in eine Absturzschleife.
   Achtung: Ist die neuere Migration nur zum Teil durchgelaufen, arbeitet der alte Container auf einem teilweise
   geänderten Schema. Das ist nur sicher, solange Migrationen rückwärtsverträglich sind (erst hinzufügen, später entfernen).
+- Zusätzlich prüft der Start `pg_index` auf **ungültige Indizes** (nur im aktuellen Schema, mit blossem Indexnamen). Nur ein
+  ungültiger Index, den eine **Migration dieses Images** anlegt (Name kommt in einem lokalen `migration.sql` als
+  `CREATE [UNIQUE] INDEX [CONCURRENTLY] [IF NOT EXISTS] <name>` vor, Gross-/Kleinschreibung egal), bricht den Start ab
+  (Log: `MIGRATE_DEPLOY_FAILED_INVALID_INDEX` mit den Namen): eine von Hand mit `--applied` markierte Zeile kann auf einem
+  kaputten Index sitzen. Ein Index, den ein **anderer Container gerade aufbaut**, erscheint ebenfalls als ungültig; gehört er
+  zu diesem Image, wird das bewusst als Abbruch behandelt (sichere Richtung: der alte Container bleibt aktiv, der Neustart
+  prüft erneut). Jeder **andere** ungültige Index (Index einer neueren Migration, anderer Besitzer, Rest eines
+  `REINDEX CONCURRENTLY`) blockiert nicht: Der Start läuft weiter und loggt `MIGRATE_INVALID_INDEX_NOT_OURS names=...`.
+  Sonst würde der alte Container nach einem abgebrochenen `CREATE INDEX CONCURRENTLY` eines neueren Deploys («Redeploy
+  previous») dauerhaft abstürzen. Lässt sich `pg_index` nicht lesen: Gehört die fehlgeschlagene Migration zu einem neueren
+  Image, läuft der Start weiter (Log `MIGRATE_INVALID_INDEX_UNKNOWN`), sonst gilt «nicht feststellbar» als Abbruch.
+  Der Notfall-Schalter `ALLOW_DB_PUSH_FALLBACK` hebt die Abbruchprüfung nicht auf, denn `db push` repariert keinen
+  ungültigen Index.
+- Baut eine neuere Migration einen Index unter demselben Namen neu, den auch eine ältere Migration anlegt (`DROP INDEX CONCURRENTLY` + `CREATE INDEX CONCURRENTLY`), und wird sie abgebrochen, gilt der ungültige Index für das alte Image als eigener: Es bricht bei jedem Neustart ab. Vor «Redeploy previous» muss dann der ungültige Index entfernt und neu angelegt (oder die Migration aufgelöst) werden. Neue Migrationen sollten neu gebaute Indizes deshalb unter einem neuen Namen anlegen.
 - Fehlt dem Image eine Migration, ist sie fehlgeschlagen oder lässt sich der Stand nicht lesen, bricht das Deploy mit
   Exit-Code 1 ab (Log: `MIGRATE_DEPLOY_FAILED`) und der alte Container bleibt aktiv.
+
+Die Migrationen laufen beim Containerstart **genau einmal**: `npm run start:production` setzt für `start.js` die Variable
+`MIGRATIONS_ALREADY_RUN=1` (direkt im Script, weil Umgebungsvariablen nicht zwischen den mit `&&` verketteten Prozessen
+weitergegeben werden), und `start.js` überspringt dann `scripts/run-migration.js`. Dieses zweite Skript gibt es nur noch für
+andere Startwege (`npm start`, Dockerfile-`CMD`); es nutzt dieselbe Entscheidung wie `run-all-migrations.js`
+(`scripts/migrate-deploy-decision.js`): nach einem fehlgeschlagenen `migrate deploy` ist `db push` ohne
+`ALLOW_DB_PUSH_FALLBACK=true` nirgends erreichbar, auch nicht bei aktuellem Schema.
 
 Es gibt bewusst **keinen** stillen Wechsel auf `prisma db push`: der liesse ungültige (INVALID) Indizes und
 fehlgeschlagene Migrationszeilen für immer stehen, würde spätere SQL-Backfills überspringen und spätere Indizes ohne

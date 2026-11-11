@@ -93,7 +93,11 @@ export const ADMIN_SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "X-Frame-Options": "DENY",
   "Content-Security-Policy": "frame-ancestors 'none'",
   "X-Robots-Tag": "noindex, nofollow",
-  "Referrer-Policy": "no-referrer",
+  // same-origin (not no-referrer): with no-referrer a browser sends `Origin: null` on a
+  // native form POST (page not hydrated yet), which the strict destructive-intent check
+  // must refuse. same-origin keeps the real Origin on same-origin requests and sends no
+  // referrer cross-origin.
+  "Referrer-Policy": "same-origin",
 };
 
 /**
@@ -167,6 +171,17 @@ export function isSameOriginAdminRequest(request: Request): boolean {
  * refused; a `Sec-Fetch-Site` that is present must say same-origin. Other
  * admin intents keep the lenient `isSameOriginAdminRequest`.
  */
+export function isNullOriginAdminRequest(request: Request): boolean {
+  return request.headers.get("Origin")?.trim().toLowerCase() === "null";
+}
+
+/** The German refusal text for the destructive intents (null Origin gets a hint to reload). */
+export function strictOriginRefusalMessage(request: Request): string {
+  return isNullOriginAdminRequest(request)
+    ? "Seite neu laden und nochmals versuchen."
+    : "Anfrage von fremdem Ursprung abgelehnt.";
+}
+
 export function isStrictSameOriginAdminRequest(request: Request): boolean {
   const site = request.headers.get("Sec-Fetch-Site");
   if (site && site !== "same-origin") return false;

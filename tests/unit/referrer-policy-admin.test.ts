@@ -21,11 +21,11 @@ describe("Referrer-Policy on /admin", () => {
     }
   });
 
-  it("the admin document carries exactly no-referrer; /app keeps the strict one", () => {
+  it("the admin document carries exactly same-origin; /app keeps the strict one", () => {
     const admin = new Headers();
     applyDocumentSecurityHeaders(new Request("https://x.test/admin"), admin, () => {}, true);
-    expect(admin.get("Referrer-Policy")).toBe("no-referrer");
-    expect(ADMIN_SECURITY_HEADERS["Referrer-Policy"]).toBe("no-referrer");
+    expect(admin.get("Referrer-Policy")).toBe("same-origin");
+    expect(ADMIN_SECURITY_HEADERS["Referrer-Policy"]).toBe("same-origin");
     const app = new Headers();
     applyDocumentSecurityHeaders(new Request("https://x.test/app"), app, () => {}, true);
     expect(app.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");

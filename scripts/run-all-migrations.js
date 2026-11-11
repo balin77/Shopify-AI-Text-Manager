@@ -11,7 +11,7 @@
  */
 
 import { execSync } from 'child_process';
-import { readdirSync, statSync } from 'fs';
+import { readSchemaState } from './read-schema-state.js';
 import { decideAfterMigrateDeploy, isTransientDbError, retryDelayMs } from './migrate-deploy-decision.js';
 
 const colors = {
@@ -155,21 +155,7 @@ async function main() {
   // On failure: is the schema this image needs nevertheless fully applied?
   let schemaState = null;
   if (!migrateSuccess) {
-    try {
-      const localMigrations = readdirSync('prisma/migrations').filter((n) =>
-        statSync(`prisma/migrations/${n}`).isDirectory());
-      const { PrismaClient } = await import('@prisma/client');
-      const prisma = new PrismaClient();
-      try {
-        const dbRows = await prisma.$queryRawUnsafe(
-          'SELECT "migration_name", "finished_at", "rolled_back_at" FROM "_prisma_migrations"');
-        schemaState = { localMigrations, dbRows };
-      } finally {
-        await prisma.$disconnect();
-      }
-    } catch (e) {
-      log(`  ↳ Schema state check failed: ${e.message?.substring(0, 120)}`, 'yellow');
-    }
+    schemaState = await readSchemaState({ log: (m) => log(m, 'yellow') });
   }
 
   const decision = decideAfterMigrateDeploy(migrateSuccess, process.env, schemaState);

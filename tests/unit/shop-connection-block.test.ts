@@ -71,6 +71,10 @@ vi.mock("../../app/services/webhook-catchup.server", () => ({
   runWebhookCatchUp: (...a: unknown[]) => catchUp(...(a as [])),
   isCatchUpInFlight: () => false,
 }));
+const schedulerActive = vi.hoisted(() => ({ fn: vi.fn((_shop: string): boolean => false) }));
+vi.mock("../../app/services/sync-scheduler.service", () => ({
+  syncScheduler: { isShopActive: (s: string) => schedulerActive.fn(s) },
+}));
 vi.mock("../../app/services/ops-alert.server", () => ({ notifyOps: (...a: unknown[]) => opsAlerts.push(a) }));
 
 import {
@@ -413,6 +417,28 @@ describe("liftBlockOnAccessEvidence (a real Shopify answer, not a session that m
     expect(store.get(SHOP)).toMatchObject({ connectionState: null, connectionClearedCause: "session_ok", droppedWebhookCount: 4 });
     expect(store.get(SHOP)!.resyncRequiredSince).toBeInstanceOf(Date);
     await vi.waitFor(() => expect(catchUp).toHaveBeenCalledWith(SHOP, admin));
+  });
+
+  it("a shop the scheduler is active for gets NO detached catch-up (its next cycle runs it) and the owed flag stays", async () => {
+    await blockedWithOwedCatchUp();
+    schedulerActive.fn.mockReturnValue(true);
+    const admin = adminAnswering();
+    expect(await liftBlockOnAccessEvidence(SHOP, later(), { session: goodSession(), admin })).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(schedulerActive.fn).toHaveBeenCalledWith(SHOP);
+    expect(catchUp).not.toHaveBeenCalled();
+    expect(store.get(SHOP)!.resyncRequiredSince).toBeInstanceOf(Date);
+    schedulerActive.fn.mockReturnValue(false);
+  });
+
+  it("a failing scheduler lookup starts nothing and does not throw", async () => {
+    await blockedWithOwedCatchUp();
+    schedulerActive.fn.mockImplementation(() => { throw new Error("boom"); });
+    const admin = adminAnswering();
+    expect(await liftBlockOnAccessEvidence(SHOP, later(), { session: goodSession(), admin })).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(catchUp).not.toHaveBeenCalled();
+    schedulerActive.fn.mockImplementation(() => false);
   });
 
   it("an answer without a shop (errors, empty data, not ok) is no evidence", async () => {

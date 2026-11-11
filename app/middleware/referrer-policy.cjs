@@ -2,9 +2,10 @@
  * Referrer-Policy per path (plain CJS so server.js can require it).
  *
  * /admin (the operator page, plus its data requests /admin.data) sends
- * `no-referrer` only. server.js used to set strict-origin-when-cross-origin for
+ * `same-origin` only (not no-referrer: that makes browsers send `Origin: null` on a
+ * native form POST, which the strict admin origin check refuses). server.js used to set strict-origin-when-cross-origin for
  * every response, and the React Router response then carried its own
- * `no-referrer` for /admin, so the browser saw TWO Referrer-Policy headers.
+ * `same-origin` for /admin, so the browser saw TWO Referrer-Policy headers.
  * Everything else (/app, the website) keeps the embedded-app value.
  * Matching mirrors isAdminPath in admin-auth.server.ts (case-insensitive,
  * trailing slashes ignored).

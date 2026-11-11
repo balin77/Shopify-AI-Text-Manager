@@ -318,6 +318,13 @@ function startCatchUpAfterLift(shop: string, admin: AccessEvidence["admin"]): vo
     try {
       const { runWebhookCatchUp, isCatchUpInFlight } = await import("../services/webhook-catchup.server");
       if (isCatchUpInFlight(shop)) return;
+      // A shop with a scheduler timer owns its catch-up: its next cycle runs it
+      // inside a sync slot BEFORE syncAll (resyncRequiredSince stays set, the
+      // lift never clears it). Starting one here could overlap a running syncAll
+      // (two writers on the same caches, doubled Admin API load). A failed
+      // import or lookup also means NOT starting: scheduler and sweep still owe it.
+      const { syncScheduler } = await import("../services/sync-scheduler.service");
+      if (syncScheduler.isShopActive(shop)) return;
       // The catch-up outlives the request (CLAUDE.md "Auth / boundaries"): hold
       // the background client, never the captured one.
       const { backgroundAdmin } = await import("./offline-admin.server");
