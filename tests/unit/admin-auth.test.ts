@@ -142,7 +142,7 @@ describe("admin headers and login", () => {
     "X-Frame-Options": "DENY",
     "Content-Security-Policy": "frame-ancestors 'none'",
     "X-Robots-Tag": "noindex, nofollow",
-    "Referrer-Policy": "no-referrer",
+    "Referrer-Policy": "same-origin",
   };
 
   it("exports the four headers", () => {
@@ -245,7 +245,7 @@ describe("document headers (entry path)", () => {
       applyDocumentSecurityHeaders(req(path), h, embedded, true);
       expect(h.get("X-Frame-Options")).toBe("DENY");
       expect(h.get("Content-Security-Policy")).toBe("frame-ancestors 'none'");
-      expect(h.get("Referrer-Policy")).toBe("no-referrer");
+      expect(h.get("Referrer-Policy")).toBe("same-origin");
       expect(h.get("X-Content-Type-Options")).toBe("nosniff");
     }
   });

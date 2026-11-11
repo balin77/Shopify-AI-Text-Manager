@@ -49,6 +49,7 @@ import {
   constantTimeEqual,
   isAdminAuthenticated,
   isStrictSameOriginAdminRequest,
+  strictOriginRefusalMessage,
   serializeAdminLogout,
   serializeAdminSession,
 } from '~/utils/admin-auth.server';
@@ -235,7 +236,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // --- Als deinstalliert markieren (Operator, nur mit Beleg) ---
   if (intent === 'mark-uninstalled') {
     if (!isStrictSameOriginAdminRequest(request)) {
-      return json({ error: 'Anfrage von fremdem Ursprung abgelehnt.' }, { status: 403, headers: baseHeaders() });
+      return json({ error: strictOriginRefusalMessage(request) }, { status: 403, headers: baseHeaders() });
     }
     const shop = String(form.get('shop') ?? '').trim().toLowerCase();
     const confirm = String(form.get('confirm') ?? '');
@@ -274,7 +275,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // --- Shop-Daten löschen ---
   if (intent === 'delete-shop') {
     if (!isStrictSameOriginAdminRequest(request)) {
-      return json({ error: 'Anfrage von fremdem Ursprung abgelehnt.' }, { status: 403, headers: baseHeaders() });
+      return json({ error: strictOriginRefusalMessage(request) }, { status: 403, headers: baseHeaders() });
     }
     const shop = String(form.get('shop') ?? '').trim().toLowerCase();
     const confirm = String(form.get('confirm') ?? '');

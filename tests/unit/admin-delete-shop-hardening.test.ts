@@ -42,6 +42,7 @@ import { logger } from "~/utils/logger.server";
 import * as route from "../../app/routes/admin";
 import {
   isStrictSameOriginAdminRequest,
+  strictOriginRefusalMessage,
   serializeAdminSession,
 } from "../../app/utils/admin-auth.server";
 import { loadAuditDetail } from "~/services/admin/shop-overview.server";
@@ -180,6 +181,16 @@ describe("isStrictSameOriginAdminRequest", () => {
   it("falls back to the forwarded host without SHOPIFY_APP_URL", () => {
     expect(isStrictSameOriginAdminRequest(req({ Origin: "https://a.example", "X-Forwarded-Host": "a.example" }))).toBe(true);
     expect(isStrictSameOriginAdminRequest(req({ Origin: "https://a.example" }))).toBe(false);
+  });
+
+  it("a null Origin (native POST before hydration) is refused with the reload hint", async () => {
+    const r = req({ Origin: "null" });
+    expect(isStrictSameOriginAdminRequest(r)).toBe(false);
+    expect(strictOriginRefusalMessage(r)).toBe("Seite neu laden und nochmals versuchen.");
+    expect(strictOriginRefusalMessage(req({ Origin: "https://evil.example" }))).toBe("Anfrage von fremdem Ursprung abgelehnt.");
+    const res = await post({ intent: "delete-shop", shop: SHOP, confirm: SHOP }, { Origin: "null" });
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(res.body)).toContain("Seite neu laden");
   });
 
   it("requires an Origin at all", () => {
