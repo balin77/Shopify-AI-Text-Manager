@@ -3236,7 +3236,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         // an expensive second call still in flight.
         for (let i = meter.observed.length; i < meter.dispatched; i++) {
           meter.observed.push(
-            this.worstCaseUsage(prompt, imageUrls?.length ?? 0, requestOptions && this.effectiveMaxTokens(requestOptions)),
+            this.worstCaseUsage(prompt, imageUrls?.length ?? 0, requestOptions && this.sentMaxTokens(this.effectiveMaxTokens(requestOptions))),
           );
         }
       }
@@ -3608,6 +3608,19 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
    */
   private effectiveMaxTokens(options: AiRequestOptions): number {
     return Math.max(256, Math.min(options.maxOutputTokens, maxOutputTokensFor(this.provider, this.getModel())));
+  }
+
+  /**
+   * The output ceiling a package request is really SENT with: `maxTokens` plus
+   * the Gemini 2.5 thinking allowance (never past the model's own ceiling).
+   * ONE helper for `geminiGenerate` and the timeout worst case, so what is
+   * charged for a call that never answered equals what was sent.
+   */
+  private sentMaxTokens(maxTokens: number): number {
+    const thinking = geminiThinkingAllowanceTokens(this.provider, this.getModel());
+    return thinking > 0
+      ? Math.min(maxTokens + thinking, maxOutputTokensFor(this.provider, this.getModel()))
+      : maxTokens;
   }
 
   /** What a packaged request is planned against, for the caller's sizing. */
@@ -4021,10 +4034,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     // typings have no thinkingConfig: the package ceiling gets an allowance on
     // top (never past the model's own ceiling), so thinking cannot truncate the
     // answer. Zero for every other model.
-    const thinking = geminiThinkingAllowanceTokens(this.provider, this.getModel());
-    const ceiling = thinking > 0
-      ? Math.min(maxTokens + thinking, maxOutputTokensFor(this.provider, this.getModel()))
-      : maxTokens;
+    const ceiling = this.sentMaxTokens(maxTokens);
     return this.gemini!.generateContent(
       {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
