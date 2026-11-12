@@ -395,6 +395,9 @@ export default function BulkTranslateMissingPage() {
       startedOverCap.current = result.skippedOverCap ?? 0;
       setBanner({ kind: "running" });
       setTaskId(result.taskId);
+    } else if (!result.success && result.code === "CANCELLED") {
+      // The server's text is English; the cancelled banner is localised.
+      setBanner({ kind: "cancelled", saved: 0, notProcessed: 0 });
     } else if (!result.success) {
       setBanner({ kind: "failed", message: result.error });
       if (result.code === "ALREADY_RUNNING" && result.taskId) setTaskId(result.taskId);

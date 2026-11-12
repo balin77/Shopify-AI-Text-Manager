@@ -211,4 +211,29 @@ describe("planTranslateRead", () => {
     expect(plan.failures).toEqual([expect.objectContaining({ rowId: C1, message: expect.stringContaining("could not be read") })]);
     expect(plan.failures[0].message).not.toMatch(/no featured image/);
   });
+
+  it("a sub-resource cell with no addressable target records the empty-order marker, so a target appearing by write time reads as changed", async () => {
+    const { gateway } = gatewayFor({});
+    const plan = await planTranslateRead({ db: noDb, shop: SHOP, gateway, rowType: "product" }, [
+      job(P1, [cell(metafieldColumnId("custom", "care"), "Wash cold")]),
+    ]);
+    expect(plan.jobs[0].cells).toHaveLength(1);
+    expect(plan.expected.get(planCellKey(P1, metafieldColumnId("custom", "care")))).toEqual({ "#order": "" });
+  });
+
+  it("the mismatch warning carries lengths and hash prefixes only; the text edges go to debug", async () => {
+    const { logger } = await import("~/utils/logger.server");
+    const warn = vi.spyOn(logger, "warn").mockImplementation((() => logger) as never);
+    const debug = vi.spyOn(logger, "debug").mockImplementation((() => logger) as never);
+    const { gateway } = gatewayFor({ [P1]: { title: { value: "Live merchant text", digest: "dt" } } });
+    await planTranslateRead({ db: noDb, shop: SHOP, gateway, rowType: "product" }, [
+      job(P1, [cell("field.title", "Cached merchant text")]),
+    ]);
+    const warnMeta = JSON.stringify(warn.mock.calls.map((c) => (c as unknown[])[1]));
+    expect(warnMeta).toContain("liveHash");
+    expect(warnMeta).not.toContain("merchant text");
+    expect(JSON.stringify(debug.mock.calls.map((c) => (c as unknown[])[1]))).toContain("liveEdges");
+    warn.mockRestore();
+    debug.mockRestore();
+  });
 });

@@ -3734,6 +3734,15 @@ async function persistSubResourceTranslations(
     if (deps.fillOnly) {
       const plannedOrder = group.expected?.[cell.columnId]?.[EXPECTED_ORDER_KEY];
       if (plannedOrder !== undefined && plannedOrder !== expectedOrderOf(pairs.map((p) => p.target.resourceId))) {
+        // A different target list reads as "changed" only when Shopify was
+        // ASKED about it: a target the live read did not answer for is
+        // UNKNOWN (the same rule fillOnlyVerdict applies), never a changed
+        // source -- the merchant is told to retry rather than that the text
+        // moved.
+        if (pairs.some((p) => !deps.live.get(p.target.resourceId)?.get(locale))) {
+          failures.push(failureOf(group, FILL_UNKNOWN_MESSAGE, cell.columnId));
+          continue;
+        }
         deps.skips.changed++;
         continue;
       }

@@ -531,4 +531,32 @@ describe("fillOnly — the plan's expected map must cover the write's targets (H
     expect(registered).toEqual([]);
     expect(result.skippedChanged).toBe(1);
   });
+
+  it("a target that appeared since the plan recorded none (empty-order marker) is changed, not written", async () => {
+    const MF = "gid://shopify/Metafield/4";
+    const db = mockDb({
+      productMetafield: { findMany: vi.fn(async () => [{ id: MF, productId: PRODUCT, namespace: "custom", key: "care" }]) },
+      productOption: { findMany: vi.fn(async () => []) },
+    });
+    const cols = columnsByType([{ namespace: "custom", key: "care", type: "single_line_text_field" }]);
+    const { admin, registered } = shopify({ [MF]: { content: { value: "dm" }, translations: { fr: {} } } });
+    const result = await run(admin, db, [cell(metafieldColumnId("custom", "care"), "Soie", { expected: { "#order": "" } })], cols);
+    expect(registered).toEqual([]);
+    expect(result.skippedChanged).toBe(1);
+  });
+
+  it("a changed target list whose live read was NOT answered is unknown (a failure), never 'changed'", async () => {
+    const MF = "gid://shopify/Metafield/4";
+    const db = mockDb({
+      productMetafield: { findMany: vi.fn(async () => [{ id: MF, productId: PRODUCT, namespace: "custom", key: "care" }]) },
+      productOption: { findMany: vi.fn(async () => []) },
+    });
+    const cols = columnsByType([{ namespace: "custom", key: "care", type: "single_line_text_field" }]);
+    // The mock has no node for MF: the live read does not answer for it.
+    const { admin, registered } = shopify({});
+    const result = await run(admin, db, [cell(metafieldColumnId("custom", "care"), "Soie", { expected: { "#order": "gid://shopify/Metafield/3" } })], cols);
+    expect(registered).toEqual([]);
+    expect(result.skippedChanged ?? 0).toBe(0);
+    expect(result.failures).toHaveLength(1);
+  });
 });

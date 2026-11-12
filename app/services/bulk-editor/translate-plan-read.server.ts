@@ -89,16 +89,19 @@ function normalize(text: string): string {
 /** A short description of a mismatch for the log: lengths, a hash and the
  *  first/last 40 characters of each side -- never the whole merchant text. */
 function mismatchSample(live: string, cached: string): Record<string, unknown> {
-  const edge = (t: string) => (t.length <= 80 ? t : `${t.slice(0, 40)} ... ${t.slice(-40)}`);
   const hash = (t: string) => createHash("sha1").update(t).digest("hex").slice(0, 10);
   return {
     liveLength: live.length,
     cachedLength: cached.length,
     liveHash: hash(live),
     cachedHash: hash(cached),
-    liveEdges: edge(live),
-    cachedEdges: edge(cached),
   };
+}
+
+/** The 40-character edges of both sides: merchant text, so debug level only. */
+function mismatchEdges(live: string, cached: string): Record<string, unknown> {
+  const edge = (t: string) => (t.length <= 80 ? t : `${t.slice(0, 40)} ... ${t.slice(-40)}`);
+  return { liveEdges: edge(live), cachedEdges: edge(cached) };
 }
 
 export const planCellKey = (rowId: string, columnId: string): string => `${rowId}|${columnId}`;
@@ -162,6 +165,9 @@ export async function planTranslateRead<J extends PlanJob>(
         const subTargets = cache ? subResourceTargetsForColumn(cell.column, cache) : null;
         if (!subTargets || subTargets.length === 0) {
           // Not addressable here — the write path words that failure itself.
+          // Recorded as an EMPTY target list so a target that appears by
+          // write time (a metafield synced meanwhile) reads as changed: the
+          // plan never read it, so nothing was verified for it.
           targetsByCell.set(cellKey, []);
           continue;
         }
@@ -211,6 +217,9 @@ export async function planTranslateRead<J extends PlanJob>(
       // in the cache, a linked option, a collection without a featured image),
       // exactly as before — the plan does not add a second wording.
       if (targets === undefined || (targets && targets.length === 0)) {
+        if (targets && isSubResourceColumn(cell.column)) {
+          result.expected.set(cellKey, { [EXPECTED_ORDER_KEY]: expectedOrderOf([]) });
+        }
         kept.push(cell);
         continue;
       }
@@ -255,6 +264,12 @@ export async function planTranslateRead<J extends PlanJob>(
               rowType,
               key: target.key,
               ...mismatchSample(live, target.expectedText),
+            });
+            logger.debug("[BulkTranslate] Plan-time mismatch edges", {
+              context: "AI",
+              rowType,
+              key: target.key,
+              ...mismatchEdges(live, target.expectedText),
             });
           }
           break;

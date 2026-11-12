@@ -326,6 +326,23 @@ export async function scanMissingTranslations(
  * the entries that are already translated (`existingListValues`) so the task can
  * merge instead of overwriting them.
  */
+/**
+ * True when a sub-resource cell has nothing to fill for a reason OTHER than
+ * "every locale is present": the row no longer backs the column (target gone,
+ * linked option, uncached metafield) or its primary text is empty now.
+ * `missingSubResourceEntry` answers null for these too, so the re-check asks
+ * this first to tell the two apart.
+ */
+export function subResourceNothingToFill(
+  row: BulkRow,
+  column: ColumnDescriptor,
+  cache: ReturnType<typeof subResourceCacheFromRow>,
+): boolean {
+  const targets = subResourceTargetsForColumn(column, cache);
+  if (!targets || targets.length === 0) return true;
+  return candidateSourceValue(row, column).trim() === "";
+}
+
 export function missingSubResourceEntry(
   row: BulkRow,
   column: ColumnDescriptor,
@@ -642,6 +659,12 @@ export async function recheckMissingDetailed(
       for (const column of opts.columns) {
         let missing: string[] = [];
         if (subCache && isSubResourceColumn(column)) {
+          if (subResourceNothingToFill(row, column, subCache)) {
+            // Target gone or source empty is NOT "all locales present": the
+            // handler counts it as skipped-gone, not as already filled.
+            emptySources.add(`${row.id}|${column.id}`);
+            continue;
+          }
           missing = missingSubResourceEntry(row, column, subCache, scanOpts, subTranslated)?.locales ?? [];
         } else {
           const key = keyByColumnId.get(column.id);
