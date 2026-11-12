@@ -692,7 +692,7 @@ export const guideDe: GuideCopy = {
             "Im Bulk-Editor die Zeilen filtern, die Sie übersetzen möchten.",
             "„Fehlende Übersetzungen ergänzen“ öffnen.",
             "Oben die Zielsprachen wählen und in der Liste Einträge oder einzelne Felder ab- oder anwählen.",
-            "Auf „Übersetzen & speichern“ klicken und im Fenster die geschätzten Kosten prüfen, dann „Jetzt starten“ — die Übersetzung läuft als Aufgabe im Hintergrund.",
+            "Auf „Übersetzen & speichern“ klicken und im Fenster die geschätzten Kosten prüfen, dann „Jetzt starten“ — die Übersetzung läuft als Aufgabe im Hintergrund. Wird Ihnen die Wahl „Günstiger, Ergebnis bis zu 24 Stunden“ angeboten, können Sie stattdessen diese wählen (siehe unten).",
           ],
         },
         {
@@ -703,6 +703,15 @@ export const guideDe: GuideCopy = {
             "Die Übersetzungen werden schon während des Laufs in Etappen gespeichert, nicht erst am Ende. Hat sich der Originaltext eines Eintrags inzwischen geändert, wird er übersprungen, damit nie die Übersetzung eines alten Textes gespeichert wird; ebenso, wenn eine Sprache inzwischen schon eine Übersetzung hat. Auch ein Eintrag, der inzwischen gelöscht wurde oder dessen Originaltext leer ist, wird übersprungen. Alles steht im Ergebnis als „übersprungen“ und ist kein Fehler: Ist der Eintrag neu geladen bzw. synchronisiert, starten Sie den Lauf erneut, dann werden die Einträge mit geändertem Text mit dem aktuellen Text ergänzt.",
             "Im Reiter „Aufgaben“ können Sie einen laufenden Lauf abbrechen. Er hört dann bei der nächsten Gelegenheit auf; was bis dahin gespeichert wurde, bleibt gespeichert, und es läuft immer nur ein Lauf pro Shop.",
             "Wird die App während des Laufs neu gestartet (zum Beispiel bei einem Update), wird der Lauf nach kurzer Zeit als unterbrochen markiert; im Reiter „Aufgaben“ steht dann eine Warnung, und solange Sie die Seite offen haben, sehen Sie sie auch dort. Was bereits in Etappen gespeichert war, bleibt erhalten; nur die zuletzt übersetzte, noch nicht gespeicherte Etappe fehlt. Starten Sie „Fehlende Übersetzungen ergänzen“ einfach erneut, es werden nur noch fehlende Übersetzungen gefüllt.",
+          ],
+        },
+        {
+          heading: "Günstiger, Ergebnis bis zu 24 Stunden",
+          paragraphs: [
+            "Nutzen Sie Claude (Anthropic) — mit Ihrem eigenen KI-Schlüssel oder mit der in der App enthaltenen KI —, bietet das Fenster vor dem Start eine Wahl: „Sofort“ (voreingestellt) oder „Günstiger, Ergebnis bis zu 24 Stunden“. Im günstigeren Modus arbeitet der Anbieter die Übersetzungen mit Wartezeit ab und berechnet dafür weniger; beide Preise stehen im Fenster. Bei anderen Anbietern, beim kostenlosen KI-Guthaben zum Ausprobieren und wenn Ihr verbleibendes KI-Budget für den ganzen Lauf im Voraus nicht reicht, steht die Wahl nicht zur Verfügung.",
+            "Nach dem Start steht der Lauf im Reiter „Aufgaben“ als „Wartet auf die KI (bis zu 24 Stunden)“. Sie können die Seite verlassen und die App schliessen; auch ein Neustart der App schadet nicht. Sobald die Ergebnisse da sind, werden sie mit denselben Regeln eingetragen wie im Modus „Sofort“: Es werden nur leere Übersetzungen gefüllt, und was inzwischen von Hand ausgefüllt wurde oder dessen Originaltext sich geändert hat, wird übersprungen und im Ergebnis gezählt.",
+            "Den wartenden Lauf können Sie im Reiter „Aufgaben“ jederzeit abbrechen; was der Anbieter bis dahin schon fertig hatte, wird noch eingetragen und berechnet. Einträge, die der Anbieter nicht oder fehlerhaft geliefert hat, bleiben leer und stehen im Ergebnis; ein erneuter Lauf füllt sie. Liefert der Anbieter innerhalb seiner Frist gar nichts, wird der Lauf als fehlgeschlagen markiert, es wird nichts geschrieben, und nichts wird automatisch erneut gestartet. Einige Übersetzungen (zum Beispiel die Produktart oder sehr lange Texte) werden im günstigeren Modus nicht gestartet; sie stehen im Ergebnis und lassen sich in einem Lauf im Modus „Sofort“ ergänzen.",
+            "Ziehen Sie während des Wartens Ihre Zustimmung zur KI-Verarbeitung zurück, wird der Lauf sofort abgebrochen und nichts mehr eingetragen; berechnet wird dann der bei der Einreichung reservierte Höchstbetrag statt der tatsächlichen Kosten.",
           ],
         },
       ],

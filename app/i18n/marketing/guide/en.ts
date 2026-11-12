@@ -685,7 +685,7 @@ export const guideEn: GuideCopy = {
             "In the bulk editor, filter to the rows you want translated.",
             "Open “Add missing translations”.",
             "Choose the target languages at the top and select or deselect entries or single fields in the list.",
-            "Click “Translate & save”, check the estimated cost in the window, then “Start now” — the translation runs as a background task.",
+            "Click “Translate & save”, check the estimated cost in the window, then “Start now” — the translation runs as a background task. If you are offered the choice “Cheaper, result within up to 24 hours”, you can pick that instead (see below).",
           ],
         },
         {
@@ -696,6 +696,15 @@ export const guideEn: GuideCopy = {
             "Translations are saved in stages while the run is going, not only at the end. If the original text of an entry has changed in the meantime, it is skipped so that the translation of an old text is never saved; the same goes for a language that has received a translation in the meantime. An entry that has been deleted in the meantime, or whose original text is now empty, is skipped as well. All of this shows up in the result as “skipped” and is not an error: once the item has been reloaded or synced, start the run again and the entries with changed text are filled in from the current text.",
             "In the Tasks tab you can cancel a running run. It then stops at the next opportunity; whatever was saved up to that point stays saved, and only one run per shop can be active at a time.",
             "If the app is restarted while the run is going (for example by an update), the run is marked as interrupted after a short while; the Tasks tab then shows a warning, and so does the page while you keep it open. What was already saved in stages stays; only the most recently translated stage that was not yet saved is missing. Simply start “Add missing translations” again — only what is still missing is filled.",
+          ],
+        },
+        {
+          heading: "Cheaper, result within up to 24 hours",
+          paragraphs: [
+            "If you use Claude (Anthropic) — with your own AI key or with the AI included in the app — the window offers a choice before it starts: “Immediately” (preselected) or “Cheaper, result within up to 24 hours”. In the cheaper mode the provider works through the translations with a delay and charges less for it; both prices are shown in the window. With other providers, with the free AI trial credit, and when your remaining AI budget does not cover the whole run up front, the choice is not available.",
+            "After the start the run appears in the Tasks tab as “Waiting for the AI (up to 24 hours)”. You can leave the page and close the app; restarting the app does no harm either. As soon as the results are ready they are entered with the same rules as in “Immediately” mode: only empty translations are filled, and anything that was filled in by hand in the meantime, or whose original text changed, is skipped and counted in the result.",
+            "You can cancel the waiting run in the Tasks tab at any time; whatever the provider had already finished is still entered and charged. Entries the provider did not deliver, or delivered with errors, stay empty and are listed in the result; a new run fills them. If the provider delivers nothing at all within its time limit, the run is marked as failed, nothing is written and nothing is restarted automatically. Some translations (for example the product type or very long texts) are not started in the cheaper mode; they are listed in the result and can be filled in a run in “Immediately” mode.",
+            "If you withdraw your consent to AI processing while the run is waiting, it is cancelled at once and nothing more is entered; you are then charged the maximum amount reserved at submission instead of the actual cost.",
           ],
         },
       ],

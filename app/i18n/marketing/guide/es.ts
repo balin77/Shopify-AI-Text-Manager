@@ -685,7 +685,7 @@ export const guideEs: GuideCopy = {
             "En el editor masivo, filtra las filas que quieres traducir.",
             "Abre «Añadir traducciones que faltan».",
             "Elige arriba los idiomas de destino y marca o desmarca entradas o campos concretos en la lista.",
-            "Haz clic en «Traducir y guardar», revisa en la ventana el coste estimado y pulsa «Iniciar ahora»: la traducción se ejecuta como tarea en segundo plano.",
+            "Haz clic en «Traducir y guardar», revisa en la ventana el coste estimado y pulsa «Iniciar ahora»: la traducción se ejecuta como tarea en segundo plano. Si se te ofrece la opción «Más económico, resultado en hasta 24 horas», puedes elegirla en su lugar (ver abajo).",
           ],
         },
         {
@@ -696,6 +696,15 @@ export const guideEs: GuideCopy = {
             "Las traducciones se guardan por etapas mientras la ejecución avanza, no solo al final. Si el texto original de una entrada ha cambiado entretanto, se omite para que nunca se guarde la traducción de un texto antiguo; lo mismo ocurre si un idioma ya ha recibido una traducción entretanto. También se omite una entrada que se haya eliminado entretanto o cuyo texto original esté ahora vacío. Todo aparece en el resultado como «omitidos» y no son errores: cuando el elemento se haya recargado o sincronizado, vuelve a iniciar la ejecución y las entradas con el texto modificado se completarán con el texto actual.",
             "En la pestaña Tareas puedes cancelar una ejecución en curso. Se detiene en la siguiente oportunidad; lo guardado hasta ese momento se conserva, y solo puede haber una ejecución activa por tienda.",
             "Si la app se reinicia durante la ejecución (por ejemplo, por una actualización), la ejecución se marca como interrumpida pasado un rato; la pestaña Tareas muestra entonces una advertencia, y la página también mientras la tengas abierta. Lo que ya se había guardado por etapas se conserva; solo falta la última etapa traducida que aún no estaba guardada. Vuelve a iniciar «Completar las traducciones que faltan» y solo se rellenará lo que siga faltando.",
+          ],
+        },
+        {
+          heading: "Más económico, resultado en hasta 24 horas",
+          paragraphs: [
+            "Si usas Claude (Anthropic), con tu propia clave de IA o con la IA incluida en la app, la ventana ofrece una opción antes de empezar: «Inmediato» (preseleccionado) o «Más económico, resultado en hasta 24 horas». En el modo más económico el proveedor procesa las traducciones con tiempo de espera y cobra menos por ello; ambos precios aparecen en la ventana. Con otros proveedores, con el crédito de IA gratuito de prueba y cuando tu presupuesto de IA restante no cubre de antemano todo el proceso, la opción no está disponible.",
+            "Tras el inicio, el proceso aparece en la pestaña Tareas como «Esperando a la IA (hasta 24 horas)». Puedes salir de la página y cerrar la app; reiniciar la app tampoco perjudica. En cuanto los resultados están listos se registran con las mismas reglas que en el modo «Inmediato»: solo se rellenan las traducciones vacías, y lo que entretanto se haya rellenado a mano o cuyo texto original haya cambiado se omite y se cuenta en el resultado.",
+            "Puedes cancelar el proceso en espera en la pestaña Tareas en cualquier momento; lo que el proveedor ya hubiera terminado se registra y se cobra. Las entradas que el proveedor no entregó, o entregó con errores, quedan vacías y figuran en el resultado; un nuevo proceso las rellena. Si el proveedor no entrega nada dentro de su plazo, el proceso se marca como fallido, no se escribe nada y no se reinicia nada automáticamente. Algunas traducciones (por ejemplo el tipo de producto o los textos muy largos) no se inician en el modo más económico; figuran en el resultado y se pueden completar en un proceso en modo «Inmediato».",
+            "Si retiras tu consentimiento para el tratamiento con IA mientras el proceso espera, se cancela de inmediato y no se registra nada más; entonces se cobra el importe máximo reservado al enviarlo en lugar del coste real.",
           ],
         },
       ],

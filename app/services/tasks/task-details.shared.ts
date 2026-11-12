@@ -379,9 +379,19 @@ const bulkEditorTranslate: Summariser = (blob) => {
   // skipped: a run that skipped nothing has nothing to explain, and a column
   // of zeros would also hide the "nothing was missing" sentence the panel
   // shows for an all-zero result.
-  for (const key of ["skippedChanged", "skippedFilled", "skippedGone", "notProcessed"]) {
+  for (const key of ["skippedChanged", "skippedFilled", "skippedGone", "notProcessed", "notStarted"]) {
     const v = blob[key];
     if (typeof v === "number" && Number.isFinite(v) && v > 0) lines.push({ labelKey: key, value: String(v) });
+  }
+  // A run that went through the provider's batch mode says what the provider did (only the figures that
+  // are not zero): how many requests it took, and how many answers never arrived usable.
+  const batch = blob.batch;
+  if (batch && typeof batch === "object" && !Array.isArray(batch)) {
+    const b = batch as Blob;
+    if (typeof b.requests === "number" && b.requests > 0) lines.push({ labelKey: "batchRequests", value: String(b.requests) });
+    if (typeof b.undelivered === "number" && b.undelivered > 0) {
+      lines.push({ labelKey: "batchUndelivered", value: String(b.undelivered), tone: "warning" });
+    }
   }
   // A cancelled run says so: its numbers are what was written before the stop.
   if (blob.cancelled === true) lines.push({ labelKey: "cancelledRun", value: "", tone: "warning" });
