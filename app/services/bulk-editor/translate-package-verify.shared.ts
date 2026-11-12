@@ -31,9 +31,20 @@ export interface VerifyOptions {
    *  entry answered alone: with nothing to swap with, spelling a number out is
    *  a legitimate translation. */
   strictNumbers: boolean;
+  /** Compare placeholders ({{ }}, %s, [shortcode]). Default true; off on the
+   *  single-entry rung, which is the pre-existing path and asked nothing of
+   *  the kind before -- a text that cannot pass here must still be translatable
+   *  alone. */
+  checkProtectedTokens?: boolean;
 }
 
-const PROTECTED_TOKEN = /\{\{[^}]*\}\}|\{%[^%]*%\}|%[sd]|%\([a-z_]+\)s|\[[a-z_]+(?:\s[^\]]*)?\]|\{\d+\}/gi;
+// Placeholders a translation must carry over unchanged. Deliberately narrow:
+// a case-insensitive shortcode pattern made "[NEU] Vase" / "[Sale]" protected
+// (the model rightly translates those), and a bare "%s" matched "50%sale".
+// Shortcodes are lowercase-underscore names ([gallery id="1"]); printf tokens
+// must not touch a word character.
+const PROTECTED_TOKEN =
+  /\{\{[^}]*\}\}|\{%[^%]*%\}|(?<![A-Za-z0-9%])%[sd](?![A-Za-z0-9])|%\([a-z_]+\)s|\[[a-z][a-z_]*(?:\s[^\]]*)?\]|\{\d+\}/g;
 const SKU_LIKE = /\b[A-Z0-9]{2,}(?:[-_./][A-Z0-9]+)+\b/g;
 const DIGIT_RUN = /\d+/g;
 const HTML_TAG = /<\/?([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>/g;
@@ -55,7 +66,7 @@ export function hasHtml(text: string): boolean {
 
 /** `null` = the translation passes; otherwise the first check it fails. */
 export function verifyTranslation(opts: VerifyOptions): VerifyFailure | null {
-  const { kind, source, translation, strictNumbers } = opts;
+  const { kind, source, translation, strictNumbers, checkProtectedTokens = true } = opts;
   if (translation === undefined || translation === null) return "missing";
   if (typeof translation !== "string") return "missing";
   const out = translation.trim();
@@ -67,7 +78,10 @@ export function verifyTranslation(opts: VerifyOptions): VerifyFailure | null {
   // A translation can be 4x longer for a short label and rarely more.
   if (kind !== "long" && out.length > src.length * 4 + 20) return "length";
 
-  if (multiset(matchAll(src, PROTECTED_TOKEN)) !== multiset(matchAll(out, PROTECTED_TOKEN))) {
+  if (
+    checkProtectedTokens &&
+    multiset(matchAll(src, PROTECTED_TOKEN)) !== multiset(matchAll(out, PROTECTED_TOKEN))
+  ) {
     return "protectedTokens";
   }
 

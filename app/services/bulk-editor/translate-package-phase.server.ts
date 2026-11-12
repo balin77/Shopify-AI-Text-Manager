@@ -38,6 +38,7 @@ import {
   type TranslatePackage,
 } from "./translate-packages.shared";
 import {
+  isTransientProviderError,
   runPackageLadder,
   type ItemOutcome,
   type LadderDeps,
@@ -317,10 +318,13 @@ export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePh
       deps.log("warn", "[BulkTranslate] Package request failed", {
         group: pkg.groupLabel,
         items: pkg.items.length,
-        reason: isAIRequestTooLarge(err) ? "too_large" : isAIRequestStarved(err) ? "starved" : "error",
+        reason: isAIRequestTooLarge(err) ? "too_large" : isAIRequestStarved(err) ? "starved" : isTransientProviderError(err) ? "transient" : "error",
         error: err instanceof Error ? err.message : String(err),
       });
-      return { answer: null, invalid: isAIRequestStarved(err) ? "starved" : "error" };
+      return {
+        answer: null,
+        invalid: isAIRequestStarved(err) ? "starved" : isTransientProviderError(err) ? "transient" : "error",
+      };
     }
   };
 
@@ -372,7 +376,7 @@ export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePh
       const pkg = take();
       if (!pkg) return;
       try {
-        const { outcomes, stats: pkgStats } = await runPackageLadder(pkg, {
+        const { outcomes, stats: pkgStats, stopped } = await runPackageLadder(pkg, {
           callPackage,
           callSingle,
           shouldStop: async () => hasAborted || !!deps.managedRefusal() || (await deps.shouldStop()),
@@ -393,6 +397,9 @@ export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePh
             settleItem(item.key, outcome);
           }
         }
+        // The ladder stopped on a fatal error AFTER the decided entries above
+        // were settled (their answers were paid for): now stand down / abort.
+        if (stopped) throw stopped.error;
         await deps.afterPackage();
       } catch (err: unknown) {
         if (err instanceof PhaseStop) return;

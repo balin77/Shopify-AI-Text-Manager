@@ -102,3 +102,26 @@ describe("judgePackageAnswer", () => {
     expect(verdicts.get(items[0].key)!.rejected).toEqual({ fr: "missing", es: "missing" });
   });
 });
+
+describe("protected tokens are narrow", () => {
+  const v = (source: string, translation: string, strictNumbers = true) =>
+    verifyTranslation({ kind: "short", source, translation, strictNumbers });
+  it("bracketed words in capitals or mixed case are ordinary text, translatable", () => {
+    expect(v("[NEU] Vase", "[NOUVEAU] Vase")).toBeNull();
+    expect(v("[Sale] Vase", "[Soldes] Vase")).toBeNull();
+  });
+  it("a printf-looking fragment inside a word is not a placeholder", () => {
+    expect(v("50%sale on vases", "50% de rabais sur les vases")).toBeNull();
+  });
+  it("real placeholders are still protected", () => {
+    expect(v("Hello {{ name }}", "Bonjour")).toBe("protectedTokens");
+    expect(v("Total: %s", "Total")).toBe("protectedTokens");
+    expect(v('See [gallery id="1"]', "Voir")).toBe("protectedTokens");
+    expect(v("Hello {{ name }}", "Bonjour {{ name }}")).toBeNull();
+  });
+  it("can be switched off (single-entry rung)", () => {
+    expect(
+      verifyTranslation({ kind: "short", source: "Hello {{ name }}", translation: "Bonjour", strictNumbers: false, checkProtectedTokens: false }),
+    ).toBeNull();
+  });
+});

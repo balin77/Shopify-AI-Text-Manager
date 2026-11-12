@@ -13,10 +13,15 @@
  * - a truncated, unparseable or errored answer rejects the whole package (the
  *   halves are what makes progress possible), never a part of it;
  * - the source text is never offered as a translation;
+ * - a TRANSIENT failure (5xx / 529 / connection reset) repeats the SAME package
+ *   once after a jittered pause before anything is halved: halving cannot cure
+ *   an overloaded provider and doubles the requests into it;
  * - a fatal error (a rejected key, a managed refusal, a queue shutdown) is
- *   thrown by the injected call and propagates untouched -- the caller decides
- *   what stands down; everything not yet resolved stays UNRESOLVED (absent from
- *   the outcome map), which is not a failure.
+ *   thrown by the injected call; the ladder CATCHES it, keeps every outcome
+ *   already verified (those were paid for) and returns it as `stopped`, so the
+ *   caller can settle what is decided before it stands down or aborts.
+ *   Everything not yet resolved stays UNRESOLVED (absent from the outcome map),
+ *   which is not a failure.
  */
 
 import {
@@ -30,7 +35,30 @@ import { judgePackageAnswer, verifyTranslation, type VerifyFailure } from "./tra
 /** What one package call answered. `invalid` = the answer cannot be used at all. */
 export interface PackageCallResult {
   answer: { parsed: unknown; idOf: Map<string, string> } | null;
-  invalid?: "truncated" | "unparseable" | "starved" | "error";
+  invalid?: "truncated" | "unparseable" | "starved" | "error" | "transient";
+}
+
+const TRANSIENT_STATUS = new Set([500, 502, 503, 504, 529, 408]);
+const TRANSIENT_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "EPIPE", "EAI_AGAIN", "ENOTFOUND", "UND_ERR_SOCKET"]);
+
+/**
+ * A provider error that says "try the same request again": an overloaded or
+ * unavailable provider (5xx, Anthropic's 529, 408) or a dropped connection.
+ * NOT a timeout (the call was too big or too slow: the halves are the cure),
+ * not a 429 (the queue owns that), not a 4xx.
+ */
+export function isTransientProviderError(err: unknown): boolean {
+  if (err === null || typeof err !== "object") return false;
+  const e = err as { status?: unknown; code?: unknown; name?: unknown; message?: unknown; cause?: unknown };
+  const name = typeof e.name === "string" ? e.name : "";
+  const message = typeof e.message === "string" ? e.message : "";
+  if (/timeout|timed out/i.test(name) || /timed out|timeout/i.test(message)) return false;
+  if (typeof e.status === "number") return TRANSIENT_STATUS.has(e.status);
+  if (typeof e.code === "string" && TRANSIENT_CODES.has(e.code)) return true;
+  const causeCode = (e.cause as { code?: unknown } | undefined)?.code;
+  if (typeof causeCode === "string" && TRANSIENT_CODES.has(causeCode)) return true;
+  // The SDKs' status-less connection failures ("Connection error.", "fetch failed").
+  return name === "APIConnectionError" || /^(connection error|fetch failed)/i.test(message);
 }
 
 export interface LadderDeps {
@@ -41,6 +69,8 @@ export interface LadderDeps {
   callSingle(item: PackageItem): Promise<Record<string, string> | null>;
   /** True once the run should stop spending (cancelled, stood down). */
   shouldStop(): boolean | Promise<boolean>;
+  /** Pause before the transient retry (tests inject an instant one). */
+  sleep?(ms: number): Promise<void>;
 }
 
 export interface ItemOutcome {
@@ -60,6 +90,10 @@ export interface LadderStats {
 
 export const MAX_LADDER_DEPTH = 2;
 
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** Jittered pause before a transient retry. */
+const transientPauseMs = () => 300 + Math.floor(Math.random() * 700);
+
 /** `item` restricted to `locales` (same key and owners, so outcomes merge). */
 function restrict(item: PackageItem, locales: string[]): PackageItem {
   return { ...item, locales: [...locales].sort() };
@@ -68,7 +102,7 @@ function restrict(item: PackageItem, locales: string[]): PackageItem {
 export async function runPackageLadder(
   pkg: TranslatePackage,
   deps: LadderDeps,
-): Promise<{ outcomes: Map<string, ItemOutcome>; stats: LadderStats }> {
+): Promise<{ outcomes: Map<string, ItemOutcome>; stats: LadderStats; stopped?: { error: unknown } }> {
   const outcomes = new Map<string, ItemOutcome>();
   const stats: LadderStats = { requests: 0, retries: 0 };
   const originals = new Map(pkg.items.map((item) => [item.key, item] as const));
@@ -85,7 +119,15 @@ export async function runPackageLadder(
     if (await deps.shouldStop()) return;
     stats.requests++;
     if (isRetry) stats.retries++;
-    const result = await deps.callPackage(current);
+    let result = await deps.callPackage(current);
+    if (result.invalid === "transient") {
+      // Same package once more, after a pause; only then does it split.
+      await (deps.sleep ?? defaultSleep)(transientPauseMs());
+      if (await deps.shouldStop()) return;
+      stats.requests++;
+      stats.retries++;
+      result = await deps.callPackage(current);
+    }
     // Whatever this answer holds was paid for: the verified part is kept even
     // when the run is being stopped.
     const rejectedByItem = new Map<string, string[]>();
@@ -140,12 +182,18 @@ export async function runPackageLadder(
         source: item.source,
         translation: answered?.[locale],
         strictNumbers: false,
+        checkProtectedTokens: false,
       });
       if (failure) out.failed[locale] = failure === "missing" || failure === "empty" ? "unavailable" : failure;
       else out.accepted[locale] = answered![locale].trim();
     }
   };
 
-  await runOne(pkg, 0, false);
+  try {
+    await runOne(pkg, 0, false);
+  } catch (error) {
+    // Keep what was verified (and paid for) before the stop.
+    return { outcomes, stats, stopped: { error } };
+  }
   return { outcomes, stats };
 }

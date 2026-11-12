@@ -323,6 +323,33 @@ describe("packages ON", () => {
     expect(data.status).toBe("failed");
   });
 
+  it("a stand-down mid-ladder still writes the entries the earlier answers already delivered", async () => {
+    echoModel({ drop: (text) => text === "Schal 5x" });
+    // The dropped entry goes down to the single path, where the refusal hits.
+    translateShortFieldsBatch.mockRejectedValue(new ManagedAiRefusedError("budgetExceeded"));
+    const db = makeDb();
+    await run(db, jobs(5), { packages: true });
+    const rows = new Set(written().map((e) => e.rowId));
+    expect([...rows].sort()).toEqual([1, 2, 3, 4].map((n) => `gid://shopify/Product/${n}`));
+    const { data, result } = finalResult(db);
+    expect(data.error).toMatch(/^managed_ai_refused:/);
+    expect(result.failures).toEqual([]);
+    expect(data.status).not.toBe("failed");
+  });
+
+  it("a transient provider error (503) repeats the same package once instead of splitting it", async () => {
+    echoModel();
+    const base = translatePackage.getMockImplementation()!;
+    translatePackage.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("Service Unavailable"), { status: 503 });
+    });
+    translatePackage.mockImplementation(base);
+    const db = makeDb();
+    await run(db, jobs(4), { packages: true });
+    expect(translatePackage.mock.calls.map((c) => c[0].items.length)).toEqual([4, 4]);
+    expect(new Set(written().map((e) => e.rowId)).size).toBe(4);
+  });
+
   it("a rejected provider key aborts the run as before (a failed task, not a per-entry failure)", async () => {
     const { InvalidAIKeyError } = await import("../../src/services/ai.service");
     translatePackage.mockRejectedValue(new InvalidAIKeyError("bad key"));

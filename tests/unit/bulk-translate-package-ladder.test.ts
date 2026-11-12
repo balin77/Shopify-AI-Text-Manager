@@ -2,8 +2,8 @@
  * The retry ladder of one package (PLAN_BULK_TRANSLATE_BATCHING 3.1):
  * package -> halves (two levels) -> one entry on the single path -> failed.
  */
-import { describe, it, expect } from "vitest";
-import { runPackageLadder, type LadderDeps, type PackageCallResult } from "~/services/bulk-editor/translate-package-run.shared";
+import { describe, it, expect, vi } from "vitest";
+import { isTransientProviderError, runPackageLadder, type LadderDeps, type PackageCallResult } from "~/services/bulk-editor/translate-package-run.shared";
 import {
   buildPackageItems,
   packageBudgetFor,
@@ -119,7 +119,7 @@ describe("runPackageLadder", () => {
     expect([...outcomes.values()].every((o) => Object.keys(o.accepted).length === 2)).toBe(true);
   });
 
-  it("a fatal error thrown by the call propagates (the caller stands down); nothing is invented", async () => {
+  it("a fatal error thrown by the call is RETURNED as `stopped`; nothing is invented", async () => {
     const deps: LadderDeps = {
       shouldStop: () => false,
       callPackage: async () => {
@@ -127,7 +127,82 @@ describe("runPackageLadder", () => {
       },
       callSingle: async () => null,
     };
-    await expect(runPackageLadder(mk(3), deps)).rejects.toThrow("managed_ai_refused");
+    const { outcomes, stopped } = await runPackageLadder(mk(3), deps);
+    expect((stopped?.error as Error).message).toContain("managed_ai_refused");
+    expect(outcomes.size).toBe(0);
+  });
+
+  it("a stand-down mid-ladder keeps the already VERIFIED (paid) outcomes of earlier calls", async () => {
+    // Round 1 delivers 3 of 4 entries, drops one; its single-path retry is refused.
+    const m = model({ badSources: new Set(["Textd"]) });
+    const deps: LadderDeps = {
+      ...m.deps,
+      callSingle: async () => {
+        throw new Error("managed_ai_refused:budget");
+      },
+    };
+    const { outcomes, stopped } = await runPackageLadder(mk(4), deps);
+    expect(stopped).toBeDefined();
+    const delivered = [...outcomes.values()].filter((o) => Object.keys(o.accepted).length === 2);
+    expect(delivered.map((o) => o.item.source).sort()).toEqual(["Texta", "Textb", "Textc"]);
+    // The refused entry is unresolved (no failed marks): not an AI failure.
+    const refused = [...outcomes.values()].find((o) => o.item.source === "Textd");
+    expect(refused?.accepted ?? {}).toEqual({});
+    expect(refused?.failed ?? {}).toEqual({});
+  });
+
+  it("a transient failure repeats the SAME package once before anything is halved", async () => {
+    const sizes: number[] = [];
+    let n = 0;
+    const m = model();
+    const deps: LadderDeps = {
+      ...m.deps,
+      sleep: async () => {},
+      callPackage: async (pkg) => {
+        sizes.push(pkg.items.length);
+        if (++n === 1) return { answer: null, invalid: "transient" };
+        return m.deps.callPackage(pkg);
+      },
+    };
+    const { outcomes, stats } = await runPackageLadder(mk(4), deps);
+    expect(sizes).toEqual([4, 4]);
+    expect(stats).toEqual({ requests: 2, retries: 1 });
+    expect([...outcomes.values()].every((o) => Object.keys(o.accepted).length === 2)).toBe(true);
+  });
+
+  it("a second transient failure then halves like any other failure (one repeat only)", async () => {
+    const sizes: number[] = [];
+    const m = model();
+    const deps: LadderDeps = {
+      ...m.deps,
+      sleep: async () => {},
+      callPackage: async (pkg) => {
+        sizes.push(pkg.items.length);
+        if (pkg.items.length === 4) return { answer: null, invalid: "transient" };
+        return m.deps.callPackage(pkg);
+      },
+    };
+    await runPackageLadder(mk(4), deps);
+    expect(sizes).toEqual([4, 4, 2, 2]);
+  });
+
+  it("truncated / unparseable do NOT take the transient repeat", async () => {
+    const m = model({ truncateAbove: 2 });
+    const slept = vi.fn(async () => {});
+    await runPackageLadder(mk(4), { ...m.deps, sleep: slept });
+    expect(slept).not.toHaveBeenCalled();
+  });
+
+  it("the single-entry rung does not check placeholders (a text that cannot pass the package check is still translatable alone)", async () => {
+    const entries: PackageEntry[] = [{ owner: "o", kind: "short", fieldKey: "title", source: "Hallo [gallery id]", locales: ["fr"] }];
+    const pkg = planPackages(buildPackageItems(entries), packageBudgetFor({ modelMaxOutput: 32_000, bucketTpm: null })).packages[0];
+    const deps: LadderDeps = {
+      shouldStop: () => false,
+      callPackage: async () => ({ answer: null, invalid: "truncated" }),
+      callSingle: async () => ({ fr: "Bonjour" }),
+    };
+    const { outcomes } = await runPackageLadder(pkg, deps);
+    expect([...outcomes.values()][0].accepted).toEqual({ fr: "Bonjour" });
   });
 
   it("stops spending once shouldStop says so; verified results of the answer in hand are kept", async () => {
@@ -145,5 +220,24 @@ describe("runPackageLadder", () => {
     const { outcomes, stats } = await runPackageLadder(mk(4), deps);
     expect(stats.requests).toBe(1);
     expect(outcomes.size).toBe(0); // the answer was invalid, and no retry was made
+  });
+});
+
+describe("isTransientProviderError", () => {
+  it("recognises overload / unavailable / dropped connections", () => {
+    expect(isTransientProviderError({ status: 529 })).toBe(true);
+    expect(isTransientProviderError({ status: 503 })).toBe(true);
+    expect(isTransientProviderError({ status: 500 })).toBe(true);
+    expect(isTransientProviderError(Object.assign(new Error("read"), { code: "ECONNRESET" }))).toBe(true);
+    expect(isTransientProviderError(new Error("Connection error."))).toBe(true);
+    expect(isTransientProviderError(new Error("fetch failed"))).toBe(true);
+  });
+  it("does not retry timeouts, rate limits, client errors or non-errors", () => {
+    expect(isTransientProviderError(new Error("AI request timed out after 90000ms"))).toBe(false);
+    expect(isTransientProviderError({ name: "APIConnectionTimeoutError", message: "Request timed out." })).toBe(false);
+    expect(isTransientProviderError({ status: 429 })).toBe(false);
+    expect(isTransientProviderError({ status: 400 })).toBe(false);
+    expect(isTransientProviderError(null)).toBe(false);
+    expect(isTransientProviderError("boom")).toBe(false);
   });
 });
