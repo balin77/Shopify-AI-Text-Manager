@@ -72,7 +72,8 @@ describe("Gemini package call", () => {
     (svc as any).getGlossaryDirective = async () => "";
     await svc.translatePackage(REQUEST);
     const [request, options] = generateContent.mock.calls[0] as unknown as [any, any];
-    expect(request.generationConfig.maxOutputTokens).toBe(1500);
+    // 1500 planned + the 4096-token thinking allowance of a gemini-2.5 model.
+    expect(request.generationConfig.maxOutputTokens).toBe(1500 + 4096);
     expect(typeof request.contents[0].parts[0].text).toBe("string");
     expect(options).toEqual({ timeout: 90_000 });
   });
