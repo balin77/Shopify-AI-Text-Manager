@@ -326,7 +326,7 @@ export async function scanMissingTranslations(
  * the entries that are already translated (`existingListValues`) so the task can
  * merge instead of overwriting them.
  */
-function missingSubResourceEntry(
+export function missingSubResourceEntry(
   row: BulkRow,
   column: ColumnDescriptor,
   cache: ReturnType<typeof subResourceCacheFromRow>,
@@ -362,7 +362,7 @@ function missingSubResourceEntry(
  * locale → (sub-resource gid → non-empty GLOBAL translation) for the page's
  * rows. One query for every metafield/option/option-value of the chunk.
  */
-async function loadSubResourceTranslatedLocales(
+export async function loadSubResourceTranslatedLocales(
   db: PrismaClient,
   shop: string,
   opts: MissingScanOptions,
@@ -536,4 +536,97 @@ export async function loadTranslatedLocales(
     locales.add(record.locale);
   }
   return byRow;
+}
+
+/**
+ * Block-time re-check of a translate run: which of these (row, column,
+ * language) cells are STILL missing in the local mirror right now?
+ *
+ * The scan that found the candidates ran before the AI work, and the run
+ * writes in blocks minutes later; a webhook sync, another app or a merchant
+ * in the grid may have filled a cell in between. This is the cheap local
+ * half of the "never overwrite" rule (the live Shopify read inside
+ * applyBulkDiff's fill-only mode is the strong half): ONE row query per
+ * chunk plus the same two translation lookups the scan uses
+ * (`loadTranslatedLocales` / `loadSubResourceTranslatedLocales`), for exactly
+ * the rows named — not a second scan.
+ *
+ * Returns `${rowId}|${columnId}|${locale}` keys of the cells that are still
+ * missing. A row that no longer loads, or whose source text is empty now,
+ * contributes nothing (there is nothing to fill).
+ */
+export async function recheckMissing(
+  db: PrismaClient,
+  shop: string,
+  opts: {
+    type: BulkRowType;
+    moType?: string;
+    /** Blog rows are live-fetched — the loader needs the admin client. */
+    admin?: BulkAdminClient;
+    rowIds: string[];
+    columns: ColumnDescriptor[];
+    locales: string[];
+  },
+): Promise<Set<string>> {
+  const stillMissing = new Set<string>();
+  const rowIds = [...new Set(opts.rowIds)];
+  if (rowIds.length === 0 || opts.locales.length === 0 || opts.columns.length === 0) return stillMissing;
+
+  const scanOpts: MissingScanOptions = {
+    type: opts.type,
+    search: "",
+    filters: [],
+    moType: opts.moType ?? "",
+    foreignLocales: opts.locales,
+    columns: opts.columns,
+    admin: opts.admin,
+  };
+  const keyByColumnId = new Map<string, string>();
+  for (const column of opts.columns) {
+    if (isSubResourceColumn(column)) continue;
+    const key = candidateTranslationKey(column, opts.type);
+    if (key) keyByColumnId.set(column.id, key);
+  }
+  const keys = [...new Set(keyByColumnId.values())];
+  const subColumns = opts.columns.filter(isSubResourceColumn);
+  const productCells = productCellsFor(opts.columns);
+
+  for (let i = 0; i < rowIds.length; i += TRANSLATE_SCAN_CHUNK) {
+    const ids = rowIds.slice(i, i + TRANSLATE_SCAN_CHUNK);
+    const { rows } = await loadBulkRows(db, shop, {
+      type: opts.type,
+      locale: "",
+      marketId: "",
+      search: "",
+      filters: [],
+      sort: null,
+      skip: 0,
+      take: ids.length,
+      ids,
+      productCells,
+      admin: opts.admin,
+      moType: opts.moType ?? "",
+    });
+    if (rows.length === 0) continue;
+    const translated = await loadTranslatedLocales(db, shop, scanOpts, rows, keys);
+    const subTranslated = await loadSubResourceTranslatedLocales(db, shop, scanOpts, rows, subColumns);
+    for (const row of rows) {
+      const byKey = translated.get(row.id);
+      const subCache = subColumns.length > 0 ? subResourceCacheFromRow(row) : null;
+      for (const column of opts.columns) {
+        let missing: string[] = [];
+        if (subCache && isSubResourceColumn(column)) {
+          missing = missingSubResourceEntry(row, column, subCache, scanOpts, subTranslated)?.locales ?? [];
+        } else {
+          const key = keyByColumnId.get(column.id);
+          if (!key) continue;
+          if (candidateSourceValue(row, column).trim() === "") continue;
+          const have = byKey?.get(key);
+          missing = opts.locales.filter((locale) => !have?.has(locale));
+        }
+        for (const locale of missing) stillMissing.add(`${row.id}|${column.id}|${locale}`);
+      }
+    }
+  }
+  return stillMissing;
 }
