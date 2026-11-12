@@ -590,7 +590,7 @@ export interface RunArgs {
 /**
  * Cross-item packaging (PLAN_BULK_TRANSLATE_BATCHING phase 1b) is OFF unless
  * the deployment says exactly "true". With it off the run is the per-row run it
- * always was, byte for byte (pinned by tests/unit/bulk-translate-packages-off).
+ * always was, byte for byte (pinned by the "OFF (the default)" test in tests/unit/bulk-translate-packages-run.test.ts).
  */
 export function bulkTranslatePackagesEnabled(): boolean {
   return process.env.BULK_TRANSLATE_PACKAGES === "true";

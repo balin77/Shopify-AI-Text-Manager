@@ -2697,9 +2697,10 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     // provider reject the key — fail fast instead of firing more 401s.
     if (this.authError) throw this.authError;
 
+    const logEntryId = requestOptions ? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}` : undefined;
     // Save prompt to database if taskId is provided
     if (this.taskId && this.shop) {
-      await this.savePromptToTask(prompt, imageUrls, !!requestOptions);
+      await this.savePromptToTask(prompt, imageUrls, !!requestOptions, logEntryId);
     }
 
     let response: string;
@@ -2803,13 +2804,42 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
 
     // Save AI response to the corresponding prompt entry (raw, for debugging)
     if (this.taskId && this.shop) {
-      await this.saveResponseToTask(response, !!requestOptions);
+      await this.saveResponseToTask(response, !!requestOptions, logEntryId);
     }
 
     return AIService.stripMarkdownFence(response);
   }
 
-  private async savePromptToTask(prompt: string, imageUrls?: string[], compact = false): Promise<void> {
+  /**
+   * The prompt log of a task is one JSON column that every call reads, extends
+   * and writes back. Package calls of one run are concurrent, so unserialised
+   * writers lose each other's entries (and a response lands on whichever entry
+   * is last, not on its own). Per-task chain: one read-modify-write at a time.
+   */
+  private static readonly taskLogChains = new Map<string, Promise<unknown>>();
+  private static serialiseTaskLog<T>(taskId: string, work: () => Promise<T>): Promise<T> {
+    const previous = AIService.taskLogChains.get(taskId) ?? Promise.resolve();
+    const next = previous.then(work, work);
+    const tail = next.catch(() => undefined);
+    AIService.taskLogChains.set(taskId, tail);
+    void tail.then(() => {
+      if (AIService.taskLogChains.get(taskId) === tail) AIService.taskLogChains.delete(taskId);
+    });
+    return next;
+  }
+
+  private savePromptToTask(prompt: string, imageUrls?: string[], compact = false, entryId?: string): Promise<void> {
+    return AIService.serialiseTaskLog(this.taskId as string, () =>
+      this.savePromptToTaskUnserialised(prompt, imageUrls, compact, entryId),
+    );
+  }
+
+  private async savePromptToTaskUnserialised(
+    prompt: string,
+    imageUrls?: string[],
+    compact = false,
+    entryId?: string,
+  ): Promise<void> {
     try {
       const { db } = await import('../../app/db.server');
 
@@ -2820,7 +2850,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       });
 
       // Parse existing prompts or start with empty array
-      let promptHistory: { timestamp: string; prompt: string }[] = [];
+      let promptHistory: { timestamp: string; prompt: string; id?: string }[] = [];
       if (existingTask?.prompt) {
         try {
           const parsed = JSON.parse(existingTask.prompt);
@@ -2852,6 +2882,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       // call quadratic.
       promptHistory.push({
         timestamp: new Date().toISOString(),
+        ...(entryId ? { id: entryId } : {}),
         prompt: compact
           ? `${fullPrompt.slice(0, PACKAGE_LOG_PROMPT_CHARS)}${fullPrompt.length > PACKAGE_LOG_PROMPT_CHARS ? ` ... [${fullPrompt.length} chars]` : ''}`
           : fullPrompt,
@@ -2874,7 +2905,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     }
   }
 
-  private async saveResponseToTask(response: string, compact = false): Promise<void> {
+  private saveResponseToTask(response: string, compact = false, entryId?: string): Promise<void> {
+    return AIService.serialiseTaskLog(this.taskId as string, () =>
+      this.saveResponseToTaskUnserialised(response, compact, entryId),
+    );
+  }
+
+  private async saveResponseToTaskUnserialised(response: string, compact = false, entryId?: string): Promise<void> {
     try {
       const { db } = await import('../../app/db.server');
 
@@ -2888,7 +2925,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           const parsed = JSON.parse(existingTask.prompt);
           if (Array.isArray(parsed) && parsed.length > 0) {
             // Add response to the last prompt entry (store full response, no truncation)
-            parsed[parsed.length - 1].response =
+            // A package call finds ITS entry by id (concurrent calls append
+            // between its prompt and its answer); every other caller keeps
+            // the last-entry rule.
+            const target = (entryId && parsed.find((entry) => entry?.id === entryId)) || parsed[parsed.length - 1];
+            target.response =
               compact && response.length > PACKAGE_LOG_PROMPT_CHARS
                 ? `${response.slice(0, PACKAGE_LOG_PROMPT_CHARS)} ... [${response.length} chars]`
                 : response;
@@ -3645,6 +3686,10 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     // Package requests: a per-request timeout and NO SDK retries (the ladder
     // owns repeating). Passed as the SDK call's second argument.
     const sdkOptions = requestOptions ? { timeout: requestOptions.timeoutMs, maxRetries: 0 } : undefined;
+    // A package request object is reused across attempts (queue retries, the
+    // failover): a cut-off flag from an earlier attempt must not condemn the
+    // answer of this one.
+    if (requestOptions) requestOptions.stop.truncated = false;
     const markTruncated = (truncated: boolean) => {
       if (requestOptions && truncated) requestOptions.stop.truncated = true;
     };
@@ -3718,7 +3763,9 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         messages: [{ role: 'user', content: prompt }],
         max_tokens: maxTokens,
         temperature: 0.7,
-      });
+      }, requestOptions
+        ? { retry_on_error: false, signal: AbortSignal.timeout(requestOptions.timeoutMs) }
+        : undefined);
       markTruncated(response.choices[0]?.finish_reason === 'length');
       // HuggingFace's chat-completion output declares `usage`, but whether a
       // routed provider fills it is a runtime question — absent is the
@@ -3770,7 +3817,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           // as two, not summed: a sum would count one call, which is exactly
           // the per-call average Phase 0 exists to measure.
           meter.dispatched++;
-          const result = await this.gemini.generateContent(prompt);
+          const result = await this.geminiGenerate(prompt, requestOptions, maxTokens);
           const response = await result.response;
           markTruncated(response.candidates?.[0]?.finishReason === 'MAX_TOKENS');
           const fallbackReported = AIService.geminiUsage(response);
@@ -3785,7 +3832,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         }
       } else {
         meter.dispatched++;
-        const result = await this.gemini.generateContent(prompt);
+        const result = await this.geminiGenerate(prompt, requestOptions, maxTokens);
         const response = await result.response;
         markTruncated(response.candidates?.[0]?.finishReason === 'MAX_TOKENS');
         const reported = AIService.geminiUsage(response);
@@ -3931,6 +3978,23 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     }
 
     throw new Error('No AI provider configured');
+  }
+
+  /**
+   * A text-only Gemini call. A PACKAGE request carries its own output ceiling
+   * (`generationConfig.maxOutputTokens`) and request timeout -- without them the
+   * stop-reason check has no meaning and a hung call waits for the SDK default.
+   * Every other caller sends the bare prompt, byte-identical to before.
+   */
+  private geminiGenerate(prompt: string, requestOptions: AiRequestOptions | undefined, maxTokens: number) {
+    if (!requestOptions) return this.gemini!.generateContent(prompt);
+    return this.gemini!.generateContent(
+      {
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: maxTokens },
+      },
+      { timeout: requestOptions.timeoutMs },
+    );
   }
 
   /**
