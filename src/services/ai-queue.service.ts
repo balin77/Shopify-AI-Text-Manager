@@ -43,6 +43,8 @@ interface QueuedRequest {
   /** A package request above LARGE_PACKAGE_SHARE of its bucket's TPM: at most
    *  one of these per shop executes at a time. */
   large?: boolean;
+  /** A package request (counts against the per-shop package concurrency cap). */
+  packageCall?: boolean;
   /** Admission-timeout timer (cleared on dispatch). */
   admissionTimer?: NodeJS.Timeout;
 }
@@ -137,6 +139,14 @@ export interface EnqueueOptions {
 /** A package request estimated above this share of its bucket's TPM is "large". */
 export const LARGE_PACKAGE_SHARE = 0.25;
 
+/**
+ * Package requests one shop may have IN FLIGHT at once. The app-wide
+ * concurrency (AI_QUEUE_CONCURRENCY, default 4) is shared by every shop; without
+ * this, one bulk run with three package workers holds three of four slots.
+ * Applies to package requests only -- every other caller is unaffected.
+ */
+export const PACKAGE_PER_SHOP_LIMIT = 2;
+
 export function isAIQueueShuttingDown(error: unknown): boolean {
   return (error as { code?: string } | null)?.code === 'AI_QUEUE_SHUTTING_DOWN';
 }
@@ -211,6 +221,8 @@ export class AIQueueService {
 
   /** Shops with a LARGE package request executing right now. */
   private largeInFlight: Set<string> = new Set();
+  /** Package requests executing right now, per shop. */
+  private packagesInFlight: Map<string, number> = new Map();
 
   // Track usage per provider using sliding window (global - shared API keys)
   /** Usage windows, keyed like the buckets above. */
@@ -472,6 +484,7 @@ export class AIQueueService {
         retryCount: 0,
         createdAt: new Date(),
         ...(large ? { large: true } : {}),
+        ...(options?.packageCall ? { packageCall: true } : {}),
       };
 
       const shopQueue = this.getShopQueue(shop);
@@ -486,20 +499,36 @@ export class AIQueueService {
       shopQueue.push(request);
       if (options?.admissionTimeoutMs && options.admissionTimeoutMs > 0) {
         const waitedMs = options.admissionTimeoutMs;
-        request.admissionTimer = setTimeout(() => {
+        const arm = () => {
           const queue = this.queues.get(shop);
           const at = queue ? queue.indexOf(request) : -1;
           if (!queue || at === -1) return; // already dispatched
+          // Waiting behind the shop's OWN package (the large-package rule or
+          // the per-shop package cap) is not starvation by other shops: the
+          // clock only runs while something else holds the slots.
+          if (this.blockedByOwnPackages(shop, request)) {
+            request.admissionTimer = setTimeout(arm, waitedMs);
+            request.admissionTimer.unref?.();
+            return;
+          }
           queue.splice(at, 1);
           if (queue.length === 0) this.queues.delete(shop);
           request.reject(new AIRequestStarvedError(waitedMs));
-        }, waitedMs);
+        };
+        request.admissionTimer = setTimeout(arm, waitedMs);
+        request.admissionTimer.unref?.();
       }
       loggers.queue('debug', `Enqueued request ${request.id} for shop ${shop}, task ${taskId}`, { shopQueueSize: shopQueue.length, totalQueueSize: this.getTotalQueueLength() });
 
       // Update task queue position in database (shop-specific)
       this.updateQueuePositions(shop);
     });
+  }
+
+  /** True when `request` is held back only by its own shop's package limits. */
+  private blockedByOwnPackages(shop: string, req: QueuedRequest): boolean {
+    if (req.large && this.largeInFlight.has(shop)) return true;
+    return !!req.packageCall && (this.packagesInFlight.get(shop) ?? 0) >= PACKAGE_PER_SHOP_LIMIT;
   }
 
   /**
@@ -626,7 +655,7 @@ export class AIQueueService {
       const requestIndex = queue.findIndex(req =>
         // One LARGE package per shop at a time: a second one waits for the
         // first, whatever the bucket would allow.
-        !(req.large && this.largeInFlight.has(shop)) &&
+        !this.blockedByOwnPackages(shop, req) &&
         this.canExecute(this.bucketOf(req), req.estimatedTokens)
       );
 
@@ -676,6 +705,7 @@ export class AIQueueService {
                 request.admissionTimer = undefined;
               }
               if (request.large) this.largeInFlight.add(shop);
+              if (request.packageCall) this.packagesInFlight.set(shop, (this.packagesInFlight.get(shop) ?? 0) + 1);
               // Fire-and-forget: do NOT await here, so multiple requests run
               // concurrently. inFlight is decremented in runRequest's finally.
               void this.runRequest(shop, request);
@@ -776,6 +806,11 @@ export class AIQueueService {
     } finally {
       this.inFlight--;
       if (request.large) this.largeInFlight.delete(shop);
+      if (request.packageCall) {
+        const left = (this.packagesInFlight.get(shop) ?? 1) - 1;
+        if (left > 0) this.packagesInFlight.set(shop, left);
+        else this.packagesInFlight.delete(shop);
+      }
     }
   }
 
@@ -807,6 +842,10 @@ export class AIQueueService {
     // Reject everything still waiting in the queues — it never started.
     for (const [shop, queue] of this.queues.entries()) {
       for (const req of queue.splice(0)) {
+        if (req.admissionTimer) {
+          clearTimeout(req.admissionTimer);
+          req.admissionTimer = undefined;
+        }
         req.reject(new AIQueueShuttingDownError());
       }
       this.queues.delete(shop);
