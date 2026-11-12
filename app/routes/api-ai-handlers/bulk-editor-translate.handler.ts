@@ -57,6 +57,7 @@ import {
 import { buildServerColumnsByType } from "~/services/bulk-editor/columns.server";
 import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
 import { chunkImportDiff } from "~/services/bulk-editor/diff-chunks.server";
+import { runPackagePhase, type PackagePhaseResult } from "~/services/bulk-editor/translate-package-phase.server";
 import { planTranslateRead, planCellKey } from "~/services/bulk-editor/translate-plan-read.server";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import {
@@ -494,6 +495,18 @@ export interface RunArgs {
    * Omitted ⇒ that cheap local re-check is skipped (the live fill-only check
    * inside applyBulkDiff still runs). */
   recheck?: { columns: ColumnDescriptor[]; moType: string; locales: string[] };
+  /** Cross-item packages on/off. Omitted = the deployment switch
+   *  (BULK_TRANSLATE_PACKAGES, exactly "true"). A TEST SEAM. */
+  packages?: boolean;
+}
+
+/**
+ * Cross-item packaging (PLAN_BULK_TRANSLATE_BATCHING phase 1b) is OFF unless
+ * the deployment says exactly "true". With it off the run is the per-row run it
+ * always was, byte for byte (pinned by tests/unit/bulk-translate-packages-off).
+ */
+export function bulkTranslatePackagesEnabled(): boolean {
+  return process.env.BULK_TRANSLATE_PACKAGES === "true";
 }
 
 /** A write block is flushed once this many cells are buffered … */
@@ -573,6 +586,16 @@ interface TranslateResultJson {
   mismatchesByKey?: Record<string, number>;
   /** "sync" is the only mode that exists yet. */
   mode: "sync";
+  /** Only present when the run used cross-item packages: how many packages
+   *  were planned, how many provider requests and retries they cost, and the
+   *  retry rate per group (kind / languages / instruction set). */
+  packaging?: {
+    packages: number;
+    requests: number;
+    retries: number;
+    oversizedCells: number;
+    groups: PackagePhaseResult["stats"]["groups"];
+  };
   /** Write blocks that went through applyBulkDiff. */
   blocks: number;
   /** The Task was cancelled: the run stopped before the next step and what was
@@ -626,6 +649,7 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
   let mismatchesByKey: Record<string, number> = {};
   let saved = 0;
   let blocks = 0;
+  let packaging: TranslateResultJson["packaging"] | undefined;
   /** Units whose outcome is FINAL: written, skipped on purpose or failed. The
    * progress bar counts these, so it never runs ahead of what is stored. */
   let settled = 0;
@@ -800,6 +824,17 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     }
   };
 
+  // Package workers run concurrently and each may find a block due: flushes are
+  // chained so only one write block is in flight (the per-row path calls
+  // flush() sequentially and is unaffected).
+  let flushChain: Promise<void> = Promise.resolve();
+  const flushSerial = (): Promise<void> => {
+    flushChain = flushChain.then(flush, flush);
+    return flushChain;
+  };
+  const blockDue = (): boolean =>
+    buffer.length >= BULK_TRANSLATE_BLOCK_CELLS || Date.now() - lastWriteAt >= BULK_TRANSLATE_BLOCK_MS;
+
   // A bounded-interval HEARTBEAT, independent of the job loop (one AI call may take minutes): boot recovery and
   // the reaper treat this type as orphaned only after a silence (orphan-run-recovery.js), so a run that is alive
   // in another container during a deploy overlap is never failed under its own feet.
@@ -844,7 +879,108 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     }
     await heartbeat();
 
-    for (const job of jobs) {
+    /**
+     * ONE finished cell: per language, its verified text (or none) becomes a
+     * write-buffer entry, a skipped handle or a failure. Shared by the per-row
+     * loop below and the package phase, so a handle, a stand-down or a missing
+     * answer means the same thing on both.
+     */
+    const emitCell = (
+      job: TranslateJob,
+      cell: TranslateJob["cells"][number],
+      valueFor: (locale: string) => string | undefined,
+      skipLocale?: (locale: string) => boolean,
+    ) => {
+      const expected = plan.expected.get(planCellKey(job.rowId, cell.column.id));
+      for (const locale of cell.locales) {
+        if (skipLocale?.(locale)) continue;
+        // Never substitute the source text — an untranslated value written
+        // as a "translation" is silent corruption.
+        let value = (valueFor(locale) ?? "").trim();
+        if (!value && managedRefusal) {
+          // Not attempted (or refused) after the stand-down: it is counted
+          // as not saved and explained by the Task error, not reported as
+          // an AI that answered nothing.
+          settled++;
+          continue;
+        }
+        if (!value) {
+          settled++;
+          failures.push({
+            rowId: job.rowId,
+            columnId: cell.column.id,
+            locale,
+            message: "AI returned no translation.",
+          });
+          continue;
+        }
+        if (cell.column.id === HANDLE_COLUMN_ID) {
+          // AI output → a slug Shopify accepts; identical-to-primary handles
+          // are skipped on purpose (a translated URL that equals the primary
+          // one is a routing conflict, not a translation).
+          const scope = handleScopeKey(CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType], locale);
+          const used = handlesByScope.get(scope) ?? new Set<string>();
+          handlesByScope.set(scope, used);
+          value = dedupeHandle(normalizeTranslatedHandle(value), used);
+          if (!value || value === job.primaryHandle.trim()) {
+            skippedHandles++;
+            settled++;
+            continue;
+          }
+        }
+        buffer.push({
+          rowId: job.rowId,
+          rowType,
+          locale,
+          // GLOBAL only — the page has no market dimension.
+          marketId: "",
+          columnId: cell.column.id,
+          value,
+          // The digests the plan read, which the fill-only write holds the
+          // registration to (text moved since ⇒ skipped, not registered).
+          ...(expected ? { expected } : {}),
+        });
+      }
+    };
+
+    // Cross-item packages (BULK_TRANSLATE_PACKAGES, off by default): carry the
+    // cells they can; whatever they leave runs through the per-row loop below.
+    let loopJobs = jobs;
+    if ((args.packages ?? bulkTranslatePackagesEnabled()) && !managedRefusal && !(await shouldStop())) {
+      const phase = await runPackagePhase({
+        jobs,
+        ai: aiService as never,
+        primaryLocale,
+        contentType,
+        instructionsFor,
+        isGroupedColumn: isGroupedProductTypeColumn,
+        isValueColumn: isBatchSubResourceColumn,
+        isShortColumn: isShortFieldColumn,
+        isListValuesColumn,
+        isHandleColumn: (column) => column.id === HANDLE_COLUMN_ID,
+        isTitleColumn: (column) => column.kind === "field" && canonicalFieldNameForColumn(column) === "title",
+        mergeList: mergeExistingListValues,
+        emitCell: (job, cell, valueFor) => emitCell(job, cell, valueFor),
+        standsDown,
+        shouldStop,
+        managedRefusal: () => managedRefusal,
+        afterPackage: async () => {
+          await heartbeat();
+          if (!managedRefusal && blockDue()) await flushSerial();
+        },
+        log: (level, message, meta) => logger[level](message, { context: "AI", taskId, ...meta }),
+      });
+      loopJobs = phase.remainingJobs;
+      packaging = {
+        packages: phase.stats.packages,
+        requests: phase.stats.requests,
+        retries: phase.stats.retries,
+        oversizedCells: phase.stats.oversizedCells,
+        groups: phase.stats.groups,
+      };
+    }
+
+    for (const job of loopJobs) {
       if (managedRefusal) break;
       if (await shouldStop()) break;
       // Routing keys on the COLUMN, never on the AI payload key: a metaobject
@@ -1025,69 +1161,25 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
 
       for (const cell of job.cells) {
         if (failedColumnIds.has(cell.column.id)) continue;
-        const expected = plan.expected.get(planCellKey(job.rowId, cell.column.id));
-        for (const locale of cell.locales) {
-          if (failedCellLocales.has(`${cell.column.id}|${locale}`)) continue;
-          // Never substitute the source text — an untranslated value written
-          // as a "translation" is silent corruption.
-          let value = (results[locale]?.[cell.fieldKey] ?? "").trim();
-          if (!value && managedRefusal) {
-            // Not attempted (or refused) after the stand-down: it is counted
-            // as not saved and explained by the Task error, not reported as
-            // an AI that answered nothing.
-            settled++;
-            continue;
-          }
-          if (!value) {
-            settled++;
-            failures.push({
-              rowId: job.rowId,
-              columnId: cell.column.id,
-              locale,
-              message: "AI returned no translation.",
-            });
-            continue;
-          }
-          if (cell.column.id === HANDLE_COLUMN_ID) {
-            // AI output → a slug Shopify accepts; identical-to-primary handles
-            // are skipped on purpose (a translated URL that equals the primary
-            // one is a routing conflict, not a translation).
-            const scope = handleScopeKey(CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType], locale);
-            const used = handlesByScope.get(scope) ?? new Set<string>();
-            handlesByScope.set(scope, used);
-            value = dedupeHandle(normalizeTranslatedHandle(value), used);
-            if (!value || value === job.primaryHandle.trim()) {
-              skippedHandles++;
-              settled++;
-              continue;
-            }
-          }
-          buffer.push({
-            rowId: job.rowId,
-            rowType,
-            locale,
-            // GLOBAL only — the page has no market dimension.
-            marketId: "",
-            columnId: cell.column.id,
-            value,
-            // The digests the plan read, which the fill-only write holds the
-            // registration to (text moved since ⇒ skipped, not registered).
-            ...(expected ? { expected } : {}),
-          });
-        }
+        emitCell(
+          job,
+          cell,
+          (locale) => results[locale]?.[cell.fieldKey],
+          (locale) => failedCellLocales.has(`${cell.column.id}|${locale}`),
+        );
       }
       await heartbeat();
       // Write in BLOCKS as the run goes, not once at the end: a restart then
       // loses at most the block in flight (re-running is resuming — only what
       // is still missing is found), and a long run shows its result as it goes.
-      if (!managedRefusal && (buffer.length >= BULK_TRANSLATE_BLOCK_CELLS || Date.now() - lastWriteAt >= BULK_TRANSLATE_BLOCK_MS)) {
-        await flush();
+      if (!managedRefusal && blockDue()) {
+        await flushSerial();
       }
     }
 
     // The tail block — also after a managed stand-down (what was translated
     // before it is real work), never after a cancellation.
-    if (!(await shouldStop())) await flush();
+    if (!(await shouldStop())) await flushSerial();
 
     // Every selected unit ends in exactly one bucket: saved, deliberately
     // skipped, or failed — derived, so the buckets always add up to the run.
@@ -1110,6 +1202,7 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
       ...(Object.keys(mismatchesByKey).length > 0 ? { mismatchesByKey } : {}),
       mode: "sync",
       blocks,
+      ...(packaging ? { packaging } : {}),
       ...(stoppedBy === "cancelled" ? { cancelled: true } : {}),
       failures,
     };
@@ -1186,6 +1279,7 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
                   skippedGone,
                   mode: "sync",
                   blocks,
+                  ...(packaging ? { packaging } : {}),
                   failures,
                 }),
               }

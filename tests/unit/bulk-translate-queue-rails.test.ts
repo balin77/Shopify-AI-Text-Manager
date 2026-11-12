@@ -73,7 +73,7 @@ describe("package queue rails", () => {
     const error = await settled;
     expect(isAIRequestStarved(error)).toBe(true);
     expect(execute).not.toHaveBeenCalled();
-    expect(queue.getQueueStats?.().totalQueued ?? 0).toBe(0);
+    expect(queue.getQueueStats().queueLength).toBe(0);
   });
 
   it("at most one LARGE package per shop executes at a time ", async () => {
