@@ -58,6 +58,8 @@ import { buildServerColumnsByType } from "~/services/bulk-editor/columns.server"
 import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
 import { chunkImportDiff } from "~/services/bulk-editor/diff-chunks.server";
 import { runPackagePhase, type PackagePhaseResult } from "~/services/bulk-editor/translate-package-phase.server";
+import { estimateTranslateRun, type TranslateEstimate } from "~/services/bulk-editor/translate-estimate.shared";
+import { aiServiceFor } from "~/services/ai/ai-credentials.server";
 import { planTranslateRead, planCellKey } from "~/services/bulk-editor/translate-plan-read.server";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import {
@@ -161,6 +163,12 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
     .filter((f): f is BulkFilterId => (BULK_FILTER_IDS as string[]).includes(f));
   const selection = parseTranslateSelection(getFormJSON(formData, "selection"));
 
+  // PREVIEW MODE (phase 1c): the same validation as the run, the same scan and
+  // the same job building -- but no Task row, no AI call, no Shopify write.
+  // It sits behind the same plan gate (above) and, through /api/ai, behind
+  // aiRefusalFor: a shop without a key gets the refusal, not a number.
+  const estimateOnly = getFormString(formData, "estimateOnly") === "true";
+
   const columnsByType = await buildServerColumnsByType(db, shop, plan);
   // Metaobject rows are only schema-homogeneous per definition type — an
   // unknown moType would mix schemas, so it is validated like every other param.
@@ -182,10 +190,12 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
   // Single-flight per shop — a second run would race the same cells. This
   // check is the cheap early exit (before the scan is paid for); the ATOMIC
   // claim is claimBulkTranslateRun below.
-  const runningTask = await db.task.findFirst({
-    where: activeRunWhere(shop),
-    select: { id: true },
-  });
+  const runningTask = estimateOnly
+    ? null
+    : await db.task.findFirst({
+        where: activeRunWhere(shop),
+        select: { id: true },
+      });
   if (runningTask) {
     return json(
       {
@@ -214,6 +224,31 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
   const { jobs, units, overCap } = buildJobs(scan.items, columns, selection, targetLocales, rowType);
   if (jobs.length === 0) {
     return json({ success: true, none: true, total: 0 });
+  }
+
+  if (estimateOnly) {
+    const instructionRow = await db.aIInstructions.findUnique({ where: { shop } }).catch(() => null);
+    const estimate = await buildEstimate({
+      shop,
+      settings,
+      plan,
+      jobs,
+      units,
+      overCap,
+      scanTruncated: scan.scanTruncated,
+      instructionsFor: (fieldKeys) =>
+        buildTranslateInstructions(
+          getInstructionWithDefault(instructionRow, "translateInstructions"),
+          translationMode,
+          fieldKeys,
+          { limits: seoLimits as unknown as Record<string, number> | null },
+        ),
+    });
+    if (!estimate) {
+      // Not an error of the merchant's: the page still lets them start.
+      return json({ success: false, code: "ESTIMATE_UNAVAILABLE", error: "The estimate is not available." });
+    }
+    return json({ success: true, estimate });
   }
 
   const claim = await claimBulkTranslateRun(db, {
@@ -285,6 +320,58 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
     matchedRows: scan.matchedRows,
     scannedRows: scan.scannedRows,
   });
+}
+
+// ─── Cost preview ──────────────────────────────────────────────────────────
+
+/**
+ * The estimate of a run, or null when it cannot be made (the service could not
+ * be built). READ-ONLY: it builds an AI service only to read its limits (no
+ * request is sent) and reads the managed budget without writing it.
+ */
+async function buildEstimate(args: {
+  shop: string;
+  settings: AIActionContext["settings"];
+  plan: Plan;
+  jobs: TranslateJob[];
+  units: number;
+  overCap: number;
+  scanTruncated: boolean;
+  instructionsFor: (fieldKeys: string[]) => string | undefined;
+}): Promise<TranslateEstimate | null> {
+  try {
+    const { service, decision } = aiServiceFor(args.settings, args.shop);
+    const limits = service.packageLimits();
+    let managedBudget: { remainingMicros: number; limitMicros: number } | undefined;
+    if (decision.ok && decision.source === "managed") {
+      const { managedBudgetStatus } = await import("~/services/ai/managed-budget.server");
+      const status = await managedBudgetStatus(args.shop, args.settings, args.plan as never);
+      // A budget that could not be read is left out: no claim either way.
+      if (!status.readFailed) {
+        managedBudget = { remainingMicros: status.remainingMicros, limitMicros: status.limitMicros };
+      }
+    }
+    return estimateTranslateRun({
+      jobs: args.jobs,
+      units: args.units,
+      packages: bulkTranslatePackagesEnabled(),
+      classifiers: {
+        isGroupedColumn: isGroupedProductTypeColumn,
+        isValueColumn: isBatchSubResourceColumn,
+        isShortColumn: isShortFieldColumn,
+        isListValuesColumn,
+        isHandleColumn: (column) => column.id === HANDLE_COLUMN_ID,
+        instructionsFor: args.instructionsFor,
+      },
+      limits,
+      skippedOverCap: args.overCap,
+      scanTruncated: args.scanTruncated,
+      managedBudget,
+    });
+  } catch (err: unknown) {
+    logger.warn("[API-AI] Bulk-editor translate estimate failed", { context: "AI", error: errorMessage(err) });
+    return null;
+  }
 }
 
 // ─── Single-flight ─────────────────────────────────────────────────────────
@@ -771,12 +858,23 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     for (const piece of pieces) {
       if (await shouldStop()) return;
       blocks++;
+      const blockStartedAt = Date.now();
       try {
         // The SAME verified write path as manual saving: digest rule (§6.3),
         // registerAndVerify echo check, DB mirror, markTranslationSaved — in
         // fill-only mode, so a value that is there now is never overwritten
         // and a text that moved since the plan is never registered against.
         const applyResult = await applyBulkDiff({ db, shop, admin, columnsByType, fillOnly: true }, piece);
+        // Block timing (PLAN_BULK_TRANSLATE_BATCHING 7 / 11 step 1c): the
+        // measurement the MAX_TRANSLATE_UNITS decision waits for. Counts only,
+        // no merchant text.
+        logger.info("[BulkTranslate] write block timing", {
+          context: "AI",
+          taskId,
+          block: blocks,
+          cells: piece.length,
+          durationMs: Date.now() - blockStartedAt,
+        });
         // applyResult.saved counts row GROUPS, not translations — count the
         // entries no failure was attributed to instead (a cell failure carries
         // its columnId + locale, a row-level one only the row), minus the

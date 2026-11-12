@@ -685,13 +685,14 @@ export const guideEn: GuideCopy = {
             "In the bulk editor, filter to the rows you want translated.",
             "Open “Add missing translations”.",
             "Choose the target languages at the top and select or deselect entries or single fields in the list.",
-            "Start — the translation runs as a background task.",
+            "Click “Translate & save”, check the estimated cost in the window, then “Start now” — the translation runs as a background task.",
           ],
         },
         {
           heading: "What happens",
           paragraphs: [
             "Only empty translations are filled; an existing translation is never overwritten. The app re-checks what is really missing right before writing. Translated handles are optional and are normalised into a valid URL form; they are also compared with the translated handles that already exist, so no URL is assigned twice.",
+            "Before it starts, a window shows what the run is expected to cost: the number of translations, AI requests and the approximate amount of text, plus the estimated cost in euros. The estimate is deliberately on the high side; you are billed for what is actually used. If you use your own AI key, your provider bills you directly. If you use the AI included in the app, you also see what share of your remaining budget it would use; if that is not enough, the run stops once the budget is used up, and whatever was translated by then stays saved. For some providers the cost cannot be estimated in euros, and the window says “cannot be estimated”. If no estimate can be made you can still start. If the AI key is missing, the window names the reason and the run cannot be started.",
             "Translations are saved in stages while the run is going, not only at the end. If the original text of an entry has changed in the meantime, it is skipped so that the translation of an old text is never saved; the same goes for a language that has received a translation in the meantime. An entry that has been deleted in the meantime, or whose original text is now empty, is skipped as well. All of this shows up in the result as “skipped” and is not an error: once the item has been reloaded or synced, start the run again and the entries with changed text are filled in from the current text.",
             "In the Tasks tab you can cancel a running run. It then stops at the next opportunity; whatever was saved up to that point stays saved, and only one run per shop can be active at a time.",
             "If the app is restarted while the run is going (for example by an update), the run is marked as interrupted after a short while; the Tasks tab then shows a warning, and so does the page while you keep it open. What was already saved in stages stays; only the most recently translated stage that was not yet saved is missing. Simply start “Add missing translations” again — only what is still missing is filled.",

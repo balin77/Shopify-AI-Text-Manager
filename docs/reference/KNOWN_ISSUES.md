@@ -156,6 +156,8 @@ Dieses Repo ist öffentlich: Sicherheitsrelevante Details gehören nicht in dies
 
 ## Bekannt: Server und Betrieb
 
+- Die Obergrenze «Fehlende Übersetzungen ergänzen» (`MAX_TRANSLATE_UNITS`, heute 2000 pro Lauf) ist noch nicht auf 10 000 angehoben. Der Plan (PLAN_BULK_TRANSLATE_BATCHING §7) macht die Anhebung von der gemessenen Schreibzeit je Block abhängig, und die liess sich bisher nicht messen. So wird gemessen: einen Lauf mit mehreren hundert Übersetzungen auf einem echten Shop starten und in den Server-Logs nach den Zeilen «[BulkTranslate] write block timing» suchen (`durationMs` und `cells` je Block). Dauern 10 000 Einheiten hochgerechnet länger als etwa 4 Stunden, bleibt die Zahl oder sinkt; sonst wird die Konstante in `translate-missing.shared.ts` angehoben. Beim Anheben den Guide-Text und die Hinweise der Seite prüfen.
+- Die Kostenschätzung im Startfenster von «Fehlende Übersetzungen ergänzen» liest den Originaltext aus dem Zwischenspeicher und ignoriert die Gegenprüfung gegen Shopify, die der echte Lauf vor dem Start macht. Wurden Texte inzwischen geändert, weicht die tatsächliche Zahl leicht ab (die Schätzung ist bewusst eher zu hoch angesetzt). Der Lauf selbst bleibt unverändert.
 - Ob ein Abbruch durch den Railway-Proxy weitergereicht wird, ist nicht geprüft.
 - Nach einem Datenbankausfall von über 10 Minuten kann eine laufende Konvertierung fälschlich geschlossen werden.
 - Die 90-Tage-Annahme beim Keep-alive sollte Mitte Januar 2027 geprüft werden.

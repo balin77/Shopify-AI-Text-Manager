@@ -77,6 +77,11 @@ import {
 import { LocaleToggleBar } from "../components/bulk-editor/LocaleToggleBar";
 import { MissingTranslationList } from "../components/bulk-editor/MissingTranslationList";
 import { appFetch } from "../utils/app-fetch";
+import {
+  TranslateConfirmModal,
+  type ConfirmEstimateState,
+} from "../components/bulk-editor/TranslateConfirmModal";
+import type { TranslateEstimate } from "../services/bulk-editor/translate-estimate.shared";
 
 interface TranslateLoaderData {
   gated: boolean;
@@ -248,6 +253,7 @@ interface TranslateFetcherResult {
   /** Units that did not fit into MAX_TRANSLATE_UNITS. */
   skippedOverCap?: number;
   none?: boolean;
+  estimate?: TranslateEstimate;
 }
 
 interface TranslateTaskResult {
@@ -369,21 +375,82 @@ export default function BulkTranslateMissingPage() {
 
   const goToPage = (page: number) => navigateWith({ tp: String(page) });
 
-  const handleStart = () => {
+  const runParams = (): Record<string, string> => ({
+    action: "bulkEditorTranslate",
+    contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[data.type],
+    rowType: data.type,
+    moType: data.moType,
+    locales: data.activeLocales.join(","),
+    search: data.search,
+    filters: data.filters.join(","),
+    selection: JSON.stringify(serializeTranslateSelection(selection)),
+  });
+
+  // The Start button first opens the confirmation with the cost estimate. The
+  // estimate is a plain appFetch (a failure stays local to the dialog and never
+  // reaches the route error boundary) of the SAME action with estimateOnly.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [estimateState, setEstimateState] = useState<ConfirmEstimateState>({ status: "loading" });
+  const estimateAbort = useRef<AbortController | null>(null);
+
+  const openConfirm = async () => {
     setBanner(null);
-    startFetcher.submit(
-      {
-        action: "bulkEditorTranslate",
-        contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[data.type],
-        rowType: data.type,
-        moType: data.moType,
-        locales: data.activeLocales.join(","),
-        search: data.search,
-        filters: data.filters.join(","),
-        selection: JSON.stringify(serializeTranslateSelection(selection)),
-      },
-      { method: "post", action: "/api/ai" },
-    );
+    setEstimateState({ status: "loading" });
+    setConfirmOpen(true);
+    estimateAbort.current?.abort();
+    const controller = new AbortController();
+    estimateAbort.current = controller;
+    try {
+      const res = await appFetch("/api/ai", {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ ...runParams(), estimateOnly: "true" }).toString(),
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      let payload: TranslateFetcherResult | null = null;
+      try {
+        payload = (await res.json()) as TranslateFetcherResult;
+      } catch {
+        payload = null;
+      }
+      if (controller.signal.aborted) return;
+      if (payload?.success && payload.estimate) {
+        setEstimateState({ status: "ready", estimate: payload.estimate });
+      } else if (payload?.success && payload.none) {
+        // Nothing left to translate: the run itself would answer "none".
+        setEstimateState({ status: "unavailable" });
+      } else if (
+        payload &&
+        !payload.success &&
+        payload.error &&
+        payload.code !== "ESTIMATE_UNAVAILABLE" &&
+        res.status >= 400 &&
+        res.status < 500 &&
+        res.status !== 429
+      ) {
+        // The same refusal the run would get (no key, plan, ...).
+        setEstimateState({ status: "refused", message: payload.error });
+      } else {
+        setEstimateState({ status: "unavailable" });
+      }
+    } catch {
+      if (!controller.signal.aborted) setEstimateState({ status: "unavailable" });
+    }
+  };
+
+  const closeConfirm = () => {
+    estimateAbort.current?.abort();
+    setConfirmOpen(false);
+  };
+
+  useEffect(() => () => estimateAbort.current?.abort(), []);
+
+  const handleStart = () => {
+    estimateAbort.current?.abort();
+    setConfirmOpen(false);
+    setBanner(null);
+    startFetcher.submit(runParams(), { method: "post", action: "/api/ai" });
   };
 
   useEffect(() => {
@@ -674,12 +741,21 @@ export default function BulkTranslateMissingPage() {
                   {tm.startHint}
                 </Text>
                 <Box>
-                  <Button variant="primary" disabled={!canStart} loading={busy} onClick={handleStart}>
+                  <Button variant="primary" disabled={!canStart} loading={busy} onClick={openConfirm}>
                     {tm.start}
                   </Button>
                 </Box>
               </BlockStack>
             </Card>
+            <TranslateConfirmModal
+              open={confirmOpen}
+              state={estimateState}
+              locale={appLocale}
+              maxUnits={MAX_TRANSLATE_UNITS}
+              strings={tm.confirm}
+              onCancel={closeConfirm}
+              onStart={handleStart}
+            />
           </BlockStack>
         )}
       </PlanAccessGate>

@@ -685,13 +685,14 @@ export const guideEs: GuideCopy = {
             "En el editor masivo, filtra las filas que quieres traducir.",
             "Abre «Añadir traducciones que faltan».",
             "Elige arriba los idiomas de destino y marca o desmarca entradas o campos concretos en la lista.",
-            "Inicia — la traducción se ejecuta como tarea en segundo plano.",
+            "Haz clic en «Traducir y guardar», revisa en la ventana el coste estimado y pulsa «Iniciar ahora»: la traducción se ejecuta como tarea en segundo plano.",
           ],
         },
         {
           heading: "Qué ocurre",
           paragraphs: [
             "Solo se rellenan las traducciones vacías; una traducción existente nunca se sobrescribe. La app vuelve a comprobar justo antes de escribir qué falta realmente. Los handles traducidos son opcionales y se normalizan a una forma de URL válida; además se comparan con los handles traducidos que ya existen, para que no se asigne dos veces la misma URL.",
+            "Antes de empezar, una ventana muestra lo que se prevé que cueste la ejecución: el número de traducciones, de solicitudes de IA y la cantidad aproximada de texto, además del coste estimado en euros. La estimación es deliberadamente algo alta; se factura lo que realmente se consume. Si usas tu propia clave de IA, tu proveedor te factura directamente. Si usas la IA incluida en la app, ves además qué parte de tu presupuesto restante consumiría; si no alcanza, la ejecución se detiene cuando el presupuesto se agota y lo traducido hasta entonces queda guardado. En algunos proveedores el coste no se puede estimar en euros y la ventana indica «no se puede estimar». Si no es posible hacer una estimación, puedes iniciar de todos modos. Si falta la clave de IA, la ventana indica el motivo y la ejecución no se puede iniciar.",
             "Las traducciones se guardan por etapas mientras la ejecución avanza, no solo al final. Si el texto original de una entrada ha cambiado entretanto, se omite para que nunca se guarde la traducción de un texto antiguo; lo mismo ocurre si un idioma ya ha recibido una traducción entretanto. También se omite una entrada que se haya eliminado entretanto o cuyo texto original esté ahora vacío. Todo aparece en el resultado como «omitidos» y no son errores: cuando el elemento se haya recargado o sincronizado, vuelve a iniciar la ejecución y las entradas con el texto modificado se completarán con el texto actual.",
             "En la pestaña Tareas puedes cancelar una ejecución en curso. Se detiene en la siguiente oportunidad; lo guardado hasta ese momento se conserva, y solo puede haber una ejecución activa por tienda.",
             "Si la app se reinicia durante la ejecución (por ejemplo, por una actualización), la ejecución se marca como interrumpida pasado un rato; la pestaña Tareas muestra entonces una advertencia, y la página también mientras la tengas abierta. Lo que ya se había guardado por etapas se conserva; solo falta la última etapa traducida que aún no estaba guardada. Vuelve a iniciar «Completar las traducciones que faltan» y solo se rellenará lo que siga faltando.",
