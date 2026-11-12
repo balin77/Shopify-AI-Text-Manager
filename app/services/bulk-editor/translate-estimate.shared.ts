@@ -111,6 +111,23 @@ export interface TranslateEstimate {
 
 const inTok = (chars: number): number => Math.ceil(chars / 3);
 
+/**
+ * What the multi-locale prompts add on top of the source: the target-language
+ * list ("Portuguese (Brazil) (pt-BR), ") and the JSON skeleton the model is
+ * asked to fill, both PER LOCALE. Generous on purpose; pinned against the real
+ * prompt builders by bulk-translate-estimate-vs-sent.test.ts (estimate >= sent).
+ */
+const LANGUAGE_LIST_CHARS_PER_LOCALE = 32;
+const SKELETON_CHARS_PER_LOCALE = 14;
+/** `"seoTitle": "...",` on its own indented line, plus its label in the field list. */
+const SHORT_SKELETON_CHARS_PER_FIELD = 28;
+/** `"translated 12",` on its own indented line. */
+const VALUE_SKELETON_CHARS_PER_VALUE = 24;
+export const shortSkeletonChars = (localeCount: number, fieldCount: number): number =>
+  localeCount * (LANGUAGE_LIST_CHARS_PER_LOCALE + SKELETON_CHARS_PER_LOCALE + fieldCount * SHORT_SKELETON_CHARS_PER_FIELD);
+export const valueSkeletonChars = (localeCount: number, valueCount: number): number =>
+  localeCount * (LANGUAGE_LIST_CHARS_PER_LOCALE + SKELETON_CHARS_PER_LOCALE + valueCount * VALUE_SKELETON_CHARS_PER_VALUE);
+
 interface Totals {
   requests: number;
   inputTokens: number;
@@ -191,7 +208,7 @@ function estimateValueBatch(
   if (values.length === 0 || locales.length === 0) return t;
   const add = (chars: number, count: number, localeCount: number, outputChars: number) => {
     t.requests += 1;
-    t.inputTokens += PER_ROW_PREFIX_TOKENS + instrTok + glossaryTok(localeCount) + inTok(chars + 20 * count);
+    t.inputTokens += PER_ROW_PREFIX_TOKENS + instrTok + glossaryTok(localeCount) + inTok(chars + 20 * count + (localeCount > 1 ? valueSkeletonChars(localeCount, count) : 0));
     t.outputTokens += outputTokensForChars(outputChars, localeCount);
   };
   if (locales.length === 1) {
@@ -254,6 +271,7 @@ function estimatePerRow(jobs: EstimateJob[], c: EstimateClassifiers, glossaryTok
         PER_ROW_PREFIX_TOKENS +
           inTok(instr.length) +
           glossaryTok(union.length) +
+          inTok(shortSkeletonChars(union.length, short.length)) +
           short.reduce((n, x) => n + inTok(x.source.length + 20), 0),
         short.reduce((n, x) => n + outTokForText(x.source, union), 0),
       );
