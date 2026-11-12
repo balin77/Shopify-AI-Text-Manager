@@ -419,7 +419,7 @@ export default function BulkTranslateMissingPage() {
         setEstimateState({ status: "ready", estimate: payload.estimate });
       } else if (payload?.success && payload.none) {
         // Nothing left to translate: the run itself would answer "none".
-        setEstimateState({ status: "unavailable" });
+        setEstimateState({ status: "nothing" });
       } else if (
         payload &&
         !payload.success &&

@@ -4754,6 +4754,8 @@ export const en: Translation = {
         costUnknown: "Estimated cost: cannot be estimated (your provider does not bill per token)",
         costTiny: "less than {cost}",
         byokNote: "Your AI provider bills you directly. The estimate is deliberately on the high side.",
+        budgetUnavailable: "Your remaining AI budget could not be read just now, so there is no comparison with it. The estimate is deliberately on the high side.",
+        nothing: "Nothing to translate: no translations are missing in the current filter.",
         budgetShare: "That is about {share}% of your remaining AI budget.",
         budgetExceeds: "The estimate is above your remaining AI budget. You can still start: the run stops once the budget is used up, and whatever was translated by then stays saved.",
         overCap: "{rest} more translations do not fit into this run (at most {max}) and are left for the next run.",

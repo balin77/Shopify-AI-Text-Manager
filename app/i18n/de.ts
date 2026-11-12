@@ -4776,6 +4776,8 @@ export const de = {
         costUnknown: "Geschätzte Kosten: nicht schätzbar (Ihr Anbieter rechnet nicht pro Token ab)",
         costTiny: "weniger als {cost}",
         byokNote: "Die Kosten stellt Ihr KI-Anbieter Ihnen direkt in Rechnung. Die Schätzung ist bewusst eher hoch angesetzt.",
+        budgetUnavailable: "Ihr verbleibendes KI-Budget konnte gerade nicht gelesen werden, deshalb gibt es keinen Vergleich damit. Die Schätzung ist bewusst eher hoch angesetzt.",
+        nothing: "Es gibt nichts zu übersetzen: Im aktuellen Filter fehlen keine Übersetzungen.",
         budgetShare: "Das sind ca. {share} % Ihres verbleibenden KI-Budgets.",
         budgetExceeds: "Die Schätzung liegt über Ihrem verbleibenden KI-Budget. Sie können trotzdem starten: Der Lauf hält an, sobald das Budget aufgebraucht ist, und was bis dahin übersetzt wurde, bleibt gespeichert.",
         overCap: "{rest} weitere Übersetzungen passen nicht in diesen Lauf (höchstens {max}) und bleiben für den nächsten Lauf übrig.",

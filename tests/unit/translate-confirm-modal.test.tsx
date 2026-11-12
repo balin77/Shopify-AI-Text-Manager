@@ -22,6 +22,7 @@ const estimate = (over: Partial<TranslateEstimate> = {}): TranslateEstimate => (
   costMicros: 1_500_000,
   pricedAtCeiling: false,
   packaged: false,
+  source: "byo",
   skippedOverCap: 0,
   scanTruncated: false,
   ...over,
@@ -88,6 +89,18 @@ describe("TranslateConfirmModal", () => {
     expect(screen.getByText(/über Ihrem verbleibenden KI-Budget/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Jetzt starten" }));
     expect(h.onStart).toHaveBeenCalled();
+  });
+
+  it("managed with a budget that could not be read: a neutral line, never 'your provider bills you'", () => {
+    mount({ status: "ready", estimate: estimate({ source: "managed" }) });
+    expect(screen.getByText(/KI-Budget konnte gerade nicht gelesen werden/)).toBeTruthy();
+    expect(screen.queryByText(/Ihr KI-Anbieter/)).toBeNull();
+  });
+
+  it("nothing missing: says so and offers no Start", () => {
+    mount({ status: "nothing" });
+    expect(screen.getByText(/Es gibt nichts zu übersetzen/)).toBeTruthy();
+    expect(startDisabled()).toBe(true);
   });
 
   it("names units left for the next run", () => {

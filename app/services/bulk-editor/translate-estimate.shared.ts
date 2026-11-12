@@ -103,6 +103,8 @@ export interface TranslateEstimate {
   /** Units beyond MAX_TRANSLATE_UNITS that this run leaves for the next one. */
   skippedOverCap: number;
   scanTruncated: boolean;
+  /** Whose key the run spends: the operator's (managed) or the merchant's own. */
+  source: "managed" | "byo";
   /** Managed shops only: the remaining budget the estimate is read against. */
   budget?: { remainingMicros: number; limitMicros: number; wouldExceed: boolean };
 }
@@ -388,6 +390,8 @@ export function estimateTranslateRun(args: {
    * the real rules). Omitted = unknown: a worst-case allowance is added.
    */
   glossaryChars?: number;
+  /** Whose key the run would spend; default "byo". */
+  source?: "managed" | "byo";
   /** Remaining managed budget; omitted for a shop on its own key. */
   managedBudget?: { remainingMicros: number; limitMicros: number };
 }): TranslateEstimate {
@@ -412,6 +416,7 @@ export function estimateTranslateRun(args: {
     costMicros,
     pricedAtCeiling: priced.pricedAtCeiling,
     packaged: packages,
+    source: args.source ?? "byo",
     skippedOverCap: args.skippedOverCap,
     scanTruncated: args.scanTruncated,
     ...(args.managedBudget

@@ -20,7 +20,9 @@ export type ConfirmEstimateState =
   /** The shop may not run AI (no key, plan ...): the server's own sentence. */
   | { status: "refused"; message: string }
   /** The estimate could not be made; starting stays allowed. */
-  | { status: "unavailable" };
+  | { status: "unavailable" }
+  /** Nothing is missing in the current selection: there is nothing to start. */
+  | { status: "nothing" };
 
 export interface TranslateConfirmStrings {
   title: string;
@@ -34,6 +36,8 @@ export interface TranslateConfirmStrings {
   costUnknown: string;
   costTiny: string;
   byokNote: string;
+  budgetUnavailable: string;
+  nothing: string;
   budgetShare: string;
   budgetExceeds: string;
   overCap: string;
@@ -112,6 +116,7 @@ export function TranslateConfirmModal({ open, state, locale, maxUnits, strings, 
             </Banner>
           )}
           {state.status === "unavailable" && <Banner tone="warning">{strings.unavailable}</Banner>}
+          {state.status === "nothing" && <Text as="p">{strings.nothing}</Text>}
           {estimate && (
             <BlockStack gap="200">
               <Text as="h3" variant="headingSm">
@@ -130,10 +135,17 @@ export function TranslateConfirmModal({ open, state, locale, maxUnits, strings, 
               </Text>
               {budget ? (
                 <Banner tone={budget.tone}>{budget.text}</Banner>
+              ) : estimate.source === "byo" ? (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {strings.byokNote}
+                </Text>
               ) : (
+                // A managed shop is never told "your provider bills you": when its
+                // budget could not be read (or the cost cannot be compared) the line
+                // says so neutrally.
                 !estimate.budget && (
                   <Text as="p" variant="bodySm" tone="subdued">
-                    {strings.byokNote}
+                    {strings.budgetUnavailable}
                   </Text>
                 )
               )}

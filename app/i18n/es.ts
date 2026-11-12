@@ -4739,6 +4739,8 @@ export const es: Translation = {
         costUnknown: "Coste estimado: no se puede estimar (su proveedor no factura por token)",
         costTiny: "menos de {cost}",
         byokNote: "Su proveedor de IA le factura directamente. La estimación es deliberadamente algo alta.",
+        budgetUnavailable: "Su presupuesto de IA restante no se ha podido leer ahora, por lo que no hay comparación. La estimación es deliberadamente algo alta.",
+        nothing: "No hay nada que traducir: en el filtro actual no falta ninguna traducción.",
         budgetShare: "Eso es aproximadamente el {share} % de su presupuesto de IA restante.",
         budgetExceeds: "La estimación supera su presupuesto de IA restante. Puede iniciar de todos modos: el proceso se detiene cuando el presupuesto se agota y lo traducido hasta entonces queda guardado.",
         overCap: "{rest} traducciones más no caben en este proceso (máximo {max}) y quedan para el siguiente.",

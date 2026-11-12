@@ -343,7 +343,8 @@ async function buildEstimate(args: {
     const { service, decision } = aiServiceFor(args.settings, args.shop);
     const limits = service.packageLimits();
     let managedBudget: { remainingMicros: number; limitMicros: number } | undefined;
-    if (decision.ok && decision.source === "managed") {
+    const source: "managed" | "byo" = decision.ok && decision.source === "managed" ? "managed" : "byo";
+    if (source === "managed") {
       const { managedBudgetStatus } = await import("~/services/ai/managed-budget.server");
       const status = await managedBudgetStatus(args.shop, args.settings, args.plan as never);
       // A budget that could not be read is left out: no claim either way.
@@ -382,6 +383,7 @@ async function buildEstimate(args: {
       skippedOverCap: args.overCap,
       scanTruncated: args.scanTruncated,
       glossaryChars,
+      source,
       managedBudget,
     });
   } catch (err: unknown) {

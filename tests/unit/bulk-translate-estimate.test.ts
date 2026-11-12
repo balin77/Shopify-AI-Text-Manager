@@ -290,7 +290,19 @@ describe("handleBulkEditorTranslate estimateOnly", () => {
     const db = makeDb();
     const res = await bodyOf(await handleBulkEditorTranslate(ctx(db)));
     expect(res.estimate.budget).toEqual({ remainingMicros: 5_000_000, limitMicros: 20_000_000, wouldExceed: false });
+    expect(res.estimate.source).toBe("managed");
     expect(db.task.create).not.toHaveBeenCalled();
+  });
+
+  it("a managed shop whose budget read failed is still source 'managed' (the page words it neutrally)", async () => {
+    aiServiceFor.mockReturnValue({
+      service: { packageLimits: () => limits },
+      decision: { ok: true, source: "managed", provider: "claude" },
+    });
+    managedBudgetStatus.mockResolvedValue({ remainingMicros: 0, limitMicros: 0, readFailed: true });
+    const res = await bodyOf(await handleBulkEditorTranslate(ctx(makeDb())));
+    expect(res.estimate.source).toBe("managed");
+    expect(res.estimate.budget).toBeUndefined();
   });
 
   it("the plan gate and the row-type check still apply", async () => {
