@@ -257,11 +257,24 @@ interface TranslateTaskResult {
   /** Handles whose translation equalled the primary handle (or normalized to
    * nothing) — skipped on purpose, not failures. */
   skippedHandles?: number;
+  /** Units not written because the original text changed meanwhile / because
+   * the language had a translation by then (fill-only write path). */
+  skippedChanged?: number;
+  skippedFilled?: number;
 }
 
 type ResultBanner =
   | { kind: "running" }
-  | { kind: "done"; saved: number; failed: number; skippedHandles: number; overCap: number }
+  | {
+      kind: "done";
+      saved: number;
+      failed: number;
+      skippedHandles: number;
+      skippedChanged: number;
+      skippedFilled: number;
+      overCap: number;
+    }
+  | { kind: "cancelled"; saved: number }
   | { kind: "none" }
   | { kind: "failed"; message?: string; interrupted?: boolean };
 
@@ -401,7 +414,13 @@ export default function BulkTranslateMissingPage() {
           task?: { status: string; result?: string | null; error?: string | null };
         };
         const task = payload.task;
-        if (!task || (task.status !== "completed" && task.status !== "failed") || cancelled) return;
+        if (
+          !task ||
+          (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") ||
+          cancelled
+        ) {
+          return;
+        }
 
         setTaskId(null);
         if (task.status === "failed" && !task.result) {
@@ -424,13 +443,21 @@ export default function BulkTranslateMissingPage() {
         } catch {
           parsed = null;
         }
-        setBanner({
-          kind: "done",
-          saved: parsed?.saved ?? 0,
-          failed: parsed?.failed ?? 0,
-          skippedHandles: parsed?.skippedHandles ?? 0,
-          overCap: startedOverCap.current,
-        });
+        if (task.status === "cancelled") {
+          // Cancelled in the Tasks tab: what the run wrote before it stopped
+          // stays written, so the list is reloaded like after a finished run.
+          setBanner({ kind: "cancelled", saved: parsed?.saved ?? 0 });
+        } else {
+          setBanner({
+            kind: "done",
+            saved: parsed?.saved ?? 0,
+            failed: parsed?.failed ?? 0,
+            skippedHandles: parsed?.skippedHandles ?? 0,
+            skippedChanged: parsed?.skippedChanged ?? 0,
+            skippedFilled: parsed?.skippedFilled ?? 0,
+            overCap: startedOverCap.current,
+          });
+        }
         // The translated rows are no longer candidates — reload the list and
         // start from a clean selection.
         setSelection(initialTranslateSelection(columnIds));
@@ -479,6 +506,9 @@ export default function BulkTranslateMissingPage() {
             {banner?.kind === "failed" && (
               <Banner tone={banner.interrupted ? "warning" : "critical"}>{banner.message || tm.failed}</Banner>
             )}
+            {banner?.kind === "cancelled" && (
+              <Banner tone="warning">{tm.cancelled.replace("{saved}", String(banner.saved))}</Banner>
+            )}
             {banner?.kind === "done" && (
               <Banner tone={banner.failed > 0 ? "warning" : "success"}>
                 <BlockStack gap="100">
@@ -489,6 +519,12 @@ export default function BulkTranslateMissingPage() {
                   </Text>
                   {banner.skippedHandles > 0 && (
                     <Text as="p">{tm.skippedHandles.replace("{count}", String(banner.skippedHandles))}</Text>
+                  )}
+                  {banner.skippedChanged > 0 && (
+                    <Text as="p">{tm.skippedChanged.replace("{count}", String(banner.skippedChanged))}</Text>
+                  )}
+                  {banner.skippedFilled > 0 && (
+                    <Text as="p">{tm.skippedFilled.replace("{count}", String(banner.skippedFilled))}</Text>
                   )}
                   {banner.overCap > 0 && (
                     <Text as="p">

@@ -698,8 +698,10 @@ export const guideDe: GuideCopy = {
         {
           heading: "Was dabei passiert",
           paragraphs: [
-            "Es werden ausschliesslich leere Übersetzungen gefüllt; eine bestehende Übersetzung wird nie überschrieben. Die App prüft vor dem Schreiben erneut, was wirklich fehlt. Übersetzte Handles sind optional und werden in eine gültige URL-Form gebracht.",
-            "Wird die App während des Laufs neu gestartet (zum Beispiel bei einem Update), wird der Lauf nach kurzer Zeit als unterbrochen markiert; im Reiter „Aufgaben“ steht dann eine Warnung, und solange Sie die Seite offen haben, sehen Sie sie auch dort. Was dabei noch nicht gespeichert war, wurde nicht geschrieben; starten Sie „Fehlende Übersetzungen ergänzen“ einfach erneut, es werden nur noch fehlende Übersetzungen gefüllt.",
+            "Es werden ausschliesslich leere Übersetzungen gefüllt; eine bestehende Übersetzung wird nie überschrieben. Die App prüft vor dem Schreiben erneut, was wirklich fehlt. Übersetzte Handles sind optional und werden in eine gültige URL-Form gebracht; sie werden auch mit den bereits vorhandenen übersetzten Handles abgeglichen, damit keine URL doppelt vergeben wird.",
+            "Die Übersetzungen werden schon während des Laufs in Etappen gespeichert, nicht erst am Ende. Hat sich der Originaltext eines Eintrags inzwischen geändert, wird er übersprungen, damit nie die Übersetzung eines alten Textes gespeichert wird; ebenso, wenn eine Sprache inzwischen schon eine Übersetzung hat. Beides steht im Ergebnis als „übersprungen“ und ist kein Fehler: starten Sie den Lauf später erneut, dann werden diese Einträge mit dem aktuellen Text ergänzt.",
+            "Im Reiter „Aufgaben“ können Sie einen laufenden Lauf abbrechen. Er hört dann bei der nächsten Gelegenheit auf; was bis dahin gespeichert wurde, bleibt gespeichert, und es läuft immer nur ein Lauf pro Shop.",
+            "Wird die App während des Laufs neu gestartet (zum Beispiel bei einem Update), wird der Lauf nach kurzer Zeit als unterbrochen markiert; im Reiter „Aufgaben“ steht dann eine Warnung, und solange Sie die Seite offen haben, sehen Sie sie auch dort. Was bereits in Etappen gespeichert war, bleibt erhalten; nur die zuletzt übersetzte, noch nicht gespeicherte Etappe fehlt. Starten Sie „Fehlende Übersetzungen ergänzen“ einfach erneut, es werden nur noch fehlende Übersetzungen gefüllt.",
           ],
         },
       ],

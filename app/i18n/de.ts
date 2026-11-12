@@ -2564,6 +2564,9 @@ export const de = {
       retranslationsCapped: "Nicht neu übersetzt (Obergrenze erreicht)",
       retranslationsSkipped: "Neuübersetzung nicht gestartet",
       skipped: "Übersprungen",
+      skippedChanged: "Übersprungen (Text inzwischen geändert)",
+      skippedFilled: "Übersprungen (inzwischen übersetzt)",
+      cancelledRun: "Abgebrochen – bis dahin Gespeichertes bleibt erhalten",
       skippedDrafts: "Übersprungen (Entwürfe)",
       skippedHandles: "Übersprungene URL-Slugs",
       skippedOverCap: "Übersprungen (über dem Limit)",
@@ -4746,6 +4749,11 @@ export const de = {
       savedResult: "{saved} Übersetzung(en) gespeichert, {failed} fehlgeschlagen.",
       skippedHandles:
         "{count} URL-Handle(s) übersprungen — die Übersetzung war identisch mit der Primärsprache oder ergab keinen gültigen Slug.",
+      skippedChanged:
+        "{count} Übersetzung(en) übersprungen — der Originaltext wurde inzwischen geändert. Beim nächsten Lauf werden sie mit dem neuen Text ergänzt.",
+      skippedFilled:
+        "{count} Übersetzung(en) übersprungen — diese Sprache hatte inzwischen schon eine Übersetzung. Es wurde nichts überschrieben.",
+      cancelled: "Der Lauf wurde abgebrochen. {saved} Übersetzung(en) wurden bis dahin gespeichert.",
       runTruncated:
         "Es wurden maximal {max} Übersetzungen ausgeführt — {rest} weitere sind offen. Starte den Lauf erneut für den Rest.",
       noneMissing: "In der aktuellen Auswahl fehlt keine Übersetzung.",

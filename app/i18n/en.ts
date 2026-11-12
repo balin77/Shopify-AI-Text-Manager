@@ -2560,6 +2560,9 @@ export const en: Translation = {
       retranslationsCapped: "Not re-translated (cap reached)",
       retranslationsSkipped: "Re-translation did not start",
       skipped: "Skipped",
+      skippedChanged: "Skipped (text changed meanwhile)",
+      skippedFilled: "Skipped (translated meanwhile)",
+      cancelledRun: "Cancelled – what was saved before stays saved",
       skippedDrafts: "Skipped (drafts)",
       skippedHandles: "Skipped URL slugs",
       skippedOverCap: "Skipped (over the limit)",
@@ -4724,6 +4727,11 @@ export const en: Translation = {
       savedResult: "{saved} translation(s) saved, {failed} failed.",
       skippedHandles:
         "{count} URL handle(s) skipped — the translation was identical to the primary language or produced no valid slug.",
+      skippedChanged:
+        "{count} translation(s) skipped — the original text was changed in the meantime. The next run fills them in from the new text.",
+      skippedFilled:
+        "{count} translation(s) skipped — that language already had a translation by then. Nothing was overwritten.",
+      cancelled: "The run was cancelled. {saved} translation(s) had been saved by then.",
       runTruncated:
         "At most {max} translations were processed — {rest} are still open. Start the run again for the rest.",
       noneMissing: "Nothing is missing in the current selection.",

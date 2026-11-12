@@ -369,12 +369,22 @@ const seoBulkMeta: Summariser = (blob) => {
   return { lines, failures };
 };
 
-/** {saved, failed, skippedHandles, failures[]} — bulk-editor-translate.handler.ts L386. */
+/** {saved, failed, skippedHandles, skippedChanged, skippedFilled, failures[]} — bulk-editor-translate.handler.ts. */
 const bulkEditorTranslate: Summariser = (blob) => {
   const lines: TaskSummaryLine[] = [];
   num(lines, blob, "saved", "translationsSaved");
   num(lines, blob, "failed", "failed", criticalWhenPositive);
   num(lines, blob, "skippedHandles", "skippedHandles");
+  // The two deliberate skips of a fill-only run appear only when something was
+  // skipped: a run that skipped nothing has nothing to explain, and a column
+  // of zeros would also hide the "nothing was missing" sentence the panel
+  // shows for an all-zero result.
+  for (const key of ["skippedChanged", "skippedFilled"]) {
+    const v = blob[key];
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) lines.push({ labelKey: key, value: String(v) });
+  }
+  // A cancelled run says so: its numbers are what was written before the stop.
+  if (blob.cancelled === true) lines.push({ labelKey: "cancelledRun", value: "", tone: "warning" });
   return { lines, failures: bulkFailures(blob.failures) };
 };
 

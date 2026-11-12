@@ -2543,6 +2543,9 @@ export const es: Translation = {
       retranslationsCapped: "No retraducidas (límite alcanzado)",
       retranslationsSkipped: "La retraducción no se inició",
       skipped: "Omitidos",
+      skippedChanged: "Omitidos (texto modificado entretanto)",
+      skippedFilled: "Omitidos (ya traducidos entretanto)",
+      cancelledRun: "Cancelado – lo guardado hasta entonces se conserva",
       skippedDrafts: "Omitidos (borradores)",
       skippedHandles: "URL slugs omitidos",
       skippedOverCap: "Omitidos (por encima del límite)",
@@ -4709,6 +4712,11 @@ export const es: Translation = {
       savedResult: "{saved} traducción(es) guardada(s), {failed} fallida(s).",
       skippedHandles:
         "{count} handle(s) de URL omitido(s): la traducción era idéntica al idioma principal o no produjo un slug válido.",
+      skippedChanged:
+        "{count} traducción(es) omitida(s) — el texto original se modificó entretanto. La próxima ejecución las completará con el texto nuevo.",
+      skippedFilled:
+        "{count} traducción(es) omitida(s) — ese idioma ya tenía una traducción. No se sobrescribió nada.",
+      cancelled: "La ejecución se canceló. Hasta ese momento se habían guardado {saved} traducción(es).",
       runTruncated:
         "Se procesaron como máximo {max} traducciones: quedan {rest} pendientes. Vuelve a iniciar la ejecución para el resto.",
       noneMissing: "No falta ninguna traducción en la selección actual.",

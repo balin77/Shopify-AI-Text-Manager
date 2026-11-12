@@ -691,8 +691,10 @@ export const guideEn: GuideCopy = {
         {
           heading: "What happens",
           paragraphs: [
-            "Only empty translations are filled; an existing translation is never overwritten. The app re-checks what is really missing right before writing. Translated handles are optional and are normalised into a valid URL form.",
-            "If the app is restarted while the run is going (for example by an update), the run is marked as interrupted after a short while; the Tasks tab then shows a warning, and so does the page while you keep it open. Anything not yet saved at that point was not written; simply start “Add missing translations” again — only what is still missing is filled.",
+            "Only empty translations are filled; an existing translation is never overwritten. The app re-checks what is really missing right before writing. Translated handles are optional and are normalised into a valid URL form; they are also compared with the translated handles that already exist, so no URL is assigned twice.",
+            "Translations are saved in stages while the run is going, not only at the end. If the original text of an entry has changed in the meantime, it is skipped so that the translation of an old text is never saved; the same goes for a language that has received a translation in the meantime. Both show up in the result as “skipped” and are not errors: start the run again later and those entries are filled in from the current text.",
+            "In the Tasks tab you can cancel a running run. It then stops at the next opportunity; whatever was saved up to that point stays saved, and only one run per shop can be active at a time.",
+            "If the app is restarted while the run is going (for example by an update), the run is marked as interrupted after a short while; the Tasks tab then shows a warning, and so does the page while you keep it open. What was already saved in stages stays; only the most recently translated stage that was not yet saved is missing. Simply start “Add missing translations” again — only what is still missing is filled.",
           ],
         },
       ],
