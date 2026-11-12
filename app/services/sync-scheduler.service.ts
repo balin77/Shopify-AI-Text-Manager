@@ -646,15 +646,16 @@ class SyncSchedulerService {
       // The batch state of a settled run goes with its (expired) task. A row
       // still holding a reservation stays until the reservation sweep has
       // released it (usage-meter.server.ts releaseSettledReservations).
-      await db.bulkTranslateBatch
-        .deleteMany({
+      try {
+        await db.bulkTranslateBatch.deleteMany({
           where: { state: 'done', reservationState: { not: 'held' }, updatedAt: { lt: threeDaysAgo } },
-        })
-        .catch((error: unknown) => {
-          logger.warn('[SyncScheduler] Settled batch rows could not be pruned', {
-            error: error instanceof Error ? error.message : String(error),
-          });
         });
+      } catch (error) {
+        // Housekeeping only: never let it stop the rest of the cleanup.
+        logger.warn('[SyncScheduler] Settled batch rows could not be pruned', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
 
       // 2. Delete old webhook logs.
       //   a) processed rows after 24h (minimise storage for multi-tenant SaaS).

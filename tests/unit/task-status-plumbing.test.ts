@@ -125,6 +125,13 @@ describe("expiry sweeps exclude the open batch statuses (all three)", () => {
   });
 });
 
+describe("the batch state is pruned only once settled and released", () => {
+  it("the scheduler cleanup deletes 'done' batch rows that no longer hold a reservation", () => {
+    const scheduler = read("app/services/sync-scheduler.service.ts");
+    expect(scheduler).toMatch(/bulkTranslateBatch\.deleteMany\(\{\s*where: \{ state: 'done', reservationState: \{ not: 'held' \}/);
+  });
+});
+
 describe("/api/task-result never ships a result for an open batch task", () => {
   const findUnique = vi.fn();
   beforeEach(() => {
