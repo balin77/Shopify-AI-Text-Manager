@@ -220,9 +220,9 @@ describe("settlementOps (claude)", () => {
         text: '{"k1":{"fr":"Echarpe"}}',
         truncated: false,
         // input_tokens EXCLUDES the cache parts: the total is the sum of the three
-        usage: { inputTokens: 140, outputTokens: 20, cacheReadTokens: 30, cacheWriteTokens: 10 },
+        usage: { inputTokens: 140, outputTokens: 20, cacheReadTokens: 30, cacheWriteTokens: 10, serviceTier: null },
       },
-      { customId: "t1_p1", outcome: "succeeded", text: "{", truncated: true, usage: { inputTokens: 5, outputTokens: 600 } },
+      { customId: "t1_p1", outcome: "succeeded", text: "{", truncated: true, usage: { inputTokens: 5, outputTokens: 600, serviceTier: null } },
       { customId: "t1_p2", outcome: "errored", error: "bad request" },
       { customId: "t1_p3", outcome: "expired" },
       { customId: "t1_p4", outcome: "canceled" },

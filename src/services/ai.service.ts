@@ -1652,6 +1652,7 @@ ${JSON.stringify(skeleton)}`;
           ? {
               requestCounts: {
                 total: c.processing + c.succeeded + c.errored + c.expired + c.canceled,
+                processing: c.processing,
                 succeeded: c.succeeded,
                 errored: c.errored,
                 expired: c.expired,
@@ -1663,14 +1664,49 @@ ${JSON.stringify(skeleton)}`;
       };
     };
     return {
+      findIntentBatch: async (query) => {
+        // A create whose answer never arrived may still have made a batch. `batches.list` names no request ids
+        // and a RUNNING batch has no results to read them from, so a candidate (created since the intent, the
+        // same number of requests) is only ADOPTED once it has ended and its first result carries our id prefix.
+        // A running candidate is reported as pending: it cannot be told from a stranger's batch yet.
+        const since = Date.parse(query.since) - 60_000;
+        const candidates: { id: string; expiresAt: string | null; ended: boolean }[] = [];
+        let seen = 0;
+        for await (const b of client.messages.batches.list({ limit: 100 })) {
+          if (++seen > 300) break;
+          if (Date.parse(b.created_at) < since) break; // newest first: everything after is older
+          const c = b.request_counts;
+          const total = c.processing + c.succeeded + c.errored + c.expired + c.canceled;
+          if (total === query.requestCount) {
+            candidates.push({ id: b.id, expiresAt: b.expires_at ?? null, ended: b.processing_status === 'ended' });
+          }
+        }
+        let pending = false;
+        for (const cand of candidates) {
+          if (!cand.ended) {
+            pending = true;
+            continue;
+          }
+          for await (const line of await client.messages.batches.results(cand.id)) {
+            if (line.custom_id.startsWith(query.idPrefix)) {
+              return { found: true as const, batchId: cand.id, expiresAt: cand.expiresAt };
+            }
+            break; // the first line decides: a batch is ONE run's
+          }
+        }
+        return { found: false as const, pending };
+      },
       retrieve: async (batchId) => toStatus(await client.messages.batches.retrieve(batchId)),
       cancel: async (batchId) => {
         try {
           return toStatus(await client.messages.batches.cancel(batchId));
         } catch (error) {
           // A batch that already ended (or is already being cancelled) cannot be
-          // cancelled again and answers with an error -- but then there is
-          // nothing running: report its state instead of failing the cancel.
+          // cancelled again and answers with an error: report its state instead
+          // of failing the cancel. NOTE what that does NOT mean: a batch that
+          // ended before the cancel REACHED it ran, and was billed. Callers must
+          // never read "the cancel did not fail" as "nothing was processed" --
+          // that is the retrieve's request counts, read by translate-batch-hold.
           try {
             const current = await client.messages.batches.retrieve(batchId);
             if (current.processing_status !== 'in_progress') return toStatus(current);
@@ -1693,6 +1729,7 @@ ${JSON.stringify(skeleton)}`;
                 output_tokens?: number;
                 cache_read_input_tokens?: number | null;
                 cache_creation_input_tokens?: number | null;
+                service_tier?: string | null;
               };
               const cacheRead = usage?.cache_read_input_tokens ?? 0;
               const cacheWrite = usage?.cache_creation_input_tokens ?? 0;
@@ -1707,6 +1744,8 @@ ${JSON.stringify(skeleton)}`;
                   outputTokens: usage?.output_tokens ?? 0,
                   ...(cacheRead > 0 ? { cacheReadTokens: cacheRead } : {}),
                   ...(cacheWrite > 0 ? { cacheWriteTokens: cacheWrite } : {}),
+                  // The batch discount is only claimed for a result the provider says was served in the batch tier.
+                  serviceTier: usage?.service_tier ?? null,
                 },
               };
             } else if (r.type === 'errored') {

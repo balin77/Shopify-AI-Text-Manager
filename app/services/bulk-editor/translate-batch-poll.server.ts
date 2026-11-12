@@ -16,9 +16,20 @@
  *    did is paid for, so retrieve / results / cancel always go through the
  *    settlement transport (credentials module, restricted to those operations).
  *    Whether anything is WRITTEN is decided afterwards by the normal gate.
- *  - CONSENT WITHDRAWN (owner decision, PLAN 16): cancel at once, fetch NOTHING,
- *    write NOTHING, and book the reserved upper bound instead of the actual
- *    cost (the reservation is converted, not released).
+ *  - CONSENT WITHDRAWN (owner decision, PLAN 16): cancel at once, fetch NO
+ *    CONTENT, write NOTHING. The hold is booked pro rata from the provider's
+ *    request counts (a status read, no content) where they can be read, else at
+ *    the reserved upper bound -- never released while the batch may have run. A
+ *    consent NOTICE VERSION bump is not a withdrawal: the row is held (nothing
+ *    fetched, nothing written, nothing cancelled) until the merchant answers the
+ *    new notice or the absolute end.
+ *  - EVERY terminal path settles the hold by the guiding rule of
+ *    translate-batch-hold.server.ts (booked from evidence, converted to the upper
+ *    bound, released only on proof) and does so BEFORE the row is marked done,
+ *    so the reservation sweep can never release what should be converted.
+ *  - Our own configuration refusals (kill switch, dev build, no credential,
+ *    provider changed) are not the provider failing: they do not count as failed
+ *    ticks, the row waits, and the absolute end converts the hold.
  *  - A shop that is no longer allowed to write (the resolver refuses: managed
  *    entitlement gone, no key left) still has its results collected and BOOKED;
  *    they are not written (`managed_ai_refused:<reason>`). An exhausted budget
@@ -27,12 +38,15 @@
  *    it re-collects and re-writes (fill-only) without double booking, and a
  *    crash before it books nothing.
  *  - A provider that stops answering for N ticks in a row ends the run as
- *    `batch_unreachable` with the hold released; failures back off, so N ticks
- *    is hours, not minutes.
+ *    `batch_unreachable` (the hold settled by the guiding rule: unreadable =
+ *    upper bound); failures back off, so N ticks is hours, not minutes.
  *  - Open rows whose Task is terminal or gone (a recovery failed it, the
  *    merchant deleted it, a restart raced a cancel) are ORPHANS: cancelled at
  *    the provider and their hold settled. Provider batches this database does
  *    not know are never touched.
+ *  - A row whose create answer never arrived (`create_unknown`) searches the
+ *    provider for the batch by its own id prefix and adopts it; at the absolute
+ *    end the hold is converted (translate-batch-expiry.server.ts).
  *  - Shops whose connection is blocked or that uninstalled are skipped (the
  *    uninstall path cancels their batches itself).
  *
@@ -47,11 +61,13 @@ import {
   TASK_STATUS_CANCEL_REQUESTED,
 } from "~/config/task-statuses.js";
 import { stringList, type SettlementResultItem, type SettlementTransport } from "../ai/batch-settlement.shared";
+import { aiProcessingConsentState } from "../ai/managed-ai.shared";
 import { maxOutputTokensFor } from "~/config/ai-model-limits";
 import { logger } from "~/utils/logger.server";
 import { parseManifest } from "./translate-batch.shared";
 import { buildBatchAnswers, runBatchCollect, usageItemsFromResults } from "./translate-batch-collect.server";
-import { expireStaleBatches, BATCH_UNREACHABLE_ERROR } from "./translate-batch-expiry.server";
+import { expireStaleBatches, BATCH_UNREACHABLE_ERROR, BATCH_SUBMIT_UNCONFIRMED_ERROR } from "./translate-batch-expiry.server";
+import { settleHold } from "./translate-batch-hold.server";
 
 /** A lease holds for this long; the holder renews it while it works. */
 export const LEASE_MS = 2 * 60 * 1000;
@@ -63,7 +79,10 @@ export const MAX_ROWS_PER_TICK = 10;
 /** Provider calls of one tick must not hang it. */
 export const PROVIDER_CALL_DEADLINE_MS = 60_000;
 
-const OPEN_ROW_STATES = ["waiting", "cancel_requested", "collecting"] as const;
+const OPEN_ROW_STATES = ["create_unknown", "waiting", "cancel_requested", "collecting"] as const;
+
+/** Our own configuration said no (not the provider failing): the row waits, nothing counts against it. */
+const CONFIG_REFUSALS = ["managedDisabled", "devBuild", "noCredential", "providerChanged"];
 
 /** Delay before a row that failed `failedTicks` times in a row is looked at again: 5, 10, 20, then 30 minutes. */
 export function failedTickBackoffMs(failedTicks: number): number {
@@ -78,6 +97,12 @@ export type RowOutcome =
   | "waiting" // provider still working
   | "collected"
   | "consentWithdrawn"
+  | "consentOutdated" // a new notice version is unanswered: held, nothing cancelled, fetched or written
+  | "configBlocked" // our own configuration refuses settlement access: waits for the absolute end
+  | "adopted" // a create of unknown outcome was found at the provider
+  | "consentOutdated" // a new notice version is unanswered: held, nothing cancelled, fetched or written
+  | "configBlocked" // our own configuration refuses settlement access: waits for the absolute end
+  | "adopted" // a create of unknown outcome was found at the provider
   | "refusedWrite" // gate says no: booked, not written
   | "noResult" // ended with nothing usable
   | "orphan"
@@ -178,16 +203,33 @@ async function closeRun(
   });
 }
 
-/** A provider answer failed: count it; after MAX_FAILED_TICKS the run is given up on, the hold released. */
-async function noteFailedTick(deps: RowDeps, row: BulkTranslateBatch, token: string, error: unknown): Promise<RowOutcome> {
+/** What the Task and the code say when a run is given up on after MAX_FAILED_TICKS. */
+function giveUpOutcome(row: Pick<BulkTranslateBatch, "batchIds">) {
+  return stringList(row.batchIds).length === 0
+    ? { status: "failed", error: BATCH_SUBMIT_UNCONFIRMED_ERROR }
+    : { status: TASK_STATUS_BATCH_UNREACHABLE, error: BATCH_UNREACHABLE_ERROR };
+}
+
+/**
+ * A provider answer failed: count it; after MAX_FAILED_TICKS the run is given up on. The hold is settled FIRST
+ * (the guiding rule: a last look at the counts, the upper bound where they cannot be read) and the row closed after.
+ */
+async function noteFailedTick(
+  deps: RowDeps,
+  row: BulkTranslateBatch,
+  token: string,
+  error: unknown,
+  transport: SettlementTransport | null = null,
+): Promise<RowOutcome> {
   const { db } = deps;
   const failedTicks = row.failedTicks + 1;
   logger.warn("[BatchPoll] Tick failed for a batch", { context: "AI", batchRowId: row.id, failedTicks, error: messageOf(error) });
   if (failedTicks >= MAX_FAILED_TICKS) {
-    await closeRun(db, row, token, { status: TASK_STATUS_BATCH_UNREACHABLE, error: BATCH_UNREACHABLE_ERROR });
-    const { releaseBudget } = await import("../ai/usage-meter.server");
-    await releaseBudget(row.id);
-    return "unreachable";
+    const outcome = await settleHold(row, transport, { final: true });
+    if (outcome.kind !== "pending") {
+      await closeRun(db, row, token, giveUpOutcome(row));
+      return "unreachable";
+    }
   }
   await db.bulkTranslateBatch.updateMany({
     where: { id: row.id, leaseToken: token },
@@ -215,11 +257,113 @@ export async function processBatchRow(rowId: string, deps: RowDeps): Promise<Row
   }
 }
 
+type Access = { ok: true; transport: SettlementTransport } | { ok: false; reason: string };
+
+/** An orphan row: nobody waits for its result. Cancel at the provider, settle the hold by the guiding rule, close. */
+async function handleOrphan(
+  deps: RowDeps,
+  row: BulkTranslateBatch,
+  token: string,
+  task: { status: string } | null,
+  transport: SettlementTransport | null,
+): Promise<RowOutcome> {
+  const { db } = deps;
+  const batchIds = stringList(row.batchIds);
+  if (batchIds.length > 0 && transport && !row.cancelRequestedAt) {
+    if (await cancelAllAtProvider(transport, batchIds)) {
+      await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { cancelRequestedAt: new Date() } });
+    }
+  }
+  // A confirmed cancel proves nothing (it takes effect asynchronously, and a batch that had ended ran): the
+  // counts decide -- released only when nothing succeeded, booked pro rata otherwise, converted when unreadable at the end.
+  const outcome = await settleHold(row, transport, { final: false });
+  if (outcome.kind === "pending") {
+    logger.info("[BatchPoll] Orphan batch row not settled yet", { context: "AI", batchRowId: row.id, reason: outcome.reason });
+    return "orphan";
+  }
+  await db.bulkTranslateBatch.updateMany({
+    where: { id: row.id, leaseToken: token },
+    data: { state: "done", lastError: task ? `task_${task.status}` : "task_gone" },
+  });
+  logger.warn("[BatchPoll] Orphan batch row settled", { context: "AI", batchRowId: row.id, hold: outcome.kind });
+  return "orphan";
+}
+
+/**
+ * CONSENT WITHDRAWN (owner decision, PLAN 16): cancel at once, fetch no content, write nothing. The hold is
+ * settled by the counts (pro rata, a status read) or the upper bound. The row stays open (and withdrawn: a later
+ * re-consent does not revive it, the cancel is irreversible) until the batch has ended and the hold is settled.
+ */
+async function handleWithdrawal(deps: RowDeps, row: BulkTranslateBatch, token: string, access: Access): Promise<RowOutcome> {
+  const { db } = deps;
+  const batchIds = stringList(row.batchIds);
+  if (!row.consentWithdrawnAt) {
+    await db.bulkTranslateBatch.updateMany({
+      where: { id: row.id, leaseToken: token },
+      data: { consentWithdrawnAt: new Date(), state: "cancel_requested" },
+    });
+  }
+  if (!access.ok) {
+    // Cannot cancel or read: our own configuration (wait for the absolute end, which converts) or a lookup failure.
+    return CONFIG_REFUSALS.includes(access.reason)
+      ? "configBlocked"
+      : await noteFailedTick(deps, row, token, new Error(`settlement_${access.reason}`));
+  }
+  if (batchIds.length > 0 && !row.cancelRequestedAt) {
+    if (await cancelAllAtProvider(access.transport, batchIds)) {
+      await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { cancelRequestedAt: new Date() } });
+    }
+  }
+  const outcome = await settleHold(row, access.transport, { final: false });
+  if (outcome.kind === "pending") return "consentWithdrawn";
+  await closeRun(db, row, token, { status: "failed", error: "managed_ai_refused:consentMissing" });
+  return "consentWithdrawn";
+}
+
+/** A create whose answer never arrived: search the provider for the batch it may have made. */
+async function reconcileUnknownCreate(
+  deps: RowDeps,
+  row: BulkTranslateBatch,
+  token: string,
+  access: Access,
+  cancelWanted: boolean,
+): Promise<RowOutcome> {
+  const { db } = deps;
+  if (!access.ok) {
+    return CONFIG_REFUSALS.includes(access.reason)
+      ? "configBlocked"
+      : await noteFailedTick(deps, row, token, new Error(`settlement_${access.reason}`));
+  }
+  const manifest = parseManifest(row.manifest);
+  const requestCount = manifest?.requests.length ?? 0;
+  if (!row.idPrefix || !row.intentAt || requestCount === 0) return "waiting"; // cannot search: the absolute end converts
+  let search;
+  try {
+    search = await withDeadline(() =>
+      access.transport.findIntentBatch({ idPrefix: row.idPrefix, since: row.intentAt!.toISOString(), requestCount }),
+    );
+  } catch (error) {
+    return await noteFailedTick(deps, row, token, error, access.transport);
+  }
+  if (!search.found) return "waiting"; // nothing yet (or a running candidate that cannot be told from a stranger's)
+  await db.bulkTranslateBatch.updateMany({
+    where: { id: row.id, leaseToken: token },
+    data: { batchIds: [search.batchId], state: cancelWanted ? "cancel_requested" : "waiting", failedTicks: 0, lastError: null },
+  });
+  const expiresAtMs = search.expiresAt ? Date.parse(search.expiresAt) : NaN;
+  await db.task.updateMany({
+    where: { id: row.taskId, status: { in: [...OPEN_BATCH_TASK_STATUSES] } },
+    data: { expiresAt: new Date((Number.isFinite(expiresAtMs) ? expiresAtMs : Date.now()) + 3 * 24 * 3600 * 1000) },
+  });
+  logger.info("[BatchPoll] Adopted a batch whose create answer was lost", { context: "AI", batchRowId: row.id });
+  return "adopted";
+}
+
 async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string): Promise<RowOutcome> {
   const { db } = deps;
   const shop = row.shop;
   const { settlementCredentialsFor, resolveAiCredentials, aiServiceFor } = await import("../ai/ai-credentials.server");
-  const { convertReservation, releaseBudget, settleBatchUsage } = await import("../ai/usage-meter.server");
+  const { settleBatchUsage } = await import("../ai/usage-meter.server");
   const batchIds = stringList(row.batchIds);
 
   // 1. The Task. Gone or already terminal = an ORPHAN row: nothing waits for its result any more.
@@ -229,20 +373,32 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
   });
   const decision = await settlementCredentialsFor(shop, row.id);
   const orphan = !task || !(OPEN_BATCH_TASK_STATUSES as string[]).includes(task.status);
+  // Neither the orphan logic nor the consent gate needs Shopify: both come BEFORE the admin lookup, so a shop
+  // whose connection is blocked can still have its orphans cancelled and a withdrawal honoured.
   if (orphan) {
-    // Cancel at the provider (best effort), then settle the hold: a confirmed cancel is not a charge, an
-    // unconfirmed one may still bill and is booked at the reserved upper bound.
-    const confirmed = batchIds.length === 0 || (decision.ok && (await cancelAllAtProvider(decision.transport, batchIds)));
-    await db.bulkTranslateBatch.updateMany({
-      where: { id: row.id, leaseToken: token },
-      data: { state: "done", lastError: task ? `task_${task.status}` : "task_gone" },
-    });
-    await (batchIds.length > 0 && !confirmed ? convertReservation : releaseBudget)(row.id);
-    logger.warn("[BatchPoll] Orphan batch row settled", { context: "AI", batchRowId: row.id, cancelConfirmed: confirmed });
-    return "orphan";
+    // No batch id: a create of unknown outcome may still have made one -- look for it, so the next tick can cancel it.
+    if (batchIds.length === 0) return await reconcileUnknownCreate(deps, row, token, decision, true);
+    return await handleOrphan(deps, row, token, task, decision.ok ? decision.transport : null);
   }
 
-  // 2. Shops we cannot talk to are skipped, not failed (uninstall cancels its own batches).
+  const settings = await db.aISettings.findUnique({ where: { shop } });
+
+  // 2. CONSENT (managed rows). WITHDRAWN is checked before anything else about access (the kill switch included).
+  if (row.source === "managed") {
+    const consent = aiProcessingConsentState(settings);
+    if (row.consentWithdrawnAt || consent === "withdrawn") return await handleWithdrawal(deps, row, token, decision);
+    // A bumped notice version is an unanswered NEW question, not a request to stop: hold the row.
+    if (consent === "outdated") return "consentOutdated";
+  }
+
+  const cancelRequested = row.state === "cancel_requested" || task!.status === TASK_STATUS_CANCEL_REQUESTED;
+
+  // 3. A create of unknown outcome: find its batch (or wait for the absolute end).
+  if (row.state === "create_unknown" || batchIds.length === 0) {
+    return await reconcileUnknownCreate(deps, row, token, decision, cancelRequested);
+  }
+
+  // 4. Shops we cannot talk to are skipped, not failed (uninstall cancels its own batches).
   let admin: unknown;
   try {
     admin = await (deps.adminFor ?? (async (s: string) => (await import("~/utils/admin-client.server")).createAdminClientFromShop(s)))(shop);
@@ -250,41 +406,33 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
     logger.debug(`[BatchPoll] ${shop} skipped: ${messageOf(error)}`);
     return "skippedShop";
   }
-  const settings = await db.aISettings.findUnique({ where: { shop } });
 
-  // 3. CONSENT WITHDRAWN (managed rows): cancel at once, fetch nothing, book the reserved upper bound.
-  const writeGate = resolveAiCredentials({ shop, settings });
-  if (row.source === "managed" && !writeGate.ok && writeGate.reason === "consentMissing") {
-    await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { consentWithdrawnAt: new Date() } });
-    if (decision.ok) await cancelAllAtProvider(decision.transport, batchIds);
-    await convertReservation(row.id);
-    await closeRun(db, row, token, { status: "failed", error: "managed_ai_refused:consentMissing" });
-    return "consentWithdrawn";
-  }
-
-  // 4. Access to the provider. A BYO shop whose key is gone cannot be settled: the batch runs out at the provider.
+  // 5. Access to the provider. A BYO shop whose key is gone cannot be settled: the batch runs out at the provider.
   if (!decision.ok) {
     if (decision.reason === "ai_key_missing") {
+      // An own-key run holds nothing of ours; the merchant's provider account is billed for whatever ran.
       await closeRun(db, row, token, { status: "failed", error: "ai_key_missing" });
-      // The batch may still run and bill the merchant's own provider account; nothing of ours is reserved.
-      await releaseBudget(row.id);
       return "keyMissing";
+    }
+    // Our own configuration refuses (kill switch, dev build, no credential, provider changed): not the provider failing.
+    if (CONFIG_REFUSALS.includes(decision.reason)) {
+      logger.warn("[BatchPoll] Settlement access refused by configuration; the row waits", { context: "AI", batchRowId: row.id, reason: decision.reason });
+      return "configBlocked";
     }
     return await noteFailedTick(deps, row, token, new Error(`settlement_${decision.reason}`));
   }
   const transport = decision.transport;
 
-  // 5. The merchant asked to cancel: tell the provider, then collect what is already paid for.
-  const cancelRequested = row.state === "cancel_requested" || task!.status === TASK_STATUS_CANCEL_REQUESTED;
+  // 6. The merchant asked to cancel: tell the provider, then collect what is already paid for.
   if (cancelRequested) {
     try {
       for (const id of batchIds) await withDeadline(() => transport.cancel(id));
     } catch (error) {
-      return await noteFailedTick(deps, row, token, error);
+      return await noteFailedTick(deps, row, token, error, transport);
     }
   }
 
-  // 6. Where is the provider?
+  // 7. Where is the provider?
   let ended = batchIds.length > 0;
   let expiresAtIso: string | null = null;
   try {
@@ -294,7 +442,7 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
       if (status.expiresAt) expiresAtIso = status.expiresAt;
     }
   } catch (error) {
-    return await noteFailedTick(deps, row, token, error);
+    return await noteFailedTick(deps, row, token, error, transport);
   }
   if (!ended) {
     // Still working: the task stays open and must not be cleaned up -- push its expiry past the provider's.
@@ -307,7 +455,7 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
     return "waiting";
   }
 
-  // 7. ENDED: fetch the results (the paid-for part of a cancelled batch included).
+  // 8. ENDED: fetch the results (the paid-for part of a cancelled batch included).
   await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { state: "collecting", failedTicks: 0 } });
   const results = new Map<string, SettlementResultItem>();
   try {
@@ -315,22 +463,23 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
       for await (const item of transport.results(id)) results.set(item.customId, item);
     }
   } catch (error) {
-    return await noteFailedTick(deps, { ...row, state: "collecting" }, token, error);
+    return await noteFailedTick(deps, { ...row, state: "collecting" }, token, error, transport);
   }
   const manifest = parseManifest(row.manifest);
   if (!manifest) {
-    await closeRun(db, row, token, { status: "failed", error: "batch_failed" });
-    await releaseBudget(row.id);
+    // Unreadable manifest: the results cannot be matched, but the batch ran -- the hold is settled by the counts.
+    const outcome = await settleHold(row, transport, { final: true });
+    if (outcome.kind !== "pending") await closeRun(db, row, token, { status: "failed", error: "batch_failed" });
     return "noResult";
   }
   const answers = buildBatchAnswers(manifest, results);
   const usage = usageItemsFromResults(manifest, results, row.provider as never, row.model);
 
-  // 8. BOOK before writing (one transaction, idempotent per row, lease-checked).
+  // 9. BOOK before writing (one transaction, idempotent per row, lease-checked).
   const booked = await settleBatchUsage(row.id, usage, { leaseToken: token });
   if (!booked.applied && booked.reason === "leaseLost") return "leaseLost";
   if (!booked.applied && booked.reason === "failed") {
-    return await noteFailedTick(deps, { ...row, state: "collecting" }, token, new Error("booking_failed"));
+    return await noteFailedTick(deps, { ...row, state: "collecting" }, token, new Error("booking_failed"), transport);
   }
 
   const summary = {
@@ -355,7 +504,8 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
     },
   });
 
-  // 9. May anything be WRITTEN? The normal gate decides (an exhausted budget is not in it).
+  // 10. May anything be WRITTEN? The normal gate decides (an exhausted budget is not in it).
+  const writeGate = resolveAiCredentials({ shop, settings });
   if (row.source === "managed" && !writeGate.ok) {
     await closeRun(db, row, token, finalResult(`managed_ai_refused:${writeGate.reason === "noKey" ? "managedUnavailable" : writeGate.reason}`, "failed"));
     return "refusedWrite";
@@ -372,7 +522,7 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
     return "noResult";
   }
 
-  // 10. WRITE, through the live run's own machinery (verification, handle rules, fill-only write).
+  // 11. WRITE, through the live run's own machinery (verification, handle rules, fill-only write).
   let live = null as ReturnType<typeof aiServiceFor>["service"] | null;
   try {
     const built = aiServiceFor(settings, shop, row.taskId);
@@ -399,7 +549,7 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
     maxOutputTokens: maxOutputTokensFor(row.provider as never, row.model),
   });
 
-  // 11. The run settles the Task itself. A task still open afterwards means it stopped early: look again next tick.
+  // 12. The run settles the Task itself. A task still open afterwards means it stopped early: look again next tick.
   const after = await db.task.findUnique({ where: { id: row.taskId }, select: { status: true } });
   if (after && (OPEN_BATCH_TASK_STATUSES as string[]).includes(after.status)) {
     await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { state: "waiting", failedTicks: row.failedTicks + 1 } });

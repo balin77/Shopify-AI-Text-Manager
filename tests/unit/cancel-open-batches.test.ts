@@ -15,7 +15,7 @@ const h = vi.hoisted(() => ({
   batchUpdateMany: vi.fn(async (_a: unknown) => ({ count: 1 })),
   taskUpdateMany: vi.fn(async (_a: unknown) => ({ count: 1 })),
   release: vi.fn(async (_id: string): Promise<unknown> => ({ applied: true, micros: 100 })),
-  convert: vi.fn(async (_id: string): Promise<unknown> => ({ applied: true, micros: 100 })),
+  convert: vi.fn(async (_id: string, _o?: unknown): Promise<unknown> => ({ applied: true, micros: 100 })),
   heldRows: [] as any[],
 }));
 
@@ -38,7 +38,7 @@ vi.mock('~/db.server', () => ({
 }));
 vi.mock('~/services/ai/usage-meter.server', () => ({
   releaseBudget: (id: string) => h.release(id),
-  convertReservation: (id: string) => h.convert(id),
+  convertReservation: (id: string, o?: unknown) => h.convert(id, o),
 }));
 vi.mock('~/utils/encryption.server', () => ({ tryDecryptApiKey: (v: string | null | undefined) => v ?? null }));
 const warn = vi.fn();
@@ -63,12 +63,21 @@ const ENV = [
 ];
 let saved: Record<string, string | undefined>;
 
+const MANIFEST = JSON.stringify({
+  v: 1, rowType: 'product', moType: '', locales: ['fr'], primaryLocale: 'de', units: 1, cells: [],
+  requests: [{ customId: 'tx_p0', kind: 'short', items: [], maxTokens: 500, inputEstimate: 100 }],
+  plan: { skippedChanged: 0, failures: [], mismatchesByKey: {}, notStarted: 0 },
+  submittedAt: '2026-11-10T00:00:00Z',
+});
 const row = (over: Record<string, unknown> = {}) => ({
   id: 'row-1',
   taskId: 'task-1',
   shop: SHOP,
   state: 'waiting',
   provider: 'claude',
+  model: 'claude-haiku-4-5',
+  reservationState: 'held',
+  manifest: MANIFEST,
   source: 'managed',
   role: 'default',
   batchIds: ['msgbatch_1', 'msgbatch_2'],
@@ -76,10 +85,17 @@ const row = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+const ENDED = (succeeded: number) => ({
+  providerStatus: 'ended', ended: true,
+  requestCounts: { total: 2, processing: 0, succeeded, errored: 0, expired: 0, canceled: 2 - succeeded },
+});
+const RUNNING = async () => ({ providerStatus: 'canceling', ended: false });
+
 function opsRig(overrides: Partial<SettlementProviderOps> = {}) {
   const calls: string[] = [];
   const ops: SettlementProviderOps = {
-    retrieve: vi.fn(async () => ({ providerStatus: 'x', ended: false })),
+    // default: the provider PROVES nothing ran (ended, nothing succeeded)
+    retrieve: vi.fn(async () => ENDED(0)),
     results: vi.fn(() => (async function* () {})()),
     cancel: vi.fn(async (id: string) => {
       calls.push(`cancel:${id}`);
@@ -148,6 +164,32 @@ describe('cancelOpenBatches', () => {
       data: { status: 'cancel_requested' },
     });
     expect(h.release).toHaveBeenCalledWith('row-1');
+    // L5: the row is CLOSED and its task settled, not left in cancel_requested
+    expect(h.batchUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'row-1', state: { in: [...OPEN_BATCH_STATES] } },
+      data: { state: 'done', lastError: 'shop_removed' },
+    });
+    expect(h.taskUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'task-1', shop: SHOP, status: { in: ['submitting', 'waiting_batch', 'cancel_requested'] } },
+      data: { status: 'cancelled', completedAt: expect.any(Date) },
+    });
+  });
+
+  it('a batch that RAN before the cancel arrived is booked pro rata from the counts, not released (the cancel call proves nothing)', async () => {
+    h.rows = [row()];
+    opsRig({ retrieve: vi.fn(async () => ENDED(1)) });
+    const res = await cancelOpenBatches(SHOP);
+    expect(res).toMatchObject({ released: 0, converted: 1 });
+    expect(h.convert).toHaveBeenCalledWith('row-1', { bookMicros: expect.any(Number) });
+    expect(h.release).not.toHaveBeenCalled();
+  });
+
+  it('a cancel that has not taken effect yet (canceling): nothing is proven, the upper bound is booked (the last look)', async () => {
+    h.rows = [row()];
+    opsRig({ retrieve: vi.fn(RUNNING) });
+    const res = await cancelOpenBatches(SHOP);
+    expect(res).toMatchObject({ released: 0, converted: 1 });
+    expect(h.convert).toHaveBeenCalledWith('row-1', undefined);
   });
 
   it('looks only at OPEN states of this shop', async () => {
@@ -155,13 +197,14 @@ describe('cancelOpenBatches', () => {
     h.rows = [];
     await cancelOpenBatches(SHOP);
     expect(calls).toEqual([]);
-    expect([...OPEN_BATCH_STATES]).toEqual(['submitting', 'waiting', 'cancel_requested', 'collecting']);
+    expect([...OPEN_BATCH_STATES]).toEqual(['submitting', 'create_unknown', 'waiting', 'cancel_requested', 'collecting']);
   });
 
   it('a provider that fails does not stop the rest, and the row is still marked and the hold released', async () => {
     h.rows = [row()];
     const calls: string[] = [];
     opsRig({
+      retrieve: vi.fn(RUNNING),
       cancel: vi.fn(async (id: string) => {
         calls.push(`cancel:${id}`);
         if (id === 'msgbatch_1') throw new Error('provider 503');
@@ -178,7 +221,7 @@ describe('cancelOpenBatches', () => {
     expect(res).toMatchObject({ rows: 1, cancelled: 1, failed: 1, released: 0, converted: 1 });
     expect(calls).toContain('cancel:msgbatch_2');
     expect(calls).toContain('deleteFile:file_in');
-    expect(h.convert).toHaveBeenCalledWith('row-1');
+    expect(h.convert).toHaveBeenCalledWith('row-1', undefined);
     expect(h.release).not.toHaveBeenCalled();
     expect(warn.mock.calls.some((c) => String(c[0]).includes('provider 503'))).toBe(true);
   });
@@ -226,12 +269,13 @@ describe('cancelOpenBatches', () => {
     expect(calls).toEqual(['msgbatch_9']);
   });
 
-  it('a row still submitting with no batch id yet cancels nothing at the provider but is marked and its hold released', async () => {
+  it('a row still submitting with no batch id yet cancels nothing at the provider; its create may have been sent, so the hold is BOOKED, not released', async () => {
     h.rows = [row({ state: 'submitting', batchIds: [], fileIds: [] })];
     const { calls } = opsRig();
     const res = await cancelOpenBatches(SHOP);
-    expect(res).toEqual({ rows: 1, cancelled: 0, failed: 0, released: 1, converted: 0 });
+    expect(res).toEqual({ rows: 1, cancelled: 0, failed: 0, released: 0, converted: 1 });
     expect(calls).toEqual([]);
+    expect(h.release).not.toHaveBeenCalled();
   });
 
   it('a failing lookup is reported in the result and never thrown', async () => {
@@ -251,7 +295,7 @@ describe('cancelOpenBatches', () => {
     expect(res.released).toBe(1);
   });
 
-  it('releases the hold of EVERY other row of the shop that still holds one, whatever its state (M2)', async () => {
+  it('settles the hold of EVERY other row of the shop that still holds one, whatever its state (M2): a done row that never named a batch is released', async () => {
     h.rows = [row()];
     h.heldRows = [
       row({ id: 'row-done', taskId: 'task-done', state: 'done', batchIds: [], fileIds: [], reservationState: 'held' }),
@@ -267,7 +311,7 @@ describe('cancelOpenBatches', () => {
     vi.useFakeTimers();
     try {
       h.rows = [row({ batchIds: ['msgbatch_1'], fileIds: [] })];
-      opsRig({ cancel: vi.fn(() => new Promise<never>(() => undefined)) });
+      opsRig({ retrieve: vi.fn(RUNNING), cancel: vi.fn(() => new Promise<never>(() => undefined)) });
       const pending = cancelOpenBatches(SHOP);
       await vi.advanceTimersByTimeAsync(PROVIDER_CALL_DEADLINE_MS + 100);
       const res = await pending;
@@ -286,7 +330,7 @@ describe('cancelOpenBatches', () => {
         row({ id: 'b', taskId: 'tb', batchIds: ['b2'], fileIds: [] }),
       ];
       const cancel = vi.fn(() => new Promise<never>(() => undefined));
-      opsRig({ cancel });
+      opsRig({ cancel, retrieve: vi.fn(RUNNING) });
       const pending = cancelOpenBatches(SHOP);
       // first row hangs 15 s; push the clock past the overall deadline before the second row starts
       await vi.advanceTimersByTimeAsync(OVERALL_DEADLINE_MS + 1000);

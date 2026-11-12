@@ -658,11 +658,24 @@ export async function releaseBudget(batchId: string): Promise<ReservationOutcome
  * measured provider cost -- the upper bound IS the amount the shop is charged
  * and the amount recorded as spent). Do not "correct" it to zero.
  */
-export async function convertReservation(batchId: string): Promise<ReservationOutcome> {
-  return settleReservation(batchId, 'converted');
+export async function convertReservation(
+  batchId: string,
+  opts: { bookMicros?: number } = {},
+): Promise<ReservationOutcome> {
+  return settleReservation(batchId, 'converted', opts.bookMicros);
 }
 
-async function settleReservation(batchId: string, to: 'released' | 'converted'): Promise<ReservationOutcome> {
+/**
+ * `bookMicros` (convert only): book THAT much of the hold as the charge and give
+ * the rest back -- the pro rata booking from the provider's request counts
+ * (PLAN 16, coordinator decision). Never more than the hold; 0 is a release.
+ * Omitted = the whole hold (the upper bound).
+ */
+async function settleReservation(
+  batchId: string,
+  to: 'released' | 'converted',
+  bookMicros?: number,
+): Promise<ReservationOutcome> {
   try {
     const { db } = await import('../../db.server');
     const row = await db.bulkTranslateBatch.findUnique({ where: { id: batchId } });
@@ -671,6 +684,11 @@ async function settleReservation(batchId: string, to: 'released' | 'converted'):
     const billed = clampReservation(row.reservedMicros);
     const poolAmount = clampReservation(row.reservedPoolMicros);
     const k = reservationKeys(row);
+    // What of the hold becomes the charge. A partial booking of 0 is a release.
+    const booked = to === 'converted' ? (bookMicros === undefined ? billed : Math.min(billed, clampReservation(bookMicros))) : 0;
+    if (to === 'converted' && bookMicros !== undefined && booked === 0) to = 'released';
+    // The pool counter carries the hold as cost; the booked share stays, the rest goes back.
+    const bookedPool = booked >= billed || billed === 0 ? poolAmount : Math.min(poolAmount, Math.ceil((poolAmount * booked) / billed));
 
     const done = await db.$transaction(async (tx) => {
       // The winner of this conditional flip is the only one who touches the counters.
@@ -679,7 +697,7 @@ async function settleReservation(batchId: string, to: 'released' | 'converted'):
         data: { reservationState: to },
       });
       if (flipped.count !== 1) return false;
-      if (to === 'converted' && billed > 0) {
+      if (to === 'converted' && booked > 0) {
         await tx.aiUsageCounter.upsert({
           where: {
             shop_period_source_provider_model_feature_estimated: {
@@ -700,19 +718,19 @@ async function settleReservation(batchId: string, to: 'released' | 'converted'):
             model: k.model,
             feature: BATCH_RESERVATION_FEATURE,
             estimated: true,
-            billedMicros: BigInt(billed),
-            costMicros: BigInt(billed),
+            billedMicros: BigInt(booked),
+            costMicros: BigInt(booked),
           },
-          update: { billedMicros: { increment: BigInt(billed) }, costMicros: { increment: BigInt(billed) } },
+          update: { billedMicros: { increment: BigInt(booked) }, costMicros: { increment: BigInt(booked) } },
         });
-        // The reserved row loses the hold; the pool keeps it (it is now the charge).
-        await dropReservation(tx as never, k, billed, 0);
+        // The reserved row loses the whole hold; the pool keeps the booked share (it is now the charge).
+        await dropReservation(tx as never, k, billed, poolAmount - bookedPool);
       } else if (to === 'released') {
         await dropReservation(tx as never, k, billed, poolAmount);
       }
       return true;
     });
-    return done ? { applied: true, micros: billed } : { applied: false, reason: 'notHeld' };
+    return done ? { applied: true, micros: to === 'converted' ? booked : billed } : { applied: false, reason: 'notHeld' };
   } catch (error) {
     logger.error(
       `[AI-METER] Settling the reservation of batch ${batchId} (${to}) failed: ${
@@ -724,26 +742,38 @@ async function settleReservation(batchId: string, to: 'released' | 'converted'):
 }
 
 /**
- * Sweep: release the reservation of every batch row that is SETTLED ("done")
- * but still holds one -- a crash between settling and releasing, a submit that
- * died, a recovery that closed the row. Covers BOTH counters (releaseBudget),
- * and not only `waiting` rows: a settled row is exactly where a hold gets lost.
- * Idempotent; the poller calls it each tick.
+ * Sweep: settle the reservation of every batch row that is SETTLED ("done") but
+ * still holds one -- a crash between settling and releasing, a submit that
+ * died, a recovery that closed the row. Covers BOTH counters, and not only
+ * `waiting` rows: a settled row is exactly where a hold gets lost.
+ *
+ * The rule is the guiding rule of PLAN 16 and NOT "release": a row that never
+ * got a provider batch id has nothing at the provider (the create was refused or
+ * never sent), so its hold goes back; a row that NAMES a batch may have run and
+ * cost money, and this sweep cannot read the provider, so the hold becomes the
+ * charge (the reserved upper bound -- never below the cost). Idempotent; the
+ * poller calls it each tick.
  */
-export async function releaseSettledReservations(limit = 50): Promise<{ released: number; failed: number }> {
+export async function releaseSettledReservations(
+  limit = 50,
+): Promise<{ released: number; converted: number; failed: number }> {
   let released = 0;
+  let converted = 0;
   let failed = 0;
   try {
     const { db } = await import('../../db.server');
     const rows = await db.bulkTranslateBatch.findMany({
       where: { state: 'done', reservationState: 'held' },
-      select: { id: true },
+      select: { id: true, batchIds: true },
       take: limit,
     });
-    for (const { id } of rows) {
-      const outcome = await releaseBudget(id);
-      if (outcome.applied) released += 1;
-      else if (outcome.reason === 'failed') failed += 1;
+    for (const { id, batchIds } of rows) {
+      const named = Array.isArray(batchIds) && batchIds.some((b) => typeof b === 'string' && b.length > 0);
+      const outcome = await (named ? convertReservation(id) : releaseBudget(id));
+      if (outcome.applied) {
+        if (named) converted += 1;
+        else released += 1;
+      } else if (outcome.reason === 'failed') failed += 1;
     }
   } catch (error) {
     logger.error(
@@ -751,7 +781,7 @@ export async function releaseSettledReservations(limit = 50): Promise<{ released
     );
     failed += 1;
   }
-  return { released, failed };
+  return { released, converted, failed };
 }
 
 // ─── Booking what a settled batch really consumed (PLAN 5.5 / 6.4) ───────────
@@ -767,6 +797,13 @@ export interface BatchUsageItem {
   cacheWriteTokens?: number;
   /** True when the provider reported no usage and the figures are our estimate. */
   estimated: boolean;
+  /**
+   * The price tier the result was served at. The batch discount applies only
+   * where the provider SAYS the request ran in the batch tier
+   * (`usage.service_tier === 'batch'`); anything else is priced standard.
+   * Omitted = batch (callers that know better always set it).
+   */
+  tier?: 'batch' | 'standard';
 }
 
 export type BatchBookingOutcome =
@@ -836,12 +873,13 @@ export async function settleBatchUsage(
       // One ledger row per (provider, model, measured/estimated), priced once on the sums.
       const groups = new Map<
         string,
-        { provider: AIProvider; model: string; estimated: boolean; input: number; output: number; read: number; write: number; calls: number }
+        { provider: AIProvider; model: string; estimated: boolean; tier: 'batch' | 'standard'; input: number; output: number; read: number; write: number; calls: number }
       >();
       for (const item of items) {
-        const key = `${item.provider}|${item.model}|${item.estimated}`;
+        const tier = item.tier ?? 'batch';
+        const key = `${item.provider}|${item.model}|${item.estimated}|${tier}`;
         const g = groups.get(key) ?? {
-          provider: item.provider, model: item.model, estimated: item.estimated, input: 0, output: 0, read: 0, write: 0, calls: 0,
+          provider: item.provider, model: item.model, estimated: item.estimated, tier, input: 0, output: 0, read: 0, write: 0, calls: 0,
         };
         g.input += safeTokens(item.inputTokens);
         g.output += safeTokens(item.outputTokens);
@@ -858,7 +896,7 @@ export async function settleBatchUsage(
         const priced = priceCall(g.provider, g.model, g.input, g.output, {
           cacheReadTokens: read,
           cacheWriteTokens: write,
-          tier: 'batch',
+          tier: g.tier,
         });
         if (priced.pricedAtCeiling) warnUnknownModelOnce(g.provider, g.model);
         const cost = clampMicros(priced.costMicros);

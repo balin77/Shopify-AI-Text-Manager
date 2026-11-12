@@ -1,9 +1,11 @@
 /**
  * The ABSOLUTE END of an open batch run (PLAN_BULK_TRANSLATE_BATCHING 19.4, M4):
- * a run still open after OPEN_BATCH_MAX_AGE_MS is closed as batch_unreachable
- * with its hold released -- unless a poller holds a valid lease on it (mid
- * collection) -- and the Tasks tab never hides an open batch task behind its
- * 24 h date window.
+ * a run still open after OPEN_BATCH_MAX_AGE_MS is closed -- unless a poller holds
+ * a valid lease on it (mid collection) -- and the Tasks tab never hides an open
+ * batch task behind its 24 h date window. The HOLD is settled by the guiding rule
+ * (PLAN 16): read the counts where the credentials module allows it, book the
+ * upper bound where not, release only on proof -- and BEFORE the row is marked
+ * done.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -11,17 +13,22 @@ import { join } from 'node:path';
 
 const h = vi.hoisted(() => ({
   rows: [] as any[],
+  claimCount: 1,
   flipCount: 1,
   findManyArgs: null as any,
+  order: [] as string[],
   batchUpdate: vi.fn(async (_a: any) => ({ count: 1 })),
   taskUpdate: vi.fn(async (_a: any) => ({ count: 1 })),
   release: vi.fn(async (_id: string) => ({ applied: true, micros: 1 })),
+  convert: vi.fn(async (_id: string, _o?: any) => ({ applied: true, micros: 1 })),
+  settle: vi.fn(),
+  retrieve: vi.fn(),
   txFails: false,
 }));
 
 vi.mock('~/db.server', () => {
   const tx = {
-    bulkTranslateBatch: { updateMany: async (a: any) => (h.batchUpdate(a), { count: h.flipCount }) },
+    bulkTranslateBatch: { updateMany: async (a: any) => (h.order.push('row.done'), h.batchUpdate(a), { count: h.flipCount }) },
     task: { updateMany: (a: any) => h.taskUpdate(a) },
   };
   return {
@@ -31,6 +38,10 @@ vi.mock('~/db.server', () => {
           h.findManyArgs = a;
           return h.rows;
         }),
+        updateMany: vi.fn(async (a: any) => {
+          h.batchUpdate(a);
+          return { count: a.data.leaseToken ? h.claimCount : 1 };
+        }),
       },
       $transaction: async (fn: (t: any) => Promise<unknown>) => {
         if (h.txFails) throw new Error('tx failed');
@@ -39,7 +50,11 @@ vi.mock('~/db.server', () => {
     },
   };
 });
-vi.mock('~/services/ai/usage-meter.server', () => ({ releaseBudget: (id: string) => h.release(id) }));
+vi.mock('~/services/ai/usage-meter.server', () => ({
+  releaseBudget: (id: string) => (h.order.push('release'), h.release(id)),
+  convertReservation: (id: string, o?: any) => (h.order.push('convert'), h.convert(id, o)),
+}));
+vi.mock('~/services/ai/ai-credentials.server', () => ({ settlementCredentialsFor: (...a: unknown[]) => h.settle(...a) }));
 vi.mock('~/utils/logger.server', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
@@ -48,57 +63,122 @@ import {
   expireStaleBatches,
   OPEN_BATCH_MAX_AGE_MS,
   BATCH_UNREACHABLE_ERROR,
+  BATCH_SUBMIT_UNCONFIRMED_ERROR,
 } from '~/services/bulk-editor/translate-batch-expiry.server';
+import { serializeManifest } from '~/services/bulk-editor/translate-batch.shared';
+
+const manifest = serializeManifest({
+  v: 1, rowType: 'product', moType: '', locales: ['fr'], primaryLocale: 'de', units: 1, cells: [],
+  requests: [{ customId: 'tx_p0', kind: 'short', items: [], maxTokens: 500, inputEstimate: 100 }],
+  plan: { skippedChanged: 0, failures: [], mismatchesByKey: {}, notStarted: 0 },
+  submittedAt: '2026-11-10T00:00:00Z',
+});
+const row = (over: Record<string, unknown> = {}) => ({
+  id: 'row-1', taskId: 'task-1', shop: 's.myshopify.com', source: 'managed', provider: 'claude', model: 'claude-haiku-4-5',
+  reservationState: 'held', batchIds: ['msgbatch_1'], manifest, ...over,
+});
+const COUNTS = (succeeded: number, ended = true) => ({
+  providerStatus: ended ? 'ended' : 'in_progress', ended,
+  requestCounts: { total: 1, processing: ended ? 0 : 1, succeeded, errored: 0, expired: 0, canceled: 0 },
+});
 
 beforeEach(() => {
   h.rows = [];
+  h.claimCount = 1;
   h.flipCount = 1;
   h.txFails = false;
-  h.batchUpdate.mockClear();
-  h.taskUpdate.mockClear();
-  h.release.mockClear();
+  h.order.length = 0;
+  for (const fn of [h.batchUpdate, h.taskUpdate, h.release, h.convert, h.settle, h.retrieve]) fn.mockClear();
+  h.settle.mockResolvedValue({ ok: true, transport: { retrieve: (...a: unknown[]) => h.retrieve(...a) } });
+  h.retrieve.mockResolvedValue(COUNTS(1));
 });
 
 describe('expireStaleBatches', () => {
   const now = new Date('2026-11-12T12:00:00Z');
 
-  it('selects only OPEN rows older than the limit whose lease is free or expired', async () => {
+  it('selects only OPEN rows (create_unknown included) older than the limit whose lease is free or expired', async () => {
     await expireStaleBatches(now);
     const where = h.findManyArgs.where;
-    expect(where.state.in).toEqual(['submitting', 'waiting', 'cancel_requested', 'collecting']);
+    expect(where.state.in).toEqual(['submitting', 'create_unknown', 'waiting', 'cancel_requested', 'collecting']);
     expect(where.createdAt.lt).toEqual(new Date(now.getTime() - OPEN_BATCH_MAX_AGE_MS));
     expect(where.OR).toEqual([{ leaseUntil: null }, { leaseUntil: { lt: now } }]);
   });
 
-  it('closes the row, fails the task as batch_unreachable (conditionally on open statuses) and releases the hold', async () => {
-    h.rows = [{ id: 'row-1', taskId: 'task-1' }];
+  it('a batch that RAN is booked pro rata from the counts (never released), the hold is settled BEFORE the row is marked done', async () => {
+    h.rows = [row()];
     const res = await expireStaleBatches(now);
     expect(res).toEqual({ expired: 1, failed: 0 });
+    expect(h.convert).toHaveBeenCalledWith('row-1', { bookMicros: expect.any(Number) });
+    expect(h.release).not.toHaveBeenCalled();
+    expect(h.order.indexOf('convert')).toBeLessThan(h.order.indexOf('row.done'));
     expect(h.batchUpdate).toHaveBeenCalledWith({
-      where: expect.objectContaining({ id: 'row-1', OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }] }),
-      data: { state: 'done', lastError: BATCH_UNREACHABLE_ERROR },
+      where: expect.objectContaining({ id: 'row-1', leaseToken: expect.any(String) }),
+      data: expect.objectContaining({ state: 'done', lastError: BATCH_UNREACHABLE_ERROR }),
     });
     expect(h.taskUpdate).toHaveBeenCalledWith({
       where: { id: 'task-1', status: { in: ['submitting', 'waiting_batch', 'cancel_requested'] } },
       data: { status: 'batch_unreachable', error: BATCH_UNREACHABLE_ERROR, completedAt: now },
     });
-    expect(h.release).toHaveBeenCalledWith('row-1');
   });
 
-  it('a row a poller took the lease on between the select and the flip is left alone: no task change, no release', async () => {
-    h.rows = [{ id: 'row-1', taskId: 'task-1' }];
-    h.flipCount = 0;
+  it('the provider PROVES nothing ran (ended, nothing succeeded): the hold goes back', async () => {
+    h.rows = [row()];
+    h.retrieve.mockResolvedValue(COUNTS(0));
+    await expireStaleBatches(now);
+    expect(h.release).toHaveBeenCalledWith('row-1');
+    expect(h.convert).not.toHaveBeenCalled();
+  });
+
+  it('nothing can be read (kill switch on, key gone): the reserved upper bound is booked, never released', async () => {
+    h.rows = [row()];
+    h.settle.mockResolvedValue({ ok: false, reason: 'managedDisabled' });
+    const res = await expireStaleBatches(now);
+    expect(res.expired).toBe(1);
+    expect(h.convert).toHaveBeenCalledWith('row-1', undefined);
+    expect(h.release).not.toHaveBeenCalled();
+  });
+
+  it('a batch that never ended is not proof of anything: the upper bound is booked', async () => {
+    h.rows = [row()];
+    h.retrieve.mockResolvedValue(COUNTS(0, false));
+    await expireStaleBatches(now);
+    expect(h.convert).toHaveBeenCalledWith('row-1', undefined);
+  });
+
+  it('a create of unknown outcome that was never found: the Task fails as batch_submit_unconfirmed and the upper bound is booked', async () => {
+    h.rows = [row({ batchIds: [], state: 'create_unknown' })];
+    await expireStaleBatches(now);
+    expect(h.convert).toHaveBeenCalledWith('row-1', undefined);
+    expect(h.taskUpdate).toHaveBeenCalledWith({
+      where: { id: 'task-1', status: { in: ['submitting', 'waiting_batch', 'cancel_requested'] } },
+      data: { status: 'failed', error: BATCH_SUBMIT_UNCONFIRMED_ERROR, completedAt: now },
+    });
+  });
+
+  it('a row a poller took the lease on between the select and the claim is left alone: no settlement, no task change', async () => {
+    h.rows = [row()];
+    h.claimCount = 0;
     const res = await expireStaleBatches(now);
     expect(res.expired).toBe(0);
     expect(h.taskUpdate).not.toHaveBeenCalled();
+    expect(h.convert).not.toHaveBeenCalled();
     expect(h.release).not.toHaveBeenCalled();
   });
 
   it('a failing transaction is counted, never thrown, and the next row is still tried', async () => {
-    h.rows = [{ id: 'a', taskId: 'ta' }, { id: 'b', taskId: 'tb' }];
+    h.rows = [row({ id: 'a', taskId: 'ta' }), row({ id: 'b', taskId: 'tb' })];
     h.txFails = true;
     const res = await expireStaleBatches(now);
     expect(res).toEqual({ expired: 0, failed: 2 });
+  });
+
+  it('a settlement that FAILED (bookkeeping) leaves the row open and gives the lease back', async () => {
+    h.rows = [row()];
+    h.convert.mockResolvedValue({ applied: false, reason: 'failed' } as never);
+    h.retrieve.mockResolvedValue(COUNTS(1));
+    const res = await expireStaleBatches(now);
+    expect(res).toEqual({ expired: 0, failed: 1 });
+    expect(h.taskUpdate).not.toHaveBeenCalled();
   });
 });
 

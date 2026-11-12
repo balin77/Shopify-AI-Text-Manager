@@ -53,6 +53,7 @@ import {
   SettlementAccessError,
   SettlementNotImplementedError,
   stringList,
+  type IntentBatchQuery,
   type SettlementBatchRow,
   type SettlementBatchStatus,
   type SettlementDecision,
@@ -915,6 +916,13 @@ export async function settlementCredentialsFor(
   };
 
   const transport: SettlementTransport = Object.freeze({
+    findIntentBatch: async (query: IntentBatchQuery) => {
+      // Matched by the run's own id prefix, so a stranger's batch is never returned; the caller
+      // stores the id on the row, which is what makes the other operations accept it.
+      if (!ops.findIntentBatch) throw new SettlementNotImplementedError(provider, "findIntentBatch");
+      logUse("findIntentBatch");
+      return ops.findIntentBatch(query);
+    },
     retrieve: async (batchId: string) => {
       ownBatch(batchId);
       logUse("retrieve");

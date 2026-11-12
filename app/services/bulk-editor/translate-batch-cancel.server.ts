@@ -18,9 +18,15 @@
  * cannot hold the erasure. What cannot be cancelled here is a stated residual
  * (the provider lets the batch expire).
  *
- * The hold of a batch whose cancel was NOT confirmed is converted into the
- * charge (the reserved upper bound), not released: that batch may still run and
- * bill, and releasing the hold would let the shop's budget forget it.
+ * The hold is settled by the guiding rule of translate-batch-hold.server.ts
+ * (PLAN 16): after the cancel the provider's request counts are READ (no
+ * content) and the hold is booked pro rata from them, released only where the
+ * provider proves nothing ran, and converted to the reserved upper bound where
+ * nothing can be read or the batch has not ended (a cancel takes effect
+ * asynchronously: "the cancel call worked" proves nothing). The caller deletes
+ * the rows right after, so this is the LAST look: no `pending`. The rows are
+ * CLOSED here (an uninstalled shop's row would otherwise sit in
+ * `cancel_requested` until the absolute end).
  *
  * The provider calls go through the settlement transport
  * (settlementCredentialsFor, which re-loads the row by id): the one place the
@@ -31,11 +37,12 @@ import {
   OPEN_BATCH_TASK_STATUSES,
   TASK_STATUS_CANCEL_REQUESTED,
 } from "~/config/task-statuses.js";
-import { stringList } from "../ai/batch-settlement.shared";
+import { stringList, type SettlementTransport } from "../ai/batch-settlement.shared";
+import { settleHold } from "./translate-batch-hold.server";
 import { logger } from "~/utils/logger.server";
 
 /** Batch-row states in which a provider batch may exist or be needed. */
-export const OPEN_BATCH_STATES = ["submitting", "waiting", "cancel_requested", "collecting"] as const;
+export const OPEN_BATCH_STATES = ["submitting", "create_unknown", "waiting", "cancel_requested", "collecting"] as const;
 
 /** One provider call may take this long before it counts as unreachable. */
 export const PROVIDER_CALL_DEADLINE_MS = 15_000;
@@ -49,12 +56,12 @@ export interface CancelOpenBatchesResult {
   cancelled: number;
   /** Provider calls (cancel / deleteFile) or credential lookups that did not work. */
   failed: number;
-  /** Holds released back to the budget and the pool. */
+  /** Holds released back to the budget and the pool: the provider PROVED nothing ran. */
   released: number;
   /**
-   * Holds BOOKED as the charge instead of released: the provider cancel was not
-   * confirmed, so the batch may still run and bill. The reserved upper bound is
-   * what the shop pays (the consent-withdrawal rule), never "nothing".
+   * Holds BOOKED as the charge instead of released: pro rata from the request
+   * counts where they could be read, the reserved upper bound where not. Never
+   * "nothing" for a batch that may have run.
    */
   converted: number;
   /** Set when the whole lookup failed; the caller carries on regardless. */
@@ -98,7 +105,6 @@ export async function cancelOpenBatches(shop: string): Promise<CancelOpenBatches
     result.rows = rows.length;
 
     const { settlementCredentialsFor } = await import("../ai/ai-credentials.server");
-    const { releaseBudget, convertReservation } = await import("../ai/usage-meter.server");
 
     for (const row of rows) {
       // 1. Mark -- state only, never the manifest. Conditional, so a row that
@@ -118,22 +124,20 @@ export async function cancelOpenBatches(shop: string): Promise<CancelOpenBatches
       }
 
       // 2. Cancel at the provider and delete the files this run uploaded.
-      //    `confirmed` is true only when EVERY provider batch of the row was
-      //    cancelled: anything less may still be running and billing.
+      //    A failed cancel is only logged here: whether the batch ran is decided by the counts below.
       const batchIds = stringList(row.batchIds);
-      let confirmed = true;
+      let transport: SettlementTransport | null = null;
       try {
         // The row is re-loaded INSIDE the accessor by id -- nothing the caller
         // read is trusted (PLAN 19.3).
         const decision = await settlementCredentialsFor(shop, row.id);
         if (!decision.ok) {
-          confirmed = false;
           result.failed += 1;
           logger.warn(`[BatchCancel] No settlement access for batch ${row.id} of ${shop}: ${decision.reason}`);
         } else {
+          transport = decision.transport;
           for (const batchId of batchIds) {
             if (budgetLeft() <= 0) {
-              confirmed = false;
               result.failed += 1;
               logger.warn(`[BatchCancel] Overall deadline spent, batch ${row.id} of ${shop} not cancelled`);
               break;
@@ -142,7 +146,6 @@ export async function cancelOpenBatches(shop: string): Promise<CancelOpenBatches
               await withDeadline(() => decision.transport.cancel(batchId), callBudget());
               result.cancelled += 1;
             } catch (error) {
-              confirmed = false;
               result.failed += 1;
               logger.warn(`[BatchCancel] Provider cancel failed for batch ${row.id} of ${shop}: ${messageOf(error)}`);
             }
@@ -158,25 +161,25 @@ export async function cancelOpenBatches(shop: string): Promise<CancelOpenBatches
           }
         }
       } catch (error) {
-        confirmed = false;
         result.failed += 1;
         logger.warn(`[BatchCancel] Settlement failed for batch ${row.id} of ${shop}: ${messageOf(error)}`);
       }
 
-      // 3. Settle the hold. The pool counter is GLOBAL and outlives the shop's
-      //    rows, so a reservation left there would inflate the cap for everyone.
-      //    A confirmed cancel is not a charge: release. A cancel that is NOT
-      //    confirmed (provider down, key gone, deadline) leaves a batch that may
-      //    still run and bill: the hold becomes the charge (the reserved upper
-      //    bound) -- releasing it would let the shop's budget forget money the
-      //    provider may still collect. A row with no provider batch yet has
-      //    nothing running: release.
+      // 3. Settle the hold per the guiding rule (read the counts, book / release / convert).
+      //    The row is closed afterwards (L5): it is not left in `cancel_requested`.
       try {
-        const bookIt = batchIds.length > 0 && !confirmed;
-        const outcome = await (bookIt ? convertReservation : releaseBudget)(row.id);
-        if (outcome.applied) {
-          if (bookIt) result.converted += 1;
-          else result.released += 1;
+        const outcome = await settleHold(row, transport, { final: true });
+        if (outcome.kind === "released") result.released += 1;
+        else if (outcome.kind === "booked" || outcome.kind === "converted") result.converted += 1;
+        if (outcome.kind !== "pending") {
+          await db.bulkTranslateBatch.updateMany({
+            where: { id: row.id, state: { in: [...OPEN_BATCH_STATES] } },
+            data: { state: "done", lastError: "shop_removed" },
+          });
+          await db.task.updateMany({
+            where: { id: row.taskId, shop, status: { in: [...OPEN_BATCH_TASK_STATUSES] } },
+            data: { status: "cancelled", completedAt: new Date() },
+          });
         }
       } catch (error) {
         result.failed += 1;
@@ -185,23 +188,30 @@ export async function cancelOpenBatches(shop: string): Promise<CancelOpenBatches
     }
 
     // 4. Every OTHER row of the shop that still holds a reservation, whatever
-    //    its state ("done" rows whose release failed, rows a recovery closed):
-    //    nothing runs for them, so the hold goes back. Without this a redaction
-    //    deleted the row and left its share of the global pool counted for ever.
+    //    its state ("done" rows whose settlement failed, rows a recovery closed).
+    //    The pool counter is GLOBAL and outlives the shop's rows, so a hold left
+    //    there would inflate the cap for everyone -- but a row that names a batch
+    //    is settled by the same rule (counts, else the upper bound), never just
+    //    released.
     try {
       const handled = new Set(rows.map((r) => r.id));
-      const held = await db.bulkTranslateBatch.findMany({
-        where: { shop, reservationState: "held" },
-        select: { id: true },
-      });
-      for (const { id } of held) {
-        if (handled.has(id)) continue;
+      const held = await db.bulkTranslateBatch.findMany({ where: { shop, reservationState: "held" } });
+      for (const row of held) {
+        if (handled.has(row.id)) continue;
         try {
-          const outcome = await releaseBudget(id);
-          if (outcome.applied) result.released += 1;
+          if (stringList(row.batchIds).length === 0) {
+            // A settled row that never named a batch: the create was refused or never sent, nothing runs.
+            const { releaseBudget } = await import("../ai/usage-meter.server");
+            if ((await releaseBudget(row.id)).applied) result.released += 1;
+            continue;
+          }
+          const decision = await settlementCredentialsFor(shop, row.id);
+          const outcome = await settleHold(row, decision.ok ? decision.transport : null, { final: true });
+          if (outcome.kind === "released") result.released += 1;
+          else if (outcome.kind === "booked" || outcome.kind === "converted") result.converted += 1;
         } catch (error) {
           result.failed += 1;
-          logger.warn(`[BatchCancel] Could not release the reservation of batch ${id}: ${messageOf(error)}`);
+          logger.warn(`[BatchCancel] Could not settle the reservation of batch ${row.id}: ${messageOf(error)}`);
         }
       }
     } catch (error) {

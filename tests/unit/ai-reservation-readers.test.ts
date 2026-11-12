@@ -432,21 +432,51 @@ describe('convertReservation books the hold AS the charge (consent withdrawn, PL
   });
 });
 
-describe('releaseSettledReservations (the sweep)', () => {
-  it('releases the hold of a SETTLED (done) row in both tables and leaves waiting rows alone', async () => {
-    h.batches.set('done-row', batchRow({ id: 'done-row', taskId: 'task-d', state: 'waiting' }));
+describe('convertReservation with bookMicros books PRO RATA and gives the rest back (PLAN 16 guiding rule)', () => {
+  it('books the given share as billed AND cost, the pool keeps the same share, the rest of both holds goes back', async () => {
+    await reserveBudget('batch-1', { billedMicros: 10_000_000 });
+    expect(await convertReservation('batch-1', { bookMicros: 4_000_000 })).toEqual({ applied: true, micros: 4_000_000 });
+    expect(h.usage.get(chargeUsageKey())).toMatchObject({ billedMicros: 4_000_000n, costMicros: 4_000_000n });
+    expect(h.usage.get(reservedUsageKey()).billedMicros).toBe(0n);
+    expect(poolRow().costMicros).toBe(4_000_000n);
+    expect(h.batches.get('batch-1').reservationState).toBe('converted');
+  });
+
+  it('never books more than the hold; 0 is a release', async () => {
+    await reserveBudget('batch-1', { billedMicros: 1_000 });
+    expect(await convertReservation('batch-1', { bookMicros: 9_999_999 })).toEqual({ applied: true, micros: 1_000 });
+    h.batches.set('b2', batchRow({ id: 'b2', taskId: 't2' }));
+    await reserveBudget('b2', { billedMicros: 1_000 });
+    expect(await convertReservation('b2', { bookMicros: 0 })).toEqual({ applied: true, micros: 1_000 }); // all of it goes back
+    expect(h.batches.get('b2').reservationState).toBe('released');
+  });
+});
+
+describe('releaseSettledReservations (the sweep) follows the guiding rule, it does not simply release', () => {
+  it('a done row that never named a batch is released (both tables); a waiting row is left alone', async () => {
+    h.batches.set('done-row', batchRow({ id: 'done-row', taskId: 'task-d', state: 'waiting', batchIds: [] }));
     await reserveBudget('batch-1', { billedMicros: 5_000_000 }); // stays waiting
     await reserveBudget('done-row', { billedMicros: 2_000_000 });
     h.batches.get('done-row').state = 'done';
 
-    expect(await releaseSettledReservations()).toEqual({ released: 1, failed: 0 });
+    expect(await releaseSettledReservations()).toEqual({ released: 1, converted: 0, failed: 0 });
     expect(h.batches.get('done-row').reservationState).toBe('released');
     expect(h.batches.get('batch-1').reservationState).toBe('held');
     expect(h.usage.get(reservedUsageKey()).billedMicros).toBe(5_000_000n);
     expect(poolRow().costMicros).toBe(5_000_000n);
 
     // a second sweep finds nothing
-    expect(await releaseSettledReservations()).toEqual({ released: 0, failed: 0 });
+    expect(await releaseSettledReservations()).toEqual({ released: 0, converted: 0, failed: 0 });
+  });
+
+  it('a done row that NAMES a batch may have run: its hold becomes the charge (the upper bound), never a release', async () => {
+    h.batches.set('ran', batchRow({ id: 'ran', taskId: 'task-r', batchIds: ['msgbatch_1'] }));
+    await reserveBudget('ran', { billedMicros: 2_000_000 });
+    h.batches.get('ran').state = 'done';
+    expect(await releaseSettledReservations()).toEqual({ released: 0, converted: 1, failed: 0 });
+    expect(h.batches.get('ran').reservationState).toBe('converted');
+    expect(h.usage.get(chargeUsageKey())).toMatchObject({ billedMicros: 2_000_000n, costMicros: 2_000_000n });
+    expect(poolRow().costMicros).toBe(2_000_000n);
   });
 });
 
@@ -481,6 +511,20 @@ describe('settleBatchUsage books the ACTUAL usage and settles the hold in one id
     const before = JSON.stringify([...h.usage], (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
     expect(await settleBatchUsage('batch-1', ITEMS)).toEqual({ applied: false, reason: 'alreadySettled' });
     expect(JSON.stringify([...h.usage], (_k, v) => (typeof v === 'bigint' ? v.toString() : v))).toBe(before);
+  });
+
+  it('L3: the batch discount only applies to results the provider says ran in the batch tier; anything else is priced standard', async () => {
+    await reserveBudget('batch-1', { billedMicros: 10_000_000 });
+    const out = await settleBatchUsage('batch-1', [
+      { ...ITEMS[0], tier: 'batch' },
+      { ...ITEMS[1], tier: 'standard' },
+    ]);
+    expect(out.applied).toBe(true);
+    if (!out.applied) return;
+    // dearer than two batch-tier requests (< 3.5 USD), cheaper than two standard ones (7 USD)
+    expect(out.costMicros).toBeGreaterThan(4_000_000);
+    expect(out.costMicros).toBeLessThan(5_500_000);
+    expect(h.usage.size).toBeGreaterThanOrEqual(2); // reserved row + the charge row(s)
   });
 
   it('a hold that was converted (consent withdrawn) is never booked again', async () => {

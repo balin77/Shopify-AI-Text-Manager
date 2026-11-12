@@ -172,3 +172,21 @@ export function hasCurrentAiProcessingConsent(settings: {
   if (!settings?.aiProcessingConsentAt) return false;
   return settings.aiProcessingConsentVersion === AI_PROCESSING_CONSENT_VERSION;
 }
+
+export type AiProcessingConsentState = "current" | "withdrawn" | "outdated";
+
+/**
+ * WHY the consent is not current -- `hasCurrentAiProcessingConsent` only says
+ * that it is not. Withdrawal clears both columns; a bumped notice version
+ * leaves the timestamp and changes the version. The two are different events
+ * for a batch that is already at the provider: a withdrawal means "process
+ * nothing more" (cancel at once), a version bump means the merchant has not yet
+ * answered a NEW question (hold, do not cancel -- they did not ask to stop).
+ */
+export function aiProcessingConsentState(settings: {
+  aiProcessingConsentAt?: Date | string | null;
+  aiProcessingConsentVersion?: string | null;
+} | null): AiProcessingConsentState {
+  if (!settings?.aiProcessingConsentAt) return "withdrawn";
+  return settings.aiProcessingConsentVersion === AI_PROCESSING_CONSENT_VERSION ? "current" : "outdated";
+}

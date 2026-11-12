@@ -66,7 +66,7 @@ export interface SettlementBatchStatus {
   ended: boolean;
   /** The provider is cancelling it. */
   canceling?: boolean;
-  requestCounts?: { total?: number; succeeded?: number; errored?: number; expired?: number; canceled?: number };
+  requestCounts?: { total?: number; processing?: number; succeeded?: number; errored?: number; expired?: number; canceled?: number };
   /** OpenAI: output / error files. Registered with the transport so they may be deleted. */
   outputFileId?: string | null;
   errorFileId?: string | null;
@@ -81,12 +81,37 @@ export interface SettlementResultItem {
   text?: string;
   /** Output hit the token cap: the whole request is invalid. */
   truncated?: boolean;
-  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number };
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    /** The tier the provider says served the request ('batch' = the discounted one); absent = not reported. */
+    serviceTier?: string | null;
+  };
   error?: string;
 }
 
-/** The provider calls the transport may make. Implemented in the next phase. */
+/** What a search for a batch whose create outcome is unknown can answer. */
+export type IntentBatchSearch =
+  | { found: true; batchId: string; expiresAt: string | null }
+  /** A candidate exists but is still running: its request ids cannot be read yet, so it cannot be told from a stranger's. */
+  | { found: false; pending: true }
+  | { found: false; pending: false };
+
+export interface IntentBatchQuery {
+  /** The `custom_id` prefix every request of the run carries (`t<taskId>_p`). */
+  idPrefix: string;
+  /** ISO time the intent was recorded: only batches created from then on are candidates. */
+  since: string;
+  /** Number of requests the run sent (a candidate has the same). */
+  requestCount: number;
+}
+
+/** The provider calls the transport may make. */
 export interface SettlementProviderOps {
+  /** Find the batch a create of unknown outcome may have made. Optional: a provider without it cannot be searched. */
+  findIntentBatch?(query: IntentBatchQuery): Promise<IntentBatchSearch>;
   retrieve(batchId: string): Promise<SettlementBatchStatus>;
   results(batchId: string, hint?: { outputFileId?: string | null; errorFileId?: string | null }): AsyncIterable<SettlementResultItem>;
   cancel(batchId: string): Promise<SettlementBatchStatus>;
@@ -94,17 +119,19 @@ export interface SettlementProviderOps {
 }
 
 /**
- * The ONLY four things a settlement may do. No `apiKey`, no `config`, no
+ * The ONLY five things a settlement may do. No `apiKey`, no `config`, no
  * generic `request`; the object is frozen. A test pins the key set.
  */
 export interface SettlementTransport {
+  /** Recover the id of a batch whose create answer never arrived (matched by id prefix, never by guessing). */
+  findIntentBatch(query: IntentBatchQuery): Promise<IntentBatchSearch>;
   retrieve(batchId: string): Promise<SettlementBatchStatus>;
   results(batchId: string): AsyncIterable<SettlementResultItem>;
   cancel(batchId: string): Promise<SettlementBatchStatus>;
   deleteFile(fileId: string): Promise<void>;
 }
 
-export const SETTLEMENT_TRANSPORT_METHODS = ["retrieve", "results", "cancel", "deleteFile"] as const;
+export const SETTLEMENT_TRANSPORT_METHODS = ["findIntentBatch", "retrieve", "results", "cancel", "deleteFile"] as const;
 
 /** A batch id or file id the batch row does not name: refused before any provider call. */
 export class SettlementAccessError extends Error {

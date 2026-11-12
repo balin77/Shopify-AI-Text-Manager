@@ -181,7 +181,22 @@ describe("usageItemsFromResults", () => {
       "claude",
       "claude-haiku-4-5",
     );
-    expect(items).toEqual([{ provider: "claude", model: "claude-haiku-4-5", inputTokens: 700, outputTokens: 90, estimated: false }]);
+    // no service tier reported: priced standard, the discount is never assumed
+    expect(items).toEqual([{ provider: "claude", model: "claude-haiku-4-5", inputTokens: 700, outputTokens: 90, estimated: false, tier: "standard" }]);
+  });
+
+  it("L3: only a result the provider says ran in the batch tier is priced at the batch tier", () => {
+    const [batch, other] = usageItemsFromResults(
+      m,
+      new Map<string, SettlementResultItem>([
+        ["ttask_p0", ok("ttask_p0", [1], { inputTokens: 700, outputTokens: 90, serviceTier: "batch" } as never)],
+        ["ttask_p1", ok("ttask_p1", [1], { inputTokens: 700, outputTokens: 90, serviceTier: "standard" } as never)],
+      ]),
+      "claude",
+      "claude-haiku-4-5",
+    );
+    expect(batch.tier).toBe("batch");
+    expect(other.tier).toBe("standard");
   });
 
   it("a cut-off answer WAS generated and is booked; a usage object of zero input is an estimate, never a free call", () => {
@@ -195,7 +210,7 @@ describe("usageItemsFromResults", () => {
       "claude-haiku-4-5",
     );
     expect(items[0]).toMatchObject({ inputTokens: 600, outputTokens: 1000, estimated: false });
-    expect(items[1]).toMatchObject({ inputTokens: 200, outputTokens: 100, estimated: true });
+    expect(items[1]).toMatchObject({ inputTokens: 200, outputTokens: 100, estimated: true, tier: "standard" });
   });
 
   it("carries the cache parts when the provider reports them", () => {

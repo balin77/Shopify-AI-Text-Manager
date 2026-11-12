@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const h = vi.hoisted(() => ({
   rows: new Map<string, any>(),
   tasks: new Map<string, any>(),
-  settings: { shop: "s.myshopify.com", subscriptionPlan: "pro" } as any,
+  settings: { shop: "s.myshopify.com", subscriptionPlan: "pro", aiProcessingConsentAt: new Date("2026-10-01"), aiProcessingConsentVersion: "2026-09-20.2" } as any,
   order: [] as string[],
   settle: vi.fn(),
   resolve: vi.fn(),
@@ -34,6 +34,7 @@ const h = vi.hoisted(() => ({
 function matches(row: any, where: any): boolean {
   return Object.entries(where).every(([key, cond]: [string, any]) => {
     if (key === "OR") return (cond as any[]).some((w) => matches(row, w));
+    if (key === "AND") return (cond as any[]).every((w) => matches(row, w));
     const value = row[key];
     if (cond === null) return value === null || value === undefined;
     if (cond instanceof Date) return value?.getTime?.() === cond.getTime();
@@ -41,6 +42,7 @@ function matches(row: any, where: any): boolean {
       if ("in" in cond) return cond.in.includes(value);
       if ("notIn" in cond) return !cond.notIn.includes(value);
       if ("lt" in cond) return value != null && value < cond.lt;
+      if ("gte" in cond) return value != null && value >= cond.gte;
       return false;
     }
     return value === cond;
@@ -179,7 +181,7 @@ beforeEach(() => {
   h.tasks.clear();
   h.order.length = 0;
   for (const fn of [h.settle, h.resolve, h.aiServiceFor, h.booking, h.convert, h.release, h.sweep, h.expire, h.retrieve, h.cancel, h.results, h.deleteFile]) fn.mockReset();
-  h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true });
+  h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true, requestCounts: { total: 1, processing: 0, succeeded: 1, errored: 0, expired: 0, canceled: 0 } });
   h.cancel.mockResolvedValue({ providerStatus: "canceling", ended: false });
   h.results.mockImplementation(() => (async function* () { yield SUCCESS; })());
   h.deleteFile.mockResolvedValue(undefined);
@@ -307,27 +309,97 @@ describe("an ended batch: book, THEN write", () => {
   });
 });
 
-describe("consent withdrawn (owner decision): cancel at once, fetch NOTHING, write NOTHING, book the reserved upper bound", () => {
-  it("never retrieves, never fetches results, never books usage; the hold is CONVERTED, the Task fails with the managed code", async () => {
-    h.resolve.mockReturnValue({ ok: false, reason: "consentMissing" });
+const WITHDRAWN = { shop: SHOP, subscriptionPlan: "pro", aiProcessingConsentAt: null, aiProcessingConsentVersion: null } as any;
+const OUTDATED = { shop: SHOP, subscriptionPlan: "pro", aiProcessingConsentAt: new Date("2026-10-01"), aiProcessingConsentVersion: "1999-01-01" } as any;
+
+describe("consent withdrawn (owner decision): cancel at once, fetch NO CONTENT, write NOTHING, book from the counts or the upper bound", () => {
+  it("cancels, reads only the status counts (never the results), books pro rata -- NOT a release -- and fails the Task with the managed code", async () => {
+    h.settings = WITHDRAWN;
     const d = deps();
     expect(await processBatchRow("row-1", d)).toBe("consentWithdrawn");
     expect(h.cancel).toHaveBeenCalledWith("msgbatch_1");
-    expect(h.retrieve).not.toHaveBeenCalled();
+    expect(h.retrieve).toHaveBeenCalled(); // a status read: request_counts carry no content
     expect(h.results).not.toHaveBeenCalled();
     expect(h.booking).not.toHaveBeenCalled();
-    expect(h.convert).toHaveBeenCalledWith("row-1");
+    // one request succeeded: booked at THAT request's reserved upper bound, never released
+    expect(h.convert).toHaveBeenCalledWith("row-1", { bookMicros: expect.any(Number) });
+    expect(h.convert.mock.calls[0][1].bookMicros).toBeGreaterThan(0);
     expect(h.release).not.toHaveBeenCalled();
     expect(d.runCollect).not.toHaveBeenCalled();
     expect(h.tasks.get("task-1")).toMatchObject({ status: "failed", error: "managed_ai_refused:consentMissing" });
     expect(h.rows.get("row-1")).toMatchObject({ state: "done", consentWithdrawnAt: expect.any(Date) });
   });
 
-  it("is booked even when the provider cannot be reached for the cancel", async () => {
-    h.resolve.mockReturnValue({ ok: false, reason: "consentMissing" });
-    h.cancel.mockRejectedValue(new Error("down"));
+  it("the provider proves nothing ran (ended, nothing succeeded): only then the hold goes back", async () => {
+    h.settings = WITHDRAWN;
+    h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true, requestCounts: { total: 1, processing: 0, succeeded: 0, errored: 0, expired: 0, canceled: 1 } });
     await processBatchRow("row-1", deps());
-    expect(h.convert).toHaveBeenCalledWith("row-1");
+    expect(h.release).toHaveBeenCalledWith("row-1");
+    expect(h.convert).not.toHaveBeenCalled();
+  });
+
+  it("the batch is still being cancelled (not ended): the hold is NOT settled yet, the row stays open and withdrawn", async () => {
+    h.settings = WITHDRAWN;
+    h.retrieve.mockResolvedValue({ providerStatus: "canceling", ended: false, requestCounts: { total: 1, processing: 1, succeeded: 0, errored: 0, expired: 0, canceled: 0 } });
+    expect(await processBatchRow("row-1", deps())).toBe("consentWithdrawn");
+    expect(h.convert).not.toHaveBeenCalled();
+    expect(h.release).not.toHaveBeenCalled();
+    expect(h.rows.get("row-1")).toMatchObject({ state: "cancel_requested", consentWithdrawnAt: expect.any(Date) });
+    expect(h.tasks.get("task-1").status).toBe("waiting_batch");
+    // next tick: the batch ended with a result: booked, closed -- even if the merchant consented again meanwhile
+    h.settings = { ...WITHDRAWN, aiProcessingConsentAt: new Date(), aiProcessingConsentVersion: "2026-09-20.2" };
+    h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true, requestCounts: { total: 1, processing: 0, succeeded: 1, errored: 0, expired: 0, canceled: 0 } });
+    const d = deps();
+    expect(await processBatchRow("row-1", d)).toBe("consentWithdrawn");
+    expect(h.convert).toHaveBeenCalledWith("row-1", { bookMicros: expect.any(Number) });
+    expect(d.runCollect).not.toHaveBeenCalled();
+    expect(h.rows.get("row-1").state).toBe("done");
+  });
+
+  it("the counts cannot be read: the row waits (the absolute end converts the upper bound) -- never released", async () => {
+    h.settings = WITHDRAWN;
+    h.cancel.mockRejectedValue(new Error("down"));
+    h.retrieve.mockRejectedValue(new Error("down"));
+    expect(await processBatchRow("row-1", deps())).toBe("consentWithdrawn");
+    expect(h.convert).not.toHaveBeenCalled(); // not the last look: the row waits
+    expect(h.release).not.toHaveBeenCalled();
+    expect(h.rows.get("row-1").state).toBe("cancel_requested");
+  });
+
+  it("withdrawal is judged before the kill switch: with the switch on the row waits (configBlocked), nothing is released or booked", async () => {
+    h.settings = WITHDRAWN;
+    h.settle.mockResolvedValue({ ok: false, reason: "managedDisabled" });
+    expect(await processBatchRow("row-1", deps())).toBe("configBlocked");
+    expect(h.release).not.toHaveBeenCalled();
+    expect(h.convert).not.toHaveBeenCalled();
+    expect(h.rows.get("row-1").failedTicks).toBe(0);
+    expect(h.rows.get("row-1").consentWithdrawnAt).toEqual(expect.any(Date));
+  });
+
+  it("works for a shop whose Shopify connection is blocked: the consent gate comes before the admin lookup", async () => {
+    h.settings = WITHDRAWN;
+    const d = deps({ adminFor: async () => { throw new Error("connection blocked"); } });
+    expect(await processBatchRow("row-1", d)).toBe("consentWithdrawn");
+    expect(h.cancel).toHaveBeenCalled();
+  });
+});
+
+describe("consent NOTICE VERSION bumped (not withdrawn): hold the row", () => {
+  it("cancels nothing, reads nothing, fetches nothing, writes nothing, settles nothing", async () => {
+    h.settings = OUTDATED;
+    const d = deps();
+    expect(await processBatchRow("row-1", d)).toBe("consentOutdated");
+    for (const fn of [h.cancel, h.retrieve, h.results, h.booking, h.convert, h.release]) expect(fn).not.toHaveBeenCalled();
+    expect(d.runCollect).not.toHaveBeenCalled();
+    expect(h.rows.get("row-1").state).toBe("waiting");
+    expect(h.tasks.get("task-1").status).toBe("waiting_batch");
+  });
+
+  it("when the merchant confirms the new notice the row simply continues", async () => {
+    h.settings = OUTDATED;
+    await processBatchRow("row-1", deps());
+    h.settings = { ...OUTDATED, aiProcessingConsentVersion: "2026-09-20.2" };
+    expect(await processBatchRow("row-1", deps())).toBe("collected");
   });
 });
 
@@ -391,10 +463,11 @@ describe("an ended batch with nothing usable", () => {
     expect(h.tasks.get("task-1")).toMatchObject({ status: "failed", error: "batch_failed" });
   });
 
-  it("an unreadable manifest ends the run and releases the hold (never guessed)", async () => {
+  it("an unreadable manifest ends the run, the results cannot be matched but the batch RAN: the hold is converted to the upper bound, never released", async () => {
     putRow({ manifest: "not json" });
     expect(await processBatchRow("row-1", deps())).toBe("noResult");
-    expect(h.release).toHaveBeenCalledWith("row-1");
+    expect(h.convert).toHaveBeenCalledWith("row-1");
+    expect(h.release).not.toHaveBeenCalled();
   });
 });
 
@@ -406,18 +479,48 @@ describe("a provider that stops answering", () => {
     expect(h.tasks.get("task-1").status).toBe("waiting_batch");
   });
 
-  it(`after ${MAX_FAILED_TICKS} failures in a row: batch_unreachable (terminal), the hold RELEASED`, async () => {
+  it(`after ${MAX_FAILED_TICKS} failures in a row: batch_unreachable (terminal); unreadable = the hold is CONVERTED to the upper bound, not released`, async () => {
     h.retrieve.mockRejectedValue(new Error("403"));
     h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
     expect(await processBatchRow("row-1", deps())).toBe("unreachable");
     expect(h.tasks.get("task-1")).toMatchObject({ status: "batch_unreachable", error: "batch_unreachable" });
     expect(h.rows.get("row-1").state).toBe("done");
+    expect(h.convert).toHaveBeenCalledWith("row-1");
+    expect(h.release).not.toHaveBeenCalled();
+  });
+
+  it("unreachable at the end but the counts CAN be read at the last look: an ended batch with nothing succeeded releases", async () => {
+    h.retrieve.mockRejectedValueOnce(new Error("403")); // the tick's own retrieve fails ...
+    h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true, requestCounts: { total: 1, processing: 0, succeeded: 0, errored: 1, expired: 0, canceled: 0 } }); // ... the last look works
+    h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
+    expect(await processBatchRow("row-1", deps())).toBe("unreachable");
     expect(h.release).toHaveBeenCalledWith("row-1");
   });
 
-  it("a refused settlement access (key rotated, kill switch) counts like an unreachable provider", async () => {
-    h.settle.mockResolvedValue({ ok: false, reason: "managedDisabled" });
+  it("a hold is settled BEFORE the row is marked done (the sweep must never see a done row with a hold that should be converted)", async () => {
+    h.retrieve.mockRejectedValue(new Error("403"));
+    h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
+    let stateAtConvert = "";
+    h.convert.mockImplementation(async () => { stateAtConvert = h.rows.get("row-1").state; return { applied: true, micros: 9 }; });
+    await processBatchRow("row-1", deps());
+    expect(stateAtConvert).not.toBe("done");
+    expect(h.rows.get("row-1").state).toBe("done");
+  });
+
+  for (const reason of ["managedDisabled", "devBuild", "noCredential", "providerChanged"]) {
+    it(`our own configuration refusing (${reason}) is NOT a failed tick: the row waits, the failure count stays 0`, async () => {
+      h.settle.mockResolvedValue({ ok: false, reason });
+      expect(await processBatchRow("row-1", deps())).toBe("configBlocked");
+      expect(h.rows.get("row-1")).toMatchObject({ failedTicks: 0, state: "waiting" });
+      expect(h.convert).not.toHaveBeenCalled();
+      expect(h.release).not.toHaveBeenCalled();
+    });
+  }
+
+  it("a settlement lookup failure still counts like an unreachable provider", async () => {
+    h.settle.mockResolvedValue({ ok: false, reason: "lookupFailed" });
     expect(await processBatchRow("row-1", deps())).toBe("failedTick");
+    expect(h.rows.get("row-1").failedTicks).toBe(1);
   });
 
   it("back-off: 5, 10, 20, then 30 minutes", () => {
@@ -445,21 +548,53 @@ describe("a BYO shop whose key is gone", () => {
 });
 
 describe("orphan rows (the Task is terminal or gone)", () => {
-  it("a terminal Task: the provider batch is cancelled and the hold RELEASED (cancel confirmed)", async () => {
+  it("a terminal Task: the batch is cancelled, the counts are READ -- a result exists, so the hold is booked pro rata, not released", async () => {
     putTask("failed");
     expect(await processBatchRow("row-1", deps())).toBe("orphan");
     expect(h.cancel).toHaveBeenCalledWith("msgbatch_1");
-    expect(h.release).toHaveBeenCalledWith("row-1");
+    expect(h.retrieve).toHaveBeenCalled();
+    expect(h.convert).toHaveBeenCalledWith("row-1", { bookMicros: expect.any(Number) });
+    expect(h.release).not.toHaveBeenCalled();
     expect(h.rows.get("row-1").state).toBe("done");
-    expect(h.retrieve).not.toHaveBeenCalled();
+    expect(h.results).not.toHaveBeenCalled();
   });
 
-  it("a Task that no longer exists: same, and an UNCONFIRMED cancel books the upper bound instead", async () => {
+  it("the provider PROVES nothing ran (ended, nothing succeeded): then, and only then, the hold goes back", async () => {
+    putTask("failed");
+    h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true, requestCounts: { total: 1, processing: 0, succeeded: 0, errored: 0, expired: 0, canceled: 1 } });
+    expect(await processBatchRow("row-1", deps())).toBe("orphan");
+    expect(h.release).toHaveBeenCalledWith("row-1");
+    expect(h.convert).not.toHaveBeenCalled();
+  });
+
+  it("a confirmed cancel is not proof: the batch is still canceling, so nothing is settled yet and the row stays open", async () => {
+    putTask("failed");
+    h.retrieve.mockResolvedValue({ providerStatus: "canceling", ended: false, requestCounts: { total: 1, processing: 1, succeeded: 0, errored: 0, expired: 0, canceled: 0 } });
+    expect(await processBatchRow("row-1", deps())).toBe("orphan");
+    expect(h.release).not.toHaveBeenCalled();
+    expect(h.convert).not.toHaveBeenCalled();
+    expect(h.rows.get("row-1").state).toBe("waiting");
+    // the cancel is not repeated on the next tick
+    expect(h.rows.get("row-1").cancelRequestedAt).toEqual(expect.any(Date));
+    await processBatchRow("row-1", deps());
+    expect(h.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("a Task that no longer exists and a provider that cannot be read: the row stays open for the absolute end (converted there)", async () => {
     h.tasks.clear();
     h.cancel.mockRejectedValue(new Error("down"));
+    h.retrieve.mockRejectedValue(new Error("down"));
     expect(await processBatchRow("row-1", deps())).toBe("orphan");
-    expect(h.convert).toHaveBeenCalledWith("row-1");
+    expect(h.convert).not.toHaveBeenCalled();
     expect(h.release).not.toHaveBeenCalled();
+    expect(h.rows.get("row-1").state).toBe("waiting");
+  });
+
+  it("works for a blocked shop: the orphan logic does not need Shopify", async () => {
+    putTask("failed");
+    const d = deps({ adminFor: async () => { throw new Error("connection blocked"); } });
+    expect(await processBatchRow("row-1", d)).toBe("orphan");
+    expect(h.cancel).toHaveBeenCalled();
   });
 
   it("only rows THIS database knows are ever touched: the tick selects from its own table", async () => {

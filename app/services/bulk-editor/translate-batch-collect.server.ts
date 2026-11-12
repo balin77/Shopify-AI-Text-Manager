@@ -139,6 +139,8 @@ export function usageItemsFromResults(
         ...(result.usage.cacheReadTokens ? { cacheReadTokens: result.usage.cacheReadTokens } : {}),
         ...(result.usage.cacheWriteTokens ? { cacheWriteTokens: result.usage.cacheWriteTokens } : {}),
         estimated: false,
+        // The batch discount is claimed only where the provider SAYS the request ran in the batch tier.
+        tier: result.usage.serviceTier === "batch" ? "batch" : "standard",
       });
     } else {
       // A usage object reporting zero input tokens is not a measurement (same rule as the live path).
@@ -148,6 +150,8 @@ export function usageItemsFromResults(
         inputTokens: request.inputEstimate,
         outputTokens: Math.ceil((result.text ?? "").length / 3),
         estimated: true,
+        // An estimate has no tier to prove: priced standard (the direction that cannot undercount).
+        tier: "standard",
       });
     }
   }
