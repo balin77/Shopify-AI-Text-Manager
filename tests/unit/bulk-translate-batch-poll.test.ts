@@ -433,6 +433,7 @@ describe("cancel_requested (merchant cancel)", () => {
   it("a cancel before anything ran (no usable result) ends the Task as `cancelled`, not failed", async () => {
     putTask("cancel_requested");
     putRow({ state: "cancel_requested" });
+    h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true, requestCounts: { total: 1, processing: 0, succeeded: 0, errored: 1, expired: 0, canceled: 0 } });
     h.results.mockImplementation(() => (async function* () { yield { customId: "ttask-1_p0", outcome: "canceled" as const }; })());
     const d = deps();
     expect(await processBatchRow("row-1", d)).toBe("noResult");
@@ -449,8 +450,26 @@ describe("cancel_requested (merchant cancel)", () => {
   });
 });
 
+describe("L2: the result stream must account for every request the provider says succeeded", () => {
+  it("a stream that stops early is a FAILED TICK: nothing booked, nothing written, the row goes back to waiting", async () => {
+    h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true, requestCounts: { total: 2, processing: 0, succeeded: 2, errored: 0, expired: 0, canceled: 0 } });
+    const d = deps();
+    expect(await processBatchRow("row-1", d)).toBe("failedTick");
+    expect(h.booking).not.toHaveBeenCalled();
+    expect(d.runCollect).not.toHaveBeenCalled();
+    expect(h.rows.get("row-1")).toMatchObject({ failedTicks: 1, state: "waiting" });
+    expect(h.tasks.get("task-1").status).toBe("waiting_batch");
+  });
+
+  it("a complete stream (every succeeded request seen) proceeds; counts the provider did not give are not a reason to refuse", async () => {
+    h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true });
+    expect(await processBatchRow("row-1", deps())).toBe("collected");
+  });
+});
+
 describe("an ended batch with nothing usable", () => {
   it("every request expired: a whole run without a result -> failed, batch_expired, booked (nothing to bill), nothing re-submitted", async () => {
+    h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true, requestCounts: { total: 1, processing: 0, succeeded: 0, errored: 1, expired: 0, canceled: 0 } });
     h.results.mockImplementation(() => (async function* () { yield { customId: "ttask-1_p0", outcome: "expired" as const }; })());
     const d = deps();
     expect(await processBatchRow("row-1", d)).toBe("noResult");
@@ -460,6 +479,7 @@ describe("an ended batch with nothing usable", () => {
   });
 
   it("every request errored: failed with batch_failed", async () => {
+    h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true, requestCounts: { total: 1, processing: 0, succeeded: 0, errored: 1, expired: 0, canceled: 0 } });
     h.results.mockImplementation(() => (async function* () { yield { customId: "ttask-1_p0", outcome: "errored" as const, error: "overloaded" }; })());
     await processBatchRow("row-1", deps());
     expect(h.tasks.get("task-1")).toMatchObject({ status: "failed", error: "batch_failed" });

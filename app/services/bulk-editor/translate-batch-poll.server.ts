@@ -435,11 +435,15 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
   // 7. Where is the provider?
   let ended = batchIds.length > 0;
   let expiresAtIso: string | null = null;
+  // What the provider says succeeded: the result stream must account for every one of them (L2).
+  let succeededExpected: number | null = 0;
   try {
     for (const id of batchIds) {
       const status = await withDeadline(() => transport.retrieve(id));
       if (!status.ended) ended = false;
       if (status.expiresAt) expiresAtIso = status.expiresAt;
+      const counted = status.requestCounts?.succeeded;
+      succeededExpected = typeof counted === "number" && succeededExpected !== null ? succeededExpected + counted : null;
     }
   } catch (error) {
     return await noteFailedTick(deps, row, token, error, transport);
@@ -464,6 +468,19 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
     }
   } catch (error) {
     return await noteFailedTick(deps, { ...row, state: "collecting" }, token, error, transport);
+  }
+  // A result stream that stopped early looks exactly like requests that were never answered: a SHORTFALL against
+  // the provider's own count is a failed tick (retried), never "missing" -- booking and writing on a partial
+  // stream would under-book what the provider charged and re-translate what it already delivered.
+  const succeededSeen = [...results.values()].filter((r) => r.outcome === "succeeded").length;
+  if (succeededExpected !== null && succeededSeen < succeededExpected) {
+    return await noteFailedTick(
+      deps,
+      { ...row, state: "collecting" },
+      token,
+      new Error(`results_incomplete:${succeededSeen}/${succeededExpected}`),
+      transport,
+    );
   }
   const manifest = parseManifest(row.manifest);
   if (!manifest) {
