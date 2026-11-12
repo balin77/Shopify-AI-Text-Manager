@@ -16,6 +16,7 @@ import { DEFAULT_MODELS, resolveModelId } from '../../app/config/ai-models.confi
 /** Retired model ids already logged by this process — one warning each, not one per call. */
 const retiredModelWarned = new Set<string>();
 import { TRANSLATION_BATCH } from '../../app/config/constants';
+import { maxOutputTokensFor } from '../../app/config/ai-model-limits';
 import {
   estimateOutputChars,
   fitsOneRequest,
@@ -155,6 +156,32 @@ export function localeName(code: string): string {
 // enough for long-content generation, but bounded.
 const AI_REQUEST_TIMEOUT_MS = 120_000;
 const AI_SDK_MAX_RETRIES = 2;
+/** A package request waits at most this long for the queue to admit it. */
+const PACKAGE_ADMISSION_TIMEOUT_MS = 5 * 60_000;
+/** Package prompts/responses are logged to the Task row at most this long ... */
+const PACKAGE_LOG_PROMPT_CHARS = 2000;
+/** ... and only the last few entries of the history are kept. */
+const PACKAGE_LOG_HISTORY = 20;
+/** `max_tokens` a package request is SENT with: its plan plus headroom (the
+ *  serving model's own ceiling clamps it per attempt, see effectiveMaxTokens). */
+const packageMaxTokensFor = (planned: number): number => Math.max(256, Math.ceil(planned * 1.5));
+
+/**
+ * Per-call options only the PACKAGE path passes (PLAN_BULK_TRANSLATE_BATCHING
+ * 3.2). Absent = every provider call is byte-identical to before: the fixed
+ * `max_tokens`, the 120 s backstop, the SDK's own retries, the flat 8192-token
+ * queue estimate, the whole prompt in the task log, and no stop-reason check.
+ */
+export interface AiRequestOptions {
+  /** `max_tokens` to send (clamped to what the SERVING model can emit). */
+  maxOutputTokens: number;
+  /** Planned output, for the queue's token estimate (instead of the flat 8192). */
+  plannedOutputTokens: number;
+  /** Backstop timeout and SDK request timeout; the SDK does not retry. */
+  timeoutMs: number;
+  /** Set by the provider branch when the answer was cut off at max_tokens. */
+  stop: { truncated: boolean };
+}
 
 class AIRequestTimeoutError extends Error {
   constructor(ms: number) {
@@ -1359,6 +1386,98 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   }
 
   /**
+   * ONE cross-item PACKAGE of the "add missing translations" run
+   * (PLAN_BULK_TRANSLATE_BATCHING 3.1): many unrelated items of one group,
+   * answered as `{ "<id>": { "<locale>": "<text>" } }`.
+   *
+   * This method only asks and parses. It judges nothing about the CONTENT of
+   * the answer (swapped entries, a damaged HTML skeleton ... that is
+   * translate-package-verify.shared.ts), and it never repeats a request (the
+   * ladder in translate-package-run.shared.ts owns that, which is why the SDK
+   * does not retry package calls either). Provider errors propagate untouched
+   * so the caller's stand-down / key-rejection handling sees them; an answer
+   * that was cut off at the output ceiling or cannot be parsed comes back as
+   * `invalid`, because the right reaction is a smaller package, not a throw.
+   *
+   * Prompt order is deliberate: the stable part (rules + the merchant's
+   * instructions) first, then everything that varies per package -- the
+   * glossary is built from THIS package's texts, so it cannot be part of a
+   * cacheable prefix (and a group-wide glossary would crowd the package's own
+   * terms out of MAX_TERMS_IN_PROMPT).
+   *
+   * The item texts must already have passed `sanitizePromptInput`.
+   */
+  async translatePackage(req: {
+    kind: 'short' | 'value' | 'long' | 'handle';
+    fromLang: string;
+    locales: string[];
+    items: { id: string; text: string; context?: string }[];
+    contentType: string;
+    instructions?: string;
+    plannedOutputTokens: number;
+    timeoutMs: number;
+  }): Promise<{ parsed: unknown; invalid?: 'truncated' | 'unparseable' }> {
+    const targetLanguages = req.locales.map((loc) => `${localeName(loc)} (${loc})`).join(', ');
+    const rules = [
+      'Translate EVERY item into EVERY target language listed below.',
+      'Keep each translation natural and faithful to the source meaning, and similar in length.',
+      'Keep proper nouns, brand names, SKUs, numbers and placeholders such as {{ ... }}, %s or [shortcodes] exactly as in the source.',
+      'Never merge, split, reorder or skip items, and never answer for an id that was not given.',
+      'Inside translated strings, escape any straight double-quote as \\" so the JSON stays valid.',
+      ...(req.kind === 'long'
+        ? [
+            'Keep ALL HTML tags, attributes (href, src, id, class) and structure exactly as in the source; translate only the human-readable text between the tags. Keep line breaks as they are.',
+          ]
+        : ['Each translation is a single line: no line breaks.']),
+      ...(req.kind === 'handle'
+        ? [
+            'Items are URL slugs: only lowercase a-z, 0-9 and hyphens; no special characters, umlauts or accents.',
+            'An item may carry a "context" (the title it belongs to): use it for orientation only, never translate or output it.',
+          ]
+        : []),
+    ];
+    const prefix = `You translate ${req.contentType} content from ${localeName(req.fromLang)}. Each item has an "id" and a "text".
+
+Requirements:
+${rules.map((r) => `- ${r}`).join('\n')}
+${req.instructions ? `\n${req.instructions}\n` : ''}`;
+
+    const glossaryDirective = await this.getGlossaryDirective(
+      req.items.map((item) => item.text),
+      req.locales,
+    );
+    const skeleton: Record<string, Record<string, string>> = {};
+    const first = req.items[0];
+    if (first) {
+      skeleton[first.id] = {};
+      for (const locale of req.locales) skeleton[first.id][locale] = '...';
+    }
+    const variable = `Target languages: ${targetLanguages}.
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
+Items:
+${JSON.stringify({ items: req.items.map((item) => ({ id: item.id, text: item.text, ...(item.context ? { context: item.context } : {}) })) })}
+
+Respond with ONLY a JSON object keyed by item id, then by locale code, like this (shown for the first item):
+${JSON.stringify(skeleton)}`;
+
+    const stop = { truncated: false };
+    const responseText = await this.askAI(`${prefix}\n${variable}`, undefined, {
+      maxOutputTokens: packageMaxTokensFor(req.plannedOutputTokens),
+      plannedOutputTokens: req.plannedOutputTokens,
+      timeoutMs: req.timeoutMs,
+      stop,
+    });
+    // A cut-off answer may still parse as JSON up to the cut: it is rejected as
+    // a whole, whatever its beginning looks like.
+    if (stop.truncated) return { parsed: null, invalid: 'truncated' };
+    try {
+      return { parsed: this.parseJSONResponse(responseText) };
+    } catch {
+      return { parsed: null, invalid: 'unparseable' };
+    }
+  }
+
+  /**
    * Translate an array of string values to a target locale in a single AI request.
    * Returns translated values in the same order as input.
    */
@@ -2554,11 +2673,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     return merged;
   }
 
-  private estimateTokens(prompt: string): number {
+  private estimateTokens(prompt: string, plannedOutputTokens?: number): number {
     // Rough estimate: ~4 characters per token
     // Add output tokens estimate (2000 max_tokens)
     const inputTokens = Math.ceil(prompt.length / 4);
-    const outputTokens = TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS;
+    // A package knows what it planned to receive; everything else is charged
+    // the flat output ceiling, as it always was.
+    const outputTokens =
+      plannedOutputTokens !== undefined
+        ? Math.ceil(plannedOutputTokens * 1.1)
+        : TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS;
     return inputTokens + outputTokens;
   }
 
@@ -2568,14 +2692,14 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
    * handlers have already clamped the list by the time it gets here. An empty
    * or absent list is the text-only path, byte-identical to what it was.
    */
-  private async askAI(prompt: string, imageUrls?: string[]): Promise<string> {
+  private async askAI(prompt: string, imageUrls?: string[], requestOptions?: AiRequestOptions): Promise<string> {
     // Circuit breaker: a previous call on this instance already saw the
     // provider reject the key — fail fast instead of firing more 401s.
     if (this.authError) throw this.authError;
 
     // Save prompt to database if taskId is provided
     if (this.taskId && this.shop) {
-      await this.savePromptToTask(prompt, imageUrls);
+      await this.savePromptToTask(prompt, imageUrls, !!requestOptions);
     }
 
     let response: string;
@@ -2599,13 +2723,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
             ? await acquireManagedDirectSlot(this.shop)
             : null;
         try {
-          response = await this.executeAIRequest(prompt, imageUrls, 0, served);
+          response = await this.executeAIRequest(prompt, imageUrls, 0, served, requestOptions);
         } finally {
           release?.();
         }
       } else {
         // Use queue for rate-limited execution
-        const estimatedTokens = this.estimateTokens(prompt);
+        const estimatedTokens = this.estimateTokens(prompt, requestOptions?.plannedOutputTokens);
 
         response = await this.queue.enqueue(
           this.shop,
@@ -2620,7 +2744,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           (attempt) => {
             // Each queue attempt starts on the primary again.
             served.provider = this.provider;
-            return this.executeAIRequest(prompt, imageUrls, attempt, served);
+            return this.executeAIRequest(prompt, imageUrls, attempt, served, requestOptions);
           },
           // Which rate-limit bucket this call is ADMITTED against (§9.1),
           // decided from what is knowable before dispatch.
@@ -2632,7 +2756,12 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
             rateLimitBucket(
               this.config.credentialSource === 'managed' ? 'managed' : 'byo',
               served.provider,
-            )
+            ),
+          // Package requests only: reject an impossible estimate at once and
+          // give up waiting on a starved bucket (the caller splits).
+          requestOptions
+            ? { packageCall: true, admissionTimeoutMs: PACKAGE_ADMISSION_TIMEOUT_MS }
+            : undefined,
         );
       }
     } catch (error) {
@@ -2674,13 +2803,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
 
     // Save AI response to the corresponding prompt entry (raw, for debugging)
     if (this.taskId && this.shop) {
-      await this.saveResponseToTask(response);
+      await this.saveResponseToTask(response, !!requestOptions);
     }
 
     return AIService.stripMarkdownFence(response);
   }
 
-  private async savePromptToTask(prompt: string, imageUrls?: string[]): Promise<void> {
+  private async savePromptToTask(prompt: string, imageUrls?: string[], compact = false): Promise<void> {
     try {
       const { db } = await import('../../app/db.server');
 
@@ -2716,11 +2845,20 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         fullPrompt = `[📷 ${label}: ${imageUrls.join(", ")}]\n\n${prompt}`;
       }
 
-      // Add new prompt with timestamp (store full prompt, no truncation)
+      // Add new prompt with timestamp (store full prompt, no truncation).
+      // A PACKAGE prompt is kept short and the history bounded: the whole
+      // history is read back and rewritten on every call, so a run of
+      // package-sized prompts would grow the row to megabytes and make every
+      // call quadratic.
       promptHistory.push({
         timestamp: new Date().toISOString(),
-        prompt: fullPrompt,
+        prompt: compact
+          ? `${fullPrompt.slice(0, PACKAGE_LOG_PROMPT_CHARS)}${fullPrompt.length > PACKAGE_LOG_PROMPT_CHARS ? ` ... [${fullPrompt.length} chars]` : ''}`
+          : fullPrompt,
       });
+      if (compact && promptHistory.length > PACKAGE_LOG_HISTORY) {
+        promptHistory = promptHistory.slice(-PACKAGE_LOG_HISTORY);
+      }
 
       await db.task.update({
         where: { id: this.taskId },
@@ -2736,7 +2874,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     }
   }
 
-  private async saveResponseToTask(response: string): Promise<void> {
+  private async saveResponseToTask(response: string, compact = false): Promise<void> {
     try {
       const { db } = await import('../../app/db.server');
 
@@ -2750,7 +2888,10 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           const parsed = JSON.parse(existingTask.prompt);
           if (Array.isArray(parsed) && parsed.length > 0) {
             // Add response to the last prompt entry (store full response, no truncation)
-            parsed[parsed.length - 1].response = response;
+            parsed[parsed.length - 1].response =
+              compact && response.length > PACKAGE_LOG_PROMPT_CHARS
+                ? `${response.slice(0, PACKAGE_LOG_PROMPT_CHARS)} ... [${response.length} chars]`
+                : response;
 
             await db.task.update({
               where: { id: this.taskId },
@@ -2836,6 +2977,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
      * workers), so an instance field would report a sibling's route.
      */
     served?: { provider: AIProvider },
+    requestOptions?: AiRequestOptions,
   ): Promise<string> {
     // A refusal decided at BUILD time (no consent, kill switch, a credential
     // this deployment cannot serve) fails every call on this instance, and
@@ -2891,7 +3033,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       );
       const gate = breakerAllows(this.provider);
       if (!gate.allow) {
-        const routed = await this.runOnFailover('breakerOpen', prompt, imageUrls, ledger, queueAttempt, served);
+        const routed = await this.runOnFailover('breakerOpen', prompt, imageUrls, ledger, queueAttempt, served, false, requestOptions);
         if (routed.outcome === 'answered') return routed.text;
         // The fallback ran and failed: the primary is known to be down, so
         // there is nothing better to try — its error is what happened.
@@ -2914,7 +3056,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     let probeResolved = false;
     try {
       try {
-        const answer = await this.meteredAttempt(prompt, imageUrls, ledger);
+        const answer = await this.meteredAttempt(prompt, imageUrls, ledger, requestOptions);
         // A managed SUCCESS on the default provider, recorded — without it
         // the breaker's window is 100 % failures by construction. It is also
         // what CLOSES a half-open circuit.
@@ -2960,6 +3102,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
             // charged its worst case), so the budget this call's preflight
             // admitted may already be spent.
             true,
+            requestOptions,
           );
           if (routed.outcome === 'answered') return routed.text;
           // The error re-thrown is the PRIMARY's, so the queue's rate window
@@ -3005,8 +3148,10 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     prompt: string,
     imageUrls: string[] | undefined,
     ledger: CallLedger,
+    requestOptions?: AiRequestOptions,
   ): Promise<string> {
     let timer: NodeJS.Timeout | undefined;
+    const timeoutMs = requestOptions?.timeoutMs ?? AI_REQUEST_TIMEOUT_MS;
     const meter: AiCallMeter = { dispatched: 0, observed: [] };
     try {
       // Backstop timeout: even if a provider SDK ignores its own timeout
@@ -3014,12 +3159,12 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       // shared queue slot is released so other shops are not blocked.
       const timeoutPromise = new Promise<never>((_, reject) => {
         timer = setTimeout(
-          () => reject(new AIRequestTimeoutError(AI_REQUEST_TIMEOUT_MS)),
-          AI_REQUEST_TIMEOUT_MS,
+          () => reject(new AIRequestTimeoutError(timeoutMs)),
+          timeoutMs,
         );
       });
       return await Promise.race([
-        this._executeAIRequestInner(prompt, imageUrls, meter),
+        this._executeAIRequestInner(prompt, imageUrls, meter, requestOptions),
         timeoutPromise,
       ]);
     } catch (error) {
@@ -3029,7 +3174,9 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         // answered: Gemini's vision fallback can have a cheap first answer and
         // an expensive second call still in flight.
         for (let i = meter.observed.length; i < meter.dispatched; i++) {
-          meter.observed.push(this.worstCaseUsage(prompt, imageUrls?.length ?? 0));
+          meter.observed.push(
+            this.worstCaseUsage(prompt, imageUrls?.length ?? 0, requestOptions && this.effectiveMaxTokens(requestOptions)),
+          );
         }
       }
       throw error;
@@ -3087,6 +3234,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     queueAttempt: number,
     served?: { provider: AIProvider },
     recheckBudget = false,
+    requestOptions?: AiRequestOptions,
   ): Promise<FailoverRoute> {
     if (this.config.credentialSource !== 'managed' || !this.config.switchToFailover) {
       return { outcome: 'refused' };
@@ -3160,7 +3308,8 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     // settled it, or the fallback stays disabled until a restart.
     let probeResolved = false;
     try {
-      const text = await delegate.meteredAttempt(prompt, imageUrls, ledger);
+      // The delegate clamps `max_tokens` to ITS model's ceiling.
+      const text = await delegate.meteredAttempt(prompt, imageUrls, ledger, requestOptions);
       await this.recordOutcome(delegate.provider, true, gate.probe);
       probeResolved = true;
       return { outcome: 'answered', text };
@@ -3263,11 +3412,12 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
    * images) in, and the output ceiling every provider here is configured with
    * out. Flagged as an estimate like any other counted call.
    */
-  private worstCaseUsage(prompt: string, imageCount: number): AiCallUsage {
+  private worstCaseUsage(prompt: string, imageCount: number, sentMaxTokens?: number): AiCallUsage {
     return {
       inputTokens:
         AIService.estimateTokensFor(prompt) + imageCount * ESTIMATED_TOKENS_PER_IMAGE,
-      outputTokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+      // What was actually SENT as the ceiling (a package call sends its own).
+      outputTokens: sentMaxTokens ?? TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
       model: this.getModel(),
       source: 'estimate',
     };
@@ -3390,6 +3540,28 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     return { input: meta.promptTokenCount, output: meta.candidatesTokenCount };
   }
 
+  /**
+   * The `max_tokens` a PACKAGE attempt is really sent with on THIS identity:
+   * what the package asked for, never more than this model can emit (a
+   * failover delegate may run a smaller model than the one the plan used).
+   */
+  private effectiveMaxTokens(options: AiRequestOptions): number {
+    return Math.max(256, Math.min(options.maxOutputTokens, maxOutputTokensFor(this.provider, this.getModel())));
+  }
+
+  /** What a packaged request is planned against, for the caller's sizing. */
+  packageLimits(): { provider: AIProvider; model: string; maxOutputTokens: number; bucketTpm: number | null } {
+    return {
+      provider: this.provider,
+      model: this.getModel(),
+      maxOutputTokens: maxOutputTokensFor(this.provider, this.getModel()),
+      bucketTpm: this.queue.getBucketTokenLimit(
+        this.config.credentialSource === 'managed' ? 'managed' : 'byo',
+        this.provider,
+      ),
+    };
+  }
+
   private static estimateTokensFor(text: string): number {
     // Deliberately pessimistic: ~4 chars/token is the Latin-script average, and
     // an estimate that errs cheap is the one that understates a bill. Non-Latin
@@ -3464,7 +3636,18 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     prompt: string,
     imageUrls: string[] | undefined,
     meter: AiCallMeter,
+    requestOptions?: AiRequestOptions,
   ): Promise<string> {
+    // The ceiling this attempt is sent with: the fixed app-wide value unless a
+    // package asked for its own, and then never more than what THIS (possibly
+    // failover) model can emit.
+    const maxTokens = requestOptions ? this.effectiveMaxTokens(requestOptions) : TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS;
+    // Package requests: a per-request timeout and NO SDK retries (the ladder
+    // owns repeating). Passed as the SDK call's second argument.
+    const sdkOptions = requestOptions ? { timeout: requestOptions.timeoutMs, maxRetries: 0 } : undefined;
+    const markTruncated = (truncated: boolean) => {
+      if (requestOptions && truncated) requestOptions.stop.truncated = true;
+    };
     // One local truth for "is this a vision call": every provider branch below
     // asks the same question, and a branch that asked it differently is how a
     // text-only provider would end up with an image in its payload.
@@ -3533,9 +3716,10 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       const response = await this.huggingface.chatCompletion({
         model: this.getModel(),
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+        max_tokens: maxTokens,
         temperature: 0.7,
       });
+      markTruncated(response.choices[0]?.finish_reason === 'length');
       // HuggingFace's chat-completion output declares `usage`, but whether a
       // routed provider fills it is a runtime question — absent is the
       // estimate case, never zero.
@@ -3562,6 +3746,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
             ...encoded.map((data) => ({ inlineData: { mimeType: 'image/jpeg', data } })),
           ]);
           const response = await result.response;
+          markTruncated(response.candidates?.[0]?.finishReason === 'MAX_TOKENS');
           // The usage is read BEFORE `response.text()`, which THROWS when the
           // candidate was blocked for safety or carries no text part — a
           // response Google has still billed for its input, images included.
@@ -3587,6 +3772,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           meter.dispatched++;
           const result = await this.gemini.generateContent(prompt);
           const response = await result.response;
+          markTruncated(response.candidates?.[0]?.finishReason === 'MAX_TOKENS');
           const fallbackReported = AIService.geminiUsage(response);
           let geminiTextFallback = '';
           try {
@@ -3601,6 +3787,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         meter.dispatched++;
         const result = await this.gemini.generateContent(prompt);
         const response = await result.response;
+        markTruncated(response.candidates?.[0]?.finishReason === 'MAX_TOKENS');
         const reported = AIService.geminiUsage(response);
         let geminiTextOnly = '';
         try {
@@ -3617,7 +3804,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       const message = hasImages
         ? await this.anthropic.messages.create({
             model: this.getModel(),
-            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            max_tokens: maxTokens,
             messages: [{
               role: 'user',
               content: [
@@ -3627,12 +3814,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
                 { type: 'text', text: prompt },
               ],
             }],
-          })
+          }, sdkOptions)
         : await this.anthropic.messages.create({
             model: this.getModel(),
-            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            max_tokens: maxTokens,
             messages: [{ role: 'user', content: prompt }],
-          });
+          }, sdkOptions);
+      markTruncated(message.stop_reason === 'max_tokens');
       const textBlock = message.content.find((b) => b.type === 'text');
       const claudeText = textBlock?.text ?? '';
       // `input_tokens` deliberately EXCLUDES cache_creation/cache_read tokens,
@@ -3681,13 +3869,14 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
                 { type: 'text' as const, text: prompt },
               ],
             }],
-            ...openAiChatParams(this.getModel(), TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS),
-          })
+            ...openAiChatParams(this.getModel(), maxTokens),
+          }, sdkOptions)
         : await this.openai.chat.completions.create({
             model: this.getModel(),
             messages: [{ role: 'user', content: prompt }],
-            ...openAiChatParams(this.getModel(), TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS),
-          });
+            ...openAiChatParams(this.getModel(), maxTokens),
+          }, sdkOptions);
+      markTruncated(completion.choices[0]?.finish_reason === 'length');
       const openaiContent = completion.choices[0]?.message?.content ?? '';
       reportChat(completion, openaiContent, hasImages ? images.length : 0);
       if (!completion.choices[0]) throw new Error('OpenAI returned empty response');
@@ -3709,15 +3898,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
                 { type: 'text' as const, text: prompt },
               ],
             }],
-            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            max_tokens: maxTokens,
             temperature: 0.7,
-          })
+          }, sdkOptions)
         : await this.grok.chat.completions.create({
             model: this.getModel(),
             messages: [{ role: 'user', content: prompt }],
-            max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+            max_tokens: maxTokens,
             temperature: 0.7,
-          });
+          }, sdkOptions);
+      markTruncated(completion.choices[0]?.finish_reason === 'length');
       const grokContent = completion.choices[0]?.message?.content ?? '';
       reportChat(completion, grokContent, hasImages ? images.length : 0);
       if (!completion.choices[0]) throw new Error('Grok returned empty response');
@@ -3729,9 +3919,10 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       const completion = await this.deepseek.chat.completions.create({
         model: this.getModel(),
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: TRANSLATION_BATCH.AI_MAX_OUTPUT_TOKENS,
+        max_tokens: maxTokens,
         temperature: 0.7,
-      });
+      }, sdkOptions);
+      markTruncated(completion.choices[0]?.finish_reason === 'length');
       const deepseekContent = completion.choices[0]?.message?.content ?? '';
       reportChat(completion, deepseekContent, 0); // text-only provider
       if (!completion.choices[0]) throw new Error('DeepSeek returned empty response');

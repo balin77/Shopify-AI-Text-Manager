@@ -40,6 +40,11 @@ interface QueuedRequest {
   reject: (error: any) => void;
   retryCount: number;
   createdAt: Date;
+  /** A package request above LARGE_PACKAGE_SHARE of its bucket's TPM: at most
+   *  one of these per shop executes at a time. */
+  large?: boolean;
+  /** Admission-timeout timer (cleared on dispatch). */
+  admissionTimer?: NodeJS.Timeout;
 }
 
 interface UsageWindow {
@@ -83,6 +88,54 @@ export class AIQueueShuttingDownError extends Error {
     this.name = 'AIQueueShuttingDownError';
   }
 }
+
+/**
+ * A PACKAGE request whose estimate exceeds the bucket's per-minute token
+ * allowance can never be admitted (`canExecute` needs usage + estimate <= TPM),
+ * and `enqueue` has no admission timeout, so it would wait for ever. Package
+ * callers get it rejected at once instead (PLAN_BULK_TRANSLATE_BATCHING M-2);
+ * the caller splits the package. Deliberately NOT applied to the existing
+ * callers: a merchant-configured TPM below one ordinary call's estimate (or a
+ * 130 000-character single field on the 40 000 default) hangs them today, and
+ * changing that is a decision of its own.
+ */
+export class AIRequestTooLargeError extends Error {
+  readonly code = 'AI_REQUEST_TOO_LARGE' as const;
+  constructor(readonly estimatedTokens: number, readonly limitTokens: number) {
+    super(`AI request estimate (${estimatedTokens} tokens) exceeds the per-minute token limit (${limitTokens})`);
+    this.name = 'AIRequestTooLargeError';
+  }
+}
+
+/** A package request that was not admitted within its admission timeout (a
+ *  starved global bucket): the caller splits it, smaller ones get through. */
+export class AIRequestStarvedError extends Error {
+  readonly code = 'AI_REQUEST_STARVED' as const;
+  constructor(readonly waitedMs: number) {
+    super(`AI request was not admitted within ${waitedMs}ms`);
+    this.name = 'AIRequestStarvedError';
+  }
+}
+
+export function isAIRequestTooLarge(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === 'AI_REQUEST_TOO_LARGE';
+}
+
+export function isAIRequestStarved(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === 'AI_REQUEST_STARVED';
+}
+
+/** Options only the packaged translate run passes. */
+export interface EnqueueOptions {
+  /** Marks a PACKAGE request: immediate rejection above the bucket's TPM and
+   *  the one-large-package-per-shop rule. */
+  packageCall?: boolean;
+  /** Reject with AIRequestStarvedError if not dispatched within this time. */
+  admissionTimeoutMs?: number;
+}
+
+/** A package request estimated above this share of its bucket's TPM is "large". */
+export const LARGE_PACKAGE_SHARE = 0.25;
 
 export function isAIQueueShuttingDown(error: unknown): boolean {
   return (error as { code?: string } | null)?.code === 'AI_QUEUE_SHUTTING_DOWN';
@@ -155,6 +208,9 @@ export class AIQueueService {
 
   // Round-robin tracking: which shop to process next
   private lastProcessedShopIndex = 0;
+
+  /** Shops with a LARGE package request executing right now. */
+  private largeInFlight: Set<string> = new Set();
 
   // Track usage per provider using sliding window (global - shared API keys)
   /** Usage windows, keyed like the buckets above. */
@@ -385,12 +441,22 @@ export class AIQueueService {
      */
     source: QueueCredentialSource = 'byo',
     /** See `QueuedRequest.servedBucket`. */
-    servedBucket?: () => string
+    servedBucket?: () => string,
+    options?: EnqueueOptions,
   ): Promise<T> {
     return new Promise((resolve, reject) => {
       if (this.shuttingDown) {
         reject(new AIQueueShuttingDownError());
         return;
+      }
+      let large = false;
+      if (options?.packageCall) {
+        const limits = this.rateLimits.get(rateLimitBucket(source, provider));
+        if (limits && estimatedTokens > limits.maxTokensPerMinute) {
+          reject(new AIRequestTooLargeError(estimatedTokens, limits.maxTokensPerMinute));
+          return;
+        }
+        large = !!limits && estimatedTokens > limits.maxTokensPerMinute * LARGE_PACKAGE_SHARE;
       }
       const request: QueuedRequest = {
         id: `${Date.now()}-${Math.random()}`,
@@ -405,6 +471,7 @@ export class AIQueueService {
         reject,
         retryCount: 0,
         createdAt: new Date(),
+        ...(large ? { large: true } : {}),
       };
 
       const shopQueue = this.getShopQueue(shop);
@@ -417,6 +484,17 @@ export class AIQueueService {
       }
 
       shopQueue.push(request);
+      if (options?.admissionTimeoutMs && options.admissionTimeoutMs > 0) {
+        const waitedMs = options.admissionTimeoutMs;
+        request.admissionTimer = setTimeout(() => {
+          const queue = this.queues.get(shop);
+          const at = queue ? queue.indexOf(request) : -1;
+          if (!queue || at === -1) return; // already dispatched
+          queue.splice(at, 1);
+          if (queue.length === 0) this.queues.delete(shop);
+          request.reject(new AIRequestStarvedError(waitedMs));
+        }, waitedMs);
+      }
       loggers.queue('debug', `Enqueued request ${request.id} for shop ${shop}, task ${taskId}`, { shopQueueSize: shopQueue.length, totalQueueSize: this.getTotalQueueLength() });
 
       // Update task queue position in database (shop-specific)
@@ -546,6 +624,9 @@ export class AIQueueService {
 
       // Find first executable request in this shop's queue
       const requestIndex = queue.findIndex(req =>
+        // One LARGE package per shop at a time: a second one waits for the
+        // first, whatever the bucket would allow.
+        !(req.large && this.largeInFlight.has(shop)) &&
         this.canExecute(this.bucketOf(req), req.estimatedTokens)
       );
 
@@ -590,6 +671,11 @@ export class AIQueueService {
               if (shopQueue.length === 0) this.queues.delete(shop);
 
               this.inFlight++;
+              if (request.admissionTimer) {
+                clearTimeout(request.admissionTimer);
+                request.admissionTimer = undefined;
+              }
+              if (request.large) this.largeInFlight.add(shop);
               // Fire-and-forget: do NOT await here, so multiple requests run
               // concurrently. inFlight is decremented in runRequest's finally.
               void this.runRequest(shop, request);
@@ -689,7 +775,13 @@ export class AIQueueService {
       await this.updateQueuePositions(shop);
     } finally {
       this.inFlight--;
+      if (request.large) this.largeInFlight.delete(shop);
     }
+  }
+
+  /** The per-minute token allowance of a bucket, or null if none is known. */
+  getBucketTokenLimit(source: QueueCredentialSource, provider: AIProvider): number | null {
+    return this.rateLimits.get(rateLimitBucket(source, provider))?.maxTokensPerMinute ?? null;
   }
 
   /**
