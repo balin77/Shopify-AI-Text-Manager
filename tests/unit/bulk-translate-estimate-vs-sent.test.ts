@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { AIService } from "../../src/services/ai.service";
+import { buildPackageItems, packageBudgetFor, planPackages, type PackageEntry } from "~/services/bulk-editor/translate-packages.shared";
 import { MAX_TERMS_IN_PROMPT } from "../../src/services/glossary.service";
 import {
   GLOSSARY_MAX_TERMS,
@@ -139,5 +140,115 @@ describe("estimate >= what the per-row runner sends", () => {
 
   it("the glossary term cap matches the prompt's", () => {
     expect(GLOSSARY_MAX_TERMS).toBe(MAX_TERMS_IN_PROMPT);
+  });
+});
+
+describe("estimate >= what the other runner paths send (real prompt builders)", () => {
+  const LOCALES = ["fr", "es", "it", "nl", "pt-BR", "sv", "da", "fi", "pl", "cs", "zh-CN", "ja"];
+  const col = (id: string) => ({ id, kind: "field", label: id, group: "content", editable: true, translatable: true, inputType: "text", minWidth: 100 }) as any;
+  const sentTokens = (prompts: string[]) => Math.ceil(prompts.reduce((n, p) => n + p.length, 0) / 3);
+  const cls = (over: Partial<EstimateClassifiers>): EstimateClassifiers => ({ ...classifiers(""), ...over });
+  const base = { skippedOverCap: 0, scanTruncated: false, glossaryChars: 0, limits };
+
+  it("short batch (title + seoTitle + handle + productType) into 12 locales", async () => {
+    const { svc, prompts } = service("");
+    const fields = { title: "Handgewebter Wollschal", seoTitle: "Wollschal handgewebt kaufen", handle: "wollschal-handgewebt", productType: "Schal" };
+    await svc.translateShortFieldsBatch(fields, "de", LOCALES, "product").catch(() => undefined);
+    expect(prompts).toHaveLength(1);
+    const jobs: EstimateJob[] = [{
+      rowId: "r1",
+      cells: Object.entries(fields).map(([k, v]) => ({ column: col(`field.${k}`), fieldKey: k, source: v, locales: LOCALES })),
+    }];
+    const e = estimateTranslateRun({ ...base, jobs, units: 48, packages: false, classifiers: cls({ isShortColumn: () => true }) });
+    expect(e.requests).toBeGreaterThanOrEqual(prompts.length);
+    expect(e.inputTokens).toBeGreaterThanOrEqual(sentTokens(prompts));
+  });
+
+  it("a single short title into one locale", async () => {
+    const { svc, prompts } = service("");
+    await svc.translateShortFieldsBatch({ title: "Schal" }, "de", ["fr"], "product").catch(() => undefined);
+    const jobs: EstimateJob[] = [{ rowId: "r1", cells: [{ column: col("field.title"), fieldKey: "title", source: "Schal", locales: ["fr"] }] }];
+    const e = estimateTranslateRun({ ...base, jobs, units: 1, packages: false, classifiers: cls({ isShortColumn: () => true }) });
+    expect(e.inputTokens).toBeGreaterThanOrEqual(sentTokens(prompts));
+  });
+
+  it("value batches: many locales and the single-locale batch", async () => {
+    const values = Array.from({ length: 45 }, (_, i) => `Wert Nummer ${i} aus Wolle`);
+    const jobs: EstimateJob[] = [{
+      rowId: "r1",
+      cells: [{ column: col("metafield.x"), fieldKey: "value", source: values.join(" | "), locales: LOCALES }],
+    }];
+    const { svc, prompts } = service("");
+    await svc.translateBatchValuesToLocales(values, "de", LOCALES, "product content").catch(() => undefined);
+    expect(prompts.length).toBeGreaterThan(1);
+    const e = estimateTranslateRun({
+      ...base, jobs, units: LOCALES.length, packages: false,
+      classifiers: cls({ isValueColumn: () => true, isListValuesColumn: () => true }),
+    });
+    // list columns split on the display separator; the figure must still lead high
+    expect(e.requests).toBeGreaterThanOrEqual(prompts.length);
+    const split = estimateTranslateRun({
+      ...base, units: 1, packages: false,
+      jobs: [{ rowId: "r1", cells: [{ column: col("metafield.x"), fieldKey: "value", source: "Wolle", locales: ["fr"] }] }],
+      classifiers: cls({ isValueColumn: () => true }),
+    });
+    const one = service("");
+    await one.svc.translateBatchValuesToLocales(["Wolle"], "de", ["fr"], "product content").catch(() => undefined);
+    expect(split.inputTokens).toBeGreaterThanOrEqual(sentTokens(one.prompts));
+  });
+
+  it("productType-only and handle-only short cells", async () => {
+    for (const key of ["productType", "handle"] as const) {
+      const { svc, prompts } = service("");
+      const src = key === "handle" ? "wollschal-handgewebt" : "Schal";
+      await svc.translateShortFieldsBatch({ [key]: src }, "de", LOCALES, "product").catch(() => undefined);
+      const jobs: EstimateJob[] = [{ rowId: "r1", cells: [{ column: col(`field.${key}`), fieldKey: key, source: src, locales: LOCALES }] }];
+      const e = estimateTranslateRun({ ...base, jobs, units: LOCALES.length, packages: false, classifiers: cls({ isShortColumn: () => true, isHandleColumn: () => key === "handle" }) });
+      expect(e.inputTokens).toBeGreaterThanOrEqual(sentTokens(prompts));
+    }
+  });
+
+  it("the oversized per-locale fallback of a long field", async () => {
+    const HUGE = "<p>" + "Handgewebter Wollschal in vielen Farben. ".repeat(2500) + "</p>";
+    const { svc, prompts } = service("");
+    await svc.translateFieldsToLocalesChunked({ body: HUGE }, "de", LOCALES.slice(0, 4), { preserveHtml: true }).catch(() => undefined);
+    const jobs: EstimateJob[] = [{ rowId: "r1", cells: [{ column: longColumn, fieldKey: "body", source: HUGE, locales: LOCALES.slice(0, 4) }] }];
+    const e = estimateTranslateRun({ ...base, jobs, units: 4, packages: false, classifiers: classifiers("") });
+    expect(e.requests).toBeGreaterThanOrEqual(prompts.length);
+    expect(e.inputTokens).toBeGreaterThanOrEqual(sentTokens(prompts));
+  });
+
+  it("the package path: every package prompt and every oversized item is covered", async () => {
+    const titles = Array.from({ length: 60 }, (_, i) => `Wollschal Modell ${i} handgewebt`);
+    const jobs: EstimateJob[] = titles.map((t, i) => ({
+      rowId: `r${i}`,
+      cells: [
+        { column: col("field.title"), fieldKey: "title", source: t, locales: LOCALES },
+        { column: col("field.handle"), fieldKey: "handle", source: `wollschal-${i}`, locales: LOCALES.slice(0, 5) },
+      ],
+    }));
+    const c = cls({ isShortColumn: () => true, isHandleColumn: (x) => x.id === "field.handle" });
+    const entries: PackageEntry[] = jobs.flatMap((j) =>
+      j.cells.map((cell) => ({
+        owner: `${j.rowId}|${cell.column.id}#0`,
+        kind: cell.fieldKey === "handle" ? ("handle" as const) : ("short" as const),
+        fieldKey: cell.fieldKey, source: cell.source, locales: cell.locales,
+        instructions: undefined,
+        ...(cell.fieldKey === "handle" ? { context: titles[Number(j.rowId.slice(1))].slice(0, 200) } : {}),
+      })),
+    );
+    const plan = planPackages(buildPackageItems(entries), packageBudgetFor({ modelMaxOutput: limits.maxOutputTokens, bucketTpm: null }));
+    const { svc, prompts } = service("");
+    for (const pkg of plan.packages) {
+      await svc.translatePackage({
+        kind: pkg.kind, fromLang: "de", locales: pkg.locales, contentType: "product",
+        items: pkg.items.map((it) => ({ id: it.key, text: it.source, ...(it.context ? { context: it.context } : {}) })),
+        instructions: pkg.instructions, plannedOutputTokens: 1000, timeoutMs: 60_000,
+      }).catch(() => undefined);
+    }
+    const e = estimateTranslateRun({ ...base, jobs, units: 60 * LOCALES.length, packages: true, classifiers: c });
+    expect(prompts.length).toBe(plan.packages.length);
+    expect(e.requests).toBeGreaterThanOrEqual(prompts.length);
+    expect(e.inputTokens).toBeGreaterThanOrEqual(sentTokens(prompts));
   });
 });
