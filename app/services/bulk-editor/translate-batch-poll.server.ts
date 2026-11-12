@@ -66,7 +66,7 @@ import { maxOutputTokensFor } from "~/config/ai-model-limits";
 import { logger } from "~/utils/logger.server";
 import { parseManifest } from "./translate-batch.shared";
 import { buildBatchAnswers, runBatchCollect, usageItemsFromResults } from "./translate-batch-collect.server";
-import { expireStaleBatches, BATCH_UNREACHABLE_ERROR, BATCH_SUBMIT_UNCONFIRMED_ERROR } from "./translate-batch-expiry.server";
+import { expireStaleBatches, OPEN_BATCH_MAX_AGE_MS, BATCH_UNREACHABLE_ERROR, BATCH_SUBMIT_UNCONFIRMED_ERROR } from "./translate-batch-expiry.server";
 import { settleHold } from "./translate-batch-hold.server";
 
 /** Terminal code of a collect that stayed open for MAX_FAILED_TICKS ticks (results booked, some may be written). */
@@ -246,6 +246,7 @@ async function noteFailedTick(
   transport: SettlementTransport | null = null,
   giveUpCode?: string,
   cancelWanted = false,
+  deferGiveUp = false,
 ): Promise<RowOutcome> {
   const { db } = deps;
   // Read the row FRESH: the in-memory copy is from the start of the tick, and step 8 rewrites the counter and the
@@ -275,9 +276,26 @@ async function noteFailedTick(
     (cancelWanted || row.state === "cancel_requested" || !!row.consentWithdrawnAt) &&
     !(fresh ? fresh.cancelRequestedAt : row.cancelRequestedAt) &&
     stringList(row.batchIds).length > 0;
-  if (failedTicks >= MAX_FAILED_TICKS && cancelUnconfirmed && !(await batchesEnded(transport, stringList(row.batchIds)))) {
+  if (failedTicks >= MAX_FAILED_TICKS && deferGiveUp) {
+    // A create of unknown outcome with its intent recorded: a batch may exist that nobody can name yet, so the
+    // row is not given up on; the 48 h expiry is the hard end (it converts the hold).
+    logger.warn("[BatchPoll] Give-up deferred: a create of unknown outcome waits for the absolute end", { context: "AI", batchRowId: row.id, failedTicks });
+  } else if (failedTicks >= MAX_FAILED_TICKS && cancelUnconfirmed && !(await batchesEnded(transport, stringList(row.batchIds)))) {
     logger.warn("[BatchPoll] Give-up deferred: a wanted provider cancel is not confirmed and the batch has not ended", { context: "AI", batchRowId: row.id, failedTicks });
   } else if (failedTicks >= MAX_FAILED_TICKS) {
+    // Ordinary give-up (no cancel was wanted): one best-effort provider cancel first, so a batch we stop watching
+    // does not keep running unattended. Errors are swallowed (cancelAllAtProvider logs); the hold is settled below
+    // by the guiding rule either way.
+    const ids = stringList(row.batchIds);
+    if (!cancelUnconfirmed && ids.length > 0 && transport && !(fresh ? fresh.cancelRequestedAt : row.cancelRequestedAt)) {
+      try {
+        if (await cancelAllAtProvider(transport, ids)) {
+          await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { cancelRequestedAt: new Date() } });
+        }
+      } catch (e) {
+        logger.warn("[BatchPoll] Best-effort cancel at give-up failed", { context: "AI", batchRowId: row.id, error: messageOf(e) });
+      }
+    }
     const outcome = await settleHold(row, transport, { final: true });
     if (outcome.kind !== "pending") {
       await closeRun(db, row, token, giveUpOutcome(row, giveUpCode ?? (collectReached ? BATCH_COLLECT_FAILED_ERROR : undefined)));
@@ -393,10 +411,12 @@ async function reconcileUnknownCreate(
   cancelWanted: boolean,
 ): Promise<RowOutcome> {
   const { db } = deps;
+  // With an intent recorded the create may have made a batch we cannot name: no give-up, the 48 h expiry decides.
+  const deferGiveUp = !!row.intentAt && stringList(row.batchIds).length === 0;
   if (!access.ok) {
     return CONFIG_REFUSALS.includes(access.reason)
       ? "configBlocked"
-      : await noteFailedTick(deps, row, token, new Error(`settlement_${access.reason}`));
+      : await noteFailedTick(deps, row, token, new Error(`settlement_${access.reason}`), null, undefined, false, deferGiveUp);
   }
   const manifest = parseManifest(row.manifest);
   const requestCount = manifest?.requests.length ?? 0;
@@ -407,7 +427,7 @@ async function reconcileUnknownCreate(
       access.transport.findIntentBatch({ idPrefix: row.idPrefix, since: row.intentAt!.toISOString(), requestCount }),
     );
   } catch (error) {
-    return await noteFailedTick(deps, row, token, error, access.transport);
+    return await noteFailedTick(deps, row, token, error, access.transport, undefined, false, deferGiveUp);
   }
   if (!search.found) return "waiting"; // nothing yet (or a running candidate that cannot be told from a stranger's)
   const adopted = await db.bulkTranslateBatch.updateMany({
@@ -473,6 +493,17 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
   });
   const decision = await settlementCredentialsFor(shop, row.id);
   const orphan = !task || !(OPEN_BATCH_TASK_STATUSES as string[]).includes(task.status);
+
+  // Age guard: past the absolute end nothing is collected or written; at most the wanted cancel is attempted, and
+  // the expiry (which runs first in every tick) closes the row and converts the hold.
+  const createdAtMs = row.createdAt ? new Date(row.createdAt).getTime() : NaN;
+  if (Number.isFinite(createdAtMs) && (deps.now ?? new Date()).getTime() - createdAtMs > OPEN_BATCH_MAX_AGE_MS) {
+    const wanted = row.state === "cancel_requested" || !!row.consentWithdrawnAt || (task?.status === TASK_STATUS_CANCEL_REQUESTED);
+    if (wanted && decision.ok && batchIds.length > 0 && !row.cancelRequestedAt) {
+      await attemptWantedCancel(deps, row, token, decision, true, batchIds);
+    }
+    return "waiting";
+  }
   // Neither the orphan logic nor the consent gate needs Shopify: both come BEFORE the admin lookup, so a shop
   // whose connection is blocked can still have its orphans cancelled and a withdrawal honoured.
   if (orphan) {

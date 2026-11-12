@@ -99,6 +99,7 @@ vi.mock("~/services/ai/usage-meter.server", () => ({
 vi.mock("~/services/bulk-editor/translate-batch-expiry.server", () => ({
   BATCH_UNREACHABLE_ERROR: "batch_unreachable",
   BATCH_SUBMIT_UNCONFIRMED_ERROR: "batch_submit_unconfirmed",
+  OPEN_BATCH_MAX_AGE_MS: 48 * 60 * 60 * 1000,
   expireStaleBatches: (...a: unknown[]) => h.expire(...a),
 }));
 vi.mock("~/routes/api-ai-handlers/shared", async (importOriginal) => {
@@ -842,12 +843,13 @@ describe("a create of unknown outcome (create_unknown)", () => {
     expect(h.rows.get("row-1").failedTicks).toBe(0);
   });
 
-  it("a provider that fails the search counts as a failed tick; after the last one the Task fails as unconfirmed and the hold is converted (the upper bound)", async () => {
+  it("a provider that fails the search counts as a failed tick; with the intent recorded there is NO give-up (the 48 h expiry is the hard end)", async () => {
     unknownRow({ failedTicks: MAX_FAILED_TICKS - 1 });
     h.find.mockRejectedValue(new Error("503"));
-    expect(await processBatchRow("row-1", deps())).toBe("unreachable");
-    expect(h.tasks.get("task-1")).toMatchObject({ status: "failed", error: "batch_submit_unconfirmed" });
-    expect(h.convert).toHaveBeenCalledWith("row-1");
+    expect(await processBatchRow("row-1", deps())).toBe("failedTick");
+    expect(h.rows.get("row-1")).toMatchObject({ state: "create_unknown", failedTicks: MAX_FAILED_TICKS });
+    expect(h.tasks.get("task-1").status).toBe("waiting_batch");
+    expect(h.convert).not.toHaveBeenCalled();
     expect(h.release).not.toHaveBeenCalled();
   });
 
@@ -991,5 +993,125 @@ describe("the tick", () => {
   it("a settled row is not selected", async () => {
     h.rows.get("row-1").state = "done";
     expect((await pollBatchesOnce(deps())).rows).toBe(0);
+  });
+});
+
+describe("final hardening: give-up cancel, deferral, age guard, outdated-consent cancel", () => {
+  const wantCancel = (over: Record<string, unknown> = {}) => {
+    putTask("cancel_requested");
+    putRow({ state: "cancel_requested", ...over });
+  };
+
+  describe("consentOutdated still attempts a wanted cancel", () => {
+    it("success: cancel sent, cancelRequestedAt stamped, nothing fetched or written", async () => {
+      h.settings = OUTDATED;
+      wantCancel();
+      const d = deps();
+      expect(await processBatchRow("row-1", d)).toBe("consentOutdated");
+      expect(h.cancel).toHaveBeenCalledTimes(1);
+      expect(h.rows.get("row-1").cancelRequestedAt).toEqual(expect.any(Date));
+      for (const fn of [h.results, h.booking, h.convert, h.release]) expect(fn).not.toHaveBeenCalled();
+      expect(d.runCollect).not.toHaveBeenCalled();
+    });
+    it("failure: stays unconfirmed, still consentOutdated", async () => {
+      h.settings = OUTDATED;
+      wantCancel();
+      h.cancel.mockRejectedValue(new Error("503"));
+      expect(await processBatchRow("row-1", deps())).toBe("consentOutdated");
+      expect(h.rows.get("row-1").cancelRequestedAt).toBeUndefined();
+    });
+    it("keyMissing", async () => {
+      h.settings = OUTDATED;
+      wantCancel({ source: "own" });
+      h.settle.mockResolvedValue({ ok: false, reason: "ai_key_missing" });
+      expect(await processBatchRow("row-1", deps())).toBe("keyMissing");
+    });
+    it("configBlocked", async () => {
+      h.settings = OUTDATED;
+      wantCancel();
+      h.settle.mockResolvedValue({ ok: false, reason: "managedDisabled" });
+      expect(await processBatchRow("row-1", deps())).toBe("configBlocked");
+    });
+  });
+
+  describe("give-up deferred while a wanted cancel is unconfirmed", () => {
+    it("batch not ended (retrieve fails): deferred, row stays open, hold untouched", async () => {
+      wantCancel({ failedTicks: MAX_FAILED_TICKS - 1 });
+      h.cancel.mockRejectedValue(new Error("503"));
+      h.retrieve.mockRejectedValue(new Error("503"));
+      expect(await processBatchRow("row-1", deps())).toBe("failedTick");
+      expect(h.rows.get("row-1").state).toBe("cancel_requested");
+      expect(h.convert).not.toHaveBeenCalled();
+      expect(h.release).not.toHaveBeenCalled();
+    });
+    it("batch shown ended at the last look: given up", async () => {
+      wantCancel({ failedTicks: MAX_FAILED_TICKS - 1 });
+      h.cancel.mockRejectedValue(new Error("503"));
+      h.retrieve.mockRejectedValueOnce(new Error("503"));
+      expect(await processBatchRow("row-1", deps())).toBe("unreachable");
+      expect(h.rows.get("row-1").state).toBe("done");
+    });
+    it("no transport (lookup failure): deferred", async () => {
+      wantCancel({ failedTicks: MAX_FAILED_TICKS - 1 });
+      h.settle.mockResolvedValue({ ok: false, reason: "lookup_failed" });
+      expect(await processBatchRow("row-1", deps())).toBe("failedTick");
+      expect(h.rows.get("row-1").state).toBe("cancel_requested");
+      expect(h.convert).not.toHaveBeenCalled();
+    });
+    it("a cancel confirmed in the same tick allows the give-up", async () => {
+      wantCancel({ failedTicks: MAX_FAILED_TICKS - 1 });
+      h.retrieve.mockRejectedValue(new Error("503"));
+      expect(await processBatchRow("row-1", deps())).toBe("unreachable");
+      expect(h.rows.get("row-1").cancelRequestedAt).toEqual(expect.any(Date));
+      expect(h.convert).toHaveBeenCalledWith("row-1");
+    });
+  });
+
+  describe("ordinary give-up makes one best-effort provider cancel first", () => {
+    it("cancel succeeds: stamped, then settled and closed", async () => {
+      putRow({ failedTicks: MAX_FAILED_TICKS - 1 });
+      h.retrieve.mockRejectedValue(new Error("503"));
+      expect(await processBatchRow("row-1", deps())).toBe("unreachable");
+      expect(h.cancel).toHaveBeenCalledTimes(1);
+      expect(h.rows.get("row-1").cancelRequestedAt).toEqual(expect.any(Date));
+      expect(h.rows.get("row-1").state).toBe("done");
+      expect(h.convert).toHaveBeenCalledWith("row-1");
+    });
+    it("cancel fails: swallowed, not stamped, still settled and closed", async () => {
+      putRow({ failedTicks: MAX_FAILED_TICKS - 1 });
+      h.retrieve.mockRejectedValue(new Error("503"));
+      h.cancel.mockRejectedValue(new Error("503"));
+      expect(await processBatchRow("row-1", deps())).toBe("unreachable");
+      expect(h.rows.get("row-1").cancelRequestedAt).toBeUndefined();
+      expect(h.rows.get("row-1").state).toBe("done");
+    });
+    it("no cancel before the 12th tick", async () => {
+      putRow({ failedTicks: 3 });
+      h.retrieve.mockRejectedValue(new Error("503"));
+      await processBatchRow("row-1", deps());
+      expect(h.cancel).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("age guard", () => {
+    const old = new Date(now.getTime() - 49 * 3600 * 1000);
+    it("a row past 48 h is neither collected nor written nor polled", async () => {
+      putRow({ createdAt: old });
+      const d = deps();
+      expect(await processBatchRow("row-1", d)).toBe("waiting");
+      for (const fn of [h.retrieve, h.results, h.booking, h.cancel]) expect(fn).not.toHaveBeenCalled();
+      expect(d.runCollect).not.toHaveBeenCalled();
+    });
+    it("a wanted cancel is still attempted", async () => {
+      wantCancel({ createdAt: old });
+      expect(await processBatchRow("row-1", deps())).toBe("waiting");
+      expect(h.cancel).toHaveBeenCalledTimes(1);
+      expect(h.rows.get("row-1").cancelRequestedAt).toEqual(expect.any(Date));
+      expect(h.results).not.toHaveBeenCalled();
+    });
+    it("a young row is unaffected", async () => {
+      putRow({ createdAt: new Date(now.getTime() - 3600 * 1000) });
+      expect(await processBatchRow("row-1", deps())).toBe("collected");
+    });
   });
 });

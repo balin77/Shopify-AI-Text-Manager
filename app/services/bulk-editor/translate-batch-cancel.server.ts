@@ -181,6 +181,8 @@ export async function cancelOpenBatches(shop: string): Promise<CancelOpenBatches
         else if (outcome.kind === "booked" || outcome.kind === "converted") result.converted += 1;
         // A row whose provider cancel was NOT confirmed stays open (cancel_requested, no cancelRequestedAt): the
         // poller treats it as an orphan, cancels again and settles (settleHold acts only while held).
+        // Stated residual: on a GDPR redaction the rows are deleted afterwards, so that retry never happens; an
+        // unconfirmed cancel then leaves the batch running at the provider (the hold is already converted).
         if (outcome.kind !== "pending" && allCancelled) {
           await db.bulkTranslateBatch.updateMany({
             where: { id: row.id, state: { in: [...OPEN_BATCH_STATES] } },
