@@ -260,3 +260,30 @@ describe("isInterruptedTaskError", () => {
     expect(isInterruptedTaskError(undefined)).toBe(false);
   });
 });
+
+describe("the Batch-API codes (PLAN_BULK_TRANSLATE_BATCHING)", () => {
+  const CODES = ["batch_expired", "batch_failed", "batch_not_available", "batch_nothing_to_submit", "ai_key_missing", "batch_submit_refused"];
+
+  it("every code renders in every locale and never raw", () => {
+    for (const t of [de, en, es] as any[]) {
+      for (const code of CODES) {
+        const text = String(taskErrorText(code, t));
+        expect(text, `${code}`).not.toContain(code);
+        expect(text.length).toBeGreaterThan(30);
+      }
+    }
+  });
+
+  it("the provider's own words ride after the first colon -- colons inside them survive", () => {
+    for (const t of [de, en, es] as any[]) {
+      const text = String(taskErrorText("batch_submit_refused:model x: not available for batches", t));
+      expect(text).toContain("model x: not available for batches");
+      expect(text).not.toContain("batch_submit_refused");
+    }
+  });
+
+  it("the three languages say different things (a missing key would fall back to English in all of them)", () => {
+    const texts = [de, en, es].map((t: any) => String(taskErrorText("batch_expired", t)));
+    expect(new Set(texts).size).toBe(3);
+  });
+});

@@ -2464,6 +2464,20 @@ export const de = {
         "{count} Übersetzung(en) wurden bei Shopify gespeichert, konnten aber nicht in den Cache dieser App geschrieben werden — lade den Eintrag neu, damit sie hier erscheinen.",
       autoTranslateDailyLimit:
         "Automatische Erstübersetzungen für heute pausiert: Dein Tageslimit von {cap} Einträgen ist erreicht, {count} weitere Einträge stehen auf der Wiederholungsliste und werden in der nächtlichen Wiederholung übersetzt, sobald das Limit es zulässt.",
+      batchSubmitRefused:
+        "Der KI-Anbieter hat den Auftrag nicht angenommen, deshalb wurde nichts gestartet und nichts berechnet. Du kannst den Lauf stattdessen sofort starten.",
+      batchSubmitRefusedWithDetail:
+        "Der KI-Anbieter hat den Auftrag nicht angenommen ({detail}), deshalb wurde nichts gestartet und nichts berechnet. Du kannst den Lauf stattdessen sofort starten.",
+      batchExpired:
+        "Der KI-Anbieter hat den Auftrag nicht innerhalb seiner Frist fertiggestellt, deshalb wurde nichts geschrieben. Für nicht erledigte Arbeit wurde nichts berechnet. Bitte starte den Lauf erneut.",
+      batchFailed:
+        "Der KI-Anbieter konnte diesen Auftrag nicht verarbeiten, deshalb wurde nichts geschrieben. Bitte starte den Lauf erneut oder führe ihn sofort aus.",
+      batchNotAvailable:
+        "Der günstigere Modus ist für diesen Shop nicht verfügbar, deshalb wurde nichts gestartet. Bitte führe den Lauf sofort aus.",
+      batchNothingToSubmit:
+        "Aus dieser Auswahl liess sich nichts als Auftrag für den günstigeren Modus einreichen. Bitte führe den Lauf sofort aus.",
+      aiKeyMissing:
+        "Der KI-Schlüssel, mit dem dieser Auftrag eingereicht wurde, ist nicht mehr hinterlegt, deshalb konnte das Ergebnis nicht abgeholt werden. Hinterlege den Schlüssel erneut und starte den Lauf noch einmal.",
       translationsNoneUsable:
         "Die automatische Neuübersetzung hat keine verwendbare Übersetzung geliefert.",
       managedAiBudgetExceeded:
@@ -4770,6 +4784,10 @@ export const de = {
       noneMissing: "In der aktuellen Auswahl fehlt keine Übersetzung.",
       empty: "Im aktuellen Filter fehlen keine Übersetzungen.",
       failed: "KI-Übersetzung fehlgeschlagen.",
+      batchNotAvailable: "Der günstigere Modus ist für diesen Shop nicht verfügbar. Bitte starte den Lauf sofort.",
+      batchNotStarted:
+        "{count} Übersetzung(en) wurden im günstigeren Modus nicht gestartet (z. B. Produktart oder sehr lange Texte) und bleiben für einen Lauf im Modus \"Sofort\" übrig.",
+      submittingBatch: "Wird beim KI-Anbieter eingereicht …",
       confirm: {
         title: "Übersetzung starten?",
         estimateLabel: "Schätzung",
@@ -4791,6 +4809,17 @@ export const de = {
         refusedPrefix: "Der Lauf kann so nicht gestartet werden:",
         cancel: "Abbrechen",
         start: "Jetzt starten",
+        modeLabel: "Wie soll übersetzt werden?",
+        modeNow: "Sofort",
+        modeNowHint: "Die Übersetzungen werden jetzt erstellt und gespeichert.",
+        modeBatch: "Günstiger, Ergebnis bis zu 24 Stunden",
+        modeBatchHint:
+          "Die KI arbeitet im Hintergrund. Sie können diese Seite verlassen; die Ergebnisse werden eingetragen, sobald sie da sind. Der Lauf steht im Tab \"Aufgaben\" und lässt sich dort abbrechen. Übersetzungen, die inzwischen von Hand ausgefüllt wurden oder deren Originaltext sich geändert hat, werden übersprungen.",
+        batchCost: "Im günstigeren Modus: ca. {cost}",
+        batchCostCeiling: "Im günstigeren Modus: bis zu {cost}",
+        batchBudgetExceeds:
+          "Im günstigeren Modus wird das Budget für den ganzen Lauf im Voraus reserviert, und Ihr verbleibendes KI-Budget reicht dafür nicht. Wählen Sie \"Sofort\" oder verkleinern Sie die Auswahl.",
+        startBatch: "Günstiger starten",
       },
     },
     // Phase 6 — CSV-Export/-Import (Plan §8.1/§8.2)

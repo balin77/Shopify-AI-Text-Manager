@@ -2443,6 +2443,20 @@ export const es: Translation = {
         "{count} traducción(es) se guardaron en Shopify pero no se pudieron escribir en la caché de esta app — vuelve a cargar el elemento para verlas aquí.",
       autoTranslateDailyLimit:
         "Traducciones automáticas iniciales en pausa por hoy: se alcanzó tu límite diario de {cap} elementos y {count} elementos más están en la lista de reintentos. Se traducen en el reintento nocturno en cuanto el límite lo permita.",
+      batchSubmitRefused:
+        "El proveedor de IA no aceptó el trabajo, por lo que no se inició nada ni se cobró nada. Puedes ejecutarlo de inmediato.",
+      batchSubmitRefusedWithDetail:
+        "El proveedor de IA no aceptó el trabajo ({detail}), por lo que no se inició nada ni se cobró nada. Puedes ejecutarlo de inmediato.",
+      batchExpired:
+        "El proveedor de IA no terminó el trabajo dentro de su plazo, por lo que no se escribió nada. No se cobró el trabajo no realizado. Vuelve a iniciar la ejecución.",
+      batchFailed:
+        "El proveedor de IA no pudo procesar este trabajo, por lo que no se escribió nada. Vuelve a iniciar la ejecución o ejecútala de inmediato.",
+      batchNotAvailable:
+        "El modo más económico no está disponible para esta tienda, por lo que no se inició nada. Ejecútalo de inmediato.",
+      batchNothingToSubmit:
+        "Nada de esta selección se pudo enviar para el modo más económico. Ejecútalo de inmediato.",
+      aiKeyMissing:
+        "La clave de IA con la que se envió este trabajo ya no está guardada, por lo que no se pudo recoger el resultado. Vuelve a añadir la clave e inicia la ejecución de nuevo.",
       translationsNoneUsable:
         "La retraducción automática no produjo ninguna traducción utilizable.",
       managedAiBudgetExceeded:
@@ -4733,6 +4747,10 @@ export const es: Translation = {
       noneMissing: "No falta ninguna traducción en la selección actual.",
       empty: "No falta ninguna traducción en el filtro actual.",
       failed: "La traducción con IA ha fallado.",
+      batchNotAvailable: "El modo más económico no está disponible para esta tienda. Inicia el proceso de inmediato.",
+      batchNotStarted:
+        "{count} traducción(es) no se iniciaron en el modo más económico (p. ej. tipo de producto o textos muy largos) y quedan para un proceso en modo \"Inmediato\".",
+      submittingBatch: "Enviando al proveedor de IA …",
       confirm: {
         title: "¿Iniciar la traducción?",
         estimateLabel: "Estimación",
@@ -4754,6 +4772,17 @@ export const es: Translation = {
         refusedPrefix: "El proceso no se puede iniciar así:",
         cancel: "Cancelar",
         start: "Iniciar ahora",
+        modeLabel: "¿Cómo debe traducirse?",
+        modeNow: "Inmediato",
+        modeNowHint: "Las traducciones se crean y se guardan ahora.",
+        modeBatch: "Más económico, resultado en hasta 24 horas",
+        modeBatchHint:
+          "La IA trabaja en segundo plano. Puede salir de esta página; los resultados se registran en cuanto estén listos. El proceso aparece en la pestaña Tareas y allí se puede cancelar. Se omiten las traducciones que entretanto se hayan rellenado a mano o cuyo texto original haya cambiado.",
+        batchCost: "En el modo más económico: unos {cost}",
+        batchCostCeiling: "En el modo más económico: hasta {cost}",
+        batchBudgetExceeds:
+          "El modo más económico reserva por adelantado el presupuesto de todo el proceso y su presupuesto de IA restante no alcanza. Elija \"Inmediato\" o reduzca la selección.",
+        startBatch: "Iniciar más económico",
       },
     },
     // Fase 6 — exportación/importación CSV (Plan §8.1/§8.2)

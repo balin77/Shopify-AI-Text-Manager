@@ -91,6 +91,20 @@ const FALLBACK: Record<string, string> = {
     "The server was restarted during this run. Entries translated before that were saved where possible; the rest was not translated. Please check the result and run it again.",
   handleRedirectsMissing:
     "{count} URL handle(s) were re-translated, but no redirect could be created for the previous address — add it under URL redirects, or old links will lead nowhere.",
+  batchSubmitRefused:
+    "The AI provider did not accept the job, so nothing was started and nothing was charged. You can run it again immediately instead.",
+  batchSubmitRefusedWithDetail:
+    "The AI provider did not accept the job ({detail}), so nothing was started and nothing was charged. You can run it again immediately instead.",
+  batchExpired:
+    "The AI provider did not finish the job within its time limit, so nothing was written. Nothing was charged for work that was not done. Please start the run again.",
+  batchFailed:
+    "The AI provider could not process this job, so nothing was written. Please start the run again, or run it immediately.",
+  batchNotAvailable:
+    "The cheaper batch mode is not available for this store, so nothing was started. Run it immediately instead.",
+  batchNothingToSubmit:
+    "Nothing in this selection could be sent as a batch. Run it immediately instead.",
+  aiKeyMissing:
+    "The AI key this job was submitted with is no longer stored, so the result could not be collected. Add the key again and start the run again.",
   autoTranslateDailyLimit:
     "Automatic first translations paused for today: your daily limit of {cap} items was reached, and {count} further items are on the retry list. They are translated in the nightly retry as soon as the limit allows.",
 };
@@ -152,6 +166,24 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
     // PLAN_BULK_TRANSLATE_BATCHING 19.4): written with Task.status of the same name.
     case "batch_unreachable":
       return t?.tasks?.batchUnreachable || "The AI provider no longer answers for this job. Nothing was written. Please start the run again.";
+    // The Batch-API mode of the bulk translate run (PLAN_BULK_TRANSLATE_BATCHING). The provider's own
+    // words (when it gave any) ride after the first colon and may themselves contain colons.
+    case "batch_submit_refused": {
+      const detail = parts.slice(1).join(":").trim();
+      return detail
+        ? fill(phrase(t, "batchSubmitRefusedWithDetail"), { detail })
+        : phrase(t, "batchSubmitRefused");
+    }
+    case "batch_expired":
+      return phrase(t, "batchExpired");
+    case "batch_failed":
+      return phrase(t, "batchFailed");
+    case "batch_not_available":
+      return phrase(t, "batchNotAvailable");
+    case "batch_nothing_to_submit":
+      return phrase(t, "batchNothingToSubmit");
+    case "ai_key_missing":
+      return phrase(t, "aiKeyMissing");
     case "bot_blocked": {
       const base = crawl.errorBotBlocked || null;
       // Without the attribution the merchant only sees "something blocked the

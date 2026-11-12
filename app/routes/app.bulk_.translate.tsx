@@ -86,6 +86,7 @@ import {
 import {
   TranslateConfirmModal,
   type ConfirmEstimateState,
+  type TranslateRunMode,
 } from "../components/bulk-editor/TranslateConfirmModal";
 import type { TranslateEstimate } from "../services/bulk-editor/translate-estimate.shared";
 
@@ -259,6 +260,8 @@ interface TranslateFetcherResult {
   /** Units that did not fit into MAX_TRANSLATE_UNITS. */
   skippedOverCap?: number;
   none?: boolean;
+  /** "batch" when the run was handed to the provider's batch mode. */
+  mode?: "batch";
   estimate?: TranslateEstimate;
 }
 
@@ -275,11 +278,14 @@ interface TranslateTaskResult {
   skippedFilled?: number;
   skippedGone?: number;
   notProcessed?: number;
+  /** Batch mode: units the submit never started (they fit no package). */
+  notStarted?: number;
 }
 
 type ResultBanner =
   | { kind: "running" }
   | { kind: "waiting" }
+  | { kind: "submitting" }
   | {
       kind: "done";
       saved: number;
@@ -288,6 +294,7 @@ type ResultBanner =
       skippedChanged: number;
       skippedFilled: number;
       skippedGone: number;
+      notStarted: number;
       overCap: number;
     }
   | { kind: "cancelled"; saved: number; notProcessed: number }
@@ -398,10 +405,13 @@ export default function BulkTranslateMissingPage() {
   // reaches the route error boundary) of the SAME action with estimateOnly.
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [estimateState, setEstimateState] = useState<ConfirmEstimateState>({ status: "loading" });
+  // "Sofort" is the default every time the dialog opens: the cheaper mode is an explicit choice, never a leftover.
+  const [runMode, setRunMode] = useState<TranslateRunMode>("sync");
   const estimateAbort = useRef<AbortController | null>(null);
 
   const openConfirm = async () => {
     setBanner(null);
+    setRunMode("sync");
     setEstimateState({ status: "loading" });
     setConfirmOpen(true);
     estimateAbort.current?.abort();
@@ -457,7 +467,10 @@ export default function BulkTranslateMissingPage() {
     estimateAbort.current?.abort();
     setConfirmOpen(false);
     setBanner(null);
-    startFetcher.submit(runParams(), { method: "post", action: "/api/ai" });
+    // Only a batch is named: a live run sends exactly what it always sent. The server re-decides whether this
+    // shop may use the cheaper mode (and answers BATCH_NOT_AVAILABLE if not).
+    const useBatch = runMode === "batch" && estimateState.status === "ready" && !!estimateState.estimate.batch;
+    startFetcher.submit(useBatch ? { ...runParams(), mode: "batch" } : runParams(), { method: "post", action: "/api/ai" });
   };
 
   useEffect(() => {
@@ -467,11 +480,15 @@ export default function BulkTranslateMissingPage() {
       setBanner({ kind: "none" });
     } else if (result.success && result.taskId) {
       startedOverCap.current = result.skippedOverCap ?? 0;
-      setBanner({ kind: "running" });
+      // A batch is being submitted to the provider first; the poll turns this into "waiting" once it is.
+      setBanner(result.mode === "batch" ? { kind: "submitting" } : { kind: "running" });
       setTaskId(result.taskId);
     } else if (!result.success && result.code === "CANCELLED") {
       // The server's text is English; the cancelled banner is localised.
       setBanner({ kind: "cancelled", saved: 0, notProcessed: 0 });
+    } else if (!result.success && result.code === "BATCH_NOT_AVAILABLE") {
+      // The server's text is English; this one is localised.
+      setBanner({ kind: "failed", message: tm.batchNotAvailable });
     } else if (!result.success) {
       setBanner({ kind: "failed", message: result.error });
       if (result.code === "ALREADY_RUNNING" && result.taskId) setTaskId(result.taskId);
@@ -554,6 +571,7 @@ export default function BulkTranslateMissingPage() {
           skippedChanged: parsed?.skippedChanged ?? 0,
           skippedFilled: parsed?.skippedFilled ?? 0,
           skippedGone: parsed?.skippedGone ?? 0,
+          notStarted: parsed?.notStarted ?? 0,
           overCap: startedOverCap.current,
         });
       }
@@ -615,6 +633,7 @@ export default function BulkTranslateMissingPage() {
             </Text>
 
             {banner?.kind === "running" && <Banner tone="info">{tm.running}</Banner>}
+            {banner?.kind === "submitting" && <Banner tone="info">{tm.submittingBatch}</Banner>}
             {banner?.kind === "waiting" && <Banner tone="info">{tm.waitingBatch}</Banner>}
             {banner?.kind === "none" && <Banner tone="info">{tm.noneMissing}</Banner>}
             {banner?.kind === "failed" && (
@@ -649,6 +668,9 @@ export default function BulkTranslateMissingPage() {
                   )}
                   {banner.skippedGone > 0 && (
                     <Text as="p">{tm.skippedGone.replace("{count}", String(banner.skippedGone))}</Text>
+                  )}
+                  {banner.notStarted > 0 && (
+                    <Text as="p">{tm.batchNotStarted.replace("{count}", String(banner.notStarted))}</Text>
                   )}
                   {banner.overCap > 0 && (
                     <Text as="p">
@@ -793,6 +815,8 @@ export default function BulkTranslateMissingPage() {
               locale={appLocale}
               maxUnits={MAX_TRANSLATE_UNITS}
               strings={tm.confirm}
+              mode={runMode}
+              onModeChange={setRunMode}
               onCancel={closeConfirm}
               onStart={handleStart}
             />

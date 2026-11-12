@@ -6,11 +6,17 @@
  * The estimate comes from the handler's `estimateOnly` mode and is only
  * DISPLAYED here. Numbers go through formatNumber with the app locale (the
  * server and the browser must render the same text), and money is always
- * labelled as an estimate ("ca."/"about"). Phase 2's mode choice ("sofort" /
- * "guenstiger, bis zu 24 Stunden") is deliberately NOT here yet.
+ * labelled as an estimate ("ca."/"about").
+ *
+ * The MODE choice ("Sofort" / "Guenstiger, Ergebnis bis zu 24 Stunden") is a
+ * radio choice between two ways to do ONE thing, shown only when the server's
+ * estimate carries a `batch` alternative (its own answer to "may this shop use
+ * the provider's batch mode"; the start re-checks it). "Sofort" is always the
+ * preselected one: a merchant who does not read the dialog gets the behaviour
+ * they had before.
  */
 
-import { Banner, BlockStack, Modal, Text } from "@shopify/polaris";
+import { Banner, BlockStack, ChoiceList, Modal, Text } from "@shopify/polaris";
 import { formatNumber } from "../../utils/format";
 import type { TranslateEstimate } from "../../services/bulk-editor/translate-estimate.shared";
 
@@ -45,7 +51,18 @@ export interface TranslateConfirmStrings {
   refusedPrefix: string;
   cancel: string;
   start: string;
+  modeLabel: string;
+  modeNow: string;
+  modeNowHint: string;
+  modeBatch: string;
+  modeBatchHint: string;
+  batchCost: string;
+  batchCostCeiling: string;
+  batchBudgetExceeds: string;
+  startBatch: string;
 }
+
+export type TranslateRunMode = "sync" | "batch";
 
 interface Props {
   open: boolean;
@@ -53,6 +70,8 @@ interface Props {
   locale: string;
   maxUnits: number;
   strings: TranslateConfirmStrings;
+  mode: TranslateRunMode;
+  onModeChange: (mode: TranslateRunMode) => void;
   onCancel: () => void;
   onStart: () => void;
 }
@@ -68,8 +87,23 @@ export function formatEstimateMoney(micros: number, locale: string): { text: str
   return { text: money(euro), tiny: false };
 }
 
-export function TranslateConfirmModal({ open, state, locale, maxUnits, strings, onCancel, onStart }: Props) {
-  const startable = state.status === "ready" || state.status === "unavailable";
+export function TranslateConfirmModal({
+  open,
+  state,
+  locale,
+  maxUnits,
+  strings,
+  mode,
+  onModeChange,
+  onCancel,
+  onStart,
+}: Props) {
+  // The batch alternative exists only inside a ready estimate; a stale `mode` of "batch" without one means "sync".
+  const batch = state.status === "ready" ? state.estimate.batch : undefined;
+  const effectiveMode: TranslateRunMode = batch ? mode : "sync";
+  // A batch that cannot reserve its worst case is refused at the start: the button says so by being disabled.
+  const batchBlocked = effectiveMode === "batch" && batch?.wouldExceed === true;
+  const startable = (state.status === "ready" || state.status === "unavailable") && !batchBlocked;
   const fill = (template: string, values: Record<string, string>) =>
     Object.entries(values).reduce((text, [key, value]) => text.replaceAll(`{${key}}`, value), template);
   const num = (n: number) => formatNumber(n, locale);
@@ -98,7 +132,11 @@ export function TranslateConfirmModal({ open, state, locale, maxUnits, strings, 
       open={open}
       onClose={onCancel}
       title={strings.title}
-      primaryAction={{ content: strings.start, onAction: onStart, disabled: !startable }}
+      primaryAction={{
+        content: effectiveMode === "batch" ? strings.startBatch : strings.start,
+        onAction: onStart,
+        disabled: !startable,
+      }}
       secondaryActions={[{ content: strings.cancel, onAction: onCancel }]}
     >
       <Modal.Section>
@@ -148,6 +186,29 @@ export function TranslateConfirmModal({ open, state, locale, maxUnits, strings, 
                     {strings.budgetUnavailable}
                   </Text>
                 )
+              )}
+              {batch && (
+                <BlockStack gap="200">
+                  <ChoiceList
+                    title={strings.modeLabel}
+                    selected={[effectiveMode]}
+                    onChange={(values) => onModeChange(values[0] === "batch" ? "batch" : "sync")}
+                    choices={[
+                      { label: strings.modeNow, value: "sync", helpText: strings.modeNowHint },
+                      { label: strings.modeBatch, value: "batch", helpText: strings.modeBatchHint },
+                    ]}
+                  />
+                  {batch.costMicros !== null && (
+                    <Text as="p" fontWeight="semibold">
+                      {(() => {
+                        const { text, tiny } = formatEstimateMoney(batch.costMicros, locale);
+                        const value = tiny ? fill(strings.costTiny, { cost: text }) : text;
+                        return fill(batch.pricedAtCeiling ? strings.batchCostCeiling : strings.batchCost, { cost: value });
+                      })()}
+                    </Text>
+                  )}
+                  {batchBlocked && <Banner tone="warning">{strings.batchBudgetExceeds}</Banner>}
+                </BlockStack>
               )}
               {estimate.skippedOverCap > 0 && (
                 <Text as="p" variant="bodySm" tone="caution">

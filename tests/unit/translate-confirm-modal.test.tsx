@@ -28,10 +28,26 @@ const estimate = (over: Partial<TranslateEstimate> = {}): TranslateEstimate => (
   ...over,
 });
 
-function mount(state: ConfirmEstimateState, handlers = { onCancel: vi.fn(), onStart: vi.fn() }) {
+function mount(
+  state: ConfirmEstimateState,
+  handlers: { onCancel: () => void; onStart: () => void; mode?: "sync" | "batch"; onModeChange?: (m: "sync" | "batch") => void } = {
+    onCancel: vi.fn(),
+    onStart: vi.fn(),
+  },
+) {
   render(
     <AppProvider i18n={en}>
-      <TranslateConfirmModal open state={state} locale="de" maxUnits={2000} strings={strings} {...handlers} />
+      <TranslateConfirmModal
+        open
+        state={state}
+        locale="de"
+        maxUnits={2000}
+        strings={strings}
+        mode={handlers.mode ?? "sync"}
+        onModeChange={handlers.onModeChange ?? (() => undefined)}
+        onCancel={handlers.onCancel}
+        onStart={handlers.onStart}
+      />
     </AppProvider>,
   );
   return handlers;
@@ -136,3 +152,57 @@ describe("TranslateConfirmModal", () => {
     expect(keys(esStrings)).toEqual(keys(deStrings));
   });
 });
+
+describe("the mode choice (Sofort / Günstiger, Ergebnis bis zu 24 Stunden)", () => {
+  const withBatch = (over: Partial<NonNullable<TranslateEstimate["batch"]>> = {}) =>
+    estimate({ batch: { requests: 9, inputTokens: 10_000, outputTokens: 20_000, costMicros: 800_000, pricedAtCeiling: false, ...over } });
+
+  it("is NOT offered without a batch alternative in the estimate (other providers, a taster, a refused shop)", () => {
+    mount({ status: "ready", estimate: estimate() });
+    expect(screen.queryByText("Günstiger, Ergebnis bis zu 24 Stunden")).toBeNull();
+    expect(screen.queryByText("Sofort")).toBeNull();
+  });
+
+  it("is a radio choice with 'Sofort' preselected and the owner-approved wording for the other option", () => {
+    mount({ status: "ready", estimate: withBatch() });
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(radios).toHaveLength(2);
+    expect(screen.getByText("Sofort")).toBeTruthy();
+    expect(screen.getByText("Günstiger, Ergebnis bis zu 24 Stunden")).toBeTruthy();
+    expect(radios[0].checked).toBe(true);
+    expect(radios[1].checked).toBe(false);
+  });
+
+  it("shows BOTH prices: the live estimate and the cheaper batch one", () => {
+    mount({ status: "ready", estimate: withBatch() });
+    expect(screen.getByText(/Geschätzte Kosten: ca\. 1,50/)).toBeTruthy();
+    expect(screen.getByText(/Im günstigeren Modus: ca\. 0,80/)).toBeTruthy();
+  });
+
+  it("choosing the cheaper mode reports it, and the start button then says so", () => {
+    const onModeChange = vi.fn();
+    mount({ status: "ready", estimate: withBatch() }, { onCancel: vi.fn(), onStart: vi.fn(), onModeChange });
+    fireEvent.click(screen.getAllByRole("radio")[1]);
+    expect(onModeChange).toHaveBeenCalledWith("batch");
+    cleanup();
+    mount({ status: "ready", estimate: withBatch() }, { onCancel: vi.fn(), onStart: vi.fn(), mode: "batch" });
+    expect(screen.getByRole("button", { name: "Günstiger starten" })).toBeTruthy();
+  });
+
+  it("a batch that cannot reserve its worst case disables the start (the server would refuse it); 'Sofort' stays startable", () => {
+    const blocked = withBatch({ reserveMicros: 9_000_000, wouldExceed: true });
+    mount({ status: "ready", estimate: blocked }, { onCancel: vi.fn(), onStart: vi.fn(), mode: "batch" });
+    expect(screen.getByText(/im Voraus reserviert/)).toBeTruthy();
+    const button = screen.getByRole("button", { name: "Günstiger starten" });
+    expect((button as HTMLButtonElement).disabled || button.getAttribute("aria-disabled") === "true").toBe(true);
+    cleanup();
+    mount({ status: "ready", estimate: blocked }, { onCancel: vi.fn(), onStart: vi.fn(), mode: "sync" });
+    expect(startDisabled()).toBe(false);
+  });
+
+  it("a stale 'batch' mode without a batch alternative behaves as 'Sofort'", () => {
+    mount({ status: "ready", estimate: estimate() }, { onCancel: vi.fn(), onStart: vi.fn(), mode: "batch" });
+    expect(screen.getByRole("button", { name: "Jetzt starten" })).toBeTruthy();
+  });
+});
+

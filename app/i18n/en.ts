@@ -2462,6 +2462,20 @@ export const en: Translation = {
         "{count} translation(s) were saved on Shopify but could not be written to this app's cache — reload the item to see them here.",
       autoTranslateDailyLimit:
         "Automatic first translations paused for today: your daily limit of {cap} items was reached, and {count} further items are on the retry list. They are translated in the nightly retry as soon as the limit allows.",
+      batchSubmitRefused:
+        "The AI provider did not accept the job, so nothing was started and nothing was charged. You can run it immediately instead.",
+      batchSubmitRefusedWithDetail:
+        "The AI provider did not accept the job ({detail}), so nothing was started and nothing was charged. You can run it immediately instead.",
+      batchExpired:
+        "The AI provider did not finish the job within its time limit, so nothing was written. Nothing was charged for work that was not done. Please start the run again.",
+      batchFailed:
+        "The AI provider could not process this job, so nothing was written. Please start the run again, or run it immediately.",
+      batchNotAvailable:
+        "The cheaper mode is not available for this store, so nothing was started. Please run it immediately.",
+      batchNothingToSubmit:
+        "Nothing in this selection could be submitted for the cheaper mode. Please run it immediately.",
+      aiKeyMissing:
+        "The AI key this job was submitted with is no longer stored, so the result could not be collected. Add the key again and start the run again.",
       translationsNoneUsable: "The automatic re-translation produced no usable translation.",
       managedAiBudgetExceeded:
         "The AI volume included in your plan is used up for this period. Nothing was changed — your translations were left as they are.",
@@ -4748,6 +4762,10 @@ export const en: Translation = {
       noneMissing: "Nothing is missing in the current selection.",
       empty: "No translations are missing in the current filter.",
       failed: "AI translation failed.",
+      batchNotAvailable: "The cheaper mode is not available for this store. Please start the run immediately.",
+      batchNotStarted:
+        "{count} translation(s) were not started in the cheaper mode (e.g. product type or very long texts) and are left for a run in \"Immediately\" mode.",
+      submittingBatch: "Submitting to the AI provider …",
       confirm: {
         title: "Start the translation?",
         estimateLabel: "Estimate",
@@ -4769,6 +4787,17 @@ export const en: Translation = {
         refusedPrefix: "The run cannot be started like this:",
         cancel: "Cancel",
         start: "Start now",
+        modeLabel: "How should it be translated?",
+        modeNow: "Immediately",
+        modeNowHint: "The translations are created and saved now.",
+        modeBatch: "Cheaper, result within up to 24 hours",
+        modeBatchHint:
+          "The AI works in the background. You can leave this page; the results are entered as soon as they are ready. The run is listed in the Tasks tab and can be cancelled there. Translations that were filled in by hand in the meantime, or whose original text changed, are skipped.",
+        batchCost: "In the cheaper mode: about {cost}",
+        batchCostCeiling: "In the cheaper mode: up to {cost}",
+        batchBudgetExceeds:
+          "The cheaper mode reserves the budget for the whole run in advance, and your remaining AI budget is not enough for that. Choose \"Immediately\" or narrow the selection.",
+        startBatch: "Start cheaper",
       },
     },
     // Phase 6 — CSV export/import (Plan §8.1/§8.2)
