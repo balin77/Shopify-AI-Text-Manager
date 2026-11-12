@@ -210,6 +210,16 @@ export interface AiPackageRequest {
   cacheable?: boolean;
 }
 
+/** What the gate of a batch submit answers; also the ticket `createBatch` asks for. */
+export interface BatchGate {
+  provider: AIProvider;
+  model: string;
+  source: 'managed' | 'byo';
+  role: 'default' | 'failover';
+  period?: string;
+  pool?: 'paid' | 'taster';
+}
+
 /** One request of a provider batch: what the submit path sends and the manifest records. */
 export interface AiBatchRequest {
   customId: string;
@@ -218,6 +228,35 @@ export interface AiBatchRequest {
   maxTokens: number;
   /** Estimated input tokens of the prompt (pessimistic), for the reservation. */
   inputEstimateTokens: number;
+}
+
+/**
+ * A provider batch create that did not return a batch. `definitive` is the whole
+ * point: true = the provider REFUSED the request (a 4xx with a body: no batch
+ * exists, the hold may go back); false = the OUTCOME IS UNKNOWN (a timeout, an
+ * abort, a dropped connection, a 5xx / 529, a 408 / 409): the provider may have
+ * created the batch and billed it, so the hold must be kept until it is found.
+ */
+export class BatchCreateError extends Error {
+  readonly code = 'BATCH_CREATE_FAILED' as const;
+  constructor(
+    message: string,
+    readonly definitive: boolean,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'BatchCreateError';
+  }
+}
+
+/** Is this the provider's own refusal (nothing was created)? Decided on the error's status and body, never its wording. */
+export function isDefinitiveBatchRefusal(error: unknown): boolean {
+  const e = error as { status?: unknown; error?: unknown; message?: unknown } | null;
+  const status = typeof e?.status === 'number' ? e.status : undefined;
+  if (status === undefined || status < 400 || status >= 500) return false;
+  // 408 (request timeout) and 409 (conflict) say nothing about whether the batch was made.
+  if (status === 408 || status === 409) return false;
+  return (typeof e?.error === 'object' && e.error !== null) || (typeof e?.message === 'string' && e.message.length > 0);
 }
 
 class AIRequestTimeoutError extends Error {
@@ -630,6 +669,8 @@ export class AIService {
   private huggingface?: HfInference;
   private gemini?: GenerativeModel;
   private anthropic?: Anthropic;
+  /** The answers `batchGate()` gave: the only tickets `createBatch` accepts. */
+  private readonly issuedBatchGates = new WeakSet<object>();
   private openai?: OpenAI;
   private grok?: OpenAI;
   private deepseek?: OpenAI;
@@ -1559,8 +1600,8 @@ ${JSON.stringify(skeleton)}`;
         256,
         Math.min(packageMaxTokensFor(req.plannedOutputTokens), maxOutputTokensFor(this.provider, this.getModel())),
       ),
-      // ~3 characters per token: the pessimistic rule this service meters estimates with.
-      inputEstimateTokens: AIService.estimateTokensFor(prompt),
+      // Script-aware (CJK & co. run ~1 token per character): the reservation must not undercount.
+      inputEstimateTokens: AIService.estimateInputTokensForBatch(prompt),
     };
   }
 
@@ -1572,14 +1613,7 @@ ${JSON.stringify(skeleton)}`;
    * what the reservation and the later booking are filed under (period, pool,
    * credential role): the same keys for the whole life of the batch.
    */
-  async batchGate(): Promise<{
-    provider: AIProvider;
-    model: string;
-    source: 'managed' | 'byo';
-    role: 'default' | 'failover';
-    period?: string;
-    pool?: 'paid' | 'taster';
-  }> {
+  async batchGate(): Promise<BatchGate> {
     if (this.config.managedRefusal) throw new ManagedAiRefusedError(this.config.managedRefusal);
     if (!AIService.batchSupportedFor(this.provider) || !this.anthropic) {
       throw new Error(`batch_unsupported:${this.provider}`);
@@ -1597,7 +1631,7 @@ ${JSON.stringify(skeleton)}`;
       period = verdict.period ?? period;
       pool = verdict.pool ?? pool;
     }
-    return {
+    const gate: BatchGate = {
       provider: this.provider,
       model: this.getModel(),
       source: this.config.credentialSource === 'managed' ? 'managed' : 'byo',
@@ -1605,26 +1639,45 @@ ${JSON.stringify(skeleton)}`;
       ...(period !== undefined ? { period } : {}),
       ...(pool !== undefined ? { pool } : {}),
     };
+    // The answer is the ticket `createBatch` asks for: a create cannot be made without having passed the gate.
+    this.issuedBatchGates.add(gate);
+    return gate;
   }
 
   /**
-   * Create the provider batch. Provider errors propagate untouched (the
-   * submit path decides what a refusal means). Never retried here: a create
-   * that failed AFTER the provider accepted it would make a second batch.
+   * Create the provider batch. Never retried here: a create that failed AFTER
+   * the provider accepted it would make a second batch. A failure is a
+   * `BatchCreateError` that says whether the provider REFUSED (definitive) or
+   * the outcome is UNKNOWN -- the submit path keeps the hold in the second case.
+   *
+   * It takes the ANSWER OF `batchGate()` and refuses anything else: this is the
+   * one call that spends the operator's credential on a batch, and a caller that
+   * skipped the consent / kill-switch / budget gate must not be able to reach it.
    */
-  async createBatch(requests: AiBatchRequest[]): Promise<{ batchId: string; expiresAt: string | null }> {
+  async createBatch(requests: AiBatchRequest[], gate: BatchGate): Promise<{ batchId: string; expiresAt: string | null }> {
+    if (!gate || !this.issuedBatchGates.has(gate)) throw new Error('batch_gate_required');
+    if (this.config.managedRefusal) throw new ManagedAiRefusedError(this.config.managedRefusal);
     if (!this.anthropic) throw new Error(`batch_unsupported:${this.provider}`);
     const model = this.getModel();
-    const batch = await this.anthropic.messages.batches.create(
-      {
-        requests: requests.map((r) => ({
-          custom_id: r.customId,
-          params: { model, max_tokens: r.maxTokens, messages: [{ role: 'user' as const, content: r.prompt }] },
-        })),
-      },
-      { maxRetries: 0, timeout: 120_000 },
-    );
-    return { batchId: batch.id, expiresAt: batch.expires_at ?? null };
+    try {
+      const batch = await this.anthropic.messages.batches.create(
+        {
+          requests: requests.map((r) => ({
+            custom_id: r.customId,
+            params: { model, max_tokens: r.maxTokens, messages: [{ role: 'user' as const, content: r.prompt }] },
+          })),
+        },
+        { maxRetries: 0, timeout: 120_000 },
+      );
+      return { batchId: batch.id, expiresAt: batch.expires_at ?? null };
+    } catch (error) {
+      const status = (error as { status?: unknown } | null)?.status;
+      throw new BatchCreateError(
+        error instanceof Error ? error.message : String(error),
+        isDefinitiveBatchRefusal(error),
+        typeof status === 'number' ? status : undefined,
+      );
+    }
   }
 
   /**
@@ -3912,6 +3965,27 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         this.provider,
       ),
     };
+  }
+
+  /**
+   * The input estimate a batch RESERVATION is made on. `estimateTokensFor` assumes
+   * ~3 characters per token, which is pessimistic for Latin text and WRONG the
+   * other way for scripts that tokenise at about one token per character (CJK,
+   * Hangul, Thai, Arabic, Hebrew, the Indic scripts): a Japanese catalogue would
+   * be reserved at a third of what it costs. The reservation is the protection
+   * against spending past the budget, so it leans high: Latin 1/3 token per
+   * character, Greek / Cyrillic / Armenian 1/2, every other script 1 and every
+   * astral code point 2, and a 10 % margin on top.
+   */
+  static estimateInputTokensForBatch(text: string): number {
+    let tokens = 0;
+    for (const ch of text) {
+      const cp = ch.codePointAt(0) ?? 0;
+      if (cp <= 0x024f) tokens += 1 / 3;
+      else if (cp <= 0x058f) tokens += 1 / 2;
+      else tokens += cp > 0xffff ? 2 : 1;
+    }
+    return Math.ceil(tokens * 1.1);
   }
 
   private static estimateTokensFor(text: string): number {

@@ -2468,6 +2468,8 @@ export const de = {
         "Der KI-Anbieter hat den Auftrag nicht angenommen, deshalb wurde nichts gestartet und nichts berechnet. Du kannst den Lauf stattdessen sofort starten.",
       batchSubmitRefusedWithDetail:
         "Der KI-Anbieter hat den Auftrag nicht angenommen ({detail}), deshalb wurde nichts gestartet und nichts berechnet. Du kannst den Lauf stattdessen sofort starten.",
+      batchSubmitUnconfirmed:
+        "Der KI-Anbieter hat nicht bestätigt, ob er den Auftrag angenommen hat, deshalb wurde nichts geschrieben. Falls der Auftrag beim Anbieter doch gelaufen ist, wird dafür vorsichtshalber der geschätzte Höchstbetrag berechnet – höchstens der Teil, der tatsächlich gelaufen ist, wenn sich das feststellen liess. Bitte starte den Lauf erneut oder führe ihn sofort aus.",
       batchExpired:
         "Der KI-Anbieter hat den Auftrag nicht innerhalb seiner Frist fertiggestellt, deshalb wurde nichts geschrieben. Für nicht erledigte Arbeit wurde nichts berechnet. Bitte starte den Lauf erneut.",
       batchFailed:

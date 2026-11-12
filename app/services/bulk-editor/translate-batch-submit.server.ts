@@ -19,9 +19,22 @@
  *    the reservation exists before money can be spent, and the batch id is
  *    written WITHOUT a status condition so a Task somebody changed meanwhile
  *    cannot lose it.
+ *  - A create that is REFUSED by the provider (a 4xx with a body) made no batch:
+ *    the hold goes back and the Task says "nothing was charged". A create whose
+ *    outcome is UNKNOWN (timeout, abort, dropped connection, 5xx / 529) may have
+ *    made one and billed it: the hold is KEPT, the row waits as `create_unknown`
+ *    and the poller looks for the batch by its own id prefix. "Nothing was
+ *    charged" is never said after a create that might have succeeded.
+ *  - Everything after a successful create is guarded: if the id cannot be stored,
+ *    the Task and the row cannot be moved together, or anything else throws, the
+ *    batch is cancelled AT ONCE and its hold is settled by the guiding rule of
+ *    translate-batch-hold.server.ts (booked from the counts, converted to the
+ *    upper bound, released only when the provider proves nothing ran).
  *  - If the Task is no longer ours when the id comes back (cancelled, deleted,
- *    failed by recovery) the batch is cancelled at the provider AT ONCE, through
- *    the settlement transport, and the hold settled.
+ *    failed by recovery) the same happens -- except when the recovery has merely
+ *    RESUMED the run (`waiting_batch`): that batch is ours and is left alone.
+ *  - The payload is capped (BATCH_MAX_PROMPT_BYTES) so the upload fits inside the
+ *    create's timeout; what does not fit is reported as not started.
  *  - The worst case is reserved at the BATCH tier: sum of (estimated input +
  *    the max_tokens actually SENT) priced with the model's published batch
  *    factor. A managed shop whose remaining budget or the global pool cannot
@@ -35,16 +48,19 @@
 
 import type { PrismaClient, AISettings } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
-import { AIService, isManagedRefusal, type AiBatchRequest } from "../../../src/services/ai.service";
+import { AIService, isManagedRefusal, type AiBatchRequest, type BatchCreateError } from "../../../src/services/ai.service";
 import { aiServiceFor } from "../ai/ai-credentials.server";
 import { priceCall } from "~/config/ai-pricing";
 import {
+  TASK_STATUS_CANCEL_REQUESTED,
   TASK_STATUS_SUBMITTING,
   TASK_STATUS_WAITING_BATCH,
 } from "~/config/task-statuses.js";
+import type { Plan } from "~/config/plans";
 import { logger } from "~/utils/logger.server";
 import { errorMessage } from "~/routes/api-ai-handlers/shared";
 import { ShopifyApiGateway } from "../shopify-api-gateway.service";
+import { settleHold } from "./translate-batch-hold.server";
 import { planCellKey, planTranslateRead } from "./translate-plan-read.server";
 import {
   buildPackagePlan,
@@ -80,6 +96,8 @@ export interface SubmitArgs {
   shop: string;
   admin: AdminApiContext;
   settings: AISettings | null;
+  /** The plan the HANDLER resolved (and gated on): the budget check uses it, not a second reading of the settings. */
+  plan?: Plan;
   jobs: TranslateJob[];
   units: number;
   rowType: BulkRowType;
@@ -97,6 +115,14 @@ export type SubmitOutcome =
   | { ok: true; batchRowId: string; batchId: string; requests: number; carriedUnits: number; notStarted: number }
   | { ok: false; code: string };
 
+/** The Task error code of a run whose create may have made a batch that was then lost or abandoned. */
+export const SUBMIT_UNCONFIRMED_ERROR = "batch_submit_unconfirmed";
+
+/** Did the provider REFUSE the create (nothing exists), as opposed to an outcome we do not know? */
+function isDefinitiveRefusal(error: unknown): boolean {
+  return (error as Partial<BatchCreateError> | null)?.definitive === true;
+}
+
 /** Machine code -> Task.error. A provider's own words ride after the first colon (bounded, scrubbed of newlines). */
 function refusedCode(message: string): string {
   const clean = message.replace(/\s+/g, " ").trim().slice(0, 200);
@@ -106,6 +132,9 @@ function refusedCode(message: string): string {
 export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs): Promise<SubmitOutcome> {
   const { db, shop } = args;
   let batchRowId: string | null = null;
+  /** Set right BEFORE the provider create: from here on a batch MAY exist and a hold is never simply released. */
+  let createSent = false;
+  let createdBatchId: string | null = null;
 
   const beat = setInterval(() => {
     void db.task
@@ -129,6 +158,7 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
           where: { id: batchRowId, state: "submitting" },
           data: { state: "done", lastError: (detail ?? code).substring(0, 500) },
         });
+        // Only a run that never reached the create (or whose create was REFUSED) may give the hold back.
         const { releaseBudget } = await import("../ai/usage-meter.server");
         await releaseBudget(batchRowId);
       }
@@ -192,7 +222,7 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
         timeoutMs: packageTimeoutMs(packagePlannedOutputTokens(pkg)),
       });
       promptBytes += Buffer.byteLength(built.prompt, "utf8");
-      if (promptBytes > BATCH_MAX_PROMPT_BYTES) break;
+      if (promptBytes > BATCH_MAX_PROMPT_BYTES) break; // the rest is `notStarted`: the upload must fit inside the create's timeout
       requests.push(built);
       manifestRequests.push({
         customId: built.customId,
@@ -259,7 +289,7 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
       const status = await managedBudgetStatus(
         shop,
         args.settings,
-        (args.settings?.subscriptionPlan ?? "free") as never,
+        (args.plan ?? args.settings?.subscriptionPlan ?? "free") as never,
       );
       if (status.kind === "taster") return await fail("batch_not_available", "taster");
       if (status.readFailed || status.unavailable) return await fail("managed_ai_refused:managedUnavailable");
@@ -325,79 +355,160 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
     }
 
     // 8. The provider create. Never retried (a create that failed AFTER the provider accepted it
-    //    would make a second batch).
+    //    would make a second batch). From the first line of this step a batch MAY exist.
+    createSent = true;
     let created: { batchId: string; expiresAt: string | null };
     try {
-      created = await service.createBatch(requests);
+      created = await service.createBatch(requests, gate);
     } catch (error) {
       if (isManagedRefusal(error)) return await fail(error.message);
-      return await fail(refusedCode(errorMessage(error)), errorMessage(error));
+      // The provider REFUSED (a 4xx with a body): nothing was created, the hold goes back.
+      if (isDefinitiveRefusal(error)) return await fail(refusedCode(errorMessage(error)), errorMessage(error));
+      // Anything else (timeout, abort, dropped connection, 5xx / 529, an unclassified failure) leaves the
+      // outcome UNKNOWN: the batch may exist and bill. The hold is kept and the poller looks for it.
+      return await parkUnknownCreate(errorMessage(error));
     }
+    createdBatchId = created.batchId;
 
-    // 9. The batch id is written UNCONDITIONALLY (no status in the where): the Task row may have
-    //    been touched meanwhile, and the id is the only handle on a paid batch.
-    let idStored = false;
-    for (let attempt = 0; attempt < 3 && !idStored; attempt++) {
-      try {
-        await db.bulkTranslateBatch.update({ where: { id: row.id }, data: { batchIds: [created.batchId] } });
-        idStored = true;
-      } catch (error) {
-        logger.error("[BulkTranslateBatch] Could not store the batch id", { context: "AI", taskId, attempt, error: errorMessage(error) });
+    // 9. Everything from here is GUARDED: the batch exists and is paid for, so any failure takes the "not ours" path.
+    try {
+      // The batch id is written UNCONDITIONALLY (no status in the where): the Task row may have
+      // been touched meanwhile, and the id is the only handle on a paid batch.
+      let idStored = false;
+      for (let attempt = 0; attempt < 3 && !idStored; attempt++) {
+        try {
+          await db.bulkTranslateBatch.update({ where: { id: row.id }, data: { batchIds: [created.batchId] } });
+          idStored = true;
+        } catch (error) {
+          logger.error("[BulkTranslateBatch] Could not store the batch id", { context: "AI", taskId, attempt, error: errorMessage(error) });
+        }
       }
-    }
-    const expiresAtMs = created.expiresAt ? Date.parse(created.expiresAt) : NaN;
-    const taskExpires = new Date((Number.isFinite(expiresAtMs) ? expiresAtMs : Date.now() + 24 * 3600 * 1000) + 3 * 24 * 3600 * 1000);
-    const flipped = idStored
-      ? await db.task.updateMany({
+      if (!idStored) return await abandonCreated(created.batchId, "batch_id_not_stored", true);
+
+      const expiresAtMs = created.expiresAt ? Date.parse(created.expiresAt) : NaN;
+      const taskExpires = new Date((Number.isFinite(expiresAtMs) ? expiresAtMs : Date.now() + 24 * 3600 * 1000) + 3 * 24 * 3600 * 1000);
+      // The Task and the row move TOGETHER: a Task `waiting_batch` over a row still `submitting` (or the
+      // reverse) is a pair no poller query matches.
+      const flipped = await db.$transaction(async (tx) => {
+        const taskFlip = await tx.task.updateMany({
           where: { id: taskId, status: TASK_STATUS_SUBMITTING },
           data: { status: TASK_STATUS_WAITING_BATCH, expiresAt: taskExpires },
-        })
-      : { count: 0 };
-
-    if (!idStored || flipped.count === 0) {
-      // The Task is no longer ours (cancelled, deleted, failed by recovery) -- or the id could not be
-      // kept: the batch must not run unattended. Cancel it NOW through the settlement transport.
-      const confirmed = await cancelAtOnce(shop, row.id, created.batchId);
-      await db.bulkTranslateBatch.updateMany({
-        where: { id: row.id, state: "submitting" },
-        data: { state: "done", lastError: idStored ? "task_not_ours" : "batch_id_not_stored" },
+        });
+        if (taskFlip.count === 0) return false;
+        await tx.bulkTranslateBatch.updateMany({ where: { id: row.id, state: "submitting" }, data: { state: "waiting" } });
+        return true;
       });
-      const { releaseBudget, convertReservation } = await import("../ai/usage-meter.server");
-      // Unconfirmed cancel: the batch may still bill -> the hold becomes the charge.
-      await (confirmed ? releaseBudget : convertReservation)(row.id);
-      return { ok: false, code: "task_not_ours" };
-    }
 
-    await db.bulkTranslateBatch.updateMany({ where: { id: row.id, state: "submitting" }, data: { state: "waiting" } });
-    logger.info("[BulkTranslateBatch] Batch submitted", {
-      context: "AI",
-      taskId,
-      requests: requests.length,
-      cells: cells.length,
-      reservedMicros: managed ? reserveMicros : 0,
-    });
-    return { ok: true, batchRowId: row.id, batchId: created.batchId, requests: requests.length, carriedUnits, notStarted };
+      if (!flipped) {
+        // Not `submitting` any more. If a recovery merely RESUMED the run (`waiting_batch` over a `waiting` row
+        // that names this batch) it is still ours; anything else (cancelled, deleted, failed) is not.
+        const [task, current] = await Promise.all([
+          db.task.findUnique({ where: { id: taskId }, select: { status: true } }),
+          db.bulkTranslateBatch.findUnique({ where: { id: row.id }, select: { state: true, batchIds: true } }),
+        ]);
+        const resumed =
+          !!task &&
+          [TASK_STATUS_WAITING_BATCH, TASK_STATUS_CANCEL_REQUESTED].includes(task.status) &&
+          !!current &&
+          ["waiting", "cancel_requested"].includes(current.state) &&
+          Array.isArray(current.batchIds) &&
+          current.batchIds.includes(created.batchId);
+        if (!resumed) return await abandonCreated(created.batchId, "task_not_ours", false);
+      }
+
+      logger.info("[BulkTranslateBatch] Batch submitted", {
+        context: "AI",
+        taskId,
+        requests: requests.length,
+        cells: cells.length,
+        reservedMicros: managed ? reserveMicros : 0,
+      });
+      return { ok: true, batchRowId: row.id, batchId: created.batchId, requests: requests.length, carriedUnits, notStarted };
+    } catch (error) {
+      // A database failure (or anything else) after the create: the batch must not run unattended.
+      return await abandonCreated(created.batchId, `post_create_failed:${errorMessage(error)}`.substring(0, 200), true);
+    }
   } catch (error) {
+    // Reaching here with a batch id is impossible (step 9 has its own guard). A create that was SENT but never
+    // answered is unknown, not refused: keep the hold. Before the create nothing exists: the hold goes back.
+    if (createdBatchId) return await abandonCreated(createdBatchId, `post_create_failed:${errorMessage(error)}`.substring(0, 200), true);
+    if (createSent) return await parkUnknownCreate(errorMessage(error));
     return await fail(refusedCode(errorMessage(error)), errorMessage(error));
   } finally {
     clearInterval(beat);
   }
-}
 
-/** Cancel one provider batch through the settlement transport; true when the provider confirmed. Never throws. */
-async function cancelAtOnce(shop: string, batchRowId: string, batchId: string): Promise<boolean> {
-  try {
-    const { settlementCredentialsFor } = await import("../ai/ai-credentials.server");
-    // The row exists, but its `batchIds` may not (the id could not be stored): the allowlist is built from the
-    // row, so make sure it names this batch before asking.
-    const { db } = await import("~/db.server");
-    await db.bulkTranslateBatch.updateMany({ where: { id: batchRowId }, data: { batchIds: [batchId] } }).catch(() => undefined);
-    const decision = await settlementCredentialsFor(shop, batchRowId);
-    if (!decision.ok) return false;
-    await decision.transport.cancel(batchId);
-    return true;
-  } catch (error) {
-    logger.warn("[BulkTranslateBatch] Immediate cancel failed", { context: "AI", batchRowId, error: errorMessage(error) });
-    return false;
+  /** A create of unknown outcome: the hold stays, the row waits as `create_unknown`, the poller looks for the batch. */
+  async function parkUnknownCreate(detail: string): Promise<SubmitOutcome> {
+    logger.warn("[BulkTranslateBatch] Create of unknown outcome; the hold is kept", { context: "AI", taskId, detail });
+    try {
+      const expires = new Date(Date.now() + 4 * 24 * 3600 * 1000);
+      await db.$transaction(async (tx) => {
+        if (batchRowId) {
+          await tx.bulkTranslateBatch.updateMany({
+            where: { id: batchRowId, state: "submitting" },
+            data: { state: "create_unknown", lastError: `create_unknown:${detail}`.substring(0, 500) },
+          });
+        }
+        await tx.task.updateMany({
+          where: { id: taskId, status: TASK_STATUS_SUBMITTING },
+          data: { status: TASK_STATUS_WAITING_BATCH, expiresAt: expires },
+        });
+      });
+    } catch (error) {
+      // Leaves the Task `submitting` over a `submitting` row with a held reservation: the recovery parks exactly that.
+      logger.error("[BulkTranslateBatch] Could not park a create of unknown outcome", { context: "AI", taskId, error: errorMessage(error) });
+    }
+    return { ok: false, code: "batch_create_unconfirmed" };
+  }
+
+  /**
+   * The batch exists but this run cannot own it: cancel it at once and settle its hold by the guiding
+   * rule. Whatever cannot be settled now stays as an open `cancel_requested` row, which the poller finishes
+   * (cancel again, read the counts, book / release / convert). Never throws.
+   */
+  async function abandonCreated(batchId: string, reason: string, failTask: boolean): Promise<SubmitOutcome> {
+    logger.warn("[BulkTranslateBatch] Abandoning a created batch", { context: "AI", taskId, reason });
+    try {
+      // The id first (the settlement allowlist is built from the row), then the state, then the Task.
+      await db.bulkTranslateBatch.updateMany({
+        where: { id: batchRowId! },
+        data: { batchIds: [batchId] },
+      }).catch(() => undefined);
+      await db.bulkTranslateBatch.updateMany({
+        where: { id: batchRowId!, state: { in: ["submitting", "create_unknown"] } },
+        data: { state: "cancel_requested", cancelRequestedAt: new Date(), lastError: reason.substring(0, 500) },
+      }).catch(() => undefined);
+      if (failTask) {
+        await db.task.updateMany({
+          where: { id: taskId, status: { in: ["running", TASK_STATUS_SUBMITTING] } },
+          data: { status: "failed", progress: 100, completedAt: new Date(), error: SUBMIT_UNCONFIRMED_ERROR },
+        }).catch(() => undefined);
+      }
+      const { settlementCredentialsFor } = await import("../ai/ai-credentials.server");
+      const decision = await settlementCredentialsFor(shop, batchRowId!);
+      if (decision.ok) {
+        try {
+          await decision.transport.cancel(batchId);
+        } catch (error) {
+          logger.warn("[BulkTranslateBatch] Immediate cancel failed", { context: "AI", batchRowId, error: errorMessage(error) });
+        }
+      }
+      // A confirmed cancel proves nothing: the counts decide (a batch that had ended ran).
+      const fresh = await db.bulkTranslateBatch.findUnique({ where: { id: batchRowId! } });
+      if (fresh) {
+        const outcome = await settleHold(fresh, decision.ok ? decision.transport : null, { final: false });
+        if (outcome.kind !== "pending") {
+          await db.bulkTranslateBatch.updateMany({
+            where: { id: batchRowId!, state: "cancel_requested" },
+            data: { state: "done", lastError: reason.substring(0, 500) },
+          });
+        }
+      }
+    } catch (error) {
+      logger.error("[BulkTranslateBatch] Could not settle an abandoned batch; the poller will", { context: "AI", taskId, error: errorMessage(error) });
+    }
+    return { ok: false, code: "task_not_ours" };
   }
 }
+

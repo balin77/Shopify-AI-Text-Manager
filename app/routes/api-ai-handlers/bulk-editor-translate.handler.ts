@@ -327,6 +327,7 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
       shop,
       admin: backgroundAdmin(shop, admin),
       settings,
+      plan,
       jobs,
       units,
       rowType,

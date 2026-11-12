@@ -287,10 +287,20 @@ describe('the transport reaches nothing else', () => {
     return { transport: decision.transport, ...rig, decision };
   }
 
-  it('is frozen and exposes exactly retrieve / results / cancel / deleteFile', async () => {
+  it('is frozen and exposes exactly findIntentBatch / retrieve / results / cancel / deleteFile', async () => {
     const { transport } = await transportOf();
     expect(Object.isFrozen(transport)).toBe(true);
     expect(Object.keys(transport).sort()).toEqual([...SETTLEMENT_TRANSPORT_METHODS].sort());
+  });
+
+  it('findIntentBatch passes the query to the provider ops (matched by the run id prefix) and is logged; a provider without it says so', async () => {
+    const { transport, ops } = await transportOf();
+    (ops as any).findIntentBatch = vi.fn(async () => ({ found: false, pending: false }));
+    const query = { idPrefix: 'ttask-1_p', since: '2026-11-12T00:00:00Z', requestCount: 2 };
+    expect(await transport.findIntentBatch(query)).toEqual({ found: false, pending: false });
+    expect((ops as any).findIntentBatch).toHaveBeenCalledWith(query);
+    delete (ops as any).findIntentBatch;
+    await expect(transport.findIntentBatch(query)).rejects.toThrow(/not implemented/i);
   });
 
   it('carries no key anywhere in what a caller can see', async () => {

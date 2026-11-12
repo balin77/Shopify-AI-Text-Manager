@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   pool: vi.fn(),
   settle: vi.fn(),
   cancel: vi.fn(),
+  retrieve: vi.fn(),
   planRead: vi.fn(),
 }));
 
@@ -52,7 +53,7 @@ import { submitBulkTranslateBatch } from "~/services/bulk-editor/translate-batch
 import { BULK_COLUMNS_BY_TYPE } from "~/services/bulk-editor/columns.shared";
 import { BATCH_CUSTOM_ID_PATTERN, parseManifest } from "~/services/bulk-editor/translate-batch.shared";
 import { priceCall } from "~/config/ai-pricing";
-import { AIService, ManagedAiRefusedError } from "../../src/services/ai.service";
+import { AIService, BatchCreateError, ManagedAiRefusedError } from "../../src/services/ai.service";
 
 const col = (id: string) => BULK_COLUMNS_BY_TYPE.product.find((c) => c.id === id)!;
 const LOCALES = ["fr", "es"];
@@ -77,8 +78,9 @@ const jobs = (count: number, extra = false) =>
     ],
   }));
 
-function makeDb(opts: { taskStillOurs?: boolean } = {}) {
+function makeDb(opts: { taskStillOurs?: boolean; idStoreFails?: boolean; txFails?: boolean; resumedByRecovery?: boolean } = {}) {
   const calls: { op: string; arg: any }[] = [];
+  const rowState = { state: "submitting", batchIds: [] as string[], manifest: "" };
   const db: any = {
     calls,
     task: {
@@ -88,23 +90,38 @@ function makeDb(opts: { taskStillOurs?: boolean } = {}) {
         if (arg.data.status === "waiting_batch" && opts.taskStillOurs === false) return { count: 0 };
         return { count: 1 };
       }),
+      findUnique: vi.fn(async () => ({ status: opts.resumedByRecovery ? "waiting_batch" : "cancelled" })),
     },
     bulkTranslateBatch: {
       create: vi.fn(async (arg: any) => {
         log.push("row.create");
         calls.push({ op: "row.create", arg });
+        rowState.manifest = arg.data.manifest;
         return { id: "row-1", ...arg.data };
       }),
       update: vi.fn(async (arg: any) => {
         log.push("row.update");
         calls.push({ op: "row.update", arg });
+        if (opts.idStoreFails) throw new Error("db down");
+        rowState.batchIds = arg.data.batchIds ?? rowState.batchIds;
         return {};
       }),
       updateMany: vi.fn(async (arg: any) => {
         calls.push({ op: "row.updateMany", arg });
+        if (arg.data.batchIds) rowState.batchIds = arg.data.batchIds;
+        if (arg.data.state) rowState.state = arg.data.state;
         return { count: 1 };
       }),
+      findUnique: vi.fn(async () => ({
+        id: "row-1", provider: "claude", model: "claude-haiku-4-5", source: "managed", reservationState: "held",
+        batchIds: opts.resumedByRecovery ? ["msgbatch_1"] : rowState.batchIds, state: opts.resumedByRecovery ? "waiting" : rowState.state,
+        manifest: rowState.manifest,
+      })),
     },
+    $transaction: vi.fn(async (fn: any) => {
+      if (opts.txFails) throw new Error("tx failed");
+      return fn(db);
+    }),
   };
   return db;
 }
@@ -122,7 +139,7 @@ function fakeService(over: Record<string, unknown> = {}) {
       maxTokens: 1500,
       inputEstimateTokens: 400,
     })),
-    createBatch: vi.fn(async () => {
+    createBatch: vi.fn(async (_requests: unknown, _gate: unknown) => {
       log.push("provider.create");
       return { batchId: "msgbatch_1", expiresAt: "2026-11-13T12:00:00Z" };
     }),
@@ -164,7 +181,8 @@ beforeEach(() => {
   h.budget.mockResolvedValue({ kind: "period", allowed: true, remainingMicros: 50_000_000, usedMicros: 0, limitMicros: 50_000_000, period: "b:2026-12-01" });
   h.pool.mockResolvedValue({ allowed: true, limitMicros: null, spentMicros: 0 });
   h.cancel.mockResolvedValue({});
-  h.settle.mockResolvedValue({ ok: true, transport: { cancel: h.cancel } });
+  h.retrieve.mockResolvedValue({ providerStatus: "canceling", ended: false, requestCounts: { total: 1, processing: 1, succeeded: 0, errored: 0, expired: 0, canceled: 0 } });
+  h.settle.mockResolvedValue({ ok: true, transport: { cancel: h.cancel, retrieve: h.retrieve } });
 });
 
 describe("the happy path (managed)", () => {
@@ -183,8 +201,9 @@ describe("the happy path (managed)", () => {
     expect(flip.data.expiresAt).toEqual(new Date(Date.parse("2026-11-13T12:00:00Z") + 3 * 24 * 3600 * 1000));
     // the batch id is written WITHOUT a status condition
     expect(db.calls.find((c: any) => c.op === "row.update").arg).toEqual({ where: { id: "row-1" }, data: { batchIds: ["msgbatch_1"] } });
-    // the row ends `waiting`
+    // the row ends `waiting`, flipped in the SAME transaction as the Task (never one without the other)
     expect(db.calls.some((c: any) => c.op === "row.updateMany" && c.arg.data.state === "waiting")).toBe(true);
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
   });
 
   it("the INTENT row pins everything the later booking needs: provider, model, source, role, period, pool, pool period, id prefix", async () => {
@@ -325,8 +344,10 @@ describe("refusals -- nothing is created, nothing is reserved", () => {
 });
 
 describe("the provider refuses or the reservation cannot be written", () => {
-  it("a create the provider refuses: Task failed with the provider's words after batch_submit_refused:, row done, hold RELEASED", async () => {
-    const service = fakeService({ createBatch: vi.fn(async () => { throw Object.assign(new Error("model does not support batches\nsorry"), { status: 400 }); }) });
+  const refusal = () => new BatchCreateError("model does not support batches\nsorry", true, 400);
+
+  it("a create the provider REFUSES (definitive): Task failed with the provider's words after batch_submit_refused:, row done, hold RELEASED", async () => {
+    const service = fakeService({ createBatch: vi.fn(async () => { throw refusal(); }) });
     const db = makeDb();
     const out = await submitBulkTranslateBatch("task-1", args(db, service));
     expect(out).toEqual({ ok: false, code: "batch_submit_refused:model does not support batches sorry" });
@@ -351,26 +372,156 @@ describe("the provider refuses or the reservation cannot be written", () => {
     const out = await submitBulkTranslateBatch("task-1", args(makeDb(), service));
     expect(out).toEqual({ ok: false, code: "managed_ai_refused:budgetExceeded" });
   });
+
+  it("the gate's answer is what createBatch is handed (M3: no create without the gate)", async () => {
+    const service = fakeService();
+    await submitBulkTranslateBatch("task-1", args(makeDb(), service));
+    const gate = await service.batchGate.mock.results[0].value;
+    expect(service.createBatch.mock.calls[0][1]).toBe(gate);
+  });
+});
+
+describe("H1: a create of UNKNOWN outcome (timeout, abort, dropped connection, 5xx) keeps the hold", () => {
+  for (const [name, error] of [
+    ["a timeout", new BatchCreateError("Request timed out.", false)],
+    ["an overloaded provider (529)", new BatchCreateError("overloaded", false, 529)],
+    ["a plain unclassified failure", new Error("socket hang up")],
+  ] as const) {
+    it(`${name}: the hold is NOT released, the row waits as create_unknown, the Task as waiting_batch, and nothing says "nothing was charged"`, async () => {
+      const service = fakeService({ createBatch: vi.fn(async () => { throw error; }) });
+      const db = makeDb();
+      const out = await submitBulkTranslateBatch("task-1", args(db, service));
+      expect(out).toEqual({ ok: false, code: "batch_create_unconfirmed" });
+      expect(h.release).not.toHaveBeenCalled();
+      expect(h.convert).not.toHaveBeenCalled(); // converted only at the absolute end, after the search
+      expect(db.calls.some((c: any) => c.op === "row.updateMany" && c.arg.data.state === "create_unknown")).toBe(true);
+      expect(db.calls.some((c: any) => c.op === "row.updateMany" && c.arg.data.state === "done")).toBe(false);
+      const taskFlip = db.calls.map((c: any) => c.arg).find((a: any) => a.data?.status === "waiting_batch");
+      expect(taskFlip.where).toEqual({ id: "task-1", status: "submitting" });
+      expect(taskFlip.data.expiresAt).toBeInstanceOf(Date);
+      // no failed Task, and never the "refused" code
+      expect(db.calls.map((c: any) => c.arg).find((a: any) => a.data?.status === "failed")).toBeUndefined();
+      expect(JSON.stringify(db.calls)).not.toContain("batch_submit_refused");
+      // park: Task and row in ONE transaction
+      expect(db.$transaction).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it("the row keeps the intent (id prefix, intentAt, manifest) the poller searches the provider with", async () => {
+    const service = fakeService({ createBatch: vi.fn(async () => { throw new BatchCreateError("timeout", false); }) });
+    const db = makeDb();
+    await submitBulkTranslateBatch("task-1", args(db, service));
+    const data = db.calls.find((c: any) => c.op === "row.create").arg.data;
+    expect(data).toMatchObject({ idPrefix: "ttask-1_p", state: "submitting" });
+    expect(data.intentAt).toBeInstanceOf(Date);
+    expect(parseManifest(data.manifest)!.requests).toHaveLength(1);
+  });
+
+  it("an exception thrown around the create (after it was sent, before an answer) is unknown too, never 'refused'", async () => {
+    const service = fakeService();
+    const db = makeDb({ txFails: false });
+    h.reserve.mockImplementation(async () => (log.push("reserve"), { applied: true, micros: 1 }));
+    service.createBatch = vi.fn(async () => { throw new TypeError("cannot read properties of undefined"); });
+    const out = await submitBulkTranslateBatch("task-1", args(db, service));
+    expect(out).toEqual({ ok: false, code: "batch_create_unconfirmed" });
+    expect(h.release).not.toHaveBeenCalled();
+  });
+});
+
+describe("H1-state: a failure AFTER the create takes the 'not ours' path", () => {
+  it("the batch id cannot be stored (DB down three times): cancel at once, the hold is NOT released (the counts decide), the Task fails as unconfirmed", async () => {
+    const db = makeDb({ idStoreFails: true });
+    const out = await submitBulkTranslateBatch("task-1", args(db, fakeService()));
+    expect(out).toEqual({ ok: false, code: "task_not_ours" });
+    expect(db.bulkTranslateBatch.update).toHaveBeenCalledTimes(3);
+    expect(h.cancel).toHaveBeenCalledWith("msgbatch_1");
+    // still canceling: nothing proven -> neither released nor converted yet; the row stays open for the poller
+    expect(h.release).not.toHaveBeenCalled();
+    expect(h.convert).not.toHaveBeenCalled();
+    expect(db.calls.some((c: any) => c.op === "row.updateMany" && c.arg.data.state === "cancel_requested")).toBe(true);
+    expect(db.calls.some((c: any) => c.op === "row.updateMany" && c.arg.data.state === "done")).toBe(false);
+    // the id is still written for the settlement allowlist
+    expect(db.calls.some((c: any) => c.op === "row.updateMany" && JSON.stringify(c.arg.data.batchIds) === '["msgbatch_1"]')).toBe(true);
+    expect(db.calls.map((c: any) => c.arg).find((a: any) => a.data?.status === "failed")?.data.error).toBe("batch_submit_unconfirmed");
+  });
+
+  it("the Task/row transaction fails (DB error): same path, and the batch is cancelled", async () => {
+    const db = makeDb({ txFails: true });
+    const out = await submitBulkTranslateBatch("task-1", args(db, fakeService()));
+    expect(out.ok).toBe(false);
+    expect(h.cancel).toHaveBeenCalledWith("msgbatch_1");
+    expect(h.release).not.toHaveBeenCalled();
+    expect(db.calls.map((c: any) => c.arg).find((a: any) => a.data?.status === "failed")?.data.error).toBe("batch_submit_unconfirmed");
+  });
+
+  it("once the provider PROVES nothing ran (ended, nothing succeeded) the hold goes back and the row is closed", async () => {
+    h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true, requestCounts: { total: 1, processing: 0, succeeded: 0, errored: 0, expired: 0, canceled: 1 } });
+    const db = makeDb({ txFails: true });
+    await submitBulkTranslateBatch("task-1", args(db, fakeService()));
+    expect(h.release).toHaveBeenCalledWith("row-1");
+    expect(db.calls.some((c: any) => c.op === "row.updateMany" && c.arg.data.state === "done")).toBe(true);
+  });
 });
 
 describe("the Task is no longer ours when the batch id comes back (cancelled, deleted, failed by recovery)", () => {
-  it("cancels the batch AT ONCE through the settlement transport and releases the hold (cancel confirmed)", async () => {
+  it("cancels the batch AT ONCE through the settlement transport; a cancel is no proof, so the hold waits for the counts", async () => {
     const db = makeDb({ taskStillOurs: false });
     const out = await submitBulkTranslateBatch("task-1", args(db, fakeService()));
     expect(out).toEqual({ ok: false, code: "task_not_ours" });
     expect(h.settle).toHaveBeenCalledWith("s.myshopify.com", "row-1");
     expect(h.cancel).toHaveBeenCalledWith("msgbatch_1");
-    expect(h.release).toHaveBeenCalledWith("row-1");
+    expect(h.release).not.toHaveBeenCalled();
     expect(h.convert).not.toHaveBeenCalled();
-    expect(db.calls.some((c: any) => c.op === "row.updateMany" && c.arg.data.state === "done")).toBe(true);
+    expect(db.calls.some((c: any) => c.op === "row.updateMany" && c.arg.data.state === "cancel_requested")).toBe(true);
+    // the Task is somebody else's decision: not touched
+    expect(db.calls.map((c: any) => c.arg).find((a: any) => a.data?.status === "failed")).toBeUndefined();
   });
 
-  it("a cancel that is NOT confirmed books the reserved upper bound instead of releasing it", async () => {
-    h.cancel.mockRejectedValue(new Error("provider down"));
+  it("an ended batch that SUCCEEDED somewhere is booked pro rata, not released", async () => {
+    h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true, requestCounts: { total: 1, processing: 0, succeeded: 1, errored: 0, expired: 0, canceled: 0 } });
     const db = makeDb({ taskStillOurs: false });
     await submitBulkTranslateBatch("task-1", args(db, fakeService()));
-    expect(h.convert).toHaveBeenCalledWith("row-1");
+    expect(h.convert).toHaveBeenCalledWith("row-1", { bookMicros: expect.any(Number) });
     expect(h.release).not.toHaveBeenCalled();
+  });
+
+  it("a cancel that FAILS and nothing readable: the hold is neither released nor converted here (the poller / the absolute end decide)", async () => {
+    h.cancel.mockRejectedValue(new Error("provider down"));
+    h.retrieve.mockRejectedValue(new Error("provider down"));
+    await submitBulkTranslateBatch("task-1", args(makeDb({ taskStillOurs: false }), fakeService()));
+    expect(h.release).not.toHaveBeenCalled();
+    expect(h.convert).not.toHaveBeenCalled();
+  });
+
+  it("a Task the RECOVERY merely resumed (waiting_batch over a waiting row naming this batch) is still ours: the batch is NOT cancelled", async () => {
+    const db = makeDb({ taskStillOurs: false, resumedByRecovery: true });
+    const out = await submitBulkTranslateBatch("task-1", args(db, fakeService()));
+    expect(out).toMatchObject({ ok: true, batchId: "msgbatch_1" });
+    expect(h.cancel).not.toHaveBeenCalled();
+    expect(h.release).not.toHaveBeenCalled();
+  });
+});
+
+describe("the plan the handler resolved is the plan the budget is checked with", () => {
+  it("passes args.plan, not a second reading of the settings", async () => {
+    await submitBulkTranslateBatch("task-1", args(makeDb(), fakeService(), { plan: "max", settings: { subscriptionPlan: "free" } as any }));
+    expect(h.budget.mock.calls[0][2]).toBe("max");
+  });
+});
+
+describe("the payload cap", () => {
+  it("a package that would push the batch past the byte cap is not sent: it is reported as not started, never half-sent", async () => {
+    const big = "x".repeat(5 * 1024 * 1024);
+    let n = 0;
+    const service = fakeService({
+      buildBatchRequest: vi.fn(async (customId: string) => ({ customId, prompt: big + ++n, maxTokens: 1500, inputEstimateTokens: 400 })),
+    });
+    // three groups of titles -> force several packages by instructions
+    const out = await submitBulkTranslateBatch("task-1", args(makeDb(), service, { jobs: jobs(3) as any, instructionsFor: (k: string[]) => k.join(",") + Math.random() }));
+    if (out.ok) expect(out.requests).toBeLessThanOrEqual(1);
+    const sent = service.createBatch.mock.calls[0]?.[0] ?? [];
+    const bytes = sent.reduce((acc: number, r: any) => acc + Buffer.byteLength(r.prompt), 0);
+    expect(bytes).toBeLessThanOrEqual(8 * 1024 * 1024);
   });
 });
 

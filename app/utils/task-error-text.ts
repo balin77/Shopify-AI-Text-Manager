@@ -95,6 +95,8 @@ const FALLBACK: Record<string, string> = {
     "The AI provider did not accept the job, so nothing was started and nothing was charged. You can run it again immediately instead.",
   batchSubmitRefusedWithDetail:
     "The AI provider did not accept the job ({detail}), so nothing was started and nothing was charged. You can run it again immediately instead.",
+  batchSubmitUnconfirmed:
+    "The AI provider did not confirm whether it accepted the job, so nothing was written. If the job did run at the provider, the estimated maximum cost is charged as a precaution (or only the part that actually ran, where that could be established). Please start the run again, or run it immediately.",
   batchExpired:
     "The AI provider did not finish the job within its time limit, so nothing was written. Nothing was charged for work that was not done. Please start the run again.",
   batchFailed:
@@ -174,6 +176,8 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
         ? fill(phrase(t, "batchSubmitRefusedWithDetail"), { detail })
         : phrase(t, "batchSubmitRefused");
     }
+    case "batch_submit_unconfirmed":
+      return phrase(t, "batchSubmitUnconfirmed");
     case "batch_expired":
       return phrase(t, "batchExpired");
     case "batch_failed":

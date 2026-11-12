@@ -251,7 +251,9 @@ export async function reconcileOrphanCrawlSnapshots(prisma, shops = null) {
 }
 
 /**
- * Resolve `submitting` batch tasks whose submit runner is gone.
+ * Resolve `submitting` batch tasks whose submit runner is gone: a persisted batch id
+ * resumes (`waiting_batch`), a hold without an id is parked (`create_unknown`, the
+ * create may have been sent), anything else fails as interrupted.
  *
  * `olderThan` (a Date) = only rows silent that long (the periodic reaper);
  * `silentMs` + `createdBefore` = the boot rule (existed before this process,
@@ -278,13 +280,27 @@ export async function recoverSubmittingBatchTasks(prisma, options = {}) {
 
   const batches = await prisma.bulkTranslateBatch.findMany({
     where: { taskId: { in: rows.map((r) => r.id) } },
-    select: { taskId: true, batchIds: true },
+    select: { taskId: true, batchIds: true, source: true, reservationState: true },
   });
   const persisted = new Set(
     batches.filter((b) => Array.isArray(b.batchIds) && b.batchIds.length > 0).map((b) => b.taskId),
   );
+  // No batch id, but a HOLD exists: the reservation is written right before the provider create, so the
+  // create may have been sent and its answer lost. That run is parked (the poller looks for the batch by
+  // its id prefix; the absolute end converts the hold) instead of failed with the hold released.
+  const parked = new Set(
+    batches
+      .filter(
+        (b) =>
+          !(Array.isArray(b.batchIds) && b.batchIds.length > 0) &&
+          b.source === "managed" &&
+          b.reservationState === "held",
+      )
+      .map((b) => b.taskId),
+  );
   const resumeIds = rows.filter((r) => persisted.has(r.id)).map((r) => r.id);
-  const failIds = rows.filter((r) => !persisted.has(r.id)).map((r) => r.id);
+  const parkIds = rows.filter((r) => !persisted.has(r.id) && parked.has(r.id)).map((r) => r.id);
+  const failIds = rows.filter((r) => !persisted.has(r.id) && !parked.has(r.id)).map((r) => r.id);
 
   let resumed = 0;
   let failed = 0;
@@ -305,6 +321,21 @@ export async function recoverSubmittingBatchTasks(prisma, options = {}) {
       await tx.bulkTranslateBatch.updateMany({
         where: { taskId: { in: resumeIds }, state: "submitting" },
         data: { state: "waiting" },
+      });
+      return res.count;
+    });
+  }
+  if (parkIds.length > 0) {
+    // A provider batch lives 24 h; the Task must outlive it (no cleanup deletes an open batch task).
+    const expiresAt = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
+    resumed += await together(async (tx) => {
+      const res = await tx.task.updateMany({
+        where: { id: { in: parkIds }, status: "submitting" },
+        data: { status: "waiting_batch", expiresAt },
+      });
+      await tx.bulkTranslateBatch.updateMany({
+        where: { taskId: { in: parkIds }, state: "submitting" },
+        data: { state: "create_unknown" },
       });
       return res.count;
     });

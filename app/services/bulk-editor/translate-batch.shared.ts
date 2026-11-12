@@ -156,9 +156,17 @@ export function parseManifest(text: string | null | undefined): BatchManifest | 
 
 // ─── result bookkeeping ─────────────────────────────────────────────────────
 
-/** Sizes of the whole batch. Anthropic documents 100 000 requests / 256 MB per batch; this stays far below both. */
+/**
+ * Sizes of the whole batch. Anthropic documents 100 000 requests / 256 MB per
+ * batch; this stays far below both, and the BYTE cap is chosen for the upload,
+ * not for the provider: the create is one HTTP request with a 120 s timeout, and
+ * a body that does not fit inside it ends in a create of UNKNOWN outcome (the
+ * provider may have made the batch). 8 MB of prompt text uploads in seconds even
+ * on a slow link. What does not fit is reported as not started (`notStarted`),
+ * never sent in a second batch unasked: the merchant starts the run again.
+ */
 export const BATCH_MAX_REQUESTS = 10_000;
-export const BATCH_MAX_PROMPT_BYTES = 100 * 1024 * 1024;
+export const BATCH_MAX_PROMPT_BYTES = 8 * 1024 * 1024;
 
 /** How many synchronous re-asks a collect may spend on entries the batch did not deliver: min(20, 10 % of the packages), at least one. */
 export function retryBudgetFor(requestCount: number): number {

@@ -2447,6 +2447,8 @@ export const es: Translation = {
         "El proveedor de IA no aceptó el trabajo, por lo que no se inició nada ni se cobró nada. Puedes ejecutarlo de inmediato.",
       batchSubmitRefusedWithDetail:
         "El proveedor de IA no aceptó el trabajo ({detail}), por lo que no se inició nada ni se cobró nada. Puedes ejecutarlo de inmediato.",
+      batchSubmitUnconfirmed:
+        "El proveedor de IA no confirmó si aceptó el trabajo, por lo que no se escribió nada. Si el trabajo se ejecutó en el proveedor, se cobra por precaución el coste máximo estimado (o solo la parte que realmente se ejecutó, cuando se pudo comprobar). Vuelve a iniciar la ejecución o ejecútala de inmediato.",
       batchExpired:
         "El proveedor de IA no terminó el trabajo dentro de su plazo, por lo que no se escribió nada. No se cobró el trabajo no realizado. Vuelve a iniciar la ejecución.",
       batchFailed:

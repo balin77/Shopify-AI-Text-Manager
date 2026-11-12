@@ -73,6 +73,33 @@ describe("recoverSubmittingBatchTasks", () => {
     });
   });
 
+  it("a managed run with a HOLD but no batch id (the create may have been sent) is PARKED as create_unknown, not failed with the hold released", async () => {
+    taskFindMany.mockResolvedValue([
+      { id: "t-held", shop: "a.myshopify.com" },
+      { id: "t-byo", shop: "a.myshopify.com" },
+      { id: "t-nohold", shop: "a.myshopify.com" },
+    ]);
+    batchFindMany.mockResolvedValue([
+      { taskId: "t-held", batchIds: [], source: "managed", reservationState: "held" },
+      { taskId: "t-byo", batchIds: [], source: "byo", reservationState: "none" },
+      { taskId: "t-nohold", batchIds: [], source: "managed", reservationState: "none" }, // died before the reservation: nothing was sent
+    ]);
+    const res = await recoverSubmittingBatchTasks(prisma, {});
+    expect(res).toMatchObject({ resumed: 1, failed: 2 });
+    expect(taskUpdateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["t-held"] }, status: "submitting" },
+      data: { status: "waiting_batch", expiresAt: expect.any(Date) },
+    });
+    expect(batchUpdateMany).toHaveBeenCalledWith({
+      where: { taskId: { in: ["t-held"] }, state: "submitting" },
+      data: { state: "create_unknown" },
+    });
+    expect(taskUpdateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["t-byo", "t-nohold"] }, status: "submitting" },
+      data: { status: "failed", error: INTERRUPTED_TASK_ERROR, completedAt: expect.any(Date) },
+    });
+  });
+
   it("only ever selects `submitting` rows of the batch types -- never waiting_batch or cancel_requested", async () => {
     await recoverSubmittingBatchTasks(prisma, {});
     const where = taskFindMany.mock.calls[0][0].where;

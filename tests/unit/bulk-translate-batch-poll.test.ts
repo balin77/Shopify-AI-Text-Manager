@@ -28,6 +28,7 @@ const h = vi.hoisted(() => ({
   cancel: vi.fn(),
   results: vi.fn(),
   deleteFile: vi.fn(),
+  find: vi.fn(),
 }));
 
 /** Matches the where-shapes the poller uses: equality, {in}, {lt}, {notIn}, OR. */
@@ -97,6 +98,7 @@ vi.mock("~/services/ai/usage-meter.server", () => ({
 }));
 vi.mock("~/services/bulk-editor/translate-batch-expiry.server", () => ({
   BATCH_UNREACHABLE_ERROR: "batch_unreachable",
+  BATCH_SUBMIT_UNCONFIRMED_ERROR: "batch_submit_unconfirmed",
   expireStaleBatches: (...a: unknown[]) => h.expire(...a),
 }));
 vi.mock("~/routes/api-ai-handlers/shared", async (importOriginal) => {
@@ -180,14 +182,14 @@ beforeEach(() => {
   h.rows.clear();
   h.tasks.clear();
   h.order.length = 0;
-  for (const fn of [h.settle, h.resolve, h.aiServiceFor, h.booking, h.convert, h.release, h.sweep, h.expire, h.retrieve, h.cancel, h.results, h.deleteFile]) fn.mockReset();
+  for (const fn of [h.find, h.settle, h.resolve, h.aiServiceFor, h.booking, h.convert, h.release, h.sweep, h.expire, h.retrieve, h.cancel, h.results, h.deleteFile]) fn.mockReset();
   h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true, requestCounts: { total: 1, processing: 0, succeeded: 1, errored: 0, expired: 0, canceled: 0 } });
   h.cancel.mockResolvedValue({ providerStatus: "canceling", ended: false });
   h.results.mockImplementation(() => (async function* () { yield SUCCESS; })());
   h.deleteFile.mockResolvedValue(undefined);
   h.settle.mockResolvedValue({
     ok: true,
-    transport: { retrieve: (...a: unknown[]) => (h.order.push("retrieve"), h.retrieve(...a)), cancel: (...a: unknown[]) => (h.order.push("cancel"), h.cancel(...a)), results: (...a: unknown[]) => (h.order.push("results"), h.results(...a)), deleteFile: h.deleteFile },
+    transport: { findIntentBatch: (...a: unknown[]) => (h.order.push("find"), h.find(...a)), retrieve: (...a: unknown[]) => (h.order.push("retrieve"), h.retrieve(...a)), cancel: (...a: unknown[]) => (h.order.push("cancel"), h.cancel(...a)), results: (...a: unknown[]) => (h.order.push("results"), h.results(...a)), deleteFile: h.deleteFile },
   });
   h.resolve.mockReturnValue({ ok: true, source: "managed" });
   h.aiServiceFor.mockReturnValue({ service: { packageLimits: () => ({ provider: "claude" }) }, decision: { ok: true } });
@@ -251,7 +253,7 @@ describe("an ended batch: book, THEN write", () => {
     expect(h.order.filter((s) => ["retrieve", "results", "book", "write"].includes(s))).toEqual(["retrieve", "results", "book", "write"]);
     const [rowId, usage, opts] = h.booking.mock.calls[0];
     expect(rowId).toBe("row-1");
-    expect(usage).toEqual([{ provider: "claude", model: "claude-haiku-4-5", inputTokens: 300, outputTokens: 40, estimated: false }]);
+    expect(usage).toEqual([{ provider: "claude", model: "claude-haiku-4-5", inputTokens: 300, outputTokens: 40, estimated: false, tier: "standard" }]);
     // the booking is held to THIS tick's lease token
     expect(opts.leaseToken).toEqual(expect.any(String));
     expect(d.runCollect).toHaveBeenCalledTimes(1);
@@ -603,6 +605,67 @@ describe("orphan rows (the Task is terminal or gone)", () => {
     const { join } = await import("node:path");
     const src = readFileSync(join(__dirname, "..", "..", "app/services/bulk-editor/translate-batch-poll.server.ts"), "utf8");
     expect(src).not.toMatch(/\.list\(/);
+  });
+});
+
+describe("a create of unknown outcome (create_unknown)", () => {
+  const unknownRow = (over: Record<string, unknown> = {}) =>
+    putRow({ state: "create_unknown", batchIds: [], idPrefix: "ttask-1_p", intentAt: new Date("2026-11-12T09:59:00Z"), ...over });
+
+  it("searches the provider by the run's own id prefix and request count, and ADOPTS the batch it finds", async () => {
+    unknownRow();
+    h.find.mockResolvedValue({ found: true, batchId: "msgbatch_found", expiresAt: "2026-11-13T09:59:00Z" });
+    expect(await processBatchRow("row-1", deps())).toBe("adopted");
+    expect(h.find).toHaveBeenCalledWith({ idPrefix: "ttask-1_p", since: "2026-11-12T09:59:00.000Z", requestCount: 1 });
+    expect(h.rows.get("row-1")).toMatchObject({ batchIds: ["msgbatch_found"], state: "waiting", failedTicks: 0 });
+    expect(h.tasks.get("task-1").expiresAt).toEqual(new Date(Date.parse("2026-11-13T09:59:00Z") + 3 * 24 * 3600 * 1000));
+    // nothing is collected, booked or settled in the same tick
+    expect(h.results).not.toHaveBeenCalled();
+    expect(h.convert).not.toHaveBeenCalled();
+    expect(h.release).not.toHaveBeenCalled();
+  });
+
+  it("an adopted batch of a Task the merchant cancelled meanwhile continues as cancel_requested", async () => {
+    unknownRow();
+    putTask("cancel_requested");
+    h.find.mockResolvedValue({ found: true, batchId: "msgbatch_found", expiresAt: null });
+    await processBatchRow("row-1", deps());
+    expect(h.rows.get("row-1").state).toBe("cancel_requested");
+  });
+
+  it("nothing found (or only a running candidate): the row waits, the hold is kept -- released by nobody", async () => {
+    unknownRow();
+    for (const answer of [{ found: false, pending: false }, { found: false, pending: true }]) {
+      h.find.mockResolvedValue(answer);
+      expect(await processBatchRow("row-1", deps())).toBe("waiting");
+    }
+    expect(h.release).not.toHaveBeenCalled();
+    expect(h.convert).not.toHaveBeenCalled();
+    expect(h.rows.get("row-1").state).toBe("create_unknown");
+  });
+
+  it("our own configuration refusing is not a failed tick", async () => {
+    unknownRow();
+    h.settle.mockResolvedValue({ ok: false, reason: "managedDisabled" });
+    expect(await processBatchRow("row-1", deps())).toBe("configBlocked");
+    expect(h.rows.get("row-1").failedTicks).toBe(0);
+  });
+
+  it("a provider that fails the search counts as a failed tick; after the last one the Task fails as unconfirmed and the hold is converted (the upper bound)", async () => {
+    unknownRow({ failedTicks: MAX_FAILED_TICKS - 1 });
+    h.find.mockRejectedValue(new Error("503"));
+    expect(await processBatchRow("row-1", deps())).toBe("unreachable");
+    expect(h.tasks.get("task-1")).toMatchObject({ status: "failed", error: "batch_submit_unconfirmed" });
+    expect(h.convert).toHaveBeenCalledWith("row-1");
+    expect(h.release).not.toHaveBeenCalled();
+  });
+
+  it("an orphan row with no batch id also searches (so the next tick can cancel what it finds)", async () => {
+    unknownRow();
+    putTask("failed");
+    h.find.mockResolvedValue({ found: true, batchId: "msgbatch_found", expiresAt: null });
+    expect(await processBatchRow("row-1", deps())).toBe("adopted");
+    expect(h.rows.get("row-1").state).toBe("cancel_requested");
   });
 });
 

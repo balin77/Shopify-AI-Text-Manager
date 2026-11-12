@@ -12,12 +12,13 @@ const sdk = vi.hoisted(() => ({
   retrieve: vi.fn(),
   cancel: vi.fn(),
   results: vi.fn(),
+  list: vi.fn(),
   ctorArgs: [] as unknown[],
 }));
 
 vi.mock("@anthropic-ai/sdk", () => ({
   default: class {
-    messages = { create: vi.fn(), batches: { create: sdk.create, retrieve: sdk.retrieve, cancel: sdk.cancel, results: sdk.results } };
+    messages = { create: vi.fn(), batches: { create: sdk.create, retrieve: sdk.retrieve, cancel: sdk.cancel, results: sdk.results, list: sdk.list } };
     constructor(args: unknown) {
       sdk.ctorArgs.push(args);
     }
@@ -32,7 +33,7 @@ vi.mock("../../src/services/ai-queue.service", () => ({
 vi.mock("../../app/db.server", () => ({ db: { task: { update: vi.fn(), findUnique: vi.fn() } } }));
 vi.mock("../../app/services/ai/usage-meter.server", () => ({ recordAiUsage: vi.fn() }));
 
-import { AIService, isManagedRefusal } from "../../src/services/ai.service";
+import { AIService, BatchCreateError, isDefinitiveBatchRefusal, isManagedRefusal } from "../../src/services/ai.service";
 import { maxOutputTokensFor } from "../../app/config/ai-model-limits";
 
 const SHOP = "demo.myshopify.com";
@@ -59,6 +60,7 @@ beforeEach(() => {
   sdk.retrieve.mockReset();
   sdk.cancel.mockReset();
   sdk.results.mockReset();
+  sdk.list.mockReset();
   sdk.ctorArgs.length = 0;
 });
 
@@ -129,12 +131,15 @@ describe("batchGate", () => {
 });
 
 describe("createBatch", () => {
+  const REQS = [
+    { customId: "t1_p0", prompt: "PROMPT A", maxTokens: 600, inputEstimateTokens: 10 },
+    { customId: "t1_p1", prompt: "PROMPT B", maxTokens: 300, inputEstimateTokens: 10 },
+  ];
+
   it("maps requests to {custom_id, params}, one user turn each, never retried", async () => {
     sdk.create.mockResolvedValue({ id: "msgbatch_1", expires_at: "2026-11-13T00:00:00Z" });
-    const out = await service().createBatch([
-      { customId: "t1_p0", prompt: "PROMPT A", maxTokens: 600, inputEstimateTokens: 10 },
-      { customId: "t1_p1", prompt: "PROMPT B", maxTokens: 300, inputEstimateTokens: 10 },
-    ]);
+    const svc = service();
+    const out = await svc.createBatch(REQS, await svc.batchGate());
     expect(out).toEqual({ batchId: "msgbatch_1", expiresAt: "2026-11-13T00:00:00Z" });
     const [body, options] = sdk.create.mock.calls[0];
     expect(body.requests).toEqual([
@@ -144,9 +149,80 @@ describe("createBatch", () => {
     expect(options.maxRetries).toBe(0);
   });
 
-  it("a provider error propagates untouched", async () => {
-    sdk.create.mockRejectedValue(Object.assign(new Error("model does not support batches"), { status: 400 }));
-    await expect(service().createBatch([{ customId: "t1_p0", prompt: "x", maxTokens: 300, inputEstimateTokens: 1 }])).rejects.toMatchObject({ status: 400 });
+  it("M3: it cannot be called without the answer of batchGate() -- no gate, a made-up gate or another instance's gate is refused before any provider call", async () => {
+    const svc = service();
+    await expect(svc.createBatch(REQS, undefined as never)).rejects.toThrow("batch_gate_required");
+    await expect(svc.createBatch(REQS, { provider: "claude", model: "claude-haiku-4-5", source: "byo", role: "default" })).rejects.toThrow("batch_gate_required");
+    const other = service();
+    await expect(svc.createBatch(REQS, await other.batchGate())).rejects.toThrow("batch_gate_required");
+    expect(sdk.create).not.toHaveBeenCalled();
+  });
+
+  it("M3: an instance refused at build time cannot create even with a gate in hand", async () => {
+    const svc = service();
+    const gate = await svc.batchGate();
+    (svc as never as { config: { managedRefusal?: string } }).config.managedRefusal = "consentMissing";
+    const err = await svc.createBatch(REQS, gate).catch((e) => e);
+    expect(isManagedRefusal(err)).toBe(true);
+    expect(sdk.create).not.toHaveBeenCalled();
+  });
+
+  describe("a failed create says whether the provider REFUSED it or the outcome is UNKNOWN", () => {
+    const fail = async (error: unknown) => {
+      sdk.create.mockRejectedValue(error);
+      const svc = service();
+      return svc.createBatch(REQS, await svc.batchGate()).catch((e) => e);
+    };
+    it("a 4xx with a body is a definitive refusal (nothing was created)", async () => {
+      for (const status of [400, 401, 403, 413, 429]) {
+        const err = await fail(Object.assign(new Error("bad"), { status, error: { type: "invalid_request_error" } }));
+        expect(err).toBeInstanceOf(BatchCreateError);
+        expect(err).toMatchObject({ definitive: true, status });
+      }
+    });
+    it("a timeout, an abort, a dropped connection, a 5xx / 529, a 408 or a 409 leave the outcome UNKNOWN", async () => {
+      for (const e of [
+        new Error("Request timed out."),
+        Object.assign(new Error("aborted"), { name: "AbortError" }),
+        Object.assign(new Error("Connection error."), { name: "APIConnectionError" }),
+        Object.assign(new Error("overloaded"), { status: 529, error: { type: "overloaded_error" } }),
+        Object.assign(new Error("boom"), { status: 500, error: { type: "api_error" } }),
+        Object.assign(new Error("timeout"), { status: 408, error: {} }),
+        Object.assign(new Error("conflict"), { status: 409, error: {} }),
+      ]) {
+        const err = await fail(e);
+        expect(err).toBeInstanceOf(BatchCreateError);
+        expect(err.definitive).toBe(false);
+      }
+    });
+    it("classifies on the status and the body, never on the wording", () => {
+      expect(isDefinitiveBatchRefusal({ status: 400, error: {} })).toBe(true);
+      expect(isDefinitiveBatchRefusal({ status: 400 })).toBe(false); // no body, no message: not a refusal we can read
+      expect(isDefinitiveBatchRefusal({ status: 500, message: "invalid request" })).toBe(false);
+      expect(isDefinitiveBatchRefusal(null)).toBe(false);
+    });
+  });
+});
+
+describe("M4: the reservation's input estimate is script-aware", () => {
+  it("Latin text keeps the pessimistic ~3 characters per token; CJK, Thai, Arabic, Hebrew run ~1 per character and are never reserved at a third", () => {
+    const latin = "a".repeat(300);
+    const cjk = "日".repeat(300);
+    expect(AIService.estimateInputTokensForBatch(latin)).toBeLessThanOrEqual(115);
+    expect(AIService.estimateInputTokensForBatch(latin)).toBeGreaterThanOrEqual(100);
+    for (const ch of ["日", "한", "ก", "ع", "א", "अ"]) {
+      expect(AIService.estimateInputTokensForBatch(ch.repeat(300))).toBeGreaterThanOrEqual(300);
+    }
+    expect(AIService.estimateInputTokensForBatch(cjk)).toBeGreaterThan(3 * AIService.estimateInputTokensForBatch(latin) - 20);
+    // Cyrillic sits between, an emoji (astral) counts double
+    expect(AIService.estimateInputTokensForBatch("я".repeat(300))).toBeGreaterThanOrEqual(150);
+    expect(AIService.estimateInputTokensForBatch("😀".repeat(100))).toBeGreaterThanOrEqual(200);
+    expect(AIService.estimateInputTokensForBatch("")).toBe(0);
+  });
+
+  it("buildBatchRequest uses it", async () => {
+    const built = await service().buildBatchRequest("t1_p0", { ...REQ, items: [{ id: "k1", text: "日本語のテキスト".repeat(50) }] });
+    expect(built.inputEstimateTokens).toBeGreaterThanOrEqual(400);
   });
 });
 
@@ -165,7 +241,7 @@ describe("settlementOps (claude)", () => {
       providerStatus: "ended",
       ended: true,
       canceling: false,
-      requestCounts: { total: 4, succeeded: 3, errored: 1, expired: 0, canceled: 0 },
+      requestCounts: { total: 4, processing: 0, succeeded: 3, errored: 1, expired: 0, canceled: 0 },
       expiresAt: "2026-11-13T00:00:00Z",
     });
   });
@@ -244,5 +320,38 @@ describe("parsePackageAnswer", () => {
     expect(AIService.parsePackageAnswer('```json\n{"k1":{"fr":"a"}}\n```', false)).toEqual({ parsed: { k1: { fr: "a" } } });
     expect(AIService.parsePackageAnswer('{"k1":{"fr":"a"}}', true)).toEqual({ parsed: null, invalid: "truncated" });
     expect(AIService.parsePackageAnswer("no json here", false)).toEqual({ parsed: null, invalid: "unparseable" });
+  });
+});
+
+describe("settlementOps.findIntentBatch (a create whose answer never arrived)", () => {
+  const batch = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    created_at: "2026-11-12T10:00:30Z",
+    expires_at: "2026-11-13T10:00:30Z",
+    processing_status: "ended",
+    request_counts: { processing: 0, succeeded: 2, errored: 0, expired: 0, canceled: 0 },
+    ...over,
+  });
+  const list = (items: unknown[]) => sdk.list.mockReturnValue((async function* () { for (const i of items) yield i; })());
+  const firstLine = (customId: string) => sdk.results.mockImplementation(async () => (async function* () { yield { custom_id: customId, result: { type: "canceled" } }; })());
+  const query = { idPrefix: "ttask-1_p", since: "2026-11-12T10:00:00Z", requestCount: 2 };
+  const ops = () => AIService.settlementOps("claude", "k")!;
+
+  it("adopts an ENDED batch created since the intent with the same request count whose first custom_id carries OUR prefix", async () => {
+    list([batch("msgbatch_x")]);
+    firstLine("ttask-1_p0");
+    expect(await ops().findIntentBatch!(query)).toEqual({ found: true, batchId: "msgbatch_x", expiresAt: "2026-11-13T10:00:30Z" });
+  });
+
+  it("never adopts a stranger's batch: a different prefix, a different request count or an older batch", async () => {
+    list([batch("a"), batch("b", { request_counts: { processing: 0, succeeded: 9, errored: 0, expired: 0, canceled: 0 } }), batch("c", { created_at: "2026-11-11T00:00:00Z" })]);
+    firstLine("tother_p0");
+    expect(await ops().findIntentBatch!(query)).toEqual({ found: false, pending: false });
+  });
+
+  it("a RUNNING candidate cannot be told from a stranger's (its request ids are unreadable): pending, never adopted", async () => {
+    list([batch("run", { processing_status: "in_progress", request_counts: { processing: 2, succeeded: 0, errored: 0, expired: 0, canceled: 0 } })]);
+    expect(await ops().findIntentBatch!(query)).toEqual({ found: false, pending: true });
+    expect(sdk.results).not.toHaveBeenCalled();
   });
 });

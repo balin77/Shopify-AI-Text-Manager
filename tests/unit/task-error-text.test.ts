@@ -262,7 +262,7 @@ describe("isInterruptedTaskError", () => {
 });
 
 describe("the Batch-API codes (PLAN_BULK_TRANSLATE_BATCHING)", () => {
-  const CODES = ["batch_expired", "batch_failed", "batch_not_available", "batch_nothing_to_submit", "ai_key_missing", "batch_submit_refused"];
+  const CODES = ["batch_expired", "batch_failed", "batch_not_available", "batch_nothing_to_submit", "ai_key_missing", "batch_submit_refused", "batch_submit_unconfirmed"];
 
   it("every code renders in every locale and never raw", () => {
     for (const t of [de, en, es] as any[]) {
@@ -279,6 +279,15 @@ describe("the Batch-API codes (PLAN_BULK_TRANSLATE_BATCHING)", () => {
       const text = String(taskErrorText("batch_submit_refused:model x: not available for batches", t));
       expect(text).toContain("model x: not available for batches");
       expect(text).not.toContain("batch_submit_refused");
+    }
+  });
+
+  it("an UNKNOWN create never claims that nothing was charged (a batch may have run), the refused one may", () => {
+    for (const t of [de, en, es] as any[]) {
+      const unknown = String(taskErrorText("batch_submit_unconfirmed", t));
+      const refused = String(taskErrorText("batch_submit_refused", t));
+      expect(unknown).not.toMatch(/nichts berechnet|nothing was charged|ni se cobró nada/i);
+      expect(refused).toMatch(/nichts berechnet|nothing was charged|ni se cobró nada/i);
     }
   });
 
