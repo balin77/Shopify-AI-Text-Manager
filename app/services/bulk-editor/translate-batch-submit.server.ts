@@ -407,19 +407,31 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
       if (!flipped) {
         // Not `submitting` any more. If a recovery merely RESUMED the run (`waiting_batch` over a `waiting` row
         // that names this batch) it is still ours; anything else (cancelled, deleted, failed) is not.
-        const [task, current] = await Promise.all([
-          db.task.findUnique({ where: { id: taskId }, select: { status: true } }),
-          db.bulkTranslateBatch.findUnique({ where: { id: row.id }, select: { state: true, batchIds: true } }),
-        ]);
+        let task: { status: string } | null;
+        let current: { state: string; batchIds: unknown } | null;
+        try {
+          [task, current] = await Promise.all([
+            db.task.findUnique({ where: { id: taskId }, select: { status: true } }),
+            db.bulkTranslateBatch.findUnique({ where: { id: row.id }, select: { state: true, batchIds: true } }),
+          ]);
+        } catch (error) {
+          // The batch exists and its id is stored: the poller owns it from here. Never fail the Task or settle on a failed read.
+          logger.error("[BulkTranslateBatch] Re-read after a lost flip failed; leaving the batch to the poller", {
+            context: "AI",
+            taskId,
+            error: errorMessage(error),
+          });
+          return { ok: true, batchRowId: row.id, batchId: created.batchId, requests: requests.length, carriedUnits, notStarted };
+        }
+        // A row (in ANY state but still `submitting`: waiting, cancel_requested, collecting, done) that names this batch is ours.
+        const namesBatch = !!current && current.state !== "submitting" && Array.isArray(current.batchIds) && current.batchIds.includes(created.batchId);
         const resumed =
-          !!task &&
-          [TASK_STATUS_WAITING_BATCH, TASK_STATUS_CANCEL_REQUESTED].includes(task.status) &&
-          !!current &&
-          ["waiting", "cancel_requested", "create_unknown"].includes(current.state) &&
+          namesBatch ||
           // A recovery may have parked the row as create_unknown (no batch id) while this runner was alive and
           // got its answer: the batch is ours all the same; the conditional update below names it.
-          (current.state === "create_unknown" ||
-            (Array.isArray(current.batchIds) && current.batchIds.includes(created.batchId)));
+          (!!task &&
+            [TASK_STATUS_WAITING_BATCH, TASK_STATUS_CANCEL_REQUESTED].includes(task.status) &&
+            current?.state === "create_unknown");
         if (resumed && current?.state === "create_unknown") {
           const adopted = await db.bulkTranslateBatch.updateMany({
             where: { id: row.id, state: "create_unknown" },

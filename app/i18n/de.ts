@@ -2475,7 +2475,7 @@ export const de = {
       batchFailed:
         "Der KI-Anbieter konnte diesen Auftrag nicht verarbeiten, deshalb wurde nichts geschrieben. Bitte starten Sie den Lauf erneut oder führen Sie ihn sofort aus.",
       batchCollectFailed:
-        "Das Ergebnis des KI-Anbieters konnte nicht vollständig übernommen werden. Die Ergebnisse wurden abgeholt und ein Teil der Übersetzungen kann bereits gespeichert sein. Starten Sie den Lauf erneut: Er ergänzt nur, was noch fehlt.",
+        "Das Ergebnis des KI-Anbieters konnte nicht vollständig abgeholt oder übernommen werden; ein Teil der Übersetzungen kann bereits gespeichert sein. Ein neuer Lauf ergänzt nur, was noch fehlt.",
       batchNotAvailable:
         "Der günstigere Modus ist für diesen Shop nicht verfügbar, deshalb wurde nichts gestartet. Bitte führen Sie den Lauf sofort aus.",
       batchNothingToSubmit:

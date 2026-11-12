@@ -522,6 +522,29 @@ describe("a provider that stops answering", () => {
     expect(h.release).toHaveBeenCalledWith("row-1");
   });
 
+  it("a tick whose lease was taken over mid-tick gives up nothing, closes nothing, settles nothing (leaseLost)", async () => {
+    h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
+    h.retrieve.mockImplementation(async () => {
+      h.rows.get("row-1").leaseToken = "someone-else";
+      throw new Error("403");
+    });
+    expect(await processBatchRow("row-1", deps())).toBe("leaseLost");
+    expect(h.tasks.get("task-1").status).toBe("waiting_batch");
+    expect(h.rows.get("row-1").state).not.toBe("done");
+    expect(h.convert).not.toHaveBeenCalled();
+    expect(h.release).not.toHaveBeenCalled();
+  });
+
+  it("a withdrawn row whose settlement lookup keeps failing gives up with the consent code, not batch_collect_failed", async () => {
+    h.settings = WITHDRAWN;
+    h.settle.mockResolvedValue({ ok: false, reason: "lookup_failed" });
+    h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
+    h.rows.get("row-1").lastError = "batch_collect_failed:booking_failed";
+    h.rows.get("row-1").reservationState = "converted";
+    await processBatchRow("row-1", deps());
+    expect(h.tasks.get("task-1")).toMatchObject({ status: "failed", error: "managed_ai_refused:consentMissing" });
+  });
+
   it("an EARLIER tick reached the collect, the last one fails at a status read: given up as batch_collect_failed, never 'nothing was written'", async () => {
     h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
     h.rows.get("row-1").lastError = "batch_collect_failed:results_incomplete:0/1";

@@ -78,7 +78,7 @@ const jobs = (count: number, extra = false) =>
     ],
   }));
 
-function makeDb(opts: { taskStillOurs?: boolean; idStoreFails?: boolean; txFails?: boolean; resumedByRecovery?: boolean; parkedByRecovery?: boolean; adoptMisses?: boolean } = {}) {
+function makeDb(opts: { taskStillOurs?: boolean; idStoreFails?: boolean; txFails?: boolean; resumedByRecovery?: boolean; parkedByRecovery?: boolean; adoptMisses?: boolean; namedInState?: string; rereadThrows?: boolean } = {}) {
   let polledAdopted = false;
   const calls: { op: string; arg: any }[] = [];
   const rowState = { state: "submitting", batchIds: [] as string[], manifest: "" };
@@ -91,7 +91,7 @@ function makeDb(opts: { taskStillOurs?: boolean; idStoreFails?: boolean; txFails
         if (arg.data.status === "waiting_batch" && opts.taskStillOurs === false) return { count: 0 };
         return { count: 1 };
       }),
-      findUnique: vi.fn(async () => ({ status: opts.resumedByRecovery || opts.parkedByRecovery ? "waiting_batch" : "cancelled" })),
+      findUnique: vi.fn(async () => ({ status: opts.namedInState ? "failed" : opts.resumedByRecovery || opts.parkedByRecovery ? "waiting_batch" : "cancelled" })),
     },
     bulkTranslateBatch: {
       create: vi.fn(async (arg: any) => {
@@ -117,12 +117,16 @@ function makeDb(opts: { taskStillOurs?: boolean; idStoreFails?: boolean; txFails
         if (arg.data.state) rowState.state = arg.data.state;
         return { count: 1 };
       }),
-      findUnique: vi.fn(async () => ({
+      findUnique: vi.fn(async () => {
+        if (opts.rereadThrows) throw new Error("db blink");
+        if (opts.namedInState) return { id: "row-1", state: opts.namedInState, batchIds: ["msgbatch_1"], manifest: rowState.manifest };
+        return {
         id: "row-1", provider: "claude", model: "claude-haiku-4-5", source: "managed", reservationState: "held",
         batchIds: opts.resumedByRecovery || polledAdopted ? ["msgbatch_1"] : opts.parkedByRecovery ? [] : rowState.batchIds,
         state: polledAdopted ? "waiting" : opts.resumedByRecovery ? "waiting" : opts.parkedByRecovery ? "create_unknown" : rowState.state,
         manifest: rowState.manifest,
-      })),
+      };
+      }),
     },
     $transaction: vi.fn(async (fn: any) => {
       if (opts.txFails) throw new Error("tx failed");
@@ -508,6 +512,26 @@ describe("the Task is no longer ours when the batch id comes back (cancelled, de
     expect(out).toMatchObject({ ok: true, batchId: "msgbatch_1" });
     expect(h.cancel).not.toHaveBeenCalled();
     expect(h.release).not.toHaveBeenCalled();
+  });
+});
+
+describe("a row that names this batch is ours in ANY state (M3)", () => {
+  for (const state of ["waiting", "cancel_requested", "collecting", "done"]) {
+    it(`${state}: not abandoned, not settled`, async () => {
+      const out = await submitBulkTranslateBatch("task-1", args(makeDb({ taskStillOurs: false, namedInState: state }), fakeService()));
+      expect(out).toMatchObject({ ok: true, batchId: "msgbatch_1" });
+      expect(h.cancel).not.toHaveBeenCalled();
+      expect(h.release).not.toHaveBeenCalled();
+      expect(h.convert).not.toHaveBeenCalled();
+    });
+  }
+  it("a re-read that throws neither fails the Task nor settles: the poller owns the batch", async () => {
+    const db = makeDb({ taskStillOurs: false, rereadThrows: true });
+    const out = await submitBulkTranslateBatch("task-1", args(db, fakeService()));
+    expect(out).toMatchObject({ ok: true, batchId: "msgbatch_1" });
+    expect(h.cancel).not.toHaveBeenCalled();
+    expect(h.release).not.toHaveBeenCalled();
+    expect(h.convert).not.toHaveBeenCalled();
   });
 });
 

@@ -97,6 +97,7 @@ export function failedTickBackoffMs(failedTicks: number): number {
 
 export type RowOutcome =
   | "busy" // somebody else holds the lease
+  | "leaseLost" // our lease was taken over mid-tick
   | "backoff"
   | "skippedShop" // blocked / uninstalled
   | "waiting" // provider still working
@@ -205,6 +206,8 @@ async function closeRun(
   });
 }
 
+const CONSENT_GIVE_UP_CODE = "managed_ai_refused:consentMissing";
+
 function isCollectMarked(lastError: string | null | undefined): boolean {
   return (lastError ?? "").startsWith(BATCH_COLLECT_FAILED_ERROR);
 }
@@ -233,8 +236,10 @@ async function noteFailedTick(
   // Read the row FRESH: the in-memory copy is from the start of the tick, and step 8 rewrites the counter and the
   // state in the database. The counter and the "a collect was reached" evidence are the DATABASE's.
   const fresh = await db.bulkTranslateBatch
-    .findUnique({ where: { id: row.id }, select: { failedTicks: true, lastError: true, reservationState: true, source: true } })
+    .findUnique({ where: { id: row.id }, select: { failedTicks: true, lastError: true, reservationState: true, source: true, leaseToken: true } })
     .catch(() => null);
+  // Another tick took the lease over (ours expired): no give-up, no close, no settle from this tick.
+  if (fresh && fresh.leaseToken !== token) return "leaseLost";
   const storedTicks = fresh?.failedTicks ?? row.failedTicks;
   const failedTicks = storedTicks + 1;
   // A failure inside the collect (results fetch, booking, write) is marked in `lastError`. The mark outlives later
@@ -242,7 +247,8 @@ async function noteFailedTick(
   // must say "collect failed", never "nothing was written". A booking that left `held` is the same evidence.
   const collectPhase = row.state === "collecting";
   const priorCollect = isCollectMarked(fresh?.lastError);
-  const bookedAlready = fresh?.source === "managed" && !!fresh.reservationState && fresh.reservationState !== "held";
+  const bookedAlready =
+    fresh?.source === "managed" && ["converted", "released"].includes(fresh.reservationState ?? "");
   const collectReached = collectPhase || priorCollect || bookedAlready;
   const errorText = messageOf(error);
   const marked = (collectPhase || priorCollect) && !isCollectMarked(errorText) ? `${BATCH_COLLECT_FAILED_ERROR}:${errorText}` : errorText;
@@ -331,7 +337,7 @@ async function handleWithdrawal(deps: RowDeps, row: BulkTranslateBatch, token: s
     // Cannot cancel or read: our own configuration (wait for the absolute end, which converts) or a lookup failure.
     return CONFIG_REFUSALS.includes(access.reason)
       ? "configBlocked"
-      : await noteFailedTick(deps, row, token, new Error(`settlement_${access.reason}`));
+      : await noteFailedTick(deps, row, token, new Error(`settlement_${access.reason}`), null, CONSENT_GIVE_UP_CODE);
   }
   if (batchIds.length > 0 && !row.cancelRequestedAt) {
     if (await cancelAllAtProvider(access.transport, batchIds)) {
@@ -340,7 +346,7 @@ async function handleWithdrawal(deps: RowDeps, row: BulkTranslateBatch, token: s
   }
   const outcome = await settleHold(row, access.transport, { final: false });
   if (outcome.kind === "pending") return "consentWithdrawn";
-  await closeRun(db, row, token, { status: "failed", error: "managed_ai_refused:consentMissing" });
+  await closeRun(db, row, token, { status: "failed", error: CONSENT_GIVE_UP_CODE });
   return "consentWithdrawn";
 }
 
