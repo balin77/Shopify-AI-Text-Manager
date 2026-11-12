@@ -56,11 +56,16 @@ import {
 } from "~/services/bulk-editor/columns.shared";
 import { buildServerColumnsByType } from "~/services/bulk-editor/columns.server";
 import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
+import { chunkImportDiff } from "~/services/bulk-editor/diff-chunks.server";
+import { planTranslateRead, planCellKey } from "~/services/bulk-editor/translate-plan-read.server";
+import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import {
+  CONTENT_RESOURCE_TYPE_BY_ROW_TYPE,
   canonicalFieldNameForColumn,
   isSubResourceColumn,
 } from "~/services/bulk-editor/translations.server";
 import {
+  recheckMissing,
   scanMissingTranslations,
   translateCandidateColumns,
 } from "~/services/bulk-editor/missing-translations.server";
@@ -173,9 +178,11 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
     return json({ success: false, error: "This content type has no AI-translatable fields." }, { status: 400 });
   }
 
-  // Single-flight per shop — a second run would race the same cells.
+  // Single-flight per shop — a second run would race the same cells. This
+  // check is the cheap early exit (before the scan is paid for); the ATOMIC
+  // claim is claimBulkTranslateRun below.
   const runningTask = await db.task.findFirst({
-    where: { shop, type: "bulkEditorTranslate", status: { in: ["pending", "running"] } },
+    where: activeRunWhere(shop),
     select: { id: true },
   });
   if (runningTask) {
@@ -208,20 +215,29 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
     return json({ success: true, none: true, total: 0 });
   }
 
-  const task = await db.task.create({
-    data: {
-      shop,
-      type: "bulkEditorTranslate",
-      status: "running",
-      resourceType: BULK_ROW_TYPE_TO_CONTENT_TYPE[rowType],
-      fieldType: fieldTypeLabel(jobs),
-      targetLocale: targetLocales.join(","),
-      total: units,
-      processed: 0,
-      progress: 0,
-      expiresAt: getTaskExpirationDate(),
-    },
+  const claim = await claimBulkTranslateRun(db, {
+    shop,
+    type: "bulkEditorTranslate",
+    resourceType: BULK_ROW_TYPE_TO_CONTENT_TYPE[rowType],
+    fieldType: fieldTypeLabel(jobs),
+    targetLocale: targetLocales.join(","),
+    total: units,
+    processed: 0,
+    progress: 0,
+    expiresAt: getTaskExpirationDate(),
   });
+  if (!claim.ok) {
+    return json(
+      {
+        success: false,
+        code: "ALREADY_RUNNING",
+        error: "An AI bulk translation is already running for this store. Check the Tasks tab for progress.",
+        taskId: claim.taskId,
+      },
+      { status: 409 },
+    );
+  }
+  const task = claim.task;
 
   void runBulkEditorTranslate(task.id, {
     db,
@@ -242,6 +258,7 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
     aiInstructions: await db.aIInstructions.findUnique({ where: { shop } }).catch(() => null),
     seoLimits,
     translationMode,
+    recheck: { columns, moType, locales: targetLocales },
   }).catch((err: unknown) => {
     logger.error("[API-AI] Bulk-editor translate crashed", {
       context: "AI",
@@ -261,6 +278,72 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
     matchedRows: scan.matchedRows,
     scannedRows: scan.scannedRows,
   });
+}
+
+// ─── Single-flight ─────────────────────────────────────────────────────────
+
+/** A `pending` row nobody has touched for this long is a crash leftover (a
+ * claim that never became `running`), not a run: it must not block the shop
+ * for ever. */
+export const PENDING_CLAIM_STALE_MS = 10 * 60 * 1000;
+
+/** Rows that count as "a translate run is active for this shop". */
+function activeRunWhere(shop: string, now: number = Date.now()) {
+  return {
+    shop,
+    type: "bulkEditorTranslate",
+    OR: [
+      { status: "running" },
+      { status: "pending", updatedAt: { gte: new Date(now - PENDING_CLAIM_STALE_MS) } },
+    ],
+  };
+}
+
+type RunTaskData = Parameters<PrismaClient["task"]["create"]>[0]["data"];
+
+/**
+ * ATOMIC single-flight: insert the row as `pending`, THEN ask whether anything
+ * older stands in the way — a check-then-insert lets two requests both pass the
+ * check. The row loses when another run is already `running`, or when an older
+ * (createdAt, then id) live `pending` row exists; the loser deletes its own
+ * row, the winner flips to `running`. Both directions of the race are covered:
+ * whichever request's row is committed second sees the other's (each commits
+ * its own row before it looks), and a request that decided before the other's
+ * row existed is `running` by the time that one looks. A stale `pending` row
+ * (PENDING_CLAIM_STALE_MS) is a crash leftover and does not count.
+ */
+export async function claimBulkTranslateRun(
+  db: PrismaClient,
+  data: Omit<RunTaskData, "status">,
+): Promise<{ ok: true; task: { id: string } } | { ok: false; taskId: string }> {
+  const task = await db.task.create({ data: { ...data, status: "pending" } });
+  const blocker = await db.task.findFirst({
+    where: {
+      shop: data.shop as string,
+      type: "bulkEditorTranslate",
+      id: { not: task.id },
+      OR: [
+        { status: "running" },
+        {
+          status: "pending",
+          updatedAt: { gte: new Date(Date.now() - PENDING_CLAIM_STALE_MS) },
+          OR: [{ createdAt: { lt: task.createdAt } }, { createdAt: task.createdAt, id: { lt: task.id } }],
+        },
+      ],
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true },
+  });
+  if (blocker) {
+    await db.task.deleteMany({ where: { id: task.id, status: "pending" } }).catch(() => undefined);
+    return { ok: false, taskId: blocker.id };
+  }
+  const started = await db.task.updateMany({ where: { id: task.id, status: "pending" }, data: { status: "running" } });
+  if (started.count === 0) {
+    // Somebody (a cancel, the reaper) took the row between insert and start.
+    return { ok: false, taskId: task.id };
+  }
+  return { ok: true, task: { id: task.id } };
 }
 
 // ─── Job building ──────────────────────────────────────────────────────────
@@ -397,6 +480,57 @@ export interface RunArgs {
   aiInstructions: { translateInstructions?: string | null } | null;
   seoLimits: AIActionContext["seoLimits"];
   translationMode: AIActionContext["translationMode"];
+  /** The candidate columns, metaobject type and target languages of the run:
+   * what the local re-check before each write block (recheckMissing) needs.
+   * Omitted ⇒ that cheap local re-check is skipped (the live fill-only check
+   * inside applyBulkDiff still runs). */
+  recheck?: { columns: ColumnDescriptor[]; moType: string; locales: string[] };
+}
+
+/** A write block is flushed once this many cells are buffered … */
+export const BULK_TRANSLATE_BLOCK_CELLS = 250;
+/** … or this long after the previous write — whichever comes first, so a
+ * restart loses at most one block of work and a slow AI phase still saves
+ * what it has. Each block is further split by chunkImportDiff to fit one
+ * grid save's two caps (cells, estimated Shopify calls). */
+export const BULK_TRANSLATE_BLOCK_MS = 60_000;
+
+/** Handles are only unique within one resource type AND one language: a
+ * product's /es/ handle and a page's /es/ handle never compete for a URL. */
+export function handleScopeKey(resourceType: string, locale: string): string {
+  return `${resourceType}|${locale}`;
+}
+
+/**
+ * The handle translations the shop ALREADY has (the mirror), per resource type
+ * and target language, so a handle this run produces is de-duplicated against
+ * them and not only against the other handles of the same run. A handle set in
+ * Shopify's own editor and not yet mirrored is unknown here — it collides only
+ * at write time, as a cell failure.
+ */
+export async function loadExistingHandles(
+  db: PrismaClient,
+  shop: string,
+  rowType: BulkRowType,
+  locales: string[],
+): Promise<Map<string, Set<string>>> {
+  const byScope = new Map<string, Set<string>>();
+  // Metaobjects and images carry no `handle` translation of their own.
+  if (rowType === "metaobject" || rowType === "image" || locales.length === 0) return byScope;
+  const resourceType = CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
+  const records = await db.contentTranslation.findMany({
+    where: { shop, resourceType, key: "handle", marketId: "", locale: { in: locales } },
+    select: { locale: true, value: true },
+  });
+  for (const record of records) {
+    const value = (record.value ?? "").trim();
+    if (!value) continue;
+    const scope = handleScopeKey(resourceType, record.locale);
+    const used = byScope.get(scope) ?? new Set<string>();
+    used.add(value);
+    byScope.set(scope, used);
+  }
+  return byScope;
 }
 
 interface TranslateResultJson {
@@ -408,6 +542,21 @@ interface TranslateResultJson {
   /** Handles that were deliberately NOT written: the translation equalled the
    * primary handle (no separate URL needed) or normalized to nothing. */
   skippedHandles: number;
+  /** Units NOT written because the primary text changed since it was read
+   * (plan time or write time) — the page showed a text that is not there any
+   * more; the next run takes the cell once the cache has caught up. */
+  skippedChanged: number;
+  /** Units NOT written because the language got a translation in the
+   * meantime (found at a block's re-check, or by the live read before the
+   * write). Nothing was overwritten. */
+  skippedFilled: number;
+  /** "sync" is the only mode that exists yet. */
+  mode: "sync";
+  /** Write blocks that went through applyBulkDiff. */
+  blocks: number;
+  /** The Task was cancelled: the run stopped before the next step and what was
+   * written before that stays written. */
+  cancelled?: boolean;
   /**
    * FAILURE BOOKKEEPING, not a write record: `locale` (and `marketId` where
    * the write path recorded one) travel with every entry they are known for.
@@ -429,7 +578,7 @@ export const BULK_TRANSLATE_HEARTBEAT_MS = 15_000;
 
 /** Exported as a TEST SEAM only — the handler above is the one caller. */
 export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<void> {
-  const { db, shop, admin, settings, jobs, units, rowType, primaryLocale, columnsByType } = args;
+  const { db, shop, admin, settings, jobs: plannedJobs, units, rowType, primaryLocale, columnsByType } = args;
   const { aiInstructions, seoLimits, translationMode } = args;
   /** The merchant's instructions, with the SEO caps for the fields of ONE call.
    * Built per call because the caps are per field key: a cap for a field this
@@ -446,31 +595,40 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
   // AIQueueService.enqueue (rate limits, per-shop fairness).
   const aiService = createAIService(settings, shop, taskId);
 
-  const diff: BulkDiffEntry[] = [];
+  /** Translated, verified-so-far entries waiting for their write block. */
+  let buffer: BulkDiffEntry[] = [];
   const failures: TranslateResultJson["failures"] = [];
   let skippedHandles = 0;
-  // Translation covers 0–80 %, the verified write pass 80–100 %.
-  const TRANSLATE_SPAN = 80;
+  let skippedChanged = 0;
+  let skippedFilled = 0;
+  let saved = 0;
+  let blocks = 0;
+  /** Units whose outcome is FINAL: written, skipped on purpose or failed. The
+   * progress bar counts these, so it never runs ahead of what is stored. */
+  let settled = 0;
+  let lastWriteAt = Date.now();
 
-  const heartbeat = async (processed: number) => {
+  const heartbeat = async () => {
     await db.task
       .update({
         where: { id: taskId },
-        data: { processed, progress: Math.min(TRANSLATE_SPAN, Math.round((processed / units) * TRANSLATE_SPAN)) },
+        // 99, not 100: only the terminal update below says "done".
+        data: { processed: settled, progress: Math.min(99, Math.round((settled / Math.max(1, units)) * 99)) },
       })
       .catch(() => undefined);
   };
 
-  /** Handles already produced in this run, per locale — two products whose
-   * titles translate to the same slug must not fight over one URL. */
-  const handlesByLocale = new Map<string, Set<string>>();
+  /** Handles already produced in this run PLUS the ones the shop already has,
+   * per (resource type, language) — two products whose titles translate to the
+   * same slug must not fight over one URL, and neither may a new one collide
+   * with a handle the mirror already holds. Filled by the prefill below. */
+  const handlesByScope = new Map<string, Set<string>>();
   /** productType is translated ONCE per distinct source value across the whole
    * run (shop-wide GroupedFieldTranslation cache) — otherwise one Google
    * Merchant category fans out into several AI variants across the catalog. */
   const groupedService = new GroupedFieldTranslationService(db);
   const productTypeCache = new Map<string, Record<string, string>>();
 
-  let processed = 0;
   // A managed-AI refusal (budget spent, pool closed, consent withdrawn) stops
   // the run like a rejected key would — every further call would be refused
   // too — but, unlike a rejected key, it must not throw away what the run
@@ -501,6 +659,118 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     if (isRunAbortingAIError(err)) throw err;
     return false;
   };
+
+  // Cancellation (Tasks tab → "cancelled"): checked before every row's AI work
+  // and before every write block. Anything but "running" ends the run — a
+  // cancelled, deleted or reaped Task must not keep spending the merchant's
+  // AI budget or keep writing. A failed status read is transient and does not
+  // stop a run.
+  let stoppedBy = null as string | null;
+  const shouldStop = async (): Promise<boolean> => {
+    if (stoppedBy) return true;
+    try {
+      const row = await db.task.findUnique({ where: { id: taskId }, select: { status: true } });
+      if (!row) stoppedBy = "deleted";
+      else if (row.status !== "running") stoppedBy = row.status;
+    } catch {
+      // transient — keep going
+    }
+    return stoppedBy !== null;
+  };
+
+  /** One write block: local re-check, then applyBulkDiff in FILL-ONLY mode in
+   * pieces that each fit a grid save's two caps. */
+  const flush = async (): Promise<void> => {
+    if (buffer.length === 0) return;
+    let entries = buffer;
+    buffer = [];
+    lastWriteAt = Date.now();
+
+    // Cheap local second barrier (the live Shopify read inside applyBulkDiff is
+    // the strong one): a cell the mirror already has since the scan is dropped.
+    if (args.recheck) {
+      try {
+        const stillMissing = await recheckMissing(db, shop, {
+          type: rowType,
+          moType: args.recheck.moType,
+          admin: admin as never,
+          rowIds: entries.map((e) => e.rowId),
+          columns: args.recheck.columns,
+          locales: args.recheck.locales,
+        });
+        const kept = entries.filter((e) => stillMissing.has(`${e.rowId}|${e.columnId}|${e.locale}`));
+        const dropped = entries.length - kept.length;
+        if (dropped > 0) {
+          skippedFilled += dropped;
+          settled += dropped;
+          entries = kept;
+        }
+      } catch (err: unknown) {
+        logger.warn("[API-AI] Bulk-editor translate: block re-check failed, relying on the live check", {
+          context: "AI",
+          taskId,
+          error: errorMessage(err),
+        });
+      }
+    }
+
+    const pieces = chunkImportDiff(entries, columnsByType[rowType] ?? [], { fillOnly: true });
+    for (const piece of pieces) {
+      if (await shouldStop()) return;
+      blocks++;
+      try {
+        // The SAME verified write path as manual saving: digest rule (§6.3),
+        // registerAndVerify echo check, DB mirror, markTranslationSaved — in
+        // fill-only mode, so a value that is there now is never overwritten
+        // and a text that moved since the plan is never registered against.
+        const applyResult = await applyBulkDiff({ db, shop, admin, columnsByType, fillOnly: true }, piece);
+        // applyResult.saved counts row GROUPS, not translations — count the
+        // entries no failure was attributed to instead (a cell failure carries
+        // its columnId + locale, a row-level one only the row), minus the
+        // cells that were deliberately skipped (both counted per cell).
+        const failedCells = new Set<string>();
+        const failedRowLocales = new Set<string>();
+        for (const failure of applyResult.failures) {
+          const locale = failure.locale ?? "";
+          if (failure.columnId) failedCells.add(`${failure.rowId}|${locale}|${failure.columnId}`);
+          else failedRowLocales.add(`${failure.rowId}|${locale}`);
+        }
+        const notFailed = piece.filter(
+          (entry) =>
+            !failedCells.has(`${entry.rowId}|${entry.locale}|${entry.columnId}`) &&
+            !failedRowLocales.has(`${entry.rowId}|${entry.locale}`),
+        ).length;
+        const changed = applyResult.skippedChanged ?? 0;
+        const filled = applyResult.skippedFilled ?? 0;
+        skippedChanged += changed;
+        skippedFilled += filled;
+        saved += Math.max(0, notFailed - changed - filled);
+        // The verified write path records `locale`/`marketId` per failed cell
+        // (BulkFailure, columns.shared.ts) and stripping them here threw away
+        // the only thing that told two of its lines apart.
+        failures.push(
+          ...applyResult.failures.map((f) => ({
+            rowId: f.rowId,
+            columnId: f.columnId,
+            locale: f.locale,
+            marketId: f.marketId,
+            message: f.message,
+          })),
+        );
+      } catch (err: unknown) {
+        // A block that throws loses ITS cells only; the blocks before it are
+        // written, the ones after it still run.
+        const message = errorMessage(err);
+        logger.error("[API-AI] Bulk-editor translate: write block failed", { context: "AI", taskId, error: message });
+        for (const entry of piece) {
+          failures.push({ rowId: entry.rowId, columnId: entry.columnId, locale: entry.locale, message });
+        }
+      }
+      settled += piece.length;
+      await heartbeat();
+    }
+  };
+
   // A bounded-interval HEARTBEAT, independent of the job loop (one AI call may take minutes): boot recovery and
   // the reaper treat this type as orphaned only after a silence (orphan-run-recovery.js), so a run that is alive
   // in another container during a deploy overlap is never failed under its own feet.
@@ -510,8 +780,43 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
       .catch(() => undefined);
   }, BULK_TRANSLATE_HEARTBEAT_MS);
   try {
+    // ── Plan: what is the primary text NOW? ────────────────────────────────
+    // One batched Shopify read before any AI money is spent; see
+    // translate-plan-read.server.ts. Drops cells whose text moved, records the
+    // digests the write will be held to, fails the cells it cannot verify.
+    const plan = await planTranslateRead(
+      { db, shop, gateway: new ShopifyApiGateway(admin, shop), rowType },
+      plannedJobs,
+    );
+    const jobs = plan.jobs;
+    skippedChanged += plan.skippedChanged;
+    settled += plan.skippedChanged;
+    for (const failure of plan.failures) {
+      failures.push({ rowId: failure.rowId, columnId: failure.columnId, message: failure.message });
+      settled += failure.units;
+    }
+    // Handles the shop already holds, so a fresh one never takes their URL.
+    if (jobs.some((job) => job.cells.some((c) => c.column.id === HANDLE_COLUMN_ID))) {
+      const targetLocales = [...new Set(jobs.flatMap((job) => job.cells.flatMap((c) => c.locales)))];
+      try {
+        for (const [scope, used] of await loadExistingHandles(db, shop, rowType, targetLocales)) {
+          handlesByScope.set(scope, used);
+        }
+      } catch (err: unknown) {
+        // Not fatal: the in-run set still guards duplicates inside this run,
+        // and a collision with an existing handle surfaces as a cell failure.
+        logger.warn("[API-AI] Bulk-editor translate: could not preload existing handles", {
+          context: "AI",
+          taskId,
+          error: errorMessage(err),
+        });
+      }
+    }
+    await heartbeat();
+
     for (const job of jobs) {
       if (managedRefusal) break;
+      if (await shouldStop()) break;
       // Routing keys on the COLUMN, never on the AI payload key: a metaobject
       // field may legitimately be called "handle" or "productType", and it must
       // NOT be slugified or written into the shop-wide productType cache.
@@ -554,7 +859,7 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
         for (const cell of cells) {
           failedColumnIds.add(cell.column.id);
           failures.push({ rowId: job.rowId, columnId: cell.column.id, message });
-          processed += cell.locales.length;
+          settled += cell.locales.length;
         }
       };
 
@@ -681,7 +986,7 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
               for (const locale of localesForSet) {
                 failedCellLocales.add(`${cell.column.id}|${locale}`);
                 failures.push({ rowId: job.rowId, columnId: cell.column.id, locale, message });
-                processed++;
+                settled++;
               }
             }
           }
@@ -690,9 +995,9 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
 
       for (const cell of job.cells) {
         if (failedColumnIds.has(cell.column.id)) continue;
+        const expected = plan.expected.get(planCellKey(job.rowId, cell.column.id));
         for (const locale of cell.locales) {
           if (failedCellLocales.has(`${cell.column.id}|${locale}`)) continue;
-          processed++;
           // Never substitute the source text — an untranslated value written
           // as a "translation" is silent corruption.
           let value = (results[locale]?.[cell.fieldKey] ?? "").trim();
@@ -700,9 +1005,11 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
             // Not attempted (or refused) after the stand-down: it is counted
             // as not saved and explained by the Task error, not reported as
             // an AI that answered nothing.
+            settled++;
             continue;
           }
           if (!value) {
+            settled++;
             failures.push({
               rowId: job.rowId,
               columnId: cell.column.id,
@@ -715,15 +1022,17 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
             // AI output → a slug Shopify accepts; identical-to-primary handles
             // are skipped on purpose (a translated URL that equals the primary
             // one is a routing conflict, not a translation).
-            const used = handlesByLocale.get(locale) ?? new Set<string>();
-            handlesByLocale.set(locale, used);
+            const scope = handleScopeKey(CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType], locale);
+            const used = handlesByScope.get(scope) ?? new Set<string>();
+            handlesByScope.set(scope, used);
             value = dedupeHandle(normalizeTranslatedHandle(value), used);
             if (!value || value === job.primaryHandle.trim()) {
               skippedHandles++;
+              settled++;
               continue;
             }
           }
-          diff.push({
+          buffer.push({
             rowId: job.rowId,
             rowType,
             locale,
@@ -731,59 +1040,55 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
             marketId: "",
             columnId: cell.column.id,
             value,
+            // The digests the plan read, which the fill-only write holds the
+            // registration to (text moved since ⇒ skipped, not registered).
+            ...(expected ? { expected } : {}),
           });
         }
       }
-      await heartbeat(processed);
+      await heartbeat();
+      // Write in BLOCKS as the run goes, not once at the end: a restart then
+      // loses at most the block in flight (re-running is resuming — only what
+      // is still missing is found), and a long run shows its result as it goes.
+      if (!managedRefusal && (buffer.length >= BULK_TRANSLATE_BLOCK_CELLS || Date.now() - lastWriteAt >= BULK_TRANSLATE_BLOCK_MS)) {
+        await flush();
+      }
     }
 
-    let saved = 0;
-    if (diff.length > 0) {
-      // The SAME verified write path as manual saving: digest rule (§6.3),
-      // registerAndVerify echo check, DB mirror, markTranslationSaved. Every
-      // entry is a FOREIGN write, so the primary-save invalidation never fires.
-      const applyResult = await applyBulkDiff({ db, shop, admin, columnsByType }, diff, async (done, totalRows) => {
-        await db.task
-          .update({
-            where: { id: taskId },
-            data: { progress: Math.min(100, Math.round(TRANSLATE_SPAN + (done / totalRows) * 20)) },
-          })
-          .catch(() => undefined);
-      });
-      // applyResult.saved counts row GROUPS, not translations — count the diff
-      // entries no failure was attributed to instead (a cell failure carries
-      // its columnId + locale, a row-level one only the row).
-      const failedCells = new Set<string>();
-      const failedRowLocales = new Set<string>();
-      for (const failure of applyResult.failures) {
-        const locale = failure.locale ?? "";
-        if (failure.columnId) failedCells.add(`${failure.rowId}|${locale}|${failure.columnId}`);
-        else failedRowLocales.add(`${failure.rowId}|${locale}`);
-      }
-      saved = diff.filter(
-        (entry) =>
-          !failedCells.has(`${entry.rowId}|${entry.locale}|${entry.columnId}`) &&
-          !failedRowLocales.has(`${entry.rowId}|${entry.locale}`),
-      ).length;
-      // The verified write path records `locale`/`marketId` per failed cell
-      // (BulkFailure, columns.shared.ts L1396-1400) and stripping them here
-      // threw away the only thing that told two of its lines apart.
-      failures.push(
-        ...applyResult.failures.map((f) => ({
-          rowId: f.rowId,
-          columnId: f.columnId,
-          locale: f.locale,
-          marketId: f.marketId,
-          message: f.message,
-        })),
-      );
-    }
+    // The tail block — also after a managed stand-down (what was translated
+    // before it is real work), never after a cancellation.
+    if (!(await shouldStop())) await flush();
 
     // Every selected unit ends in exactly one bucket: saved, deliberately
-    // skipped, or failed — derived, so the three always add up to the run.
-    const failed = Math.max(0, units - saved - skippedHandles);
-    const result: TranslateResultJson = { saved, failed, skippedHandles, failures };
+    // skipped, or failed — derived, so the buckets always add up to the run.
+    const failed = Math.max(0, units - saved - skippedHandles - skippedChanged - skippedFilled);
+    const result: TranslateResultJson = {
+      saved,
+      failed,
+      skippedHandles,
+      skippedChanged,
+      skippedFilled,
+      mode: "sync",
+      blocks,
+      ...(stoppedBy === "cancelled" ? { cancelled: true } : {}),
+      failures,
+    };
     const failedRows = new Set(failures.map((f) => f.rowId)).size;
+    if (stoppedBy) {
+      // Cancelled (or reaped, or deleted) under the run: the Task already has
+      // its terminal state and keeps it. A CANCELLED row also gets what the
+      // run did write, so the Tasks tab does not report "nothing happened".
+      logger.warn("[API-AI] Bulk-editor translate: stopped", { context: "AI", taskId, status: stoppedBy, saved });
+      if (stoppedBy === "cancelled") {
+        await db.task
+          .updateMany({
+            where: { id: taskId, status: "cancelled" },
+            data: { processed: settled, result: JSON.stringify(result) },
+          })
+          .catch(() => undefined);
+      }
+      return;
+    }
     if (managedRefusal) {
       // A managed-AI refusal OR a queue shutdown (`server_shutting_down`): the
       // code says which.
@@ -819,7 +1124,29 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     await db.task
       .updateMany({
         where: { id: taskId, status: "running" },
-        data: { status: "failed", progress: 100, completedAt: new Date(), error: message.substring(0, 1000) },
+        data: {
+          status: "failed",
+          progress: 100,
+          completedAt: new Date(),
+          error: message.substring(0, 1000),
+          // Blocks written before the failure are written: keep their result,
+          // so the Tasks tab does not report a half-written run as "nothing
+          // happened".
+          ...(saved > 0
+            ? {
+                result: JSON.stringify({
+                  saved,
+                  failed: Math.max(0, units - saved - skippedHandles - skippedChanged - skippedFilled),
+                  skippedHandles,
+                  skippedChanged,
+                  skippedFilled,
+                  mode: "sync",
+                  blocks,
+                  failures,
+                }),
+              }
+            : {}),
+        },
       })
       .catch(() => undefined);
   } finally {

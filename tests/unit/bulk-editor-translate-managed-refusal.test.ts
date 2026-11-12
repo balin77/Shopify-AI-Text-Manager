@@ -13,6 +13,18 @@ vi.mock("~/routes/api-ai-handlers/shared", async (importOriginal) => {
 });
 const applyBulkDiff = vi.fn();
 vi.mock("~/services/bulk-editor/apply.server", () => ({ applyBulkDiff: (...a: unknown[]) => applyBulkDiff(...a) }));
+// The plan-time read of the live primary text is Shopify I/O of its own and has
+// its own tests (bulk-translate-plan-read.test.ts); here it passes every job
+// through unchanged.
+vi.mock("~/services/bulk-editor/translate-plan-read.server", () => ({
+  planCellKey: (rowId: string, columnId: string) => `${rowId}|${columnId}`,
+  planTranslateRead: async (_deps: unknown, jobs: unknown[]) => ({
+    jobs,
+    expected: new Map(),
+    skippedChanged: 0,
+    failures: [],
+  }),
+}));
 vi.mock("~/utils/logger.server", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { runBulkEditorTranslate, BULK_TRANSLATE_HEARTBEAT_MS, type TranslateJob } from "~/routes/api-ai-handlers/bulk-editor-translate.handler";
@@ -36,7 +48,14 @@ const job = (rowId: string): TranslateJob => ({
 });
 
 function makeDb() {
-  return { task: { update: vi.fn(async () => ({})), updateMany: vi.fn(async () => ({ count: 1 })) }, groupedFieldTranslation: {} } as any;
+  return {
+    task: {
+      update: vi.fn(async () => ({})),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      findUnique: vi.fn(async () => ({ status: "running" })),
+    },
+    groupedFieldTranslation: {},
+  } as any;
 }
 
 const run = (db: any, jobs: TranslateJob[]) =>

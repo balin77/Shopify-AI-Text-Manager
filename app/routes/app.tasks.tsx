@@ -29,6 +29,7 @@ import {
   taskSubjectLabel,
 } from "~/services/tasks/task-labels.shared";
 import { hasTaskDetails } from "~/services/tasks/task-details.shared";
+import { cancelTask } from "~/services/tasks/task-cancel.server";
 import { taskEditorDeepLink } from "~/services/tasks/task-deep-link.shared";
 import { useAppNavigation } from "~/hooks/useAppNavigation";
 import { useTaskCount } from "~/contexts/TaskCountContext";
@@ -238,10 +239,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (action === "cancel") {
     try {
-      await db.task.update({
-        where: { id: taskId, shop: session.shop },
-        data: { status: "cancelled", completedAt: new Date() },
-      });
+      // Branches on the task's status (task-cancel.server.ts): only a task
+      // that is still going can be cancelled — a finished one stays as it is.
+      const outcome = await cancelTask(db, session.shop, taskId);
+      if (!outcome.ok) {
+        return json({ success: false, error: "This task can no longer be cancelled." }, { status: 409 });
+      }
       return json({ success: true });
     } catch (error: unknown) {
       logger.error("Failed to cancel task", { context: "TasksRoute", taskId, error: error instanceof Error ? error.message : String(error) });
