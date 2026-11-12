@@ -504,7 +504,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         const rows = await db.aiUsageCounter.findMany({
           // The rows the budget's used figure is summed over, so the share of
           // estimated calls describes that same number.
-          where: { shop: session.shop, source: "managed", ...usedPeriodsFilter(status.period, status.kind) },
+          // A batch RESERVATION row (`<feature>:reserved`) is a hold, not calls:
+          // it never enters the estimated share (usage-meter.server.ts).
+          where: {
+            shop: session.shop,
+            source: "managed",
+            ...usedPeriodsFilter(status.period, status.kind),
+            NOT: { feature: { endsWith: ":reserved" } },
+          },
           select: { calls: true, estimated: true },
         });
         const total = rows.reduce((n, r) => n + r.calls, 0);

@@ -399,6 +399,12 @@ export async function recordAiUsage(
 }
 
 export interface AiUsageRow {
+  /**
+   * A RESERVATION of a waiting batch (`<feature>:reserved`): money held against
+   * the budget, not spent. Carries billedMicros only. Callers that total cost
+   * must skip it; callers that show budget use may count it.
+   */
+  reserved: boolean;
   source: AiCredentialSource;
   provider: string;
   model: string;
@@ -451,6 +457,7 @@ export async function getAiUsage(
   return rows
     .filter((row) => isAiCredentialSource(row.source))
     .map((row) => ({
+      reserved: isReservedFeature(row.feature),
       source: row.source as AiCredentialSource,
       provider: row.provider,
       model: row.model,
@@ -463,4 +470,273 @@ export async function getAiUsage(
       costMicros: Number(row.costMicros),
       billedMicros: Number(row.billedMicros),
     }));
+}
+
+// ─── Batch reservations (PLAN_BULK_TRANSLATE_BATCHING 19.5) ─────────────────
+//
+// A provider batch is submitted in one go and settled up to 24 hours later, so
+// the per-call budget gate cannot see what it is about to cost. The budget side
+// is protected by a RESERVATION written at submit and turned into a charge (or
+// removed) when the batch settles. Two counters hold it, because three readers
+// look at two different tables:
+//
+//  1. `AiUsageCounter`, feature `<feature>:reserved`, `billedMicros` ONLY --
+//     `managedBudgetStatus` sums billedMicros of every managed row of the open
+//     period, so the hold counts against the shop's remaining budget. NEVER
+//     `costMicros` (shop-overview and the margin reports sum cost; a hold is not
+//     an expense) and never `calls` (the settings card's estimated share is
+//     computed over calls).
+//  2. `ManagedAiGlobalCounter` of the pool + calendar month PINNED AT SUBMIT --
+//     `globalPoolStatus` reads `costMicros` there, so the hold counts against
+//     the global cap too.
+//
+// Both writes live in THIS module (the one writer of AiUsageCounter), run in
+// ONE transaction with the state flip on the batch row, and are idempotent per
+// batch: `reservationState` moves none -> held -> converted | released through
+// conditional updates, so a second reserve / convert / release of the same row
+// finds nothing to do. Decrements clamp at zero IN the statement (GREATEST), so
+// a counter can never go negative however the rows came to disagree.
+//
+// Nothing here throws: a failure is a value (`applied: false`). The submit path
+// must refuse to submit on a failed reserve; the settle paths log and the
+// sweep (`releaseSettledReservations`) retries what a crash left behind.
+
+/** The feature the reservation row is filed under: the real feature plus this suffix. */
+export const RESERVED_FEATURE_SUFFIX = ':reserved';
+/** The feature a batch run is metered under (Task.type of the bulk translate run). */
+export const BATCH_RESERVATION_FEATURE = 'bulkEditorTranslate';
+
+export const reservedFeature = (feature: string): string => `${feature}${RESERVED_FEATURE_SUFFIX}`;
+export const isReservedFeature = (feature: string): boolean => feature.endsWith(RESERVED_FEATURE_SUFFIX);
+
+export type ReservationOutcome =
+  | { applied: true; micros: number }
+  | {
+      applied: false;
+      reason:
+        | 'noBatch' // the batch row does not exist
+        | 'byo' // an own-key run has no budget to reserve against
+        | 'zero' // nothing to reserve
+        | 'already' // reserve: the row is not in state "none"
+        | 'notHeld' // convert / release: nothing is held (never reserved, or already settled)
+        | 'failed'; // the transaction failed; nothing was written
+    };
+
+/** Identifies the counter rows of one batch -- all pinned at submit. */
+function reservationKeys(row: {
+  shop: string;
+  provider: string;
+  model: string;
+  period: string;
+  pool: string;
+  poolPeriod: string;
+}) {
+  return {
+    shop: row.shop,
+    period: row.period,
+    source: 'managed' as const,
+    provider: row.provider,
+    model: row.model,
+    pool: (row.pool === 'taster' ? 'taster' : 'paid') as 'paid' | 'taster',
+    poolPeriod: row.poolPeriod,
+  };
+}
+
+function clampReservation(n: number): number {
+  return Number.isFinite(n) ? Math.max(0, Math.min(Math.floor(n), MAX_MICROS)) : 0;
+}
+
+/**
+ * Hold `billedMicros` against the shop's budget (and `poolMicros`, default the
+ * same, against the global pool) for a batch that has just been recorded.
+ * Idempotent: a batch already holding a reservation is left as it is.
+ */
+export async function reserveBudget(
+  batchId: string,
+  amounts: { billedMicros: number; poolMicros?: number },
+): Promise<ReservationOutcome> {
+  try {
+    const { db } = await import('../../db.server');
+    const row = await db.bulkTranslateBatch.findUnique({ where: { id: batchId } });
+    if (!row) return { applied: false, reason: 'noBatch' };
+    if (row.source !== 'managed') return { applied: false, reason: 'byo' };
+    if (row.reservationState !== 'none') return { applied: false, reason: 'already' };
+    const billed = clampReservation(amounts.billedMicros);
+    const poolAmount = clampReservation(amounts.poolMicros ?? amounts.billedMicros);
+    if (billed <= 0) return { applied: false, reason: 'zero' };
+    const k = reservationKeys(row);
+
+    const done = await db.$transaction(async (tx) => {
+      const flipped = await tx.bulkTranslateBatch.updateMany({
+        where: { id: batchId, reservationState: 'none' },
+        data: { reservationState: 'held', reservedMicros: billed, reservedPoolMicros: poolAmount },
+      });
+      if (flipped.count !== 1) return false;
+      await tx.aiUsageCounter.upsert({
+        where: {
+          shop_period_source_provider_model_feature_estimated: {
+            shop: k.shop,
+            period: k.period,
+            source: k.source,
+            provider: k.provider,
+            model: k.model,
+            feature: reservedFeature(BATCH_RESERVATION_FEATURE),
+            estimated: true,
+          },
+        },
+        create: {
+          shop: k.shop,
+          period: k.period,
+          source: k.source,
+          provider: k.provider,
+          model: k.model,
+          feature: reservedFeature(BATCH_RESERVATION_FEATURE),
+          estimated: true,
+          // calls / costMicros stay 0: a hold is neither a call nor an expense.
+          billedMicros: BigInt(billed),
+        },
+        update: { billedMicros: { increment: BigInt(billed) } },
+      });
+      if (poolAmount > 0) {
+        await tx.managedAiGlobalCounter.upsert({
+          where: { period_pool: { period: k.poolPeriod, pool: k.pool } },
+          create: { period: k.poolPeriod, pool: k.pool, costMicros: BigInt(poolAmount), failoverMicros: BigInt(0) },
+          update: { costMicros: { increment: BigInt(poolAmount) } },
+        });
+      }
+      return true;
+    });
+    return done ? { applied: true, micros: billed } : { applied: false, reason: 'already' };
+  } catch (error) {
+    logger.error(
+      `[AI-METER] Reserving budget for batch ${batchId} failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return { applied: false, reason: 'failed' };
+  }
+}
+
+/** Remove a held reservation from both counters, clamped at zero in the statement. */
+async function dropReservation(
+  tx: { $executeRaw: (q: TemplateStringsArray, ...v: unknown[]) => Promise<number> },
+  k: ReturnType<typeof reservationKeys>,
+  billed: number,
+  poolAmount: number,
+): Promise<void> {
+  if (billed > 0) {
+    await tx.$executeRaw`UPDATE "AiUsageCounter" SET "billedMicros" = GREATEST("billedMicros" - ${BigInt(billed)}::bigint, 0), "updatedAt" = NOW() WHERE "shop" = ${k.shop} AND "period" = ${k.period} AND "source" = ${k.source} AND "provider" = ${k.provider} AND "model" = ${k.model} AND "feature" = ${reservedFeature(BATCH_RESERVATION_FEATURE)} AND "estimated" = true`;
+  }
+  if (poolAmount > 0) {
+    await tx.$executeRaw`UPDATE "ManagedAiGlobalCounter" SET "costMicros" = GREATEST("costMicros" - ${BigInt(poolAmount)}::bigint, 0), "updatedAt" = NOW() WHERE "period" = ${k.poolPeriod} AND "pool" = ${k.pool}`;
+  }
+}
+
+/**
+ * The batch settled without a charge (cancelled before it ran, expired,
+ * unreachable, failed at submit): give the reservation back to both counters.
+ */
+export async function releaseBudget(batchId: string): Promise<ReservationOutcome> {
+  return settleReservation(batchId, 'released');
+}
+
+/**
+ * Book the reservation AS the charge -- the consent-withdrawal path (PLAN 16):
+ * nothing was fetched, so the reserved upper bound is what the shop pays. The
+ * hold moves from the `:reserved` row into the real feature row (billedMicros
+ * and costMicros, estimated); the pool counter already carries the amount as
+ * cost and is left alone.
+ */
+export async function convertReservation(batchId: string): Promise<ReservationOutcome> {
+  return settleReservation(batchId, 'converted');
+}
+
+async function settleReservation(batchId: string, to: 'released' | 'converted'): Promise<ReservationOutcome> {
+  try {
+    const { db } = await import('../../db.server');
+    const row = await db.bulkTranslateBatch.findUnique({ where: { id: batchId } });
+    if (!row) return { applied: false, reason: 'noBatch' };
+    if (row.reservationState !== 'held') return { applied: false, reason: 'notHeld' };
+    const billed = clampReservation(row.reservedMicros);
+    const poolAmount = clampReservation(row.reservedPoolMicros);
+    const k = reservationKeys(row);
+
+    const done = await db.$transaction(async (tx) => {
+      // The winner of this conditional flip is the only one who touches the counters.
+      const flipped = await tx.bulkTranslateBatch.updateMany({
+        where: { id: batchId, reservationState: 'held' },
+        data: { reservationState: to },
+      });
+      if (flipped.count !== 1) return false;
+      if (to === 'converted' && billed > 0) {
+        await tx.aiUsageCounter.upsert({
+          where: {
+            shop_period_source_provider_model_feature_estimated: {
+              shop: k.shop,
+              period: k.period,
+              source: k.source,
+              provider: k.provider,
+              model: k.model,
+              feature: BATCH_RESERVATION_FEATURE,
+              estimated: true,
+            },
+          },
+          create: {
+            shop: k.shop,
+            period: k.period,
+            source: k.source,
+            provider: k.provider,
+            model: k.model,
+            feature: BATCH_RESERVATION_FEATURE,
+            estimated: true,
+            billedMicros: BigInt(billed),
+            costMicros: BigInt(billed),
+          },
+          update: { billedMicros: { increment: BigInt(billed) }, costMicros: { increment: BigInt(billed) } },
+        });
+        // The reserved row loses the hold; the pool keeps it (it is now the charge).
+        await dropReservation(tx as never, k, billed, 0);
+      } else if (to === 'released') {
+        await dropReservation(tx as never, k, billed, poolAmount);
+      }
+      return true;
+    });
+    return done ? { applied: true, micros: billed } : { applied: false, reason: 'notHeld' };
+  } catch (error) {
+    logger.error(
+      `[AI-METER] Settling the reservation of batch ${batchId} (${to}) failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return { applied: false, reason: 'failed' };
+  }
+}
+
+/**
+ * Sweep: release the reservation of every batch row that is SETTLED ("done")
+ * but still holds one -- a crash between settling and releasing, a submit that
+ * died, a recovery that closed the row. Covers BOTH counters (releaseBudget),
+ * and not only `waiting` rows: a settled row is exactly where a hold gets lost.
+ * Idempotent; the poller calls it each tick.
+ */
+export async function releaseSettledReservations(limit = 50): Promise<{ released: number; failed: number }> {
+  let released = 0;
+  let failed = 0;
+  try {
+    const { db } = await import('../../db.server');
+    const rows = await db.bulkTranslateBatch.findMany({
+      where: { state: 'done', reservationState: 'held' },
+      select: { id: true },
+      take: limit,
+    });
+    for (const { id } of rows) {
+      const outcome = await releaseBudget(id);
+      if (outcome.applied) released += 1;
+      else if (outcome.reason === 'failed') failed += 1;
+    }
+  } catch (error) {
+    logger.error(
+      `[AI-METER] Reservation sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    failed += 1;
+  }
+  return { released, failed };
 }

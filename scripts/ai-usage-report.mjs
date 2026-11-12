@@ -37,12 +37,20 @@ async function main() {
   const period = process.argv[2] || currentPeriod();
   const shop = process.argv[3];
 
-  const rows = await db.aiUsageCounter.findMany({
+  const allRows = await db.aiUsageCounter.findMany({
     where: { period, ...(shop ? { shop } : {}) },
     orderBy: [{ shop: "asc" }, { feature: "asc" }, { model: "asc" }],
   });
 
-  if (rows.length === 0) {
+  // Rows with feature "<feature>:reserved" are RESERVATIONS of a waiting batch
+  // (usage-meter.server.ts reserveBudget): money held against the budget, not
+  // spent. They carry billedMicros only and are reported on their own -- adding
+  // them to the cost / billed totals would book a hold as an expense.
+  const isReserved = (r) => String(r.feature).endsWith(":reserved");
+  const reservedRows = allRows.filter(isReserved);
+  const rows = allRows.filter((r) => !isReserved(r));
+
+  if (rows.length === 0 && reservedRows.length === 0) {
     console.log(`No AI usage recorded for period ${period}${shop ? ` on ${shop}` : ""}.`);
     console.log("(A shop with no row simply made no calls — there is no such thing");
     console.log(" as a zero row, which is why an absent one is not ambiguous here.)");
@@ -90,6 +98,9 @@ async function main() {
     }
   };
 
+  if (rows.length === 0) {
+    console.log(`Only reservations recorded for period ${period}${shop ? ` on ${shop}` : ""} (no calls yet).`);
+  }
   console.log(`AI usage — period ${period}${shop ? `, shop ${shop}` : ", all shops"}`);
   table("MEASURED (the provider reported these token counts)", measured);
   table("ESTIMATED (no usage object; counted from characters, rounded up)", estimated);
@@ -99,10 +110,15 @@ async function main() {
   const cost = rows.reduce((n, r) => n + r.costMicros, 0n);
   const billed = rows.reduce((n, r) => n + r.billedMicros, 0n);
   const failover = rows.reduce((n, r) => n + r.failoverCalls, 0);
+  const reserved = reservedRows.reduce((n, r) => n + r.billedMicros, 0n);
 
   console.log(`\nTotals: ${totalCalls} calls, cost ${eur(cost)}, billed ${eur(billed)}`);
+  if (reservedRows.length > 0) {
+    // Its own column: held against the budget until the batch settles, never part of cost / billed above.
+    console.log(`  reserved (held for waiting batches, not spent): ${eur(reserved)}`);
+  }
   console.log(
-    `  estimated share: ${((estCalls / totalCalls) * 100).toFixed(1)}% of calls` +
+    `  estimated share: ${totalCalls > 0 ? ((estCalls / totalCalls) * 100).toFixed(1) : "0.0"}% of calls` +
       ` — the first thing to check when the meter and an invoice disagree`,
   );
   if (failover > 0) {
