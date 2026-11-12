@@ -167,6 +167,7 @@ describe("estimate >= what the other runner paths send (real prompt builders)", 
   it("a single short title into one locale", async () => {
     const { svc, prompts } = service("");
     await svc.translateShortFieldsBatch({ title: "Schal" }, "de", ["fr"], "product").catch(() => undefined);
+    expect(prompts.length).toBeGreaterThan(0);
     const jobs: EstimateJob[] = [{ rowId: "r1", cells: [{ column: col("field.title"), fieldKey: "title", source: "Schal", locales: ["fr"] }] }];
     const e = estimateTranslateRun({ ...base, jobs, units: 1, packages: false, classifiers: cls({ isShortColumn: () => true }) });
     expect(e.inputTokens).toBeGreaterThanOrEqual(sentTokens(prompts));
@@ -194,6 +195,7 @@ describe("estimate >= what the other runner paths send (real prompt builders)", 
     });
     const one = service("");
     await one.svc.translateBatchValuesToLocales(["Wolle"], "de", ["fr"], "product content").catch(() => undefined);
+    expect(one.prompts.length).toBeGreaterThan(0);
     expect(split.inputTokens).toBeGreaterThanOrEqual(sentTokens(one.prompts));
   });
 
@@ -202,6 +204,7 @@ describe("estimate >= what the other runner paths send (real prompt builders)", 
       const { svc, prompts } = service("");
       const src = key === "handle" ? "wollschal-handgewebt" : "Schal";
       await svc.translateShortFieldsBatch({ [key]: src }, "de", LOCALES, "product").catch(() => undefined);
+      expect(prompts.length).toBeGreaterThan(0);
       const jobs: EstimateJob[] = [{ rowId: "r1", cells: [{ column: col(`field.${key}`), fieldKey: key, source: src, locales: LOCALES }] }];
       const e = estimateTranslateRun({ ...base, jobs, units: LOCALES.length, packages: false, classifiers: cls({ isShortColumn: () => true, isHandleColumn: () => key === "handle" }) });
       expect(e.inputTokens).toBeGreaterThanOrEqual(sentTokens(prompts));

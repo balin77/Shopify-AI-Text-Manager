@@ -3603,9 +3603,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     if (!meta) return null;
     // Gemini 2.5 thinking tokens are billed as output and reported apart from
     // the candidates' count; adding them can only raise the metered figure.
+    // Gemini leaves zero-valued fields out, so an answer whose thinking used
+    // the whole ceiling reports thoughts but no candidates: still metered.
     const output =
-      typeof meta.candidatesTokenCount === 'number'
-        ? meta.candidatesTokenCount + (typeof meta.thoughtsTokenCount === 'number' ? meta.thoughtsTokenCount : 0)
+      typeof meta.thoughtsTokenCount === 'number'
+        ? (typeof meta.candidatesTokenCount === 'number' ? meta.candidatesTokenCount : 0) + meta.thoughtsTokenCount
         : meta.candidatesTokenCount;
     return { input: meta.promptTokenCount, output };
   }

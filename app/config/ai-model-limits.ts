@@ -81,9 +81,9 @@ export const PACKAGE_CACHE_MIN_GROUP_PACKAGES = 3;
  * against `maxOutputTokens`. The installed `@google/generative-ai` (0.24.1) has
  * no `thinkingConfig` in its typings, so thinking cannot be switched off; a
  * package request instead gets this allowance ON TOP of its own ceiling (capped
- * at the model's), so the answer is not cut off by thinking. The estimate adds
- * it to the output of every package request (thinking is billed as output).
- * Package calls of Gemini 2.5 models only; every other call is unchanged.
+ * at the model's), so the answer is not cut off by thinking. Only package calls
+ * of Gemini 2.5 models are SENT with it; the estimate adds it to the output of
+ * every Gemini 2.5 request, package and per-row (thinking is billed as output).
  * Research state, not measured.
  */
 export const GEMINI_THINKING_ALLOWANCE_TOKENS = 4096;
