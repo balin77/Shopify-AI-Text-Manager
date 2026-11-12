@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("~/utils/logger.server", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -199,6 +199,10 @@ const statusOf = (res: unknown) => (res as { init?: { status?: number } }).init?
 const bodyOf = async (res: unknown) => (res as { data?: unknown }).data ?? (await (res as Response).json());
 
 beforeEach(() => {
+  // Pin the clock to the fixtures' "now": the session fixtures expire on
+  // 2026-11-11, so on a later real date the status would read yellow.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(NOW_ISO));
   process.env.ADMIN_PASSWORD = PW;
   process.env.SHOPIFY_API_SECRET = "api-secret";
   calls.length = 0;
@@ -209,6 +213,10 @@ beforeEach(() => {
 });
 
 type Body = { rows: Array<Record<string, any>>; header: any; audits: unknown[]; now: string };
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("admin shop overview loader", () => {
   it("runs the same number of queries for 1 and 200 shops", async () => {
