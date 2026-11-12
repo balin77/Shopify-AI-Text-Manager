@@ -74,7 +74,7 @@ export interface ShopRow {
 
 export interface OverviewHeader {
   webhooks24h: WebhookCounts;
-  /** Managed-AI spend of the current calendar month over both pools (micro-euro). */
+  /** Managed-AI spend of the current calendar month over both pools (micro-euro). INCLUDES the holds of waiting batch runs (the pool counter carries them as cost until they settle); the table labels it so. */
   managedAiCostMicrosMonth: number;
 }
 

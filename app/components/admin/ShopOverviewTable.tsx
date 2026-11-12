@@ -248,7 +248,7 @@ export function ShopOverviewTable({ rows, header, now }: { rows: ShopRow[]; head
         <span style={{ fontSize: 13, color: MUTED }}>
           Webhooks 24 h: <strong>{header.webhooks24h.total}</strong>
           {header.webhooks24h.failed > 0 && <span style={{ color: DANGER }}> ({header.webhooks24h.failed} Fehler)</span>}
-          {' · '}Managed AI im Monat (ungefähr): <strong>{formatMicros(header.managedAiCostMicrosMonth)}</strong>
+          {' · '}Managed AI im Monat (ungefähr, inkl. noch reservierter Batch-Beträge): <strong>{formatMicros(header.managedAiCostMicrosMonth)}</strong>
         </span>
       </div>
 

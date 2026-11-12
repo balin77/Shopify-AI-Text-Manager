@@ -137,3 +137,33 @@ describe("recoverOrphanedRuns wiring", () => {
     spy.mockRestore();
   });
 });
+
+describe("the task row and the batch row move in ONE transaction", () => {
+  it("both updates run inside prisma.$transaction when the client has one, and roll together", async () => {
+    taskFindMany.mockResolvedValue([{ id: "t-with", shop: "a.myshopify.com" }]);
+    batchFindMany.mockResolvedValue([{ taskId: "t-with", batchIds: ["msgbatch_1"] }]);
+    const inTx: string[] = [];
+    const txClient = {
+      task: { updateMany: async (a: any) => (inTx.push("task"), taskUpdateMany(a)) },
+      bulkTranslateBatch: { updateMany: async (a: any) => (inTx.push("batch"), batchUpdateMany(a)) },
+    };
+    const transaction = vi.fn(async (fn: (tx: any) => Promise<unknown>) => fn(txClient));
+    const withTx = { ...prisma, $transaction: transaction };
+
+    const res = await recoverSubmittingBatchTasks(withTx, {});
+
+    expect(res.resumed).toBe(1);
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(inTx).toEqual(["task", "batch"]);
+  });
+
+  it("a failure of the second update surfaces (the transaction would roll the first back) instead of being half applied", async () => {
+    taskFindMany.mockResolvedValue([{ id: "t-without", shop: "a.myshopify.com" }]);
+    batchFindMany.mockResolvedValue([]);
+    batchUpdateMany.mockRejectedValue(new Error("db down"));
+    const transaction = vi.fn(async (fn: (tx: any) => Promise<unknown>) => fn(prisma));
+    await expect(recoverSubmittingBatchTasks({ ...prisma, $transaction: transaction }, {})).rejects.toThrow("db down");
+    expect(transaction).toHaveBeenCalledTimes(1);
+  });
+});
+

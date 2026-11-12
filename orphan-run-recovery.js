@@ -288,31 +288,41 @@ export async function recoverSubmittingBatchTasks(prisma, options = {}) {
 
   let resumed = 0;
   let failed = 0;
+  // The Task row and its batch row move TOGETHER: two separate updates that
+  // died between them left a task `waiting_batch` over a batch row still
+  // `submitting` (or the reverse), a pair no poller query matches. One
+  // transaction where the client has one; the unit-test doubles have none.
+  const together = async (fn) =>
+    typeof prisma.$transaction === "function" ? prisma.$transaction(fn) : fn(prisma);
   // Conditional on the row still being `submitting`: a runner that finished
   // between the select and here keeps its own state.
   if (resumeIds.length > 0) {
-    const res = await prisma.task.updateMany({
-      where: { id: { in: resumeIds }, status: "submitting" },
-      data: { status: "waiting_batch" },
-    });
-    resumed = res.count;
-    await prisma.bulkTranslateBatch.updateMany({
-      where: { taskId: { in: resumeIds }, state: "submitting" },
-      data: { state: "waiting" },
+    resumed = await together(async (tx) => {
+      const res = await tx.task.updateMany({
+        where: { id: { in: resumeIds }, status: "submitting" },
+        data: { status: "waiting_batch" },
+      });
+      await tx.bulkTranslateBatch.updateMany({
+        where: { taskId: { in: resumeIds }, state: "submitting" },
+        data: { state: "waiting" },
+      });
+      return res.count;
     });
   }
   if (failIds.length > 0) {
-    const res = await prisma.task.updateMany({
-      where: { id: { in: failIds }, status: "submitting" },
-      data: { status: "failed", error: INTERRUPTED_TASK_ERROR, completedAt: new Date() },
-    });
-    failed = res.count;
-    // The batch row is settled too ('done'), so the reservation sweep
-    // (usage-meter.server.ts releaseSettledReservations) frees what the run
-    // had reserved before it died.
-    await prisma.bulkTranslateBatch.updateMany({
-      where: { taskId: { in: failIds }, state: "submitting" },
-      data: { state: "done", lastError: INTERRUPTED_TASK_ERROR },
+    failed = await together(async (tx) => {
+      const res = await tx.task.updateMany({
+        where: { id: { in: failIds }, status: "submitting" },
+        data: { status: "failed", error: INTERRUPTED_TASK_ERROR, completedAt: new Date() },
+      });
+      // The batch row is settled too ('done'), so the reservation sweep
+      // (usage-meter.server.ts releaseSettledReservations) frees what the run
+      // had reserved before it died.
+      await tx.bulkTranslateBatch.updateMany({
+        where: { taskId: { in: failIds }, state: "submitting" },
+        data: { state: "done", lastError: INTERRUPTED_TASK_ERROR },
+      });
+      return res.count;
     });
   }
   return { resumed, failed, shops: Array.from(new Set(rows.map((r) => r.shop))) };
