@@ -138,17 +138,45 @@ describe('the operator credential has exactly one reader', () => {
     expect(src).toMatch(/isDevAppBuild/);
   });
 
+  /** The source text of ONE exported function: from its signature to the brace that closes its body (not to the end of the file). */
+  function functionSource(src: string, signature: string): string {
+    const start = src.indexOf(signature);
+    expect(start, `${signature} not found`).toBeGreaterThan(0);
+    const open = src.indexOf('{', src.indexOf('Promise<', start));
+    let depth = 0;
+    for (let i = open; i < src.length; i++) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') {
+        depth--;
+        if (depth === 0) return src.slice(start, i + 1);
+      }
+    }
+    throw new Error(`${signature}: unbalanced braces`);
+  }
+
   it('the settlement accessor skips only the per-shop gates: kill switch and dev-build guard stay, and the key never leaves', () => {
     const src = readFileSync(join(root, RESOLVER), 'utf8');
-    const start = src.indexOf('export function settlementCredentialsFor');
-    expect(start).toBeGreaterThan(0);
-    const body = src.slice(start);
+    const body = functionSource(src, 'export async function settlementCredentialsFor');
+    // it ends at ITS closing brace: later functions of the module cannot leak into (or out of) the assertions
+    expect(body.trimEnd().endsWith('}')).toBe(true);
+    expect(body).not.toMatch(/export (async )?function (?!settlementCredentialsFor)/);
     expect(body).toMatch(/isManagedAiEnabled\(\)/);
     expect(body).toMatch(/isDevAppBuild\(\) && !managedDevTestingEnabled\(\)/);
     // it must not consult the per-shop gates it exists to skip
     expect(body).not.toMatch(/hasCurrentAiProcessingConsent|managedBudgetStatus|globalPoolStatus/);
     // and it returns a transport, never the key: no `apiKey` in the returned object literal
     expect(body).toMatch(/return \{ ok: true, source, role: batch\.role, transport \};/);
+  });
+
+  it('the settlement accessor takes a batch ROW ID and loads the row itself -- no caller-built row object', () => {
+    const src = readFileSync(join(root, RESOLVER), 'utf8');
+    const body = functionSource(src, 'export async function settlementCredentialsFor');
+    expect(body).toMatch(/batchRowId: string/);
+    expect(body).not.toMatch(/batch: SettlementBatchRow,/);
+    expect(body).toMatch(/bulkTranslateBatch\.findUnique\(\{ where: \{ id: batchRowId \} \}\)/);
+    // the allowlist is built from the DB row's own fields
+    expect(body).toMatch(/stringList\(batch\.batchIds\)/);
+    expect(body).toMatch(/stringList\(batch\.fileIds\)/);
   });
 });
 

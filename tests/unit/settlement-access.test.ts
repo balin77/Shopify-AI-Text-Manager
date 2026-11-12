@@ -10,6 +10,18 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 vi.mock('~/utils/encryption.server', () => ({
   tryDecryptApiKey: (value: string | null | undefined) => value ?? null,
 }));
+const h = vi.hoisted(() => ({ dbRow: null as any, lookupError: null as Error | null }));
+vi.mock('~/db.server', () => ({
+  db: {
+    bulkTranslateBatch: {
+      findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
+        if (h.lookupError) throw h.lookupError;
+        return h.dbRow && h.dbRow.id === where.id ? h.dbRow : null;
+      }),
+    },
+    aISettings: { findUnique: vi.fn(async () => null) },
+  },
+}));
 const warn = vi.fn();
 const info = vi.fn();
 vi.mock('~/utils/logger.server', () => ({
@@ -60,6 +72,12 @@ const row = (over: Partial<SettlementBatchRow> = {}): SettlementBatchRow => ({
   ...over,
 });
 
+/** The accessor takes a batch ROW ID and loads the row itself: put the row in the "database", then ask by id. */
+function access(shop: string, dbRow: SettlementBatchRow | null, settings: unknown = null) {
+  h.dbRow = dbRow;
+  return settlementCredentialsFor(shop, dbRow?.id ?? 'row-1', settings as never);
+}
+
 function configureManaged(provider = 'claude', model = 'claude-haiku-4-5') {
   process.env.MANAGED_AI_ENABLED = 'true';
   process.env.MANAGED_AI_PROVIDER = provider;
@@ -101,6 +119,8 @@ function fakeOps() {
 }
 
 beforeEach(() => {
+  h.dbRow = null;
+  h.lookupError = null;
   saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   for (const k of ENV_KEYS) delete process.env[k];
   warn.mockClear();
@@ -116,63 +136,63 @@ afterEach(() => {
 });
 
 describe('what it requires -- the deployment gates stay', () => {
-  it('refuses a managed row when the kill switch is off, with no key lookup', () => {
+  it('refuses a managed row when the kill switch is off, with no key lookup', async () => {
     configureManaged();
     process.env.MANAGED_AI_ENABLED = 'false';
     const { seen } = fakeOps();
-    expect(settlementCredentialsFor(SHOP, row())).toEqual({ ok: false, reason: 'managedDisabled' });
+    expect(await access(SHOP, row())).toEqual({ ok: false, reason: 'managedDisabled' });
     expect(seen).toHaveLength(0);
   });
 
-  it('an UNSET switch is off too (opt-in, like the resolver)', () => {
+  it('an UNSET switch is off too (opt-in, like the resolver)', async () => {
     configureManaged();
     delete process.env.MANAGED_AI_ENABLED;
-    expect(settlementCredentialsFor(SHOP, row())).toEqual({ ok: false, reason: 'managedDisabled' });
+    expect(await access(SHOP, row())).toEqual({ ok: false, reason: 'managedDisabled' });
   });
 
-  it('refuses on the dev/custom-app build, even with the switch on and a key configured', () => {
+  it('refuses on the dev/custom-app build, even with the switch on and a key configured', async () => {
     configureManaged();
     process.env.SHOPIFY_API_KEY = DEV_APP_CLIENT_ID;
     process.env.APP_ENV = 'development';
     const { seen } = fakeOps();
-    expect(settlementCredentialsFor(SHOP, row())).toEqual({ ok: false, reason: 'devBuild' });
+    expect(await access(SHOP, row())).toEqual({ ok: false, reason: 'devBuild' });
     expect(seen).toHaveLength(0);
   });
 
-  it('refuses when no credential is configured for the recorded role', () => {
+  it('refuses when no credential is configured for the recorded role', async () => {
     configureManaged();
     delete process.env.MANAGED_AI_FALLBACK_API_KEY;
-    expect(settlementCredentialsFor(SHOP, row({ provider: 'openai', role: 'failover' }))).toEqual({
+    expect(await access(SHOP, row({ provider: 'openai', role: 'failover' }))).toEqual({
       ok: false,
       reason: 'noCredential',
     });
   });
 
-  it('refuses a row of another shop', () => {
+  it('refuses a row of another shop', async () => {
     configureManaged();
-    expect(settlementCredentialsFor('b.myshopify.com', row())).toEqual({ ok: false, reason: 'shopMismatch' });
+    expect(await access('b.myshopify.com', row())).toEqual({ ok: false, reason: 'shopMismatch' });
   });
 
-  it('refuses a provider without a batch API and an unknown source', () => {
+  it('refuses a provider without a batch API and an unknown source', async () => {
     configureManaged();
-    expect(settlementCredentialsFor(SHOP, row({ provider: 'gemini' }))).toEqual({
+    expect(await access(SHOP, row({ provider: 'gemini' }))).toEqual({
       ok: false,
       reason: 'unsupportedProvider',
     });
-    expect(settlementCredentialsFor(SHOP, row({ provider: 'made-up' }))).toEqual({
+    expect(await access(SHOP, row({ provider: 'made-up' }))).toEqual({
       ok: false,
       reason: 'unsupportedProvider',
     });
-    expect(settlementCredentialsFor(SHOP, row({ source: 'something' }))).toEqual({
+    expect(await access(SHOP, row({ source: 'something' }))).toEqual({
       ok: false,
       reason: 'unknownSource',
     });
   });
 
-  it('refuses when the credential of that role now belongs to ANOTHER provider (key would hit the wrong endpoint)', () => {
+  it('refuses when the credential of that role now belongs to ANOTHER provider (key would hit the wrong endpoint)', async () => {
     configureManaged('openai', 'gpt-5-nano');
     const { seen } = fakeOps();
-    expect(settlementCredentialsFor(SHOP, row({ provider: 'claude' }))).toEqual({
+    expect(await access(SHOP, row({ provider: 'claude' }))).toEqual({
       ok: false,
       reason: 'providerChanged',
     });
@@ -180,41 +200,78 @@ describe('what it requires -- the deployment gates stay', () => {
   });
 });
 
+describe('the row is loaded from the DATABASE by id -- nothing the caller holds is trusted (M1)', () => {
+  it('an unknown row id is refused as noBatch, with no key lookup', async () => {
+    configureManaged();
+    const { seen } = fakeOps();
+    h.dbRow = null;
+    expect(await settlementCredentialsFor(SHOP, 'no-such-row')).toEqual({ ok: false, reason: 'noBatch' });
+    expect(seen).toHaveLength(0);
+  });
+
+  it('a failing lookup is refused as lookupFailed -- never assumed', async () => {
+    configureManaged();
+    const { seen } = fakeOps();
+    h.dbRow = row();
+    h.lookupError = new Error('db down');
+    expect(await settlementCredentialsFor(SHOP, 'row-1')).toEqual({ ok: false, reason: 'lookupFailed' });
+    expect(seen).toHaveLength(0);
+  });
+
+  it('the allowlist is the DB row\'s batch ids: a caller cannot widen it by naming anything else', async () => {
+    configureManaged();
+    const { calls } = fakeOps();
+    // the "database" says the run owns msgbatch_1 only
+    h.dbRow = row({ batchIds: ['msgbatch_1'] });
+    const decision = await settlementCredentialsFor(SHOP, 'row-1');
+    if (!decision.ok) throw new Error('expected access');
+    await expect(decision.transport.cancel('msgbatch_2')).rejects.toBeInstanceOf(SettlementAccessError);
+    await decision.transport.cancel('msgbatch_1');
+    expect(calls).toEqual(['cancel:msgbatch_1']);
+  });
+
+  it('the shop is checked against the DB row, not against anything passed in', async () => {
+    configureManaged();
+    h.dbRow = row({ shop: 'victim.myshopify.com' });
+    expect(await settlementCredentialsFor(SHOP, 'row-1')).toEqual({ ok: false, reason: 'shopMismatch' });
+  });
+});
+
 describe('what it skips -- the per-shop gates', () => {
-  it('works with no consent, no budget and no settings at all (none of them is even an input)', () => {
+  it('works with no consent, no budget and no settings at all (none of them is even an input)', async () => {
     configureManaged();
     fakeOps();
     // the signature takes no consent, no budget, no pool: nothing to check
-    const decision = settlementCredentialsFor(SHOP, row());
+    const decision = await access(SHOP, row());
     expect(decision.ok).toBe(true);
   });
 
-  it('uses the key of the RECORDED role, not the default one', () => {
+  it('uses the key of the RECORDED role, not the default one', async () => {
     configureManaged();
     const { seen } = fakeOps();
-    expect(settlementCredentialsFor(SHOP, row({ provider: 'claude', role: 'default' })).ok).toBe(true);
-    expect(settlementCredentialsFor(SHOP, row({ provider: 'openai', role: 'failover' })).ok).toBe(true);
+    expect((await access(SHOP, row({ provider: 'claude', role: 'default' }))).ok).toBe(true);
+    expect((await access(SHOP, row({ provider: 'openai', role: 'failover' }))).ok).toBe(true);
     expect(seen).toEqual([
       { provider: 'claude', apiKey: 'sk-default-operator' },
       { provider: 'openai', apiKey: 'sk-failover-operator' },
     ]);
   });
 
-  it('a BYO row uses the merchant key of the recorded provider and does not need the kill switch', () => {
+  it('a BYO row uses the merchant key of the recorded provider and does not need the kill switch', async () => {
     // nothing managed configured at all
     const { seen } = fakeOps();
     const settings = { claudeApiKey: 'sk-merchant', openaiApiKey: 'sk-other' } as never;
-    const decision = settlementCredentialsFor(SHOP, row({ source: 'byo', provider: 'claude' }), settings);
+    const decision = await access(SHOP, row({ source: 'byo', provider: 'claude' }), settings);
     expect(decision.ok).toBe(true);
     expect(seen).toEqual([{ provider: 'claude', apiKey: 'sk-merchant' }]);
   });
 
-  it('a BYO row whose key is gone is refused as ai_key_missing', () => {
-    expect(settlementCredentialsFor(SHOP, row({ source: 'byo' }), {} as never)).toEqual({
+  it('a BYO row whose key is gone is refused as ai_key_missing', async () => {
+    expect(await access(SHOP, row({ source: 'byo' }), {} as never)).toEqual({
       ok: false,
       reason: 'ai_key_missing',
     });
-    expect(settlementCredentialsFor(SHOP, row({ source: 'byo' }), null)).toEqual({
+    expect(await access(SHOP, row({ source: 'byo' }), null)).toEqual({
       ok: false,
       reason: 'ai_key_missing',
     });
@@ -222,22 +279,22 @@ describe('what it skips -- the per-shop gates', () => {
 });
 
 describe('the transport reaches nothing else', () => {
-  function transportOf() {
+  async function transportOf() {
     configureManaged();
     const rig = fakeOps();
-    const decision = settlementCredentialsFor(SHOP, row());
+    const decision = await access(SHOP, row());
     if (!decision.ok) throw new Error('expected access');
     return { transport: decision.transport, ...rig, decision };
   }
 
-  it('is frozen and exposes exactly retrieve / results / cancel / deleteFile', () => {
-    const { transport } = transportOf();
+  it('is frozen and exposes exactly retrieve / results / cancel / deleteFile', async () => {
+    const { transport } = await transportOf();
     expect(Object.isFrozen(transport)).toBe(true);
     expect(Object.keys(transport).sort()).toEqual([...SETTLEMENT_TRANSPORT_METHODS].sort());
   });
 
-  it('carries no key anywhere in what a caller can see', () => {
-    const { decision } = transportOf();
+  it('carries no key anywhere in what a caller can see', async () => {
+    const { decision } = await transportOf();
     const dump = JSON.stringify(decision) + Object.getOwnPropertyNames(decision).join(',');
     expect(dump).not.toContain('sk-default-operator');
     // not even through a stringified method
@@ -248,7 +305,7 @@ describe('the transport reaches nothing else', () => {
   });
 
   it('only touches batches the row names', async () => {
-    const { transport, calls } = transportOf();
+    const { transport, calls } = await transportOf();
     await expect(transport.retrieve('msgbatch_FOREIGN')).rejects.toBeInstanceOf(SettlementAccessError);
     await expect(transport.cancel('msgbatch_FOREIGN')).rejects.toMatchObject({ reason: 'batchNotInManifest' });
     expect(() => transport.results('msgbatch_FOREIGN')).toThrow(SettlementAccessError);
@@ -260,7 +317,7 @@ describe('the transport reaches nothing else', () => {
   });
 
   it('deletes only files the row uploaded or the provider reported for its batches', async () => {
-    const { transport, calls } = transportOf();
+    const { transport, calls } = await transportOf();
     await expect(transport.deleteFile('file_someone_elses')).rejects.toMatchObject({ reason: 'fileNotOwned' });
     await transport.deleteFile('file_in'); // recorded at submit
     // an output file only becomes deletable after the transport saw it reported
@@ -272,7 +329,7 @@ describe('the transport reaches nothing else', () => {
   });
 
   it('hands results() the file ids the last retrieve reported', async () => {
-    const { transport, ops } = transportOf();
+    const { transport, ops } = await transportOf();
     await transport.retrieve('msgbatch_1');
     const it = transport.results('msgbatch_1');
     expect(ops.results).toHaveBeenCalledWith('msgbatch_1', { outputFileId: 'file_out', errorFileId: 'file_err' });
@@ -282,7 +339,7 @@ describe('the transport reaches nothing else', () => {
   });
 
   it('logs every use with shop, task and action -- never the key', async () => {
-    const { transport } = transportOf();
+    const { transport } = await transportOf();
     await transport.retrieve('msgbatch_1');
     await transport.cancel('msgbatch_1');
     const logged = info.mock.calls.map((c) => c[1]);
@@ -293,10 +350,10 @@ describe('the transport reaches nothing else', () => {
     expect(JSON.stringify(info.mock.calls)).not.toContain('sk-default-operator');
   });
 
-  it('every refusal is logged too (and names no key)', () => {
+  it('every refusal is logged too (and names no key)', async () => {
     configureManaged();
     process.env.MANAGED_AI_ENABLED = 'false';
-    settlementCredentialsFor(SHOP, row());
+    await access(SHOP, row());
     expect(warn).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(warn.mock.calls)).not.toContain('sk-default-operator');
   });
@@ -306,13 +363,13 @@ describe('before the provider calls exist', () => {
   it('the default operations answer SettlementNotImplementedError, not a silent success', async () => {
     configureManaged();
     __setSettlementOpsFactoryForTests(null);
-    const decision = settlementCredentialsFor(SHOP, row());
+    const decision = await access(SHOP, row());
     if (!decision.ok) throw new Error('expected access');
     await expect(decision.transport.cancel('msgbatch_1')).rejects.toBeInstanceOf(SettlementNotImplementedError);
     await expect(decision.transport.retrieve('msgbatch_1')).rejects.toBeInstanceOf(SettlementNotImplementedError);
   });
 
-  it('the test seam refuses to run outside tests', () => {
+  it('the test seam refuses to run outside tests', async () => {
     const prev = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
     try {

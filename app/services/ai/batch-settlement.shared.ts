@@ -36,6 +36,10 @@ export interface SettlementBatchRow {
 }
 
 export type SettlementRefusalReason =
+  /** The batch row does not exist (or was deleted). */
+  | "noBatch"
+  /** The batch row could not be read: nothing is assumed. */
+  | "lookupFailed"
   | "shopMismatch"
   | "unknownSource"
   | "unsupportedProvider"

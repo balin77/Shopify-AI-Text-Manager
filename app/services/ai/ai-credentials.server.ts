@@ -822,16 +822,38 @@ export function __setSettlementOpsFactoryForTests(factory: SettlementOpsFactory 
  * to touch a batch / file the row does not name. Each use is logged with shop,
  * task and action -- never the key.
  *
- * `settings` is the shop's AISettings, needed only for a BYO row (the merchant
- * key); the caller loads it.
+ * The caller names a batch ROW ID and nothing else: the row is loaded here and
+ * every field the decision rests on (shop, provider, source, role, the batch
+ * and file ids that form the allowlist) comes from that row, never from an
+ * object the caller built. `settings` is the shop's AISettings, needed only for
+ * a BYO row (the merchant key); when it is not passed it is read here.
  */
-export function settlementCredentialsFor(
+export async function settlementCredentialsFor(
   shop: string,
-  batch: SettlementBatchRow,
+  batchRowId: string,
   settings: AISettings | null = null,
-): SettlementDecision {
+): Promise<SettlementDecision> {
+  let batch: SettlementBatchRow | null = null;
+  try {
+    const { db } = await import("../../db.server");
+    batch = (await db.bulkTranslateBatch.findUnique({ where: { id: batchRowId } })) as SettlementBatchRow | null;
+    if (batch && batch.source === "byo" && !settings) {
+      settings = await db.aISettings.findUnique({ where: { shop } });
+    }
+  } catch (error) {
+    logger.warn(
+      `[ManagedAI] Settlement access refused for ${shop} (batch row ${batchRowId}): lookup failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return { ok: false, reason: "lookupFailed" };
+  }
+  if (!batch) {
+    logger.warn(`[ManagedAI] Settlement access refused for ${shop} (batch row ${batchRowId}): noBatch`);
+    return { ok: false, reason: "noBatch" };
+  }
   const refuse = (reason: SettlementRefusalReason): SettlementDecision => {
-    logger.warn(`[ManagedAI] Settlement access refused for ${shop} (task ${batch.taskId}): ${reason}`);
+    logger.warn(`[ManagedAI] Settlement access refused for ${shop} (task ${batch!.taskId}): ${reason}`);
     return { ok: false, reason };
   };
   if (batch.shop !== shop) return refuse("shopMismatch");
