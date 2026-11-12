@@ -155,7 +155,8 @@ describe("ShopOverviewTable", () => {
   it("shows the header area, a word with every status dot and approximate labels", () => {
     render(<Stub />);
     expect(screen.getByText(/Problem:/)).toBeTruthy();
-    expect(screen.getByText(/Managed AI im Monat \(ungefähr\)/)).toBeTruthy();
+    // the header figure includes the holds of waiting batch runs and says so
+    expect(screen.getByText(/Managed AI im Monat \(ungefähr, inkl\. noch reservierter Batch-Beträge\)/)).toBeTruthy();
     expect(screen.getByText("4,56 €")).toBeTruthy();
     expect(screen.getAllByText("Problem").length).toBeGreaterThan(0);
     expect(screen.getByText("KI im Monat (ungefähr)")).toBeTruthy();

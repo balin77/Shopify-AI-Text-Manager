@@ -77,6 +77,8 @@ const MAXIMAL: [string, unknown][] = [
     },
   ],
   ["bulkEditorTranslate", { saved: 1, failed: 1, skippedHandles: 1, skippedChanged: 1, skippedFilled: 1, skippedGone: 1, notProcessed: 1, cancelled: true, failures: [] }],
+  // The Batch-API mode adds what was never started and what the provider did.
+  ["bulkEditorTranslate", { saved: 1, notStarted: 1, batch: { requests: 2, undelivered: 1 }, failures: [] }],
   ["seoBulkFix", { succeeded: [], failed: [] }],
   ["blogArticleRedirects", { created: 1, failed: 1, skippedDrafts: 1, skippedOverCap: 1 }],
   ["altTextTemplateApply", { applied: 1, attempted: 1, errors: ["x (Position 1): boom"] }],

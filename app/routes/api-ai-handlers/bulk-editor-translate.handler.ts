@@ -869,6 +869,8 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
   const aiService = batch ? (null as unknown as AIService) : createAIService(settings, shop, taskId);
   /** The Task statuses this run owns: `running` live, `waiting_batch` / `cancel_requested` while collecting. */
   const ownStatuses = batch?.ownStatuses ?? ["running"];
+  /** The `where.status` of a conditional Task update: byte-for-byte `"running"` on the live run. */
+  const ownStatusWhere = batch ? { in: ownStatuses } : ("running" as const);
   const notStartedUnits = batch?.preAccounted.notStarted ?? 0;
 
   /** Translated, verified-so-far entries waiting for their write block. */
@@ -1083,7 +1085,7 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
   // in another container during a deploy overlap is never failed under its own feet.
   const beat = setInterval(() => {
     void db.task
-      .updateMany({ where: { id: taskId, status: { in: ownStatuses } }, data: { updatedAt: new Date() } })
+      .updateMany({ where: { id: taskId, status: ownStatusWhere }, data: { updatedAt: new Date() } })
       .catch(() => undefined);
   }, BULK_TRANSLATE_HEARTBEAT_MS);
   try {
@@ -1520,7 +1522,7 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     logger.error("[API-AI] Bulk-editor translate: run failed", { context: "AI", taskId, error: message });
     await db.task
       .updateMany({
-        where: { id: taskId, status: { in: ownStatuses } },
+        where: { id: taskId, status: ownStatusWhere },
         data: {
           status: "failed",
           progress: 100,
