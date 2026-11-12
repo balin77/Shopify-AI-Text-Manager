@@ -46,7 +46,7 @@ import {
   runBatchCollect,
   usageItemsFromResults,
 } from "~/services/bulk-editor/translate-batch-collect.server";
-import { itemSignature, sourceHash, retryBudgetFor, type BatchManifest } from "~/services/bulk-editor/translate-batch.shared";
+import { instructionGroupHash, itemGroupSignature, itemSignature, sourceHash, retryBudgetFor, type BatchManifest } from "~/services/bulk-editor/translate-batch.shared";
 import type { SettlementResultItem } from "~/services/ai/batch-settlement.shared";
 import { ManagedAiRefusedError } from "../../src/services/ai.service";
 
@@ -499,5 +499,71 @@ describe("static guards", () => {
     const src = readFileSync(join(__dirname, "..", "..", "app/routes/api-ai-handlers/bulk-editor-translate.handler.ts"), "utf8");
     expect(src).toMatch(/const aiService = batch \? \(null as unknown as AIService\) : createAIService/);
     expect(src).toMatch(/loopJobs = batch \? \[\] : phase\.remainingJobs;/);
+  });
+});
+
+describe("State M1: one text in two FIELDS (different instruction groups) never answers for the other", () => {
+  const TITLE_RULES = "Title: max 70 characters.";
+  const SEO_RULES = "SEO title: max 60 characters, keep the brand.";
+  const g = (instructions: string) => instructionGroupHash(instructions);
+  const gsig = (instructions: string, text: string) => itemGroupSignature({ kind: "short", source: text, group: g(instructions) });
+  // ONE text "Schal" asked twice: as a title (request 0) and as an SEO title (request 1)
+  const twoFields = (): BatchManifest =>
+    manifestOf(1, {
+      requests: [
+        { customId: "ttask_p0", kind: "short", items: [sig("Schal")], groupSigs: [gsig(TITLE_RULES, "Schal")], maxTokens: 500, inputEstimate: 100 },
+        { customId: "ttask_p1", kind: "short", items: [sig("Schal")], groupSigs: [gsig(SEO_RULES, "Schal")], maxTokens: 500, inputEstimate: 100 },
+      ],
+    });
+  const answer = (customId: string, text: string): SettlementResultItem => ({
+    customId, outcome: "succeeded", text: JSON.stringify({ k1: { fr: text, es: text } }), usage: { inputTokens: 10, outputTokens: 10 },
+  });
+  const req = (instructions: string) => ({
+    kind: "short" as const, fromLang: "de", locales: LOCALES, items: [{ id: "k1", text: "Schal" }],
+    contentType: "product", instructions, plannedOutputTokens: 100, timeoutMs: 120_000,
+  });
+  const live = (impl: (r: any) => unknown) => ({ translatePackage: vi.fn(async (r: any) => impl(r)), translateShortFieldsBatch: vi.fn() }) as never;
+
+  it("each field gets ITS OWN answer, not the first one that carried the text", async () => {
+    const data = buildBatchAnswers(twoFields(), new Map([["ttask_p0", answer("ttask_p0", "Echarpe (titre)")], ["ttask_p1", answer("ttask_p1", "Echarpe (seo)")]]));
+    const ai = new BatchAnswerAI(data, null, 0, { maxOutputTokens: 32_000 });
+    expect((await ai.translatePackage(req(TITLE_RULES))).parsed).toEqual({ k1: { fr: "Echarpe (titre)", es: "Echarpe (titre)" } });
+    expect((await ai.translatePackage(req(SEO_RULES))).parsed).toEqual({ k1: { fr: "Echarpe (seo)", es: "Echarpe (seo)" } });
+  });
+
+  it("an item of a known group that was NOT delivered is re-asked live -- it does not borrow the other field's answer", async () => {
+    const data = buildBatchAnswers(twoFields(), new Map([["ttask_p0", answer("ttask_p0", "Echarpe (titre)")], ["ttask_p1", { customId: "ttask_p1", outcome: "errored" as const }]]));
+    const liveAi = live(() => ({ parsed: { k1: { fr: "Echarpe live", es: "Echarpe live" } } }));
+    const ai = new BatchAnswerAI(data, liveAi, 3, { maxOutputTokens: 32_000 });
+    expect((await ai.translatePackage(req(SEO_RULES))).parsed).toEqual({ k1: { fr: "Echarpe live", es: "Echarpe live" } });
+    expect((liveAi as any).translatePackage).toHaveBeenCalledTimes(1);
+  });
+
+  it("instructions the merchant edited while the batch waited (a group the manifest does not know): the text-only answer is the fallback", async () => {
+    const data = buildBatchAnswers(twoFields(), new Map([["ttask_p0", answer("ttask_p0", "Echarpe (titre)")]]));
+    const ai = new BatchAnswerAI(data, null, 0, { maxOutputTokens: 32_000 });
+    expect((await ai.translatePackage(req("Title: max 80 characters (edited)"))).parsed).toEqual({ k1: { fr: "Echarpe (titre)", es: "Echarpe (titre)" } });
+  });
+
+  it("answers for the same text asked for DIFFERENT locales in two requests are UNIONED, not first-request-wins", () => {
+    const m = manifestOf(1, {
+      requests: [
+        { customId: "ttask_p0", kind: "short", items: [sig("Schal")], groupSigs: [gsig(TITLE_RULES, "Schal")], maxTokens: 500, inputEstimate: 100 },
+        { customId: "ttask_p1", kind: "short", items: [sig("Schal")], groupSigs: [gsig(TITLE_RULES, "Schal")], maxTokens: 500, inputEstimate: 100 },
+      ],
+    });
+    const a = buildBatchAnswers(m, new Map([
+      ["ttask_p0", { customId: "ttask_p0", outcome: "succeeded" as const, text: JSON.stringify({ k1: { fr: "fr-A" } }), usage: { inputTokens: 1, outputTokens: 1 } }],
+      ["ttask_p1", { customId: "ttask_p1", outcome: "succeeded" as const, text: JSON.stringify({ k1: { fr: "fr-B", es: "es-B" } }), usage: { inputTokens: 1, outputTokens: 1 } }],
+    ]));
+    expect(a.answers.get(sig("Schal"))).toEqual({ fr: "fr-A", es: "es-B" });
+    expect(a.groupAnswers!.get(gsig(TITLE_RULES, "Schal"))).toEqual({ fr: "fr-A", es: "es-B" });
+  });
+
+  it("an older manifest without group signatures still resolves by text (nothing breaks for a batch submitted before this)", async () => {
+    const old = manifestOf(1, { requests: [{ customId: "ttask_p0", kind: "short", items: [sig("Schal")], maxTokens: 500, inputEstimate: 100 }] });
+    const data = buildBatchAnswers(old, new Map([["ttask_p0", answer("ttask_p0", "Echarpe")]]));
+    const ai = new BatchAnswerAI(data, null, 0, { maxOutputTokens: 32_000 });
+    expect((await ai.translatePackage(req(TITLE_RULES))).parsed).toEqual({ k1: { fr: "Echarpe", es: "Echarpe" } });
   });
 });

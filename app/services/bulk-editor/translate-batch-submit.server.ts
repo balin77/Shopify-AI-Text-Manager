@@ -78,6 +78,8 @@ import {
   BATCH_MAX_REQUESTS,
   batchCustomId,
   batchIdPrefix,
+  instructionGroupHash,
+  itemGroupSignature,
   itemSignature,
   serializeManifest,
   sourceHash,
@@ -228,6 +230,9 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
         customId: built.customId,
         kind: pkg.kind,
         items: pkg.items.map((item) => itemSignature({ kind: item.kind, source: item.source })),
+        groupSigs: pkg.items.map((item) =>
+          itemGroupSignature({ kind: item.kind, source: item.source, group: instructionGroupHash(pkg.instructions) }),
+        ),
         maxTokens: built.maxTokens,
         inputEstimate: built.inputEstimateTokens,
       });

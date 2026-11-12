@@ -238,6 +238,9 @@ describe("the happy path (managed)", () => {
     expect(manifest.cells[0].h).toMatch(/^[0-9a-f]{16}$/);
     expect(manifest.requests).toHaveLength(1);
     expect(manifest.requests[0].items).toHaveLength(3);
+    // each item also carries its signature WITHIN the instruction group it was asked under (State M1)
+    expect(manifest.requests[0].groupSigs).toHaveLength(3);
+    expect(new Set(manifest.requests[0].groupSigs).size).toBe(3);
     expect(manifest.requests[0].customId).toMatch(BATCH_CUSTOM_ID_PATTERN);
     // 3 products x 1 cell not carried (productType) x 2 locales
     expect(manifest.plan.notStarted).toBe(6);

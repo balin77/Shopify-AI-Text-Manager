@@ -78,6 +78,27 @@ export function itemSignature(item: { kind: string; source: string }): string {
   return hash64(`${item.kind}\u0000${item.source}`);
 }
 
+/**
+ * The hash of the instruction group a package was asked under. Two fields with
+ * the same text (a title and an SEO title, a handle and a title) are asked under
+ * DIFFERENT instructions (length limits, URL rules), so the text alone must not
+ * let one field's answer stand in for the other's.
+ */
+export function instructionGroupHash(instructions: string | undefined | null): string {
+  return hash64(`group\u0000${instructions ?? ""}`);
+}
+
+/**
+ * The signature of an item WITHIN its instruction group: (kind, group, text).
+ * The collect step prefers this one; `itemSignature` (text only) is the fallback
+ * for a group the manifest does not know (the merchant edited the instructions
+ * while the batch waited -- an answer to the same text under older wording is
+ * still a valid translation, and verification still checks it).
+ */
+export function itemGroupSignature(item: { kind: string; source: string; group: string }): string {
+  return hash64(`${item.kind}\u0000${item.group}\u0000${item.source}`);
+}
+
 /** Hash of a cell's source text, to notice that the text moved between submit and collect. */
 export function sourceHash(source: string): string {
   return hash64(source.replace(/\r\n/g, "\n").trim());
@@ -101,8 +122,10 @@ export interface BatchManifestCell {
 export interface BatchManifestRequest {
   customId: string;
   kind: string;
-  /** Item signatures in the order of the package-local ids k1..kN. */
+  /** Item signatures (kind + text) in the order of the package-local ids k1..kN. */
   items: string[];
+  /** The same items' signatures WITHIN the request's instruction group (kind + group + text); absent in older manifests. */
+  groupSigs?: string[];
   /** `max_tokens` the request was sent with. */
   maxTokens: number;
   /** Estimated input tokens (pessimistic). */

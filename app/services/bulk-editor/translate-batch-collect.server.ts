@@ -40,6 +40,8 @@ import { scanMissingTranslations, translateCandidateColumns } from "./missing-tr
 import type { PackagePhaseAI } from "./translate-package-phase.server";
 import { planCellKey } from "./translate-plan-read.server";
 import {
+  instructionGroupHash,
+  itemGroupSignature,
   itemSignature,
   retryBudgetFor,
   sourceHash,
@@ -58,7 +60,18 @@ export interface BatchAnswers {
   answers: Map<string, Record<string, unknown>>;
   /** Signatures the batch was asked about but did not deliver (errored / expired / canceled / cut off / garbled / absent). */
   undelivered: Set<string>;
+  /** The same, keyed WITHIN the instruction group the item was asked under (kind + group + text). Absent in older manifests. */
+  groupAnswers?: Map<string, Record<string, unknown>>;
+  groupUndelivered?: Set<string>;
+  /** Every group signature the manifest names: a group NOT in here is one the merchant changed meanwhile. */
+  knownGroupSigs?: Set<string>;
   counts: BatchOutcomeCounts;
+}
+
+/** One text can ride in several requests, each asked for its own locales: the answers are UNIONED per locale (the first answer for a locale wins), never first-request-wins as a whole. */
+function mergeAnswer(map: Map<string, Record<string, unknown>>, sig: string, entry: Record<string, unknown>): void {
+  const existing = map.get(sig);
+  map.set(sig, existing ? { ...entry, ...existing } : entry);
 }
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
@@ -70,6 +83,9 @@ export function buildBatchAnswers(
 ): BatchAnswers {
   const answers = new Map<string, Record<string, unknown>>();
   const undelivered = new Set<string>();
+  const groupAnswers = new Map<string, Record<string, unknown>>();
+  const groupUndelivered = new Set<string>();
+  const knownGroupSigs = new Set<string>();
   const counts: BatchOutcomeCounts = {
     requests: manifest.requests.length,
     succeeded: 0,
@@ -80,8 +96,12 @@ export function buildBatchAnswers(
     invalid: 0,
   };
   for (const request of manifest.requests) {
+    request.groupSigs?.forEach((g) => knownGroupSigs.add(g));
     const result = results.get(request.customId);
-    const failAll = () => request.items.forEach((sig) => undelivered.add(sig));
+    const failAll = () => {
+      request.items.forEach((sig) => undelivered.add(sig));
+      request.groupSigs?.forEach((g) => groupUndelivered.add(g));
+    };
     if (!result) {
       counts.missing += 1;
       failAll();
@@ -107,16 +127,20 @@ export function buildBatchAnswers(
     }
     request.items.forEach((sig, index) => {
       const entry = (parsed.parsed as Record<string, unknown>)[`k${index + 1}`];
+      const groupSig = request.groupSigs?.[index];
       if (isPlainObject(entry)) {
-        if (!answers.has(sig)) answers.set(sig, entry);
+        mergeAnswer(answers, sig, entry);
+        if (groupSig) mergeAnswer(groupAnswers, groupSig, entry);
       } else {
         undelivered.add(sig);
+        if (groupSig) groupUndelivered.add(groupSig);
       }
     });
   }
   // One text can ride in several requests: delivered once is delivered.
   for (const sig of answers.keys()) undelivered.delete(sig);
-  return { answers, undelivered, counts };
+  for (const sig of groupAnswers.keys()) groupUndelivered.delete(sig);
+  return { answers, undelivered, groupAnswers, groupUndelivered, knownGroupSigs, counts };
 }
 
 /** What the collected requests consumed, for the booking. Measured where the provider reported it, an estimate where not. Failed requests cost nothing. */
@@ -205,17 +229,35 @@ export class BatchAnswerAI implements PackagePhaseAI {
     }
   }
 
+  /**
+   * The signatures an item is looked up by. Within its instruction group first: a title and an SEO title
+   * with the same text were asked under different rules and must not answer for each other. The
+   * text-only signature is the fallback only for a group the manifest does not know (the merchant edited
+   * the instructions while the batch waited), never for an item whose own group was asked and failed.
+   */
+  private lookup(req: AiPackageRequest, text: string) {
+    const textSig = itemSignature({ kind: req.kind, source: text });
+    const groupSig = itemGroupSignature({ kind: req.kind, source: text, group: instructionGroupHash(req.instructions) });
+    const { groupAnswers, groupUndelivered, knownGroupSigs } = this.data;
+    if (!groupAnswers || !knownGroupSigs) {
+      // An older manifest without group signatures: the text signature is all there is.
+      return { key: textSig, answer: this.data.answers.get(textSig), undelivered: this.data.undelivered.has(textSig) };
+    }
+    if (groupAnswers.has(groupSig)) return { key: groupSig, answer: groupAnswers.get(groupSig), undelivered: false };
+    if (knownGroupSigs.has(groupSig)) return { key: groupSig, answer: undefined, undelivered: !!groupUndelivered?.has(groupSig) };
+    return { key: groupSig, answer: this.data.answers.get(textSig), undelivered: this.data.undelivered.has(textSig) };
+  }
+
   async translatePackage(req: AiPackageRequest): ReturnType<PackagePhaseAI["translatePackage"]> {
     const parsed: Record<string, unknown> = {};
     const reask: AiPackageRequest["items"] = [];
     for (const item of req.items) {
-      const sig = itemSignature({ kind: req.kind, source: item.text });
-      const answer = this.data.answers.get(sig);
-      if (answer) parsed[item.id] = answer;
-      else if (this.data.undelivered.has(sig) && !this.liveTried.has(sig)) reask.push(item);
+      const found = this.lookup(req, item.text);
+      if (found.answer) parsed[item.id] = found.answer;
+      else if (found.undelivered && !this.liveTried.has(found.key)) reask.push(item);
     }
     if (reask.length > 0) {
-      for (const item of reask) this.liveTried.add(itemSignature({ kind: req.kind, source: item.text }));
+      for (const item of reask) this.liveTried.add(this.lookup(req, item.text).key);
       const result = await this.spend((live) => live.translatePackage({ ...req, items: reask }));
       if (result && !result.invalid && isPlainObject(result.parsed)) Object.assign(parsed, result.parsed);
     }
