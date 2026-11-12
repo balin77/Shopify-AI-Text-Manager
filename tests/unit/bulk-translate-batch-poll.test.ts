@@ -179,7 +179,9 @@ const deps = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+const DEFAULT_SETTINGS = h.settings;
 beforeEach(() => {
+  h.settings = DEFAULT_SETTINGS;
   h.rows.clear();
   h.tasks.clear();
   h.order.length = 0;
@@ -728,6 +730,43 @@ describe("State M2: an exception in the write step is a failed tick (with back-o
   });
 });
 
+describe("a collect that stays open is counted and given up on (batch_collect_failed)", () => {
+  const staysOpen = () => deps({ runCollect: vi.fn(async () => ({ retries: 0 })) }); // leaves the Task open
+
+  it("counts a failed tick below the limit and sends the row back to waiting", async () => {
+    expect(await processBatchRow("row-1", staysOpen())).toBe("failedTick");
+    expect(h.rows.get("row-1")).toMatchObject({ failedTicks: 1, state: "waiting" });
+    expect(h.tasks.get("task-1").status).toBe("waiting_batch");
+  });
+
+  it(`after ${MAX_FAILED_TICKS} in a row: the hold is settled FIRST (pro rata, never released), then the Task fails with batch_collect_failed`, async () => {
+    h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
+    let stateAtConvert = "";
+    h.convert.mockImplementation(async () => { stateAtConvert = h.rows.get("row-1").state; return { applied: true, micros: 9 }; });
+    expect(await processBatchRow("row-1", staysOpen())).toBe("unreachable");
+    expect(stateAtConvert).not.toBe("done");
+    expect(h.convert).toHaveBeenCalledWith("row-1", { bookMicros: expect.any(Number) });
+    expect(h.release).not.toHaveBeenCalled();
+    expect(h.tasks.get("task-1")).toMatchObject({ status: "failed", error: "batch_collect_failed" });
+    expect(h.rows.get("row-1").state).toBe("done");
+  });
+});
+
+describe("an orphan row with no batch id and no standing consent never searches (the search reads result content)", () => {
+  for (const [name, settings] of [["withdrawn", WITHDRAWN], ["notice outdated", OUTDATED]] as const) {
+    it(`${name}: findIntentBatch is not called, nothing is settled, the row is left to the absolute end`, async () => {
+      putRow({ state: "create_unknown", batchIds: [], idPrefix: "ttask-1_p", intentAt: new Date("2026-11-12T09:59:00Z") });
+      putTask("failed");
+      h.settings = settings;
+      expect(await processBatchRow("row-1", deps())).toBe("orphan");
+      expect(h.find).not.toHaveBeenCalled();
+      expect(h.release).not.toHaveBeenCalled();
+      expect(h.convert).not.toHaveBeenCalled();
+      expect(h.rows.get("row-1").state).toBe("create_unknown");
+    });
+  }
+});
+
 describe("State M4: the collect keeps asking whether this tick still holds the lease", () => {
   it("is handed to the write; it answers true while the token is ours and false once another holder has taken the row", async () => {
     let askLease!: () => Promise<boolean>;
@@ -751,6 +790,25 @@ describe("State M4: the collect keeps asking whether this tick still holds the l
     });
     await processBatchRow("row-1", d);
     expect(askLease).toBeTypeOf("function");
+  });
+});
+
+describe("a lease check that THROWS is not 'held'", () => {
+  it("answers false (the write stops cleanly) instead of rejecting", async () => {
+    let answer: boolean | undefined;
+    const d = deps({
+      runCollect: vi.fn(async (input: any) => {
+        const spy = vi.spyOn((db as any).bulkTranslateBatch, "findUnique").mockRejectedValueOnce(new Error("db down"));
+        try {
+          answer = await input.leaseHeld();
+        } finally {
+          spy.mockRestore();
+        }
+        return { retries: 0 };
+      }),
+    });
+    await processBatchRow("row-1", d);
+    expect(answer).toBe(false);
   });
 });
 

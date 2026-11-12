@@ -2474,6 +2474,8 @@ export const de = {
         "Der KI-Anbieter hat den Auftrag nicht innerhalb seiner Frist fertiggestellt, deshalb wurde nichts geschrieben. Für nicht erledigte Arbeit wurde nichts berechnet. Bitte starten Sie den Lauf erneut.",
       batchFailed:
         "Der KI-Anbieter konnte diesen Auftrag nicht verarbeiten, deshalb wurde nichts geschrieben. Bitte starten Sie den Lauf erneut oder führen Sie ihn sofort aus.",
+      batchCollectFailed:
+        "Das Ergebnis des KI-Anbieters konnte nicht vollständig übernommen werden. Die Kosten wurden verbucht und ein Teil der Übersetzungen kann bereits geschrieben sein. Starten Sie den Lauf erneut: Er ergänzt nur, was noch fehlt.",
       batchNotAvailable:
         "Der günstigere Modus ist für diesen Shop nicht verfügbar, deshalb wurde nichts gestartet. Bitte führen Sie den Lauf sofort aus.",
       batchNothingToSubmit:
@@ -4785,11 +4787,11 @@ export const de = {
       cancelled: "Der Lauf wurde abgebrochen. {saved} Übersetzung(en) wurden bis dahin gespeichert.",
       cancelledNotProcessed: "{count} Übersetzung(en) wurden nicht mehr bearbeitet (kein Fehler).",
       runTruncated:
-        "Es wurden maximal {max} Übersetzungen ausgeführt — {rest} weitere sind offen. Starte den Lauf erneut für den Rest.",
+        "Es wurden maximal {max} Übersetzungen ausgeführt — {rest} weitere sind offen. Starten Sie den Lauf erneut für den Rest.",
       noneMissing: "In der aktuellen Auswahl fehlt keine Übersetzung.",
       empty: "Im aktuellen Filter fehlen keine Übersetzungen.",
       failed: "KI-Übersetzung fehlgeschlagen.",
-      batchNotAvailable: "Der günstigere Modus ist für diesen Shop nicht verfügbar. Bitte starte den Lauf sofort.",
+      batchNotAvailable: "Der günstigere Modus ist für diesen Shop nicht verfügbar. Bitte starten Sie den Lauf sofort.",
       batchNotStarted:
         "{count} Übersetzung(en) wurden im günstigeren Modus nicht gestartet (z. B. Produktart oder sehr lange Texte) und bleiben für einen Lauf im Modus \"Sofort\" übrig.",
       submittingBatch: "Wird beim KI-Anbieter eingereicht …",

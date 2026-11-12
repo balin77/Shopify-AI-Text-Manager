@@ -2453,6 +2453,8 @@ export const es: Translation = {
         "El proveedor de IA no terminó el trabajo dentro de su plazo, por lo que no se escribió nada. No se cobró el trabajo no realizado. Vuelve a iniciar la ejecución.",
       batchFailed:
         "El proveedor de IA no pudo procesar este trabajo, por lo que no se escribió nada. Vuelve a iniciar la ejecución o ejecútala de inmediato.",
+      batchCollectFailed:
+        "El resultado del proveedor de IA no se pudo aplicar por completo. El coste ya se ha contabilizado y es posible que parte de las traducciones ya esté escrita. Vuelve a ejecutarlo: solo completa lo que aún falta.",
       batchNotAvailable:
         "El modo más económico no está disponible para esta tienda, por lo que no se inició nada. Ejecútalo de inmediato.",
       batchNothingToSubmit:

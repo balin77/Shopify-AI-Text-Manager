@@ -956,12 +956,21 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
   let stoppedBy = null as string | null;
   const shouldStop = async (): Promise<boolean> => {
     if (stoppedBy) return true;
-    try {
-      if (batch?.leaseHeld && !(await batch.leaseHeld())) {
+    if (batch?.leaseHeld) {
+      // A lease check that THROWS is not "held": stop cleanly (booking is idempotent, the next tick re-collects).
+      let held = false;
+      try {
+        held = await batch.leaseHeld();
+      } catch {
+        held = false;
+      }
+      if (!held) {
         // Not a Task status: the final update matches nothing, so a lost lease never settles the Task.
         stoppedBy = "lease_lost";
         return true;
       }
+    }
+    try {
       const row = await db.task.findUnique({ where: { id: taskId }, select: { status: true } });
       if (!row) stoppedBy = "deleted";
       else if (!ownStatuses.includes(row.status)) stoppedBy = row.status;

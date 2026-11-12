@@ -69,6 +69,9 @@ import { buildBatchAnswers, runBatchCollect, usageItemsFromResults } from "./tra
 import { expireStaleBatches, BATCH_UNREACHABLE_ERROR, BATCH_SUBMIT_UNCONFIRMED_ERROR } from "./translate-batch-expiry.server";
 import { settleHold } from "./translate-batch-hold.server";
 
+/** Terminal code of a collect that stayed open for MAX_FAILED_TICKS ticks (results booked, some may be written). */
+export const BATCH_COLLECT_FAILED_ERROR = "batch_collect_failed";
+
 /** A lease holds for this long; the holder renews it while it works. */
 export const LEASE_MS = 2 * 60 * 1000;
 const LEASE_RENEW_MS = 30 * 1000;
@@ -99,9 +102,6 @@ export type RowOutcome =
   | "waiting" // provider still working
   | "collected"
   | "consentWithdrawn"
-  | "consentOutdated" // a new notice version is unanswered: held, nothing cancelled, fetched or written
-  | "configBlocked" // our own configuration refuses settlement access: waits for the absolute end
-  | "adopted" // a create of unknown outcome was found at the provider
   | "consentOutdated" // a new notice version is unanswered: held, nothing cancelled, fetched or written
   | "configBlocked" // our own configuration refuses settlement access: waits for the absolute end
   | "adopted" // a create of unknown outcome was found at the provider
@@ -206,7 +206,8 @@ async function closeRun(
 }
 
 /** What the Task and the code say when a run is given up on after MAX_FAILED_TICKS. */
-function giveUpOutcome(row: Pick<BulkTranslateBatch, "batchIds">) {
+function giveUpOutcome(row: Pick<BulkTranslateBatch, "batchIds">, errorCode?: string) {
+  if (errorCode) return { status: "failed", error: errorCode };
   return stringList(row.batchIds).length === 0
     ? { status: "failed", error: BATCH_SUBMIT_UNCONFIRMED_ERROR }
     : { status: TASK_STATUS_BATCH_UNREACHABLE, error: BATCH_UNREACHABLE_ERROR };
@@ -222,6 +223,7 @@ async function noteFailedTick(
   token: string,
   error: unknown,
   transport: SettlementTransport | null = null,
+  giveUpCode?: string,
 ): Promise<RowOutcome> {
   const { db } = deps;
   const failedTicks = row.failedTicks + 1;
@@ -229,7 +231,7 @@ async function noteFailedTick(
   if (failedTicks >= MAX_FAILED_TICKS) {
     const outcome = await settleHold(row, transport, { final: true });
     if (outcome.kind !== "pending") {
-      await closeRun(db, row, token, giveUpOutcome(row));
+      await closeRun(db, row, token, giveUpOutcome(row, giveUpCode));
       return "unreachable";
     }
   }
@@ -379,7 +381,15 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
   // whose connection is blocked can still have its orphans cancelled and a withdrawal honoured.
   if (orphan) {
     // No batch id: a create of unknown outcome may still have made one -- look for it, so the next tick can cancel it.
-    if (batchIds.length === 0) return await reconcileUnknownCreate(deps, row, token, decision, true);
+    if (batchIds.length === 0) {
+      // The search READS result content of candidate batches: without a standing consent it does not happen
+      // (withdrawn or an unanswered new notice). The row is left to the absolute end, which converts the hold.
+      if (row.source === "managed") {
+        const orphanSettings = await db.aISettings.findUnique({ where: { shop } });
+        if (row.consentWithdrawnAt || aiProcessingConsentState(orphanSettings) !== "current") return "orphan";
+      }
+      return await reconcileUnknownCreate(deps, row, token, decision, true);
+    }
     return await handleOrphan(deps, row, token, task, decision.ok ? decision.transport : null);
   }
 
@@ -562,8 +572,13 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
       if (!leaseOk) return false;
       if (Date.now() - lastLeaseCheck < LEASE_CHECK_MS) return true;
       lastLeaseCheck = Date.now();
-      const current = await db.bulkTranslateBatch.findUnique({ where: { id: row.id }, select: { leaseToken: true } });
-      leaseOk = !!current && current.leaseToken === token;
+      // A throwing read is NOT "held": stop cleanly (booking is idempotent, the next tick re-collects).
+      try {
+        const current = await db.bulkTranslateBatch.findUnique({ where: { id: row.id }, select: { leaseToken: true } });
+        leaseOk = !!current && current.leaseToken === token;
+      } catch {
+        leaseOk = false;
+      }
       return leaseOk;
     };
     await (deps.runCollect ?? runBatchCollect)({
@@ -589,8 +604,16 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
   // 12. The run settles the Task itself. A task still open afterwards means it stopped early: look again next tick.
   const after = await db.task.findUnique({ where: { id: row.taskId }, select: { status: true } });
   if (after && (OPEN_BATCH_TASK_STATUSES as string[]).includes(after.status)) {
-    await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { state: "waiting", failedTicks: row.failedTicks + 1 } });
-    return "failedTick";
+    // Counted like every failed tick, and given up on after MAX_FAILED_TICKS (hold settled first): a collect that
+    // never finishes must not loop for ever.
+    return await noteFailedTick(
+      deps,
+      { ...row, state: "collecting" },
+      token,
+      new Error("batch_collect_failed"),
+      transport,
+      BATCH_COLLECT_FAILED_ERROR,
+    );
   }
   await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { state: "done", lastError: null } });
   // Anthropic leaves no files; an OpenAI input / output / error file would be deleted here.
