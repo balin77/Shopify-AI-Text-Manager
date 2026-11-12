@@ -39,10 +39,15 @@ describe('priceCall with all factors 1.0', () => {
         for (const i of sizes) for (const o of sizes) {
           expect(priceCall(provider, model, i, o).costMicros).toBe(legacy(provider, model, i, o));
           expect(priceCall(provider, model, i, o, {}).costMicros).toBe(legacy(provider, model, i, o));
-          // Cache tokens with unknown (1.0) factors cost the same as plain input.
+          // Cache READS cost the same as plain input (factor 1.0 everywhere).
+          expect(
+            priceCall(provider, model, i, o, { cacheReadTokens: Math.floor(i / 2) }).costMicros,
+          ).toBe(legacy(provider, model, i, o));
+          // Cache WRITES never cost less than plain input (Claude carries its
+          // published 1.25x surcharge, every other provider 1.0).
           expect(
             priceCall(provider, model, i, o, { cacheReadTokens: Math.floor(i / 2), cacheWriteTokens: Math.floor(i / 4) }).costMicros,
-          ).toBe(legacy(provider, model, i, o));
+          ).toBeGreaterThanOrEqual(legacy(provider, model, i, o));
           expect(priceCall(provider, model, i, o, { tier: 'batch' }).costMicros).toBe(legacy(provider, model, i, o));
         }
       }
@@ -133,9 +138,9 @@ describe('priceCall: cache split never costs less than the historic formula at f
           [123_457, 9_876, 54_321, 1_234],
           [5, 0, 0, 5],
         ]) {
-          expect(priceCall(provider, model, i, o, { cacheReadTokens: r, cacheWriteTokens: w }).costMicros).toBe(
-            legacy(provider, model, i, o),
-          );
+          const c = priceCall(provider, model, i, o, { cacheReadTokens: r, cacheWriteTokens: w }).costMicros;
+          if (provider === 'claude' && w > 0) expect(c).toBeGreaterThanOrEqual(legacy(provider, model, i, o));
+          else expect(c).toBe(legacy(provider, model, i, o));
         }
       }
     }
@@ -149,5 +154,16 @@ describe('priceCall: cache split never costs less than the historic formula at f
     expect(priceCall(provider, model, 10_000, 500, { cacheReadTokens: Number.NaN }).costMicros).toBe(base);
     expect(priceCall(provider, model, 10_000, 500, { cacheWriteTokens: -5 }).costMicros).toBe(base);
     expect(priceCall(provider, model, Number.NaN, 500).costMicros).toBe(legacy(provider, model, 0, 500));
+  });
+});
+
+describe('Claude cache write surcharge', () => {
+  it('charges a cache write at 1.25x and a read at full price', () => {
+    const { price: p } = priceForModel('claude', 'claude-sonnet-5');
+    const c = priceCall('claude', 'claude-sonnet-5', 1_000_000, 0, { cacheWriteTokens: 1_000_000 }).costMicros;
+    expect(c).toBe(Math.ceil((1_000_000 * p!.inMicrosPerMToken * 1.25) / 1_000_000));
+    expect(priceCall('claude', 'claude-sonnet-5', 1_000_000, 0, { cacheReadTokens: 1_000_000 }).costMicros).toBe(
+      legacy('claude', 'claude-sonnet-5', 1_000_000, 0),
+    );
   });
 });

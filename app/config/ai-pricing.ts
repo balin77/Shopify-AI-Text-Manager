@@ -73,6 +73,16 @@ function price(usdIn: number, usdOut: number): ModelPrice {
 }
 
 /**
+ * Anthropic charges a cache WRITE at 1.25x the input price (5-minute
+ * ephemeral cache, Anthropic's published pricing). Only the surcharge is set:
+ * a cache READ stays at 1.0 (really ~0.1x), so a group that writes and reads
+ * is over-counted, and one that only writes is not under-counted.
+ */
+function claudePrice(usdIn: number, usdOut: number): ModelPrice {
+  return { ...price(usdIn, usdOut), cacheWriteMult: 1.25 };
+}
+
+/**
  * Known list prices (USD per 1M tokens, in the comments).
  *
  * Deliberately NOT exhaustive: a merchant on their own key may pick any model
@@ -90,14 +100,14 @@ export const MODEL_PRICING: Record<AIProvider, Record<string, ModelPrice>> = {
     "o3-mini": price(1.1, 4.4),
   },
   claude: {
-    "claude-haiku-4-5": price(1.0, 5.0),
-    "claude-3-5-haiku-20241022": price(0.8, 4.0),
-    "claude-sonnet-4-5-20250929": price(3.0, 15.0),
-    "claude-sonnet-5": price(2.0, 10.0),
-    "claude-opus-5": price(5.0, 25.0),
+    "claude-haiku-4-5": claudePrice(1.0, 5.0),
+    "claude-3-5-haiku-20241022": claudePrice(0.8, 4.0),
+    "claude-sonnet-4-5-20250929": claudePrice(3.0, 15.0),
+    "claude-sonnet-5": claudePrice(2.0, 10.0),
+    "claude-opus-5": claudePrice(5.0, 25.0),
     // Offered by the app's own picker (app/config/ai-models.config.ts), which
     // is why its absence was not academic.
-    "claude-opus-4-0-20250514": price(15.0, 75.0),
+    "claude-opus-4-0-20250514": claudePrice(15.0, 75.0),
   },
   gemini: {
     "gemini-2.0-flash-lite": price(0.075, 0.3),
@@ -158,7 +168,7 @@ export interface PricedUsage {
  */
 export const UNKNOWN_MODEL_PRICE: Record<AIProvider, ModelPrice | null> = {
   openai: price(15.0, 60.0), // gpt-4.5-class list price
-  claude: price(15.0, 75.0), // Opus tier
+  claude: claudePrice(15.0, 75.0), // Opus tier
   gemini: price(2.5, 15.0), // 2.5 Pro, long-context tier
   grok: price(5.0, 25.0), // grok-4 reasoning tier
   deepseek: price(1.0, 4.0), // reasoner tier, with headroom
@@ -236,7 +246,7 @@ export function priceCall(
   // whatever the cache split: splitting the input into three divided terms
   // could round a hair BELOW it, which is the forbidden direction.
   const micros =
-    readMult === 1 && writeMult === 1 && batchMult === 1
+    (cacheRead === 0 || readMult === 1) && (cacheWrite === 0 || writeMult === 1) && batchMult === 1
       ? (input * p.inMicrosPerMToken) / 1_000_000 + (output * p.outMicrosPerMToken) / 1_000_000
       : // Products first, divide once: fewer rounding steps.
         (uncached * p.inMicrosPerMToken * batchMult +
