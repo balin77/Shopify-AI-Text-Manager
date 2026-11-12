@@ -2418,7 +2418,7 @@ export const de = {
     seoBulkFixCompleted: "SEO-Korrektur abgeschlossen",
     taskTimedOut: "Zeitüberschreitung — die Aufgabe hat zu lange keinen Fortschritt gemeldet und wurde abgebrochen. Bitte erneut starten.",
     taskInterrupted: "Unterbrochen — der Server wurde neu gestartet (z. B. durch ein Deploy), während die Aufgabe lief. Bitte erneut starten.",
-    batchUnreachable: "Der KI-Anbieter antwortet für diesen Auftrag nicht mehr. Es wurde nichts geschrieben. Bitte starte den Lauf erneut.",
+    batchUnreachable: "Der KI-Anbieter antwortet für diesen Auftrag nicht mehr. Es wurde nichts geschrieben. Bitte starten Sie den Lauf erneut.",
     // Zugänglicher Name der Benachrichtigungsbox in der Navigation — wird
     // vorgelesen statt der farbigen Umrandung, die allen anderen dasselbe sagt.
     notificationSuccess: "Erfolgsmeldung",
@@ -2465,21 +2465,21 @@ export const de = {
       autoTranslateDailyLimit:
         "Automatische Erstübersetzungen für heute pausiert: Dein Tageslimit von {cap} Einträgen ist erreicht, {count} weitere Einträge stehen auf der Wiederholungsliste und werden in der nächtlichen Wiederholung übersetzt, sobald das Limit es zulässt.",
       batchSubmitRefused:
-        "Der KI-Anbieter hat den Auftrag nicht angenommen, deshalb wurde nichts gestartet und nichts berechnet. Du kannst den Lauf stattdessen sofort starten.",
+        "Der KI-Anbieter hat den Auftrag nicht angenommen, deshalb wurde nichts gestartet und nichts berechnet. Sie können den Lauf stattdessen sofort starten.",
       batchSubmitRefusedWithDetail:
-        "Der KI-Anbieter hat den Auftrag nicht angenommen ({detail}), deshalb wurde nichts gestartet und nichts berechnet. Du kannst den Lauf stattdessen sofort starten.",
+        "Der KI-Anbieter hat den Auftrag nicht angenommen ({detail}), deshalb wurde nichts gestartet und nichts berechnet. Sie können den Lauf stattdessen sofort starten.",
       batchSubmitUnconfirmed:
-        "Der KI-Anbieter hat nicht bestätigt, ob er den Auftrag angenommen hat, deshalb wurde nichts geschrieben. Falls der Auftrag beim Anbieter doch gelaufen ist, wird dafür vorsichtshalber der geschätzte Höchstbetrag berechnet – höchstens der Teil, der tatsächlich gelaufen ist, wenn sich das feststellen liess. Bitte starte den Lauf erneut oder führe ihn sofort aus.",
+        "Der KI-Anbieter hat nicht bestätigt, ob er den Auftrag angenommen hat, deshalb wurde nichts geschrieben. Falls der Auftrag beim Anbieter doch gelaufen ist, wird dafür vorsichtshalber der geschätzte Höchstbetrag berechnet – höchstens der Teil, der tatsächlich gelaufen ist, wenn sich das feststellen liess. Bitte starten Sie den Lauf erneut oder führen Sie ihn sofort aus.",
       batchExpired:
-        "Der KI-Anbieter hat den Auftrag nicht innerhalb seiner Frist fertiggestellt, deshalb wurde nichts geschrieben. Für nicht erledigte Arbeit wurde nichts berechnet. Bitte starte den Lauf erneut.",
+        "Der KI-Anbieter hat den Auftrag nicht innerhalb seiner Frist fertiggestellt, deshalb wurde nichts geschrieben. Für nicht erledigte Arbeit wurde nichts berechnet. Bitte starten Sie den Lauf erneut.",
       batchFailed:
-        "Der KI-Anbieter konnte diesen Auftrag nicht verarbeiten, deshalb wurde nichts geschrieben. Bitte starte den Lauf erneut oder führe ihn sofort aus.",
+        "Der KI-Anbieter konnte diesen Auftrag nicht verarbeiten, deshalb wurde nichts geschrieben. Bitte starten Sie den Lauf erneut oder führen Sie ihn sofort aus.",
       batchNotAvailable:
-        "Der günstigere Modus ist für diesen Shop nicht verfügbar, deshalb wurde nichts gestartet. Bitte führe den Lauf sofort aus.",
+        "Der günstigere Modus ist für diesen Shop nicht verfügbar, deshalb wurde nichts gestartet. Bitte führen Sie den Lauf sofort aus.",
       batchNothingToSubmit:
-        "Aus dieser Auswahl liess sich nichts als Auftrag für den günstigeren Modus einreichen. Bitte führe den Lauf sofort aus.",
+        "Aus dieser Auswahl liess sich nichts als Auftrag für den günstigeren Modus einreichen. Bitte führen Sie den Lauf sofort aus.",
       aiKeyMissing:
-        "Der KI-Schlüssel, mit dem dieser Auftrag eingereicht wurde, ist nicht mehr hinterlegt, deshalb konnte das Ergebnis nicht abgeholt werden. Hinterlege den Schlüssel erneut und starte den Lauf noch einmal.",
+        "Der KI-Schlüssel, mit dem dieser Auftrag eingereicht wurde, ist nicht mehr hinterlegt, deshalb konnte das Ergebnis nicht abgeholt werden. Hinterlegen Sie den Schlüssel erneut und starten Sie den Lauf noch einmal.",
       translationsNoneUsable:
         "Die automatische Neuübersetzung hat keine verwendbare Übersetzung geliefert.",
       managedAiBudgetExceeded:

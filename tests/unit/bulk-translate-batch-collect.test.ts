@@ -567,3 +567,28 @@ describe("State M1: one text in two FIELDS (different instruction groups) never 
     expect((await ai.translatePackage(req(TITLE_RULES))).parsed).toEqual({ k1: { fr: "Echarpe", es: "Echarpe" } });
   });
 });
+
+describe("runBatchCollect never throws and honours the lease", () => {
+  it("State M2: a failing PRE-RUN step (the scan) is contained: no exception, nothing written, the Task left open for the tick to count", async () => {
+    scanMissingTranslations.mockRejectedValue(new Error("shopify read failed"));
+    const db = makeDb("waiting_batch");
+    await expect(runBatchCollect(collectInput(db))).resolves.toEqual({ retries: 0 });
+    expect(applyBulkDiff).not.toHaveBeenCalled();
+    expect(terminalCalls(db)).toHaveLength(0);
+  });
+
+  it("State M4: a holder that lost its lease writes NOTHING and does not settle the Task", async () => {
+    const db = makeDb("waiting_batch");
+    await runBatchCollect(collectInput(db, { leaseHeld: async () => false }));
+    expect(applyBulkDiff).not.toHaveBeenCalled();
+    expect(terminalCalls(db)).toHaveLength(0);
+  });
+
+  it("State M4: a lease lost MID-run stops the run at the next write block (the blocks already written stay)", async () => {
+    const db = makeDb("waiting_batch");
+    let asked = 0;
+    await runBatchCollect(collectInput(db, { leaseHeld: async () => ++asked <= 1 }));
+    expect(asked).toBeGreaterThan(1);
+    expect(terminalCalls(db)).toHaveLength(0);
+  });
+});

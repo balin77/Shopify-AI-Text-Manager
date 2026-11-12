@@ -720,6 +720,12 @@ export interface RunArgs {
     };
     /** Provider-side figures for the result JSON (`result.batch`), read when the result is BUILT (the retry count is only final then). */
     summary: () => Record<string, unknown>;
+    /**
+     * Does the poller still hold the row's lease? A collect writes for minutes; a holder that lost its lease
+     * (a stalled renew, a restart race) must stop WRITING before a second holder collects the same batch.
+     * Asked wherever the run asks whether it is cancelled -- before every row's AI work and every write block.
+     */
+    leaseHeld?: () => Promise<boolean>;
   };
 }
 
@@ -951,6 +957,11 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
   const shouldStop = async (): Promise<boolean> => {
     if (stoppedBy) return true;
     try {
+      if (batch?.leaseHeld && !(await batch.leaseHeld())) {
+        // Not a Task status: the final update matches nothing, so a lost lease never settles the Task.
+        stoppedBy = "lease_lost";
+        return true;
+      }
       const row = await db.task.findUnique({ where: { id: taskId }, select: { status: true } });
       if (!row) stoppedBy = "deleted";
       else if (!ownStatuses.includes(row.status)) stoppedBy = row.status;

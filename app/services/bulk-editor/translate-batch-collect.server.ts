@@ -366,6 +366,8 @@ export interface CollectRunInput {
   /** Provider-side figures for the Task result. */
   summary: Record<string, unknown>;
   maxOutputTokens: number;
+  /** Does the caller still hold the row's lease? Asked before every write block (the handler's `batch.leaseHeld`). */
+  leaseHeld?: () => Promise<boolean>;
 }
 
 /**
@@ -375,6 +377,22 @@ export interface CollectRunInput {
  * failed through the runner's own catch.
  */
 export async function runBatchCollect(input: CollectRunInput): Promise<{ retries: number }> {
+  try {
+    return await collectRun(input);
+  } catch (error) {
+    // The PRE-RUN steps (the column universe, the scan of the manifest's rows) can fail on a database or Shopify
+    // error. They must not escape as an exception the tick cannot count: the Task stays open and the poller notes
+    // a failed tick (back-off, then the give-up) instead of retrying at full speed or never counting.
+    logger.error("[BulkTranslateBatch] Collect could not start", {
+      context: "AI",
+      taskId: input.taskId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { retries: 0 };
+  }
+}
+
+async function collectRun(input: CollectRunInput): Promise<{ retries: number }> {
   const { db, shop, manifest } = input;
   const rowType = manifest.rowType as BulkRowType;
   const plan = (input.settings?.subscriptionPlan || "free") as Plan;
@@ -434,6 +452,7 @@ export async function runBatchCollect(input: CollectRunInput): Promise<{ retries
           notStarted: manifest.plan.notStarted,
         },
         summary: () => ({ ...summary, retries: wrapper.retries }),
+        ...(input.leaseHeld ? { leaseHeld: input.leaseHeld } : {}),
       },
     });
   } catch (error) {

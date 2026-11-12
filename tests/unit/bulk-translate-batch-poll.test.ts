@@ -110,6 +110,7 @@ vi.mock("~/utils/logger.server", () => ({ logger: { info: vi.fn(), warn: vi.fn()
 import {
   LEASE_MS,
   MAX_FAILED_TICKS,
+  MAX_ROWS_PER_TICK,
   acquireLease,
   failedTickBackoffMs,
   pollBatchesOnce,
@@ -549,13 +550,26 @@ describe("a provider that stops answering", () => {
     expect([0, 1, 2, 3, 4, 9].map(failedTickBackoffMs)).toEqual([0, 5, 10, 20, 30, 30].map((m) => m * 60_000));
   });
 
-  it("the TICK skips a row inside its back-off window and takes it once the window is over -- decided on the timestamps the select saw", async () => {
+  it("the TICK does not even SELECT a row inside its back-off window, and takes it once the window is over -- decided on the timestamps the select saw", async () => {
     h.retrieve.mockResolvedValue({ providerStatus: "in_progress", ended: false });
     putRow({ failedTicks: 2, updatedAt: new Date(now.getTime() - 4 * 60_000) });
-    expect((await pollBatchesOnce(deps())).outcomes).toEqual({ backoff: 1 });
+    expect(await pollBatchesOnce(deps())).toMatchObject({ rows: 0, outcomes: {} });
     expect(h.retrieve).not.toHaveBeenCalled();
     putRow({ failedTicks: 2, updatedAt: new Date(now.getTime() - 11 * 60_000) });
     expect((await pollBatchesOnce(deps())).outcomes).toEqual({ waiting: 1 });
+  });
+
+  it("STARVATION: more than a tick's worth of failing rows (which sort first, being oldest) do not keep a healthy row from being taken", async () => {
+    h.retrieve.mockResolvedValue({ providerStatus: "in_progress", ended: false });
+    for (let i = 0; i < MAX_ROWS_PER_TICK + 5; i++) {
+      h.rows.set(`bad-${i}`, { ...h.rows.get("row-1"), id: `bad-${i}`, taskId: `bad-task-${i}`, failedTicks: 3, updatedAt: new Date(now.getTime() - (60 - i) * 1000) });
+    }
+    h.rows.set("healthy", { ...h.rows.get("row-1"), id: "healthy", taskId: "task-h", failedTicks: 0, updatedAt: new Date(now.getTime() - 1000) });
+    h.tasks.set("task-h", { id: "task-h", shop: SHOP, status: "waiting_batch" });
+    h.rows.delete("row-1");
+    const stats = await pollBatchesOnce(deps());
+    expect(stats.outcomes).toEqual({ waiting: 1 });
+    expect(h.retrieve).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -696,6 +710,47 @@ describe("shops the tick must not talk to", () => {
     expect(h.retrieve).not.toHaveBeenCalled();
     expect(h.cancel).not.toHaveBeenCalled();
     expect(h.rows.get("row-1").state).toBe("waiting");
+  });
+});
+
+describe("State M2: an exception in the write step is a failed tick (with back-off), not an uncounted error", () => {
+  it("the collect run throwing counts a failed tick and sends the row back to waiting", async () => {
+    const d = deps({ runCollect: vi.fn(async () => { throw new Error("db down"); }) });
+    expect(await processBatchRow("row-1", d)).toBe("failedTick");
+    expect(h.rows.get("row-1")).toMatchObject({ failedTicks: 1, state: "waiting" });
+    expect(h.tasks.get("task-1").status).toBe("waiting_batch");
+  });
+
+  it("so does a failing step BEFORE the run (the SEO context)", async () => {
+    h.aiServiceFor.mockImplementation(() => { throw new Error("nope"); }); // swallowed: live retries are a bonus
+    const d = deps({ runCollect: vi.fn(async () => { throw new Error("scan failed"); }) });
+    expect(await processBatchRow("row-1", d)).toBe("failedTick");
+  });
+});
+
+describe("State M4: the collect keeps asking whether this tick still holds the lease", () => {
+  it("is handed to the write; it answers true while the token is ours and false once another holder has taken the row", async () => {
+    let askLease!: () => Promise<boolean>;
+    const d = deps({
+      runCollect: vi.fn(async (input: any) => {
+        askLease = input.leaseHeld;
+        expect(await input.leaseHeld()).toBe(true);
+        // somebody else takes the row (our renew stalled): the next check -- after the throttle window -- says no
+        h.rows.get("row-1").leaseToken = "someone-else";
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(Date.now() + 10_000));
+        try {
+          expect(await input.leaseHeld()).toBe(false);
+          expect(await input.leaseHeld()).toBe(false); // and stays false
+        } finally {
+          vi.useRealTimers();
+        }
+        h.tasks.get(input.taskId).status = "waiting_batch";
+        return { retries: 0 };
+      }),
+    });
+    await processBatchRow("row-1", d);
+    expect(askLease).toBeTypeOf("function");
   });
 });
 

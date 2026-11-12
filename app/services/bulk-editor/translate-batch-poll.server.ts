@@ -72,6 +72,8 @@ import { settleHold } from "./translate-batch-hold.server";
 /** A lease holds for this long; the holder renews it while it works. */
 export const LEASE_MS = 2 * 60 * 1000;
 const LEASE_RENEW_MS = 30 * 1000;
+/** How often a running collect re-reads its lease token (the write path asks before every row and block). */
+const LEASE_CHECK_MS = 5 * 1000;
 /** Consecutive failed ticks after which a batch that never answers is given up on. */
 export const MAX_FAILED_TICKS = 12;
 /** Rows handled per tick (each may start a collect run that writes for minutes). */
@@ -539,32 +541,50 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
     return "noResult";
   }
 
-  // 11. WRITE, through the live run's own machinery (verification, handle rules, fill-only write).
-  let live = null as ReturnType<typeof aiServiceFor>["service"] | null;
+  // 11. WRITE, through the live run's own machinery (verification, handle rules, fill-only write). Guarded as a
+  //     whole: an exception here (the instructions lookup, the SEO context, the run itself) is a FAILED TICK with
+  //     back-off, like any other provider-side failure -- not an uncounted error that retries at full speed.
   try {
-    const built = aiServiceFor(settings, shop, row.taskId);
-    if (built.decision.ok && built.service.packageLimits().provider === row.provider) live = built.service;
-  } catch {
-    live = null; // live retries are a bonus; their absence changes nothing else
+    let live = null as ReturnType<typeof aiServiceFor>["service"] | null;
+    try {
+      const built = aiServiceFor(settings, shop, row.taskId);
+      if (built.decision.ok && built.service.packageLimits().provider === row.provider) live = built.service;
+    } catch {
+      live = null; // live retries are a bonus; their absence changes nothing else
+    }
+    const aiInstructions = await db.aIInstructions.findUnique({ where: { shop } }).catch(() => null);
+    const { resolveSeoContext } = await import("~/routes/api-ai-handlers/shared");
+    const seo = resolveSeoContext(settings);
+    // The write runs for minutes: it keeps asking whether this tick still holds the lease and stops writing when not.
+    let lastLeaseCheck = 0;
+    let leaseOk = true;
+    const leaseHeld = async (): Promise<boolean> => {
+      if (!leaseOk) return false;
+      if (Date.now() - lastLeaseCheck < LEASE_CHECK_MS) return true;
+      lastLeaseCheck = Date.now();
+      const current = await db.bulkTranslateBatch.findUnique({ where: { id: row.id }, select: { leaseToken: true } });
+      leaseOk = !!current && current.leaseToken === token;
+      return leaseOk;
+    };
+    await (deps.runCollect ?? runBatchCollect)({
+      db,
+      shop,
+      admin: admin as never,
+      settings,
+      taskId: row.taskId,
+      manifest,
+      answers,
+      live,
+      aiInstructions,
+      seoLimits: seo.seoLimits,
+      translationMode: seo.translationMode,
+      summary,
+      maxOutputTokens: maxOutputTokensFor(row.provider as never, row.model),
+      leaseHeld,
+    });
+  } catch (error) {
+    return await noteFailedTick(deps, { ...row, state: "collecting" }, token, error, transport);
   }
-  const aiInstructions = await db.aIInstructions.findUnique({ where: { shop } }).catch(() => null);
-  const { resolveSeoContext } = await import("~/routes/api-ai-handlers/shared");
-  const seo = resolveSeoContext(settings);
-  await (deps.runCollect ?? runBatchCollect)({
-    db,
-    shop,
-    admin: admin as never,
-    settings,
-    taskId: row.taskId,
-    manifest,
-    answers,
-    live,
-    aiInstructions,
-    seoLimits: seo.seoLimits,
-    translationMode: seo.translationMode,
-    summary,
-    maxOutputTokens: maxOutputTokensFor(row.provider as never, row.model),
-  });
 
   // 12. The run settles the Task itself. A task still open afterwards means it stopped early: look again next tick.
   const after = await db.task.findUnique({ where: { id: row.taskId }, select: { status: true } });
@@ -597,24 +617,35 @@ export async function pollBatchesOnce(deps: RowDeps): Promise<PollStats> {
     const { releaseSettledReservations } = await import("../ai/usage-meter.server");
     await releaseSettledReservations();
 
-    // Oldest first; a deliberate scan (the table is small: rows are pruned with their tasks).
+    // Oldest first. A row inside its failure back-off is filtered OUT IN THE QUERY: taking the oldest N and
+    // skipping the backed-off ones afterwards let ten failing rows (which, being old, sort first) starve every
+    // healthy row behind them for as long as they failed. The back-off is measured on `updatedAt` as the SELECT
+    // sees it -- taking the lease bumps it, so a check made after the lease would always see "just now".
+    const backedOff = [1, 2, 3].map((n) => ({
+      failedTicks: n,
+      updatedAt: { lt: new Date(now.getTime() - failedTickBackoffMs(n)) },
+    }));
     const rows = await db.bulkTranslateBatch.findMany({
       where: {
         state: { in: [...OPEN_ROW_STATES] },
-        OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }],
+        AND: [
+          { OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }] },
+          {
+            OR: [
+              { failedTicks: 0 },
+              ...backedOff,
+              // 4 and more share the 30 minute ceiling
+              { failedTicks: { gte: 4 }, updatedAt: { lt: new Date(now.getTime() - failedTickBackoffMs(4)) } },
+            ],
+          },
+        ],
       },
       orderBy: { updatedAt: "asc" },
       take: MAX_ROWS_PER_TICK,
-      select: { id: true, failedTicks: true, updatedAt: true },
+      select: { id: true },
     });
     stats.rows = rows.length;
-    for (const { id, failedTicks, updatedAt } of rows) {
-      // Failures back off. Decided HERE, on the timestamps as the SELECT saw them: taking the lease bumps
-      // `updatedAt` itself, so a check made after it would see "just now" and never let a failed row retry.
-      if (failedTicks > 0 && now.getTime() - updatedAt.getTime() < failedTickBackoffMs(failedTicks)) {
-        stats.outcomes.backoff = (stats.outcomes.backoff ?? 0) + 1;
-        continue;
-      }
+    for (const { id } of rows) {
       const outcome = await processBatchRow(id, deps);
       stats.outcomes[outcome] = (stats.outcomes[outcome] ?? 0) + 1;
     }
