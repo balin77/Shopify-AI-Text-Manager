@@ -665,6 +665,22 @@ export function managedDirectSlotState(shop: string): { active: number; waiting:
   return entry ? { active: entry.active, waiting: entry.waiters.length } : null;
 }
 
+/**
+ * Ended candidate batches that findIntentBatch inspected and found to belong to somebody else, per run id
+ * prefix. In-process only (no schema change): after a restart a candidate is inspected once more. Bounded.
+ */
+const rejectedIntentCandidates = new Map<string, Set<string>>();
+const MAX_REMEMBERED_INTENT_PREFIXES = 200;
+function rememberRejectedIntentCandidates(prefix: string, ids: Set<string>): void {
+  rejectedIntentCandidates.delete(prefix);
+  rejectedIntentCandidates.set(prefix, ids);
+  while (rejectedIntentCandidates.size > MAX_REMEMBERED_INTENT_PREFIXES) {
+    const oldest = rejectedIntentCandidates.keys().next().value;
+    if (oldest === undefined) break;
+    rejectedIntentCandidates.delete(oldest);
+  }
+}
+
 export class AIService {
   private huggingface?: HfInference;
   private gemini?: GenerativeModel;
@@ -1735,15 +1751,21 @@ ${JSON.stringify(skeleton)}`;
           }
         }
         let pending = false;
+        // A candidate that was inspected and is not ours stays not ours (an ended batch never changes): remember
+        // it, so a stranger's batch has its first result line read ONCE per process and not on every tick.
+        const rejected = rejectedIntentCandidates.get(query.idPrefix) ?? new Set<string>();
         for (const cand of candidates) {
           if (!cand.ended) {
             pending = true;
             continue;
           }
+          if (rejected.has(cand.id)) continue;
           for await (const line of await client.messages.batches.results(cand.id)) {
             if (line.custom_id.startsWith(query.idPrefix)) {
               return { found: true as const, batchId: cand.id, expiresAt: cand.expiresAt };
             }
+            rejected.add(cand.id);
+            rememberRejectedIntentCandidates(query.idPrefix, rejected);
             break; // the first line decides: a batch is ONE run's
           }
         }

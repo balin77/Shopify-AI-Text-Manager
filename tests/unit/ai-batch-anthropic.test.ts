@@ -349,6 +349,17 @@ describe("settlementOps.findIntentBatch (a create whose answer never arrived)", 
     expect(await ops().findIntentBatch!(query)).toEqual({ found: false, pending: false });
   });
 
+  it("reads a stranger's candidate batch ONCE: a rejected candidate is not inspected again on the next tick", async () => {
+    const q = { ...query, idPrefix: "tonce_p" };
+    list([batch("stranger")]);
+    firstLine("tother_p0");
+    expect(await ops().findIntentBatch!(q)).toEqual({ found: false, pending: false });
+    expect(sdk.results).toHaveBeenCalledTimes(1);
+    list([batch("stranger")]);
+    expect(await ops().findIntentBatch!(q)).toEqual({ found: false, pending: false });
+    expect(sdk.results).toHaveBeenCalledTimes(1);
+  });
+
   it("a RUNNING candidate cannot be told from a stranger's (its request ids are unreadable): pending, never adopted", async () => {
     list([batch("run", { processing_status: "in_progress", request_counts: { processing: 2, succeeded: 0, errored: 0, expired: 0, canceled: 0 } })]);
     expect(await ops().findIntentBatch!(query)).toEqual({ found: false, pending: true });
