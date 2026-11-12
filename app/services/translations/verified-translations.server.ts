@@ -110,6 +110,10 @@ export interface TranslatableState {
    * "empty" -- a caller that fills must not write on an unknown.
    */
   filled: Map<string, Map<string, Set<string>>>;
+  /** Resources Shopify ANSWERED for (a non-null `translatableResource`).
+   *  `digests` has an entry for every queried resource, an unknown one
+   *  included (an empty map) — only this set tells the two apart. */
+  answered: Set<string>;
 }
 
 interface LiveNode {
@@ -143,6 +147,7 @@ function readNode(
   }
   out.digests.set(id, digests);
   if (withValues) out.values.set(id, values);
+  if (node) out.answered.add(id);
   // A null node is a resource Shopify does not know (or could not answer):
   // nothing is recorded, so the live state stays UNKNOWN.
   if (!node || liveLocales.length === 0) return;
@@ -182,7 +187,7 @@ export async function loadTranslatableState(
   keys: string[],
   opts: { withValues?: boolean; liveLocales?: string[] } = {},
 ): Promise<TranslatableState> {
-  const out: TranslatableState = { digests: new Map(), values: new Map(), filled: new Map() };
+  const out: TranslatableState = { digests: new Map(), values: new Map(), filled: new Map(), answered: new Set() };
   if (resourceIds.length === 0 || keys.length === 0) return out;
 
   const withValues = opts.withValues === true;

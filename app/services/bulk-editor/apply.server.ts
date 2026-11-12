@@ -67,6 +67,7 @@ import {
 import {
   loadDigestsForRows,
   loadTranslatableState,
+  type GraphqlClient,
   fetchDigestsForResource,
   registerAndVerify,
   removeAndVerify,
@@ -3586,18 +3587,13 @@ async function writeFeaturedImageAltTranslation(
 
 /** `collection(id){image{id}}` / `article(id){image{id}}` — the parent is the
  * only route to the image's GID (it is cached nowhere, and cannot be derived
- * from the parent id). */
-async function fetchFeaturedImageId(
-  deps: PersistDeps,
+ * from the parent id). Exported for the translate run's plan-time read, which
+ * addresses the same image the write will. */
+export async function resolveFeaturedImageId(
+  gateway: GraphqlClient,
   rowType: BulkRowType,
   parentId: string,
 ): Promise<string | null> {
-  // A foreign group is per (row, locale, market), so translating ONE
-  // collection's alt into five languages would otherwise issue five identical
-  // lookups — plus a sixth from the §6.6 invalidation.
-  const cached = deps.featuredImageIds.get(parentId);
-  if (cached !== undefined) return cached;
-  const { gateway } = deps;
   const field = rowType === "article" ? "article" : "collection";
   const response = await gateway.graphql(
     `#graphql
@@ -3611,7 +3607,20 @@ async function fetchFeaturedImageId(
     errors?: Array<{ message: string }>;
   };
   if (payload.errors?.length) throw new Error(payload.errors[0].message);
-  const imageId = payload.data?.[field]?.image?.id ?? null;
+  return payload.data?.[field]?.image?.id ?? null;
+}
+
+async function fetchFeaturedImageId(
+  deps: PersistDeps,
+  rowType: BulkRowType,
+  parentId: string,
+): Promise<string | null> {
+  // A foreign group is per (row, locale, market), so translating ONE
+  // collection's alt into five languages would otherwise issue five identical
+  // lookups — plus a sixth from the §6.6 invalidation.
+  const cached = deps.featuredImageIds.get(parentId);
+  if (cached !== undefined) return cached;
+  const imageId = await resolveFeaturedImageId(deps.gateway, rowType, parentId);
   deps.featuredImageIds.set(parentId, imageId);
   return imageId;
 }
