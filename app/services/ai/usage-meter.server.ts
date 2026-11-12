@@ -55,8 +55,13 @@ export interface RecordAiUsageInput {
   model: string;
   /** `Task.type`, or `ADHOC_FEATURE`. */
   feature: string;
+  /** The SUM of all input tokens, cache read and write parts included. */
   inputTokens: number;
   outputTokens: number;
+  /** Part of `inputTokens` read from a prompt cache. Absent = 0. */
+  cacheReadTokens?: number;
+  /** Part of `inputTokens` written to a prompt cache. Absent = 0. */
+  cacheWriteTokens?: number;
   source: AiCredentialSource;
   /** True when the token counts were estimated because the SDK reported none. */
   estimated: boolean;
@@ -213,7 +218,23 @@ export async function recordAiUsage(
     const inputTokens = safeTokens(input.inputTokens);
     const outputTokens = safeTokens(input.outputTokens);
 
-    const priced = priceCall(input.provider, input.model, inputTokens, outputTokens);
+    // The cache parts live INSIDE inputTokens (never beside it), so the totals
+    // stay "all input tokens"; they are clamped to it so a bad report cannot
+    // make the parts exceed the whole.
+    const cacheReadTokens = Math.min(safeTokens(input.cacheReadTokens ?? 0), inputTokens);
+    const cacheWriteTokens = Math.min(
+      safeTokens(input.cacheWriteTokens ?? 0),
+      inputTokens - cacheReadTokens,
+    );
+    const cacheOpts = { cacheReadTokens, cacheWriteTokens };
+
+    const priced = priceCall(
+      input.provider,
+      input.model,
+      inputTokens,
+      outputTokens,
+      cacheOpts,
+    );
     costMicros = priced.costMicros;
 
     if (input.billedMicros !== undefined) {
@@ -228,6 +249,7 @@ export async function recordAiUsage(
         input.billedModel,
         inputTokens,
         outputTokens,
+        cacheOpts,
       ).costMicros;
     } else {
       billedMicros = costMicros;
@@ -270,6 +292,8 @@ export async function recordAiUsage(
           failoverCalls: input.failover ? 1 : 0,
           inputTokens: BigInt(inputTokens),
           outputTokens: BigInt(outputTokens),
+          cacheReadTokens: BigInt(cacheReadTokens),
+          cacheWriteTokens: BigInt(cacheWriteTokens),
           costMicros: BigInt(costMicros),
           billedMicros: BigInt(billedMicros),
         },
@@ -278,6 +302,8 @@ export async function recordAiUsage(
           failoverCalls: { increment: input.failover ? 1 : 0 },
           inputTokens: { increment: BigInt(inputTokens) },
           outputTokens: { increment: BigInt(outputTokens) },
+          cacheReadTokens: { increment: BigInt(cacheReadTokens) },
+          cacheWriteTokens: { increment: BigInt(cacheWriteTokens) },
           costMicros: { increment: BigInt(costMicros) },
           billedMicros: { increment: BigInt(billedMicros) },
         },

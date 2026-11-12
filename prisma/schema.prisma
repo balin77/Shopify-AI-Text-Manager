@@ -1806,6 +1806,8 @@ model AiUsageCounter {
   failoverCalls Int      @default(0) // calls served by the fallback provider
   inputTokens   BigInt   @default(0)
   outputTokens  BigInt   @default(0)
+  cacheReadTokens  BigInt @default(0) // part of inputTokens served from a prompt cache
+  cacheWriteTokens BigInt @default(0) // part of inputTokens written to a prompt cache
   costMicros    BigInt   @default(0) // micro-EUR we really paid
   billedMicros  BigInt   @default(0) // micro-EUR charged against the merchant's budget
   updatedAt     DateTime @updatedAt
