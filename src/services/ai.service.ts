@@ -3595,10 +3595,19 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
    * from drifting.
    */
   private static geminiUsage(response: unknown): { input?: number | null; output?: number | null } | null {
-    const meta = (response as { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } })
-      ?.usageMetadata;
+    const meta = (
+      response as {
+        usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
+      }
+    )?.usageMetadata;
     if (!meta) return null;
-    return { input: meta.promptTokenCount, output: meta.candidatesTokenCount };
+    // Gemini 2.5 thinking tokens are billed as output and reported apart from
+    // the candidates' count; adding them can only raise the metered figure.
+    const output =
+      typeof meta.candidatesTokenCount === 'number'
+        ? meta.candidatesTokenCount + (typeof meta.thoughtsTokenCount === 'number' ? meta.thoughtsTokenCount : 0)
+        : meta.candidatesTokenCount;
+    return { input: meta.promptTokenCount, output };
   }
 
   /**
