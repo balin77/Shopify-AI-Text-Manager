@@ -50,6 +50,17 @@ import { isDevAppBuild, managedDevTestingEnabled } from "../dev-plan-override.se
 import { AIService, toValidProvider, type AIServiceConfig } from "../../../src/services/ai.service";
 import { type AiCredentialSource } from "./usage-dimensions.shared";
 import {
+  SettlementAccessError,
+  SettlementNotImplementedError,
+  stringList,
+  type SettlementBatchRow,
+  type SettlementBatchStatus,
+  type SettlementDecision,
+  type SettlementProviderOps,
+  type SettlementRefusalReason,
+  type SettlementTransport,
+} from "./batch-settlement.shared";
+import {
   boughtManagedAi,
   CONSENTED_MANAGED_PROVIDERS,
   hasCurrentAiProcessingConsent,
@@ -758,4 +769,144 @@ function managedPreflight(
     // the used figure zero and the cap decorative for the rest of the run.
     return { ok: true, period: status.period, pool };
   };
+}
+
+// ─── Settlement access (PLAN_BULK_TRANSLATE_BATCHING 19.3) ───────────────────
+
+/** Builds the provider calls for one provider. The KEY is passed in here and goes no further than the returned closure. */
+type SettlementOpsFactory = (ctx: { provider: AIProvider; apiKey: string }) => SettlementProviderOps;
+
+/** Until the poller phase ships the provider calls, every operation says so. */
+function stubSettlementOps(ctx: { provider: AIProvider }): SettlementProviderOps {
+  const refuse = (operation: string): never => {
+    throw new SettlementNotImplementedError(ctx.provider, operation);
+  };
+  return {
+    retrieve: async () => refuse("retrieve"),
+    results: () => refuse("results"),
+    cancel: async () => refuse("cancel"),
+    deleteFile: async () => refuse("deleteFile"),
+  };
+}
+
+let settlementOpsFactory: SettlementOpsFactory = stubSettlementOps;
+
+/**
+ * TEST SEAM for the provider calls. Refuses outside the test runner: a way to
+ * swap the factory in production would be a way to receive the operator key.
+ */
+export function __setSettlementOpsFactoryForTests(factory: SettlementOpsFactory | null): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("__setSettlementOpsFactoryForTests is a test seam and refuses to run outside tests");
+  }
+  settlementOpsFactory = factory ?? stubSettlementOps;
+}
+
+/**
+ * Access to ONE shop's provider batch for SETTLING it -- retrieve, read the
+ * results, cancel, delete the files -- after the shop may no longer be allowed
+ * to start a NEW AI call (consent withdrawn, budget spent, key rotated).
+ *
+ * What it skips is exactly the per-SHOP gates: consent, budget, global pool.
+ * What it does NOT skip, because those are properties of the DEPLOYMENT and
+ * the reason this module is the one reader of the operator key:
+ *  - the kill switch (`isManagedAiEnabled`), and
+ *  - the dev-build guard (`isDevAppBuild() && !managedDevTestingEnabled()`):
+ *    a staging box with a restored production database must never touch
+ *    production batches with the operator key.
+ * The credential is the one the row RECORDED -- its `source` and, for managed,
+ * its `role` -- not whatever the shop would resolve to today.
+ *
+ * The result is a RESTRICTED transport (frozen, four methods, key in a
+ * closure): it cannot be used to make a generation call, to list anything, or
+ * to touch a batch / file the row does not name. Each use is logged with shop,
+ * task and action -- never the key.
+ *
+ * `settings` is the shop's AISettings, needed only for a BYO row (the merchant
+ * key); the caller loads it.
+ */
+export function settlementCredentialsFor(
+  shop: string,
+  batch: SettlementBatchRow,
+  settings: AISettings | null = null,
+): SettlementDecision {
+  const refuse = (reason: SettlementRefusalReason): SettlementDecision => {
+    logger.warn(`[ManagedAI] Settlement access refused for ${shop} (task ${batch.taskId}): ${reason}`);
+    return { ok: false, reason };
+  };
+  if (batch.shop !== shop) return refuse("shopMismatch");
+
+  const provider = toValidProvider(batch.provider);
+  if (provider !== batch.provider || (provider !== "claude" && provider !== "openai")) {
+    return refuse("unsupportedProvider");
+  }
+
+  let apiKey: string | null = null;
+  let source: "managed" | "byo";
+  if (batch.source === "managed") {
+    source = "managed";
+    if (!isManagedAiEnabled()) return refuse("managedDisabled");
+    if (isDevAppBuild() && !managedDevTestingEnabled()) return refuse("devBuild");
+    const role: ManagedRole = batch.role === "failover" ? "failover" : "default";
+    const cred = readManagedCredential(role);
+    if (!cred) return refuse("noCredential");
+    // The failover crosses providers: a key that now belongs to another
+    // provider than the batch would be sent to the wrong endpoint.
+    if (cred.provider !== provider) return refuse("providerChanged");
+    apiKey = cred.apiKey;
+  } else if (batch.source === "byo") {
+    source = "byo";
+    apiKey = tryDecryptApiKey(settings?.[PROVIDER_KEY_FIELD[provider]] as string | null | undefined, provider) || null;
+    if (!apiKey) return refuse("ai_key_missing");
+  } else {
+    return refuse("unknownSource");
+  }
+
+  const ops = settlementOpsFactory({ provider, apiKey });
+  const allowedBatches = new Set(stringList(batch.batchIds));
+  // Files the row names, plus any the provider reports for ITS batches
+  // (OpenAI output / error files) -- registered as they are seen.
+  const allowedFiles = new Set(stringList(batch.fileIds));
+  const logUse = (action: string) =>
+    logger.info(`[ManagedAI] Settlement access: ${action}`, { shop, taskId: batch.taskId, action, source });
+  const ownBatch = (id: string) => {
+    if (!allowedBatches.has(id)) {
+      throw new SettlementAccessError("batchNotInManifest", "That batch is not named by this run.");
+    }
+  };
+  // Last seen file ids per batch, handed back to `results` so the caller need
+  // not carry them; also the only way an output / error file becomes deletable.
+  const hints = new Map<string, { outputFileId?: string | null; errorFileId?: string | null }>();
+  const note = (id: string, status: SettlementBatchStatus): SettlementBatchStatus => {
+    hints.set(id, { outputFileId: status.outputFileId, errorFileId: status.errorFileId });
+    if (status.outputFileId) allowedFiles.add(status.outputFileId);
+    if (status.errorFileId) allowedFiles.add(status.errorFileId);
+    return status;
+  };
+
+  const transport: SettlementTransport = Object.freeze({
+    retrieve: async (batchId: string) => {
+      ownBatch(batchId);
+      logUse("retrieve");
+      return note(batchId, await ops.retrieve(batchId));
+    },
+    results: (batchId: string) => {
+      ownBatch(batchId);
+      logUse("results");
+      return ops.results(batchId, hints.get(batchId));
+    },
+    cancel: async (batchId: string) => {
+      ownBatch(batchId);
+      logUse("cancel");
+      return note(batchId, await ops.cancel(batchId));
+    },
+    deleteFile: async (fileId: string) => {
+      if (!allowedFiles.has(fileId)) {
+        throw new SettlementAccessError("fileNotOwned", "That file was not created by this run.");
+      }
+      logUse("deleteFile");
+      await ops.deleteFile(fileId);
+    },
+  });
+  return { ok: true, source, role: batch.role, transport };
 }

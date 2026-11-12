@@ -137,6 +137,19 @@ describe('the operator credential has exactly one reader', () => {
     expect(src).toMatch(/isManagedAiEnabled/);
     expect(src).toMatch(/isDevAppBuild/);
   });
+
+  it('the settlement accessor skips only the per-shop gates: kill switch and dev-build guard stay, and the key never leaves', () => {
+    const src = readFileSync(join(root, RESOLVER), 'utf8');
+    const start = src.indexOf('export function settlementCredentialsFor');
+    expect(start).toBeGreaterThan(0);
+    const body = src.slice(start);
+    expect(body).toMatch(/isManagedAiEnabled\(\)/);
+    expect(body).toMatch(/isDevAppBuild\(\) && !managedDevTestingEnabled\(\)/);
+    // it must not consult the per-shop gates it exists to skip
+    expect(body).not.toMatch(/hasCurrentAiProcessingConsent|managedBudgetStatus|globalPoolStatus/);
+    // and it returns a transport, never the key: no `apiKey` in the returned object literal
+    expect(body).toMatch(/return \{ ok: true, source, role: batch\.role, transport \};/);
+  });
 });
 
 describe('no AIServiceConfig literal outside the resolver', () => {
