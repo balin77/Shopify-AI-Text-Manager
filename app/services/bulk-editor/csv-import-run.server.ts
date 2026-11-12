@@ -43,70 +43,20 @@ import { MAX_REPAIR_GROUPS } from "./retranslate.server";
 import { buildCsvImportPreview, type CsvImportArgs, type CsvImportPreviewResult } from "./csv-import.server";
 import { findInvalidLocaleOrMarket } from "./translations.server";
 import {
-  estimateCalls,
   isValidBulkDiffEntry,
-  MAX_BULK_TASK_ITEMS,
-  MAX_TASK_CALLS,
   type BulkApplyResult,
   type BulkDiffEntry,
   type BulkRowType,
   type ColumnDescriptor,
 } from "./columns.shared";
+import { chunkImportDiff, rowKey } from "./diff-chunks.server";
+
+// Re-exported: the splitter moved to ./diff-chunks.server so the translate run
+// shares it, and existing importers keep working.
+export { chunkImportDiff };
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { backgroundAdmin } from "~/utils/offline-admin.server";
-
-/** One save group's identity — the unit a batch never splits. */
-function rowKey(e: BulkDiffEntry): string {
-  return `${e.rowType}|${e.rowId}|${e.locale}|${e.marketId}`;
-}
-
-/**
- * Splits an import diff into batches that each fit a single grid save
- * (≤ maxCells cells, ≤ maxCalls estimated Shopify calls), keeping every row's
- * cells together and the file's order intact. A row that alone exceeds a cap
- * (it cannot — a row has fewer cells than a type has columns) still gets a
- * batch of its own rather than being dropped.
- */
-export function chunkImportDiff(
-  diff: BulkDiffEntry[],
-  columns: ColumnDescriptor[],
-  opts: {
-    maxCells?: number;
-    maxCalls?: number;
-    variantProductIdByRowId?: Record<string, string>;
-  } = {},
-): BulkDiffEntry[][] {
-  const maxCells = opts.maxCells ?? MAX_BULK_TASK_ITEMS;
-  const maxCalls = opts.maxCalls ?? MAX_TASK_CALLS;
-  const estimateOpts = opts.variantProductIdByRowId
-    ? { variantProductIdByRowId: opts.variantProductIdByRowId }
-    : undefined;
-
-  const rows = new Map<string, BulkDiffEntry[]>();
-  for (const entry of diff) {
-    const key = rowKey(entry);
-    const list = rows.get(key);
-    if (list) list.push(entry);
-    else rows.set(key, [entry]);
-  }
-
-  const batches: BulkDiffEntry[][] = [];
-  let current: BulkDiffEntry[] = [];
-  for (const cells of rows.values()) {
-    const candidate = [...current, ...cells];
-    const fits =
-      candidate.length <= maxCells && estimateCalls(candidate, columns, estimateOpts) <= maxCalls;
-    if (fits || current.length === 0) {
-      current = candidate;
-    } else {
-      batches.push(current);
-      current = [...cells];
-    }
-  }
-  if (current.length > 0) batches.push(current);
-  return batches;
-}
 
 /** Sums the per-batch results into the ONE result shape a `seoBulkMeta` Task
  * stores, so the Tasks tab and the grid's `follow` extraction read an import

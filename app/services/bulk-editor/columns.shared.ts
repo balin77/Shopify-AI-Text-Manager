@@ -13,7 +13,7 @@
  */
 
 // zod-based pure validation helpers — no server-only imports (safe here).
-import { DIGEST_BATCH_CHUNK } from "../translations/translation-digest.shared";
+import { DIGEST_BATCH_CHUNK, liveReadChunkSize } from "../translations/translation-digest.shared";
 import { isValidShopifyGID, isValidLocale } from "../../utils/validation";
 // The enum vocabularies the create form and the single editor already offer.
 // From the import-FREE leaf module, never from create-fields.config: that file
@@ -1990,6 +1990,17 @@ export interface BulkDiffEntry {
   marketId: string; // "" = global
   columnId: string; // ColumnDescriptor.id
   value: string;
+  /**
+   * FILL-ONLY writes (applyBulkDiff `fillOnly`): the translatable-content
+   * DIGEST of every Shopify resource this cell writes to, read when the write
+   * was PLANNED -- targetResourceId -> digest. The write refuses (counted as
+   * `skippedChanged`, never as a failure) when the digest it reads at write
+   * time differs, i.e. when the primary text moved after the translation was
+   * made. A cell carries a MAP because one cell can cover several resources
+   * (an option-values cell covers one ProductOptionValue per entry); for a
+   * row field the only key is the row itself. Ignored without `fillOnly`.
+   */
+  expected?: Record<string, string>;
 }
 
 export interface BulkFailure {
@@ -2011,6 +2022,15 @@ export interface BulkFailure {
 export interface BulkApplyResult {
   saved: number;
   failures: BulkFailure[];
+  /**
+   * FILL-ONLY writes only (applyBulkDiff `fillOnly`), counted per CELL (one
+   * row x column x locale): cells NOT written because the primary text changed
+   * since the translation was planned (`skippedChanged`), or because Shopify
+   * already holds a translation for that language (`skippedFilled`). Both are
+   * deliberate and NOT failures. Absent without `fillOnly`.
+   */
+  skippedChanged?: number;
+  skippedFilled?: number;
   /**
    * What the save handed to the auto-translation (retranslate.server.ts).
    * Present only when auto-translate is on AND something was collected —
@@ -2173,6 +2193,9 @@ export interface BulkDiffRowGroup {
   marketId: string;
   /** columnId → new value. */
   cells: Record<string, string>;
+  /** columnId → the plan-time digests of that cell (`BulkDiffEntry.expected`).
+   * Only present for cells that carried them. */
+  expected?: Record<string, Record<string, string>>;
 }
 
 /**
@@ -2198,6 +2221,7 @@ export function groupDiffByRow(diff: BulkDiffEntry[]): BulkDiffRowGroup[] {
       map.set(key, group);
     }
     group.cells[entry.columnId] = entry.value;
+    if (entry.expected) (group.expected ??= {})[entry.columnId] = entry.expected;
   }
   return [...map.values()];
 }
@@ -2236,12 +2260,24 @@ const CLEAR_CELL_CALLS = 2;
 export function estimateCalls(
   diff: BulkDiffEntry[],
   columns: ColumnDescriptor[],
-  opts?: { variantProductIdByRowId?: Record<string, string> },
+  opts?: {
+    variantProductIdByRowId?: Record<string, string>;
+    /** The diff goes through applyBulkDiff's `fillOnly` mode: its digest
+     * prefetch also reads the live translations of every locale (so the
+     * resource page shrinks by the locale count), and a featured-alt cell
+     * reads its image once more. */
+    fillOnly?: boolean;
+  },
 ): number {
   const columnById = new Map(columns.map((c) => [c.id, c] as const));
   const groups = groupDiffByRow(diff);
   let calls = 0;
   const foreignDigestResources = new Set<string>();
+  const fillOnly = opts?.fillOnly === true;
+  const foreignLocales = new Set<string>();
+  // Sub-resource targets (one per register): their digest batches are summed
+  // at the end when fillOnly changes the page size.
+  let subResourceDigestTargets = 0;
   const variantTargets = new Set<string>();
   // Product/collection rows saving ONE SEO half: the other half is read live (batched, DIGEST_BATCH_CHUNK a call).
   const seoReadRows = new Set<string>();
@@ -2254,6 +2290,7 @@ export function estimateCalls(
       if (hasTitle !== hasDescription) seoReadRows.add(group.rowId);
     }
     if (group.locale !== "") {
+      foreignLocales.add(group.locale);
       // Sub-resource cells (metafields, product options) do NOT ride on the
       // row's own translationsRegister: each target resource costs its own
       // register/remove call, and an option-VALUES cell is one call per value.
@@ -2276,7 +2313,7 @@ export function estimateCalls(
         ([columnId]) => !isSubEntry(columnId) && !featuredAltEntries.some(([id]) => id === columnId),
       );
       const subEntries = entries.filter(([columnId]) => isSubEntry(columnId));
-      calls += featuredAltEntries.length * FEATURED_ALT_TRANSLATION_CALLS;
+      calls += featuredAltEntries.length * (FEATURED_ALT_TRANSLATION_CALLS + (fillOnly ? 1 : 0));
       const hasWrites = ownEntries.some(([, v]) => v !== "");
       const hasClears = ownEntries.some(([, v]) => v === "");
       // A clear is TWO calls in the worst case: the removal, plus the
@@ -2301,7 +2338,10 @@ export function estimateCalls(
               CLEARED_OPTION_VALUES_ESTIMATE;
         // One register (or remove) + one digest fetch per target resource.
         calls += targets;
-        if (value !== "") calls += Math.ceil(targets / DIGEST_BATCH_CHUNK);
+        if (value !== "") {
+          if (fillOnly) subResourceDigestTargets += targets;
+          else calls += Math.ceil(targets / DIGEST_BATCH_CHUNK);
+        }
       }
       continue;
     }
@@ -2384,7 +2424,16 @@ export function estimateCalls(
   }
 
   calls += variantTargets.size;
-  calls += Math.ceil(foreignDigestResources.size / DIGEST_BATCH_CHUNK);
+  // fillOnly: the digest prefetch also reads the live translations of every
+  // foreign locale, one alias per locale per resource, so a page is
+  // DIVIDED by the locale count (liveReadChunkSize) -- the row resources and
+  // the sub-resource targets are all paged that way.
+  if (fillOnly) {
+    const chunk = liveReadChunkSize(foreignLocales.size);
+    calls += Math.ceil((foreignDigestResources.size + subResourceDigestTargets) / chunk);
+  } else {
+    calls += Math.ceil(foreignDigestResources.size / DIGEST_BATCH_CHUNK);
+  }
   calls += Math.ceil(seoReadRows.size / DIGEST_BATCH_CHUNK);
   return calls;
 }
