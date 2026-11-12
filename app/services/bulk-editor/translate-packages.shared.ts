@@ -114,10 +114,14 @@ export function packageBudgetFor(opts: {
 }
 
 /** Planned output tokens of one item (pessimistic, JSON skeleton included). */
-export function itemOutputTokens(item: Pick<PackageItem, "source" | "locales">): number {
-  const chars = estimateOutputChars(item.source.length, item.locales.length);
+export function outputTokensForChars(sourceChars: number, localeCount: number): number {
+  const chars = estimateOutputChars(sourceChars, localeCount);
   const text = Math.ceil((chars / TRANSLATION_BATCH.CHARS_PER_OUTPUT_TOKEN) * (1 + TRANSLATION_BATCH.JSON_STRUCTURE_RESERVE));
-  return text + 12 * Math.max(1, item.locales.length) + 12;
+  return text + 12 * Math.max(1, localeCount) + 12;
+}
+
+export function itemOutputTokens(item: Pick<PackageItem, "source" | "locales">): number {
+  return outputTokensForChars(item.source.length, item.locales.length);
 }
 
 /** Estimated input tokens of one item (~4 characters per token, like the queue). */

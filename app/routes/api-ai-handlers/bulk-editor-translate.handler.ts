@@ -351,6 +351,21 @@ async function buildEstimate(args: {
         managedBudget = { remainingMicros: status.remainingMicros, limitMicros: status.limitMicros };
       }
     }
+    // The run injects the shop glossary into every request. The real rules are
+    // read here (read-only); a failed read is "unknown" and the estimate then
+    // adds its worst-case allowance instead of assuming none.
+    let glossaryChars: number | undefined;
+    try {
+      const { loadGlossaryRules, buildGlossaryDirective } = await import("../../../src/services/glossary.service");
+      const rules = await loadGlossaryRules(args.shop);
+      glossaryChars = buildGlossaryDirective(
+        rules,
+        args.jobs.flatMap((job) => job.cells.map((cell) => cell.source)),
+        [...new Set(args.jobs.flatMap((job) => job.cells.flatMap((cell) => cell.locales)))],
+      ).length;
+    } catch {
+      glossaryChars = undefined;
+    }
     return estimateTranslateRun({
       jobs: args.jobs,
       units: args.units,
@@ -366,6 +381,7 @@ async function buildEstimate(args: {
       limits,
       skippedOverCap: args.overCap,
       scanTruncated: args.scanTruncated,
+      glossaryChars,
       managedBudget,
     });
   } catch (err: unknown) {
