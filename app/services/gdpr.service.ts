@@ -240,6 +240,22 @@ export async function redactShopData(
 
   logger.info(`[GDPR] Redacting ALL data for shop ${shop_domain}`);
 
+  // Open provider batches first: once the Task / batch rows below are gone
+  // there is no handle left to cancel them with, and they would keep running
+  // (and billing) for up to 24 h on a shop that asked for its data to be
+  // erased. Best effort and NEVER blocking -- cancelOpenBatches logs its own
+  // failures and does not throw; the extra try/catch covers the import itself.
+  try {
+    const { cancelOpenBatches } = await import("./bulk-editor/translate-batch-cancel.server");
+    await cancelOpenBatches(shop_domain);
+  } catch (error) {
+    logger.warn(
+      `[GDPR] Cancelling open batches for ${shop_domain} failed (redaction continues): ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
   // Use a transaction to delete all data atomically
   await db.$transaction(async (tx) => {
     // 1. Delete all sessions

@@ -150,5 +150,20 @@ export async function markShopUninstalled(
       error instanceof Error ? error.message : String(error),
     );
   }
+
+  // A provider batch of "add missing translations" that is still open outlives
+  // the install: nothing could write its result (the token is revoked) and it
+  // keeps billing for up to 24 h. Cancel it now (best effort, logged, never
+  // blocking; PLAN_BULK_TRANSLATE_BATCHING 6.7). The Task / batch rows stay
+  // until redactShopData, which cancels once more for anything left.
+  try {
+    const { cancelOpenBatches } = await import("./bulk-editor/translate-batch-cancel.server");
+    await cancelOpenBatches(shop);
+  } catch (error) {
+    logger.error(
+      `${tag} Failed to cancel open batches for ${shop}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   return true;
 }
