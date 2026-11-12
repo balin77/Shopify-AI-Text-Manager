@@ -36,6 +36,7 @@ import { useTaskCount } from "~/contexts/TaskCountContext";
 import { WEBP_ITEM_TASK_TYPE } from "~/config/webp-tasks.js";
 import {
   BATCH_TERMINAL_TASK_STATUSES,
+  OPEN_BATCH_TASK_STATUSES,
   SETTLED_TASK_STATUSES,
   TASK_STATUS_CANCEL_REQUESTED,
   TASK_STATUS_SUBMITTING,
@@ -151,7 +152,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     // Date range filter (max 24 hours = 1 day)
     const dateFrom = getTaskDateRange(hoursFilter);
-    where.createdAt = { gte: dateFrom };
+    if (statusFilter === "all") {
+      // An OPEN batch run (submitting / waiting_batch / cancel_requested) is
+      // exempt from the date window: it waits up to 24 hours, and the merchant
+      // must always be able to see it and cancel it, however old it is. The
+      // other status filters are disjoint from the open states.
+      where.OR = [{ createdAt: { gte: dateFrom } }, { status: { in: [...OPEN_BATCH_TASK_STATUSES] } }];
+    } else {
+      where.createdAt = { gte: dateFrom };
+    }
 
     // Get total count for pagination
     const totalCount = await db.task.count({ where });

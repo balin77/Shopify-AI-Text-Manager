@@ -643,6 +643,23 @@ class SyncSchedulerService {
         }
       });
 
+      // Batch housekeeping that must not depend on the poller being switched
+      // on: (1) the absolute end of an open batch run (a run that has waited
+      // longer than any provider batch lives is closed as batch_unreachable and
+      // its hold released), (2) the reservation sweep -- a settled row whose
+      // release was lost (crash, failed transaction) would otherwise keep part
+      // of the shop's budget and of the global pool for ever.
+      try {
+        const { expireStaleBatches } = await import('./bulk-editor/translate-batch-expiry.server');
+        await expireStaleBatches();
+        const { releaseSettledReservations } = await import('./ai/usage-meter.server');
+        await releaseSettledReservations();
+      } catch (error) {
+        logger.warn('[SyncScheduler] Batch housekeeping failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
       // The batch state of a settled run goes with its (expired) task. A row
       // still holding a reservation stays until the reservation sweep has
       // released it (usage-meter.server.ts releaseSettledReservations).
