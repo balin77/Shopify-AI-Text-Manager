@@ -23,6 +23,11 @@
 
 import { TRANSLATION_BATCH } from "~/config/constants";
 import { priceCall } from "~/config/ai-pricing";
+import {
+  PACKAGE_CACHE_MIN_GROUP_PACKAGES,
+  PACKAGE_CACHE_MIN_PREFIX_TOKENS,
+  geminiThinkingAllowanceTokens,
+} from "~/config/ai-model-limits";
 import type { AIProvider } from "~/utils/api-key-validation";
 import { LIST_DISPLAY_SEPARATOR, type ColumnDescriptor } from "./columns.shared";
 import { perLocaleSourceBudgetChars, planLocaleChunks, fitsOneRequest } from "~/services/ai/translation-budget.shared";
@@ -108,6 +113,8 @@ interface Totals {
   requests: number;
   inputTokens: number;
   outputTokens: number;
+  /** Part of inputTokens written to a prompt cache (Claude package groups). */
+  cacheWriteTokens?: number;
 }
 
 const outTokForText = (source: string, locales: string[]): number => itemOutputTokens({ source, locales });
@@ -326,8 +333,28 @@ function estimatePackaged(
   }
   const budget = packageBudgetFor({ modelMaxOutput: limits.maxOutputTokens, bucketTpm: limits.bucketTpm });
   const plan = planPackages(buildPackageItems(entries), budget);
+  // Prompt caching, as the runner does it (translate-package-phase): a Claude
+  // group with enough packages and a long enough stable prefix sends its first
+  // package ALONE (one cache write at 1.25x), the rest read the cache (priced
+  // at 1.0, no discount claimed).
+  const packagesPerGroup = new Map<string, number>();
+  for (const pkg of plan.packages) packagesPerGroup.set(pkg.groupKey, (packagesPerGroup.get(pkg.groupKey) ?? 0) + 1);
+  const cacheWritten = new Set<string>();
+  const thinking = geminiThinkingAllowanceTokens(limits.provider, limits.model);
   for (const pkg of plan.packages) {
     t.requests += 1;
+    // Gemini 2.5 thinking is billed as output; the package ceiling carries it.
+    t.outputTokens += thinking;
+    const prefixTokens = PACKAGE_PREFIX_TOKENS + Math.ceil((pkg.instructions?.length ?? 0) / 4);
+    if (
+      limits.provider === "claude" &&
+      (packagesPerGroup.get(pkg.groupKey) ?? 0) >= PACKAGE_CACHE_MIN_GROUP_PACKAGES &&
+      prefixTokens >= PACKAGE_CACHE_MIN_PREFIX_TOKENS &&
+      !cacheWritten.has(pkg.groupKey)
+    ) {
+      cacheWritten.add(pkg.groupKey);
+      t.cacheWriteTokens = (t.cacheWriteTokens ?? 0) + PACKAGE_PREFIX_TOKENS + inTok(pkg.instructions?.length ?? 0);
+    }
     t.inputTokens +=
       PACKAGE_PREFIX_TOKENS +
       inTok(pkg.instructions?.length ?? 0) +
@@ -373,7 +400,9 @@ export function estimateTranslateRun(args: {
   const requests = jobs.length === 0 ? 0 : Math.max(1, Math.ceil(raw.requests * RETRY_ALLOWANCE));
   const inputTokens = Math.ceil(raw.inputTokens * RETRY_ALLOWANCE);
   const outputTokens = Math.ceil(raw.outputTokens * RETRY_ALLOWANCE);
-  const priced = priceCall(limits.provider, limits.model, inputTokens, outputTokens);
+  const priced = priceCall(limits.provider, limits.model, inputTokens, outputTokens, {
+    cacheWriteTokens: Math.min(raw.cacheWriteTokens ?? 0, inputTokens),
+  });
   const costMicros = priced.unpriced ? null : priced.costMicros;
   return {
     units,

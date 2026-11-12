@@ -75,3 +75,24 @@ export const PACKAGE_CACHE_MIN_PREFIX_TOKENS = 4096;
 
 /** A group needs at least this many packages before a cache WRITE amortises. */
 export const PACKAGE_CACHE_MIN_GROUP_PACKAGES = 3;
+
+/**
+ * Gemini 2.5 models THINK before they answer, and the thinking tokens count
+ * against `maxOutputTokens`. The installed `@google/generative-ai` (0.24.1) has
+ * no `thinkingConfig` in its typings, so thinking cannot be switched off; a
+ * package request instead gets this allowance ON TOP of its own ceiling (capped
+ * at the model's), so the answer is not cut off by thinking. The estimate adds
+ * it to the output of every package request (thinking is billed as output).
+ * Package calls of Gemini 2.5 models only; every other call is unchanged.
+ * Research state, not measured.
+ */
+export const GEMINI_THINKING_ALLOWANCE_TOKENS = 4096;
+
+export function geminiThinkingAllowanceTokens(
+  provider: string | undefined | null,
+  model: string | undefined | null,
+): number {
+  return provider === "gemini" && /^gemini-2\.5-/.test((model ?? "").toLowerCase().trim())
+    ? GEMINI_THINKING_ALLOWANCE_TOKENS
+    : 0;
+}

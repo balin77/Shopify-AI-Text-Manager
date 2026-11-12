@@ -41,6 +41,59 @@ function service(glossary: string) {
   return { svc, prompts };
 }
 
+describe("packaged estimate: cache write once per qualifying group, Gemini thinking", () => {
+  const LONG = "Always keep the brand voice playful and precise. ".repeat(350);
+  const titleColumn = { id: "field.title", kind: "field", label: "title", group: "content", editable: true, translatable: true, inputType: "text", minWidth: 100 } as any;
+  const shortClassifiers = (instr: string | undefined): EstimateClassifiers => ({
+    isGroupedColumn: () => false,
+    isValueColumn: () => false,
+    isShortColumn: () => true,
+    isListValuesColumn: () => false,
+    isHandleColumn: () => false,
+    instructionsFor: () => instr,
+  });
+  const many = (n: number): EstimateJob[] =>
+    Array.from({ length: n }, (_, i) => ({
+      rowId: `r${i}`,
+      cells: [{ column: titleColumn, fieldKey: "title", source: `Wollschal Modell ${i} mit langem Namen`, locales: ["fr", "es"] }],
+    }));
+  const base = { units: 240, packages: true, skippedOverCap: 0, scanTruncated: false };
+  const tiny = { provider: "claude" as const, model: "claude-sonnet-4-5", maxOutputTokens: 1024, bucketTpm: null };
+
+  it("a qualifying Claude group is priced with ONE cache write at 1.25x (reads at 1.0)", async () => {
+    const { priceCall } = await import("~/config/ai-pricing");
+    const e = estimateTranslateRun({ ...base, jobs: many(120), classifiers: shortClassifiers(LONG), limits: tiny });
+    const noCache = priceCall("claude", "claude-sonnet-4-5", e.inputTokens, e.outputTokens).costMicros;
+    expect(e.costMicros).toBeGreaterThan(noCache);
+    // The surcharge is bounded: one write of ~the prefix, not every package.
+    const prefixTokens = 250 + Math.ceil(LONG.length / 3);
+    const oneWrite = priceCall("claude", "claude-sonnet-4-5", e.inputTokens, e.outputTokens, { cacheWriteTokens: prefixTokens }).costMicros;
+    expect(e.costMicros).toBeLessThanOrEqual(oneWrite);
+  });
+
+  it("no cache credit or surcharge when the prefix is short, the group small or the provider not Claude", async () => {
+    const { priceCall } = await import("~/config/ai-pricing");
+    const short = estimateTranslateRun({ ...base, jobs: many(120), classifiers: shortClassifiers("Short."), limits: tiny });
+    expect(short.costMicros).toBe(priceCall("claude", "claude-sonnet-4-5", short.inputTokens, short.outputTokens).costMicros);
+    const small = estimateTranslateRun({ ...base, jobs: many(2), classifiers: shortClassifiers(LONG), limits: tiny });
+    expect(small.costMicros).toBe(priceCall("claude", "claude-sonnet-4-5", small.inputTokens, small.outputTokens).costMicros);
+    const openai = { provider: "openai" as const, model: "gpt-4o", maxOutputTokens: 1024, bucketTpm: null };
+    const o = estimateTranslateRun({ ...base, jobs: many(120), classifiers: shortClassifiers(LONG), limits: openai });
+    expect(o.costMicros).toBe(priceCall("openai", "gpt-4o", o.inputTokens, o.outputTokens).costMicros);
+  });
+
+  it("Gemini 2.5 package requests carry the thinking allowance in the output; other Gemini models and the per-row path do not", () => {
+    const g25 = { provider: "gemini" as const, model: "gemini-2.5-flash", maxOutputTokens: 32_000, bucketTpm: null };
+    const g20 = { provider: "gemini" as const, model: "gemini-2.0-flash", maxOutputTokens: 8192, bucketTpm: null };
+    const a = estimateTranslateRun({ ...base, jobs: many(10), classifiers: shortClassifiers(undefined), limits: g25 });
+    const b = estimateTranslateRun({ ...base, jobs: many(10), classifiers: shortClassifiers(undefined), limits: g20 });
+    expect(a.outputTokens).toBeGreaterThan(b.outputTokens);
+    const perRow25 = estimateTranslateRun({ ...base, packages: false, jobs: many(10), classifiers: shortClassifiers(undefined), limits: g25 });
+    const perRow20 = estimateTranslateRun({ ...base, packages: false, jobs: many(10), classifiers: shortClassifiers(undefined), limits: g20 });
+    expect(perRow25.outputTokens).toBe(perRow20.outputTokens);
+  });
+});
+
 describe("estimate >= what the per-row runner sends", () => {
   const LOCALES = ["fr", "es", "it", "nl", "pt", "sv", "da", "fi"];
   const BODY = "<p>" + "Handgewebter Wollschal in vielen Farben. ".repeat(100) + "</p>";

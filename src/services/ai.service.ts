@@ -16,7 +16,7 @@ import { DEFAULT_MODELS, resolveModelId } from '../../app/config/ai-models.confi
 /** Retired model ids already logged by this process — one warning each, not one per call. */
 const retiredModelWarned = new Set<string>();
 import { TRANSLATION_BATCH } from '../../app/config/constants';
-import { maxOutputTokensFor, PACKAGE_CACHE_MIN_PREFIX_TOKENS } from '../../app/config/ai-model-limits';
+import { maxOutputTokensFor, geminiThinkingAllowanceTokens, PACKAGE_CACHE_MIN_PREFIX_TOKENS } from '../../app/config/ai-model-limits';
 import {
   estimateOutputChars,
   fitsOneRequest,
@@ -4017,10 +4017,18 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
    */
   private geminiGenerate(prompt: string, requestOptions: AiRequestOptions | undefined, maxTokens: number) {
     if (!requestOptions) return this.gemini!.generateContent(prompt);
+    // Gemini 2.5 thinking tokens count against maxOutputTokens and the SDK's
+    // typings have no thinkingConfig: the package ceiling gets an allowance on
+    // top (never past the model's own ceiling), so thinking cannot truncate the
+    // answer. Zero for every other model.
+    const thinking = geminiThinkingAllowanceTokens(this.provider, this.getModel());
+    const ceiling = thinking > 0
+      ? Math.min(maxTokens + thinking, maxOutputTokensFor(this.provider, this.getModel()))
+      : maxTokens;
     return this.gemini!.generateContent(
       {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: maxTokens },
+        generationConfig: { maxOutputTokens: ceiling },
       },
       { timeout: requestOptions.timeoutMs },
     );
