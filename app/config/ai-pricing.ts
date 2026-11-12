@@ -180,13 +180,6 @@ export function priceForModel(
   return { price: UNKNOWN_MODEL_PRICE[provider], atCeiling: true };
 }
 
-/**
- * Cost of one call in micro-euro, ROUNDED UP.
- *
- * Rounding up is the same rule the estimate follows: a fraction of a
- * micro-euro is noise, and the direction that errs cheap is the one that
- * understates a bill.
- */
 export interface PriceCallOptions {
   /** Part of `inputTokens` that was READ from a cache (included in it). */
   cacheReadTokens?: number;
@@ -203,6 +196,18 @@ function factorOrOne(f: number | undefined): number {
   return typeof f === "number" && Number.isFinite(f) && f > 0 ? f : 1;
 }
 
+/** A token count that is missing, negative or not a finite number is 0. */
+function safeTokens(n: number | undefined): number {
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Cost of one call in micro-euro, ROUNDED UP.
+ *
+ * Rounding up is the same rule the estimate follows: a fraction of a
+ * micro-euro is noise, and the direction that errs cheap is the one that
+ * understates a bill.
+ */
 export function priceCall(
   provider: AIProvider,
   model: string,
@@ -214,30 +219,31 @@ export function priceCall(
   if (!p) {
     return { costMicros: 0, pricedAtCeiling: false, unpriced: true };
   }
-  const input = Math.max(0, inputTokens);
+  const input = safeTokens(inputTokens);
+  const output = safeTokens(outputTokens);
   // `inputTokens` is the SUM of all input tokens; the cache parts are inside
   // it and are clamped so they can never exceed it (which would price some
   // tokens twice or, worse, make the uncached part negative).
-  const cacheRead = Math.min(Math.max(0, options.cacheReadTokens ?? 0), input);
-  const cacheWrite = Math.min(Math.max(0, options.cacheWriteTokens ?? 0), input - cacheRead);
+  const cacheRead = Math.min(safeTokens(options.cacheReadTokens), input);
+  const cacheWrite = Math.min(safeTokens(options.cacheWriteTokens), input - cacheRead);
   const uncached = input - cacheRead - cacheWrite;
   const f = options.factors;
   const readMult = factorOrOne(f?.cacheReadMult ?? p.cacheReadMult);
   const writeMult = factorOrOne(f?.cacheWriteMult ?? p.cacheWriteMult);
   const batchMult =
     options.tier === "batch" ? factorOrOne(f?.batchMult ?? p.batchMult) : 1;
-  // With no cache tokens and a factor of 1 this is the historic expression
-  // term for term (x * 1 and + 0 are exact), so existing callers are
-  // byte-identical.
-  const plain =
-    (uncached * p.inMicrosPerMToken) / 1_000_000 +
-    (Math.max(0, outputTokens) * p.outMicrosPerMToken) / 1_000_000;
-  const cacheParts =
-    cacheRead > 0 || cacheWrite > 0
-      ? (cacheRead * p.inMicrosPerMToken * readMult) / 1_000_000 +
-        (cacheWrite * p.inMicrosPerMToken * writeMult) / 1_000_000
-      : 0;
-  const micros = plain * batchMult + cacheParts;
+  // With every factor at 1 this is the historic expression term for term,
+  // whatever the cache split: splitting the input into three divided terms
+  // could round a hair BELOW it, which is the forbidden direction.
+  const micros =
+    readMult === 1 && writeMult === 1 && batchMult === 1
+      ? (input * p.inMicrosPerMToken) / 1_000_000 + (output * p.outMicrosPerMToken) / 1_000_000
+      : // Products first, divide once: fewer rounding steps.
+        (uncached * p.inMicrosPerMToken * batchMult +
+          cacheRead * p.inMicrosPerMToken * readMult +
+          cacheWrite * p.inMicrosPerMToken * writeMult +
+          output * p.outMicrosPerMToken * batchMult) /
+        1_000_000;
   return {
     costMicros: clampMicros(Math.ceil(micros)),
     pricedAtCeiling: atCeiling,

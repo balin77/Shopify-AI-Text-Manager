@@ -122,3 +122,32 @@ describe('recordAiUsage cache fields', () => {
     expect(r.costMicros).toBe(legacy('claude', 'claude-sonnet-5', 12345, 678));
   });
 });
+
+describe('priceCall: cache split never costs less than the historic formula at factor 1', () => {
+  it('equals the legacy price for any cache split when every factor is 1', () => {
+    for (const provider of Object.keys(MODEL_PRICING) as AIProvider[]) {
+      for (const model of Object.keys(MODEL_PRICING[provider])) {
+        for (const [i, o, r, w] of [
+          [1, 1, 1, 0],
+          [997, 13, 333, 333],
+          [123_457, 9_876, 54_321, 1_234],
+          [5, 0, 0, 5],
+        ]) {
+          expect(priceCall(provider, model, i, o, { cacheReadTokens: r, cacheWriteTokens: w }).costMicros).toBe(
+            legacy(provider, model, i, o),
+          );
+        }
+      }
+    }
+  });
+
+  it('a NaN or negative cache value is treated as 0, never as a free call', () => {
+    const provider = Object.keys(MODEL_PRICING)[0] as AIProvider;
+    const model = Object.keys(MODEL_PRICING[provider])[0];
+    const base = priceCall(provider, model, 10_000, 500).costMicros;
+    expect(base).toBeGreaterThan(0);
+    expect(priceCall(provider, model, 10_000, 500, { cacheReadTokens: Number.NaN }).costMicros).toBe(base);
+    expect(priceCall(provider, model, 10_000, 500, { cacheWriteTokens: -5 }).costMicros).toBe(base);
+    expect(priceCall(provider, model, Number.NaN, 500).costMicros).toBe(legacy(provider, model, 0, 500));
+  });
+});

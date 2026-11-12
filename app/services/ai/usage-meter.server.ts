@@ -244,12 +244,14 @@ export async function recordAiUsage(
       // charged is the default model's price for the same tokens. Same table,
       // same rounding — the two columns describe one call and must not be
       // computed two different ways.
+      // No cache split here: the cache hits belong to the model that RAN, so
+      // pricing the billed model with them could hand the merchant a discount
+      // the billed model never gave. Full input price is never less.
       billedMicros = priceCall(
         input.billedProvider ?? input.provider,
         input.billedModel,
         inputTokens,
         outputTokens,
-        cacheOpts,
       ).costMicros;
     } else {
       billedMicros = costMicros;
