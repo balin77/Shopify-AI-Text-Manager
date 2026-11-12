@@ -66,6 +66,7 @@ import {
 } from "./translations.server";
 import {
   loadDigestsForRows,
+  loadTranslatableState,
   fetchDigestsForResource,
   registerAndVerify,
   removeAndVerify,
@@ -168,6 +169,26 @@ interface ApplyContext {
    *  cap. The batched CSV import passes the remainder of ONE budget for the
    *  whole file, so its batches together open no more runs than one save. */
   repairGroupBudget?: number;
+  /**
+   * FILL-ONLY mode, for a diff of GLOBAL FOREIGN translations that were made
+   * for cells found MISSING some time ago (the "add missing translations"
+   * run): nothing is written over a value that is there now, and nothing is
+   * written for a text that is not the one that was translated.
+   *
+   * The old guarantee was the scan that ran right before the write. With a
+   * write that happens in blocks, minutes after the scan, that is no longer
+   * enough: the cache lags the Shopify admin (the source may have changed),
+   * and the DB mirror does not see a translation entered in Shopify's editor.
+   * So this is a PRECONDITION on the one verified write path (not a second
+   * writer): the digest prefetch also reads the LIVE translations of every
+   * locale, a cell whose language already holds a value is skipped
+   * (`skippedFilled`), a cell whose `expected` digest (BulkDiffEntry) differs
+   * from the digest read now is skipped (`skippedChanged`), and a resource the
+   * read could not answer writes NOTHING (a per-cell failure: unknown is not
+   * empty). Primary, market and clearing entries are refused outright. Without
+   * the flag nothing here differs from before.
+   */
+  fillOnly?: boolean;
 }
 
 /** Settable `ProductStatus` values for `productUpdate`'s `ProductInput`.
@@ -309,6 +330,44 @@ interface PersistDeps {
   repairPlan: BulkRepairPlan;
   /** The shop's primary locale, for the value prompts — see ApplyContext. */
   primaryLocale?: string;
+  /** `ApplyContext.fillOnly` (see there). */
+  fillOnly: boolean;
+  /** fillOnly: resourceId -> locale -> keys that carry a non-empty GLOBAL
+   *  translation RIGHT NOW (read with the digest prefetch). A resource or
+   *  locale that is absent was not answered: unknown, never "empty". */
+  live: Map<string, Map<string, Set<string>>>;
+  /** fillOnly: cells deliberately not written, per CELL (see BulkApplyResult). */
+  skips: { changed: number; filled: number };
+}
+
+/** A fill-only cell that was deliberately NOT written (not a failure). */
+interface FillSkip {
+  skipped: "filled" | "changed";
+}
+
+const FILL_UNKNOWN_MESSAGE =
+  "Shopify could not be read to confirm this translation is still missing — nothing was written.";
+
+/**
+ * The fill-only precondition for ONE (resource, locale, key): `unknown` when
+ * the live read did not answer, `filled` when Shopify already holds a value,
+ * `changed` when the digest read now is not the one the translation was made
+ * for, otherwise `ok`. Order matters: emptiness is checked before the digest,
+ * so an already-translated field is never reported as a changed source.
+ */
+function fillOnlyVerdict(
+  deps: PersistDeps,
+  resourceId: string,
+  locale: string,
+  key: string,
+  digest: string | undefined,
+  expected: string | undefined,
+): "ok" | "unknown" | "filled" | "changed" {
+  const live = deps.live.get(resourceId)?.get(locale);
+  if (!live) return "unknown";
+  if (live.has(key)) return "filled";
+  if (expected !== undefined && digest !== undefined && digest !== expected) return "changed";
+  return "ok";
 }
 
 function failureOf(group: BulkDiffRowGroup, message: string, columnId?: string): BulkFailure {
@@ -3040,7 +3099,13 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
     failures.push(...(await persistSubResourceTranslations(group, subResourceCells, deps)));
   }
   for (const cell of featuredAltCells) {
-    const error = await writeFeaturedImageAltTranslation(group, cell.value, deps);
+    const outcome = await writeFeaturedImageAltTranslation(group, cell, deps);
+    if (outcome !== null && typeof outcome === "object") {
+      // Fill-only, deliberately not written: no claim, no failure.
+      deps.skips[outcome.skipped]++;
+      continue;
+    }
+    const error = outcome;
     if (error) failures.push(failureOf(group, error, cell.columnId));
     else {
       // The featured alt is its OWN surface and is claimed under its OWN key
@@ -3135,6 +3200,26 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
   const ready: (TranslationCell & { digest: string })[] = [];
   for (const write of writes) {
     const digest = digestsForResource?.get(write.key);
+    if (deps.fillOnly) {
+      // Precondition of a fill-only write (ApplyContext.fillOnly): still empty
+      // at Shopify, and still the text the translation was made for.
+      const verdict = fillOnlyVerdict(
+        deps,
+        resourceId,
+        locale,
+        write.key,
+        digest,
+        group.expected?.[write.columnId]?.[resourceId],
+      );
+      if (verdict === "unknown") {
+        failures.push(failureOf(group, FILL_UNKNOWN_MESSAGE, write.columnId));
+        continue;
+      }
+      if (verdict === "filled" || verdict === "changed") {
+        deps.skips[verdict]++;
+        continue;
+      }
+    }
     if (!digest) {
       // Expected for meta_title/meta_description without a primary SEO
       // override (Plan §14 no. 6) — still a cell error, never a silent skip
@@ -3386,9 +3471,10 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
  */
 async function writeFeaturedImageAltTranslation(
   group: BulkDiffRowGroup,
-  value: string,
+  cell: { columnId: string; value: string },
   deps: PersistDeps,
-): Promise<string | null> {
+): Promise<string | null | FillSkip> {
+  const { value } = cell;
   const { db, shop, gateway } = deps;
   const { locale, marketId } = group;
   const resourceType = CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[group.rowType];
@@ -3421,6 +3507,34 @@ async function writeFeaturedImageAltTranslation(
     } catch (err: unknown) {
       return err instanceof Error ? err.message : String(err);
     }
+  }
+
+  if (deps.fillOnly) {
+    // The image is not part of the run's prefetch (its GID is only known once
+    // the parent is asked), so its live translations and digest are read here,
+    // for this one language: one more call per featured-alt cell, which
+    // estimateCalls counts.
+    if (!deps.live.get(imageResourceId)?.has(locale)) {
+      const state = await loadTranslatableState(gateway, [imageResourceId], ["alt"], { liveLocales: [locale] });
+      const digestsOfImage = state.digests.get(imageResourceId);
+      if (digestsOfImage) deps.digests.set(imageResourceId, digestsOfImage);
+      const filledOfImage = state.filled.get(imageResourceId);
+      if (filledOfImage) {
+        const merged = deps.live.get(imageResourceId) ?? new Map<string, Set<string>>();
+        for (const [loc, keys] of filledOfImage) merged.set(loc, keys);
+        deps.live.set(imageResourceId, merged);
+      }
+    }
+    const verdict = fillOnlyVerdict(
+      deps,
+      imageResourceId,
+      locale,
+      "alt",
+      deps.digests.get(imageResourceId)?.get("alt"),
+      group.expected?.[cell.columnId]?.[imageResourceId],
+    );
+    if (verdict === "unknown") return FILL_UNKNOWN_MESSAGE;
+    if (verdict === "filled" || verdict === "changed") return { skipped: verdict };
   }
 
   let digest = deps.digests.get(imageResourceId)?.get("alt");
@@ -3592,8 +3706,23 @@ async function persistSubResourceTranslations(
 
     let cellFailed: string | null = null;
     const claimed: string[] = [];
+    // Fill-only: targets left alone on purpose (see FillSkip). An option-VALUES
+    // cell is one cell over N resources — an entry that already has its
+    // translation stays, the rest is written, and the CELL only counts as
+    // skipped when nothing in it was written.
+    const cellSkips = { changed: 0, filled: 0 };
     for (const pair of pairs) {
-      const error = await writeSubResourceTranslation(pair.target, pair.value, deps);
+      const outcome = await writeSubResourceTranslation(
+        pair.target,
+        pair.value,
+        deps,
+        group.expected?.[cell.columnId]?.[pair.target.resourceId],
+      );
+      if (outcome !== null && typeof outcome === "object") {
+        cellSkips[outcome.skipped]++;
+        continue;
+      }
+      const error = outcome;
       if (error && !cellFailed) cellFailed = error;
       if (!error) {
         claimed.push(pair.target.resourceId);
@@ -3614,6 +3743,11 @@ async function persistSubResourceTranslations(
       }
     }
     if (cellFailed) failures.push(failureOf(group, cellFailed, cell.columnId));
+    else if (claimed.length === 0 && cellSkips.changed + cellSkips.filled > 0) {
+      // Nothing of this cell was written: one skipped CELL, "changed" winning
+      // because it is the one the merchant may want to look at.
+      deps.skips[cellSkips.changed > 0 ? "changed" : "filled"]++;
+    }
     // The SUB-RESOURCES themselves, and the private lock their repair runs
     // under (translation-locks.shared.ts) — never the row. That repair watches
     // the resources it is about to write plus its own lock, not the product,
@@ -3642,12 +3776,14 @@ async function persistSubResourceTranslations(
 
   return failures;
 
-  /** ONE resource, ONE key. Returns an error message, or null on success. */
+  /** ONE resource, ONE key. Returns an error message, or null on success — or,
+   *  in fill-only mode, a FillSkip when the target was deliberately left alone. */
   async function writeSubResourceTranslation(
     target: SubResourceTarget,
     value: string,
     persistDeps: PersistDeps,
-  ): Promise<string | null> {
+    expectedDigest?: string,
+  ): Promise<string | null | FillSkip> {
     // Clearing: Shopify rejects blank option/metafield translations, so a
     // cleared cell REMOVES the translation — and the local row only goes when
     // Shopify confirms the removal (CLAUDE.md).
@@ -3673,6 +3809,19 @@ async function persistSubResourceTranslations(
       } catch (err: unknown) {
         return err instanceof Error ? err.message : String(err);
       }
+    }
+
+    if (persistDeps.fillOnly) {
+      const verdict = fillOnlyVerdict(
+        persistDeps,
+        target.resourceId,
+        locale,
+        target.key,
+        persistDeps.digests.get(target.resourceId)?.get(target.key),
+        expectedDigest,
+      );
+      if (verdict === "unknown") return FILL_UNKNOWN_MESSAGE;
+      if (verdict === "filled" || verdict === "changed") return { skipped: verdict };
     }
 
     // §6.3 digest rule: prefetched, ONE re-fetch, then cell error — no Shopify
@@ -4375,6 +4524,31 @@ export async function applyBulkDiff(
       }
     }
   }
+  // ── Fill-only: the shape of the diff, before anything dispatches ──────────
+  //
+  // A fill-only write is a GLOBAL FOREIGN fill. A primary entry, a market
+  // override or a clear is not what it is for, and quietly performing one
+  // would be the very overwrite the mode exists to prevent — so each is
+  // refused per cell, loudly.
+  const fillOnly = ctx.fillOnly === true;
+  if (fillOnly) {
+    for (const group of allGroups) {
+      const wholeGroupRefused = group.locale === "" || group.marketId !== "";
+      for (const columnId of Object.keys(group.cells)) {
+        if (!wholeGroupRefused && group.cells[columnId] !== "") continue;
+        selectFailures.push(
+          failureOf(
+            group,
+            wholeGroupRefused
+              ? "A fill-only write is a global translation into another language."
+              : "A fill-only write never clears a translation.",
+            columnId,
+          ),
+        );
+        delete group.cells[columnId];
+      }
+    }
+  }
   // A row whose ONLY cell was refused has nothing left to write, and
   // dispatching it anyway would run every stage as a no-op and then count the
   // row as saved — "1 row saved" about a row where nothing was.
@@ -4475,10 +4649,21 @@ export async function applyBulkDiff(
     }
   }
 
-  const digests =
-    foreignResourceIds.length > 0
-      ? await loadDigestsForRows(gateway, foreignResourceIds, [...foreignKeys])
-      : new Map<string, Map<string, string>>();
+  // Fill-only: the SAME aliased pass also reads the live translations of every
+  // locale a group writes (one `translations(locale:)` alias per locale, the
+  // page divided by the locale count inside loadTranslatableState).
+  let digests: Map<string, Map<string, string>>;
+  let liveFilled = new Map<string, Map<string, Set<string>>>();
+  if (foreignResourceIds.length === 0) {
+    digests = new Map();
+  } else if (fillOnly) {
+    const liveLocales = [...new Set(groups.filter((g) => g.locale !== "").map((g) => g.locale))];
+    const state = await loadTranslatableState(gateway, foreignResourceIds, [...foreignKeys], { liveLocales });
+    digests = state.digests;
+    liveFilled = state.filled;
+  } else {
+    digests = await loadDigestsForRows(gateway, foreignResourceIds, [...foreignKeys]);
+  }
 
   // One-sided SEO saves (primary product/collection rows): read the untouched half LIVE, batched.
   const seoReadIds: string[] = [];
@@ -4512,6 +4697,9 @@ export async function applyBulkDiff(
     policy: changePolicy,
     repairPlan,
     primaryLocale: ctx.primaryLocale,
+    fillOnly,
+    live: liveFilled,
+    skips: { changed: 0, filled: 0 },
   };
   const failures: BulkFailure[] = [...selectFailures];
   let saved = 0;
@@ -4661,5 +4849,10 @@ export async function applyBulkDiff(
     failedRows: new Set(failures.map((f) => f.rowId)).size,
   });
 
-  return { saved, failures, ...(retranslation ? { retranslation } : {}) };
+  return {
+    saved,
+    failures,
+    ...(fillOnly ? { skippedChanged: deps.skips.changed, skippedFilled: deps.skips.filled } : {}),
+    ...(retranslation ? { retranslation } : {}),
+  };
 }

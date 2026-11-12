@@ -24,7 +24,7 @@ import {
   REMOVE_TRANSLATIONS,
 } from "../../graphql/content.mutations";
 import { logger } from "../../utils/logger.server";
-import { DIGEST_BATCH_CHUNK } from "./translation-digest.shared";
+import { DIGEST_BATCH_CHUNK, liveReadChunkSize } from "./translation-digest.shared";
 import { echoComparisonKey, findEchoFor } from "./translation-echo.shared";
 
 /** Minimal client: `ShopifyApiGateway` and `admin` both satisfy it. */
@@ -93,57 +93,133 @@ export async function fetchDigestsForResourceDetailed(
 }
 
 /**
- * Batch-fetch translation digests for many resources × several keys at once
- * (Plan §6.2 — the multi-key generalization of the seo-bulk-fix
- * loadTranslatableDigests). Aliased `a0..aN` sub-selections because Shopify
- * has no `translatableResourcesByIds`; chunked at DIGEST_BATCH_CHUNK,
- * deduplicated, and with a PER-ITEM fallback when a whole chunk fails.
- *
- * Returns resourceId → (key → digest). A resource that was queried but has no
- * digest for a key simply lacks that key in its inner map — the §6.3 rule
- * (one re-fetch, then cell error) is applied by the CALLER, not here. A
- * resource whose chunk AND per-item fallback both failed is absent from the
- * outer map entirely.
+ * What ONE aliased read learns about a set of resources: the digests, the
+ * live PRIMARY values (`withValues`) and which (locale, key) pairs already
+ * carry a GLOBAL translation (`liveLocales`).
  */
-export async function loadDigestsForRows(
+export interface TranslatableState {
+  /** resourceId -> key -> digest (as loadDigestsForRows). */
+  digests: Map<string, Map<string, string>>;
+  /** resourceId -> key -> the live primary value. Only with `withValues`; a
+   *  key Shopify lists without a value (or not at all) is absent. */
+  values: Map<string, Map<string, string>>;
+  /**
+   * resourceId -> locale -> keys that carry a NON-EMPTY global translation.
+   * Only with `liveLocales`, and ONLY for a resource (and locale) whose live
+   * read was ANSWERED: an absent resource or locale means "unknown", never
+   * "empty" -- a caller that fills must not write on an unknown.
+   */
+  filled: Map<string, Map<string, Set<string>>>;
+}
+
+interface LiveNode {
+  translatableContent?: { key: string; value?: string | null; digest: string | null }[];
+  [alias: string]: unknown;
+}
+
+/** The selection of one resource: content (digest, optionally value) plus one
+ *  `translations(locale:)` alias per live locale. ASCII only, no comments --
+ *  the text goes to Shopify verbatim (graphql-document-hygiene). */
+function stateSelection(withValues: boolean, localeVars: string[]): string {
+  const content = withValues ? "translatableContent { key value digest }" : "translatableContent { key digest }";
+  const live = localeVars.map((v, i) => `t${i}: translations(locale: ${v}) { key value }`).join(" ");
+  return live ? `${content} ${live}` : content;
+}
+
+function readNode(
+  id: string,
+  node: LiveNode | null | undefined,
+  wanted: string[],
+  liveLocales: string[],
+  withValues: boolean,
+  out: TranslatableState,
+): void {
+  const digests = new Map<string, string>();
+  const values = new Map<string, string>();
+  for (const entry of node?.translatableContent ?? []) {
+    if (!wanted.includes(entry.key)) continue;
+    if (entry.digest) digests.set(entry.key, entry.digest);
+    if (withValues && typeof entry.value === "string") values.set(entry.key, entry.value);
+  }
+  out.digests.set(id, digests);
+  if (withValues) out.values.set(id, values);
+  // A null node is a resource Shopify does not know (or could not answer):
+  // nothing is recorded, so the live state stays UNKNOWN.
+  if (!node || liveLocales.length === 0) return;
+  const byLocale = new Map<string, Set<string>>();
+  liveLocales.forEach((locale, i) => {
+    const rows = node[`t${i}`];
+    if (!Array.isArray(rows)) return;
+    const keys = new Set<string>();
+    for (const row of rows as { key?: string; value?: string | null }[]) {
+      if (row && typeof row.key === "string" && typeof row.value === "string" && row.value.trim() !== "") {
+        keys.add(row.key);
+      }
+    }
+    byLocale.set(locale, keys);
+  });
+  if (byLocale.size > 0) out.filled.set(id, byLocale);
+}
+
+/**
+ * Batch-fetch translation digests for many resources x several keys at once
+ * (Plan §6.2 -- the multi-key generalization of the seo-bulk-fix
+ * loadTranslatableDigests), optionally with the live primary values and the
+ * live emptiness of N locales folded into the SAME aliased query (fill-only
+ * writes: "is this still missing, and is it still the text that was
+ * translated?").
+ *
+ * Aliased `a0..aN` sub-selections because Shopify has no
+ * `translatableResourcesByIds`; chunked at DIGEST_BATCH_CHUNK -- DIVIDED by
+ * the locale count when `liveLocales` is given (liveReadChunkSize), because
+ * every locale alias adds query cost -- deduplicated, and with a PER-ITEM
+ * fallback when a whole chunk fails. Without `liveLocales`/`withValues` the
+ * query text is exactly the digest query it always was.
+ */
+export async function loadTranslatableState(
   gateway: GraphqlClient,
   resourceIds: string[],
   keys: string[],
-): Promise<Map<string, Map<string, string>>> {
-  const result = new Map<string, Map<string, string>>();
-  if (resourceIds.length === 0 || keys.length === 0) return result;
+  opts: { withValues?: boolean; liveLocales?: string[] } = {},
+): Promise<TranslatableState> {
+  const out: TranslatableState = { digests: new Map(), values: new Map(), filled: new Map() };
+  if (resourceIds.length === 0 || keys.length === 0) return out;
 
+  const withValues = opts.withValues === true;
+  const liveLocales = [...new Set(opts.liveLocales ?? [])];
   const unique = Array.from(new Set(resourceIds));
   const wanted = Array.from(new Set(keys));
+  const pageSize = liveLocales.length > 0 ? liveReadChunkSize(liveLocales.length) : DIGEST_BATCH_CHUNK;
+  const localeDefs = liveLocales.map((_, idx) => `$l${idx}: String!`);
+  const localeVariables: Record<string, string> = {};
+  liveLocales.forEach((locale, idx) => {
+    localeVariables[`l${idx}`] = locale;
+  });
+  const localeVarNames = liveLocales.map((_, idx) => `$l${idx}`);
+  const selection = stateSelection(withValues, localeVarNames);
 
-  for (let i = 0; i < unique.length; i += DIGEST_BATCH_CHUNK) {
-    const chunk = unique.slice(i, i + DIGEST_BATCH_CHUNK);
+  for (let i = 0; i < unique.length; i += pageSize) {
+    const chunk = unique.slice(i, i + pageSize);
 
     // Variable names $r0..$rN match alias names a0..aN, so parsing is
-    // index-driven. The query TEXT depends only on chunk.length, never on the
-    // GIDs — identical batch sizes stay cacheable server-side.
-    const varDefs = chunk.map((_, idx) => `$r${idx}: ID!`).join(", ");
+    // index-driven. The query TEXT depends only on chunk.length (and the
+    // locale count), never on the GIDs or locale codes -- identical batch
+    // sizes stay cacheable server-side.
+    const varDefs = [...chunk.map((_, idx) => `$r${idx}: ID!`), ...localeDefs].join(", ");
     const selections = chunk
-      .map(
-        (_, idx) =>
-          `a${idx}: translatableResource(resourceId: $r${idx}) { translatableContent { key digest } }`,
-      )
+      .map((_, idx) => `a${idx}: translatableResource(resourceId: $r${idx}) { ${selection} }`)
       .join("\n        ");
     const query = `#graphql
       query bulkEditorBatchDigests(${varDefs}) {
         ${selections}
       }`;
-    const variables: Record<string, string> = {};
+    const variables: Record<string, string> = { ...localeVariables };
     for (let idx = 0; idx < chunk.length; idx++) variables[`r${idx}`] = chunk[idx];
 
-    let parsed:
-      | Record<string, { translatableContent?: TranslatableContentEntry[] } | null>
-      | null = null;
+    let parsed: Record<string, LiveNode | null> | null = null;
     try {
       const response = await gateway.graphql(query, { variables });
-      const data = (await response.json()) as {
-        data?: Record<string, { translatableContent?: TranslatableContentEntry[] } | null>;
-      };
+      const data = (await response.json()) as { data?: Record<string, LiveNode | null> };
       parsed = data.data ?? null;
     } catch (err: unknown) {
       logger.warn("[BULK] Digest batch failed — falling back per item", {
@@ -156,22 +232,28 @@ export async function loadDigestsForRows(
 
     if (parsed) {
       for (let idx = 0; idx < chunk.length; idx++) {
-        const node = parsed[`a${idx}`];
-        const map = new Map<string, string>();
-        for (const entry of node?.translatableContent ?? []) {
-          if (entry.digest && wanted.includes(entry.key)) map.set(entry.key, entry.digest);
-        }
-        result.set(chunk[idx], map);
+        readNode(chunk[idx], parsed[`a${idx}`], wanted, liveLocales, withValues, out);
       }
       continue;
     }
 
-    // Per-item fallback: one bad chunk must not sink the run — each resource
+    // Per-item fallback: one bad chunk must not sink the run -- each resource
     // gets its own attempt; individual failures leave the id absent so the
-    // caller's re-fetch/cell-error rule takes over.
+    // caller's re-fetch/cell-error rule (or, for a live read, "unknown")
+    // takes over.
     for (const id of chunk) {
       try {
-        result.set(id, await fetchDigestsForResource(gateway, id, wanted));
+        const query1 = `#graphql
+      query bulkEditorTranslatableState($resourceId: ID!${liveLocales.length ? ", " + localeDefs.join(", ") : ""}) {
+        translatableResource(resourceId: $resourceId) { ${selection} }
+      }`;
+        const response = await gateway.graphql(query1, { variables: { resourceId: id, ...localeVariables } });
+        const data = (await response.json()) as {
+          data?: { translatableResource?: LiveNode | null };
+          errors?: { message: string }[];
+        };
+        if (data.errors && data.errors.length > 0) throw new Error(data.errors[0].message);
+        readNode(id, data.data?.translatableResource, wanted, liveLocales, withValues, out);
       } catch (err: unknown) {
         logger.warn("[BULK] Per-item digest fetch failed", {
           context: "Bulk",
@@ -181,7 +263,25 @@ export async function loadDigestsForRows(
       }
     }
   }
-  return result;
+  return out;
+}
+
+/**
+ * Digests only -- the historic entry point, now a thin view of
+ * loadTranslatableState (same query text, same chunking, same fallback).
+ *
+ * Returns resourceId -> (key -> digest). A resource that was queried but has no
+ * digest for a key simply lacks that key in its inner map -- the §6.3 rule
+ * (one re-fetch, then cell error) is applied by the CALLER, not here. A
+ * resource whose chunk AND per-item fallback both failed is absent from the
+ * outer map entirely.
+ */
+export async function loadDigestsForRows(
+  gateway: GraphqlClient,
+  resourceIds: string[],
+  keys: string[],
+): Promise<Map<string, Map<string, string>>> {
+  return (await loadTranslatableState(gateway, resourceIds, keys)).digests;
 }
 
 // ─── Verified register / remove ────────────────────────────────────────────
