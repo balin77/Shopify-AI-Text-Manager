@@ -284,6 +284,7 @@ import { IndexNowAutoSubmitService } from "./services/seo/index-now-auto-submit.
 import { SeoAuditAutoRunService } from "./services/seo/audit-auto-run.service";
 import { SeoCrawlAutoRunService } from "./services/seo/crawl-auto-run.service";
 import { TranslationDriftAutoRunService } from "./services/translations/translation-drift-auto-run.service";
+import { BulkTranslateBatchPollService } from "./services/bulk-editor/bulk-translate-batch-poll.service";
 
 /**
  * The managed-AI smoke test runs ONCE per process. It is a real provider call,
@@ -387,6 +388,10 @@ const enhancedAuthenticate = {
     // The change event Shopify does not send for pages, articles, blogs and
     // policies — see translation-drift-auto-run.service.ts.
     TranslationDriftAutoRunService.getInstance().start();
+
+    // Provider batches of "add missing translations" (PLAN_BULK_TRANSLATE_BATCHING 5.4):
+    // settles what was submitted -- collects, books, writes, cancels, gives up on the unreachable.
+    BulkTranslateBatchPollService.getInstance().start();
 
     // PLAN_MANAGED_AI_KEY §9.6 — does the operator credential actually ANSWER?
     // A table lookup cannot see a retired model id or a revoked key, and a
