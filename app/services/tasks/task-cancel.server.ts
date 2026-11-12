@@ -64,7 +64,8 @@ export async function cancelTask(db: CancelDb, shop: string, taskId: string): Pr
     try {
       await db.bulkTranslateBatch?.updateMany({
         where: { taskId, shop, state: "waiting" },
-        data: { state: "cancel_requested", cancelRequestedAt: new Date() },
+        // cancelRequestedAt means "provider cancel CONFIRMED": only the poller / submit set it, after a real cancel.
+        data: { state: "cancel_requested" },
       });
     } catch (error) {
       logger.warn("[Tasks] Could not mirror cancel_requested onto the batch row", {

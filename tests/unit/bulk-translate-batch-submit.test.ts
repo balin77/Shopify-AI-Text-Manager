@@ -546,21 +546,17 @@ describe("a row that names this batch is ours in ANY state (M3)", () => {
     expect(n).toBeGreaterThan(1);
     expect(h.cancel).not.toHaveBeenCalled();
   });
-  it("a re-read that keeps throwing: the batch is CANCELLED at the provider at once (even with the DB failing), cancelRequestedAt only after that confirmed cancel, no hold release", async () => {
+  it("a re-read that keeps throwing: the run is NOT cancelled from here; the row is handed to the poller as cancel_requested (conditional on submitting, no cancelRequestedAt), the task is not failed, no hold release", async () => {
     const db = makeDb({ taskStillOurs: false, rereadThrows: true });
     const out = await submitBulkTranslateBatch("task-1", { ...args(db, fakeService()), rereadRetryDelayMs: 0 });
     expect(out).toEqual({ ok: false, code: "task_not_ours" });
-    expect(db.bulkTranslateBatch.findUnique.mock.calls.length).toBeGreaterThanOrEqual(3);
-    expect(h.cancel).toHaveBeenCalledWith("msgbatch_1");
+    expect(db.bulkTranslateBatch.findUnique.mock.calls.length).toBeGreaterThanOrEqual(5);
+    expect(h.cancel).not.toHaveBeenCalled();
     const moves = db.calls.filter((c: any) => c.op === "row.updateMany" && c.arg.data.state === "cancel_requested");
-    expect(moves.length).toBeGreaterThan(0);
-    for (const m of moves) {
-      expect(m.arg.data.cancelRequestedAt).toBeUndefined();
-      expect(m.arg.where.state).toEqual({ in: ["submitting", "create_unknown"] });
-    }
-    const stamp = db.calls.find((c: any) => c.op === "row.updateMany" && c.arg.data.cancelRequestedAt);
-    expect(stamp).toBeDefined();
-    expect(db.calls.indexOf(stamp)).toBeGreaterThan(db.calls.indexOf(moves[0]));
+    expect(moves.length).toBe(1);
+    expect(moves[0].arg.data.cancelRequestedAt).toBeUndefined();
+    expect(moves[0].arg.where).toEqual({ id: expect.any(String), state: "submitting" });
+    expect(db.calls.some((c: any) => c.op === "row.updateMany" && c.arg.data.cancelRequestedAt)).toBe(false);
     expect(db.calls.map((c: any) => c.arg).find((a: any) => a.data?.status === "failed")).toBeUndefined();
     expect(h.release).not.toHaveBeenCalled();
   });

@@ -183,6 +183,20 @@ async function cancelAllAtProvider(transport: SettlementTransport, batchIds: str
   return confirmed;
 }
 
+/** True only when the provider shows EVERY batch ended (a failed or missing read is "not known to have ended"). */
+async function batchesEnded(transport: SettlementTransport | null, batchIds: string[]): Promise<boolean> {
+  if (!transport || batchIds.length === 0) return false;
+  try {
+    for (const id of batchIds) {
+      const status = await withDeadline(() => transport.retrieve(id));
+      if (!status.ended) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Settle the row and the task of a run that cannot go on. Conditional on the task still being open. */
 async function closeRun(
   db: PrismaClient,
@@ -299,10 +313,17 @@ async function handleOrphan(
 ): Promise<RowOutcome> {
   const { db } = deps;
   const batchIds = stringList(row.batchIds);
-  if (batchIds.length > 0 && transport && !row.cancelRequestedAt) {
+  let cancelConfirmed = batchIds.length === 0 || !!row.cancelRequestedAt;
+  if (!cancelConfirmed && transport) {
     if (await cancelAllAtProvider(transport, batchIds)) {
+      cancelConfirmed = true;
       await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { cancelRequestedAt: new Date() } });
     }
+  }
+  // Closed only when the cancel is CONFIRMED (now or earlier) or the provider shows the batch ENDED.
+  if (!cancelConfirmed && !(await batchesEnded(transport, batchIds))) {
+    logger.info("[BatchPoll] Orphan batch row: provider cancel not confirmed yet; retrying next tick", { context: "AI", batchRowId: row.id });
+    return "orphan";
   }
   // A confirmed cancel proves nothing (it takes effect asynchronously, and a batch that had ended ran): the
   // counts decide -- released only when nothing succeeded, booked pro rata otherwise, converted when unreadable at the end.
@@ -339,11 +360,15 @@ async function handleWithdrawal(deps: RowDeps, row: BulkTranslateBatch, token: s
       ? "configBlocked"
       : await noteFailedTick(deps, row, token, new Error(`settlement_${access.reason}`), null, CONSENT_GIVE_UP_CODE);
   }
-  if (batchIds.length > 0 && !row.cancelRequestedAt) {
+  let cancelConfirmed = batchIds.length === 0 || !!row.cancelRequestedAt;
+  if (!cancelConfirmed) {
     if (await cancelAllAtProvider(access.transport, batchIds)) {
+      cancelConfirmed = true;
       await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { cancelRequestedAt: new Date() } });
     }
   }
+  // No content is fetched; ended-ness is a status read. The row closes only after a confirmed cancel or an ended batch.
+  if (!cancelConfirmed && !(await batchesEnded(access.transport, batchIds))) return "consentWithdrawn";
   const outcome = await settleHold(row, access.transport, { final: false });
   if (outcome.kind === "pending") return "consentWithdrawn";
   await closeRun(db, row, token, { status: "failed", error: CONSENT_GIVE_UP_CODE });
@@ -376,10 +401,15 @@ async function reconcileUnknownCreate(
     return await noteFailedTick(deps, row, token, error, access.transport);
   }
   if (!search.found) return "waiting"; // nothing yet (or a running candidate that cannot be told from a stranger's)
-  await db.bulkTranslateBatch.updateMany({
+  const adopted = await db.bulkTranslateBatch.updateMany({
     where: { id: row.id, leaseToken: token },
     data: { batchIds: [search.batchId], state: cancelWanted ? "cancel_requested" : "waiting", failedTicks: 0, lastError: null },
   });
+  if (adopted.count === 0) {
+    // The row changed under us (lease lost, closed, adopted by the submit): re-read and leave it for the next tick.
+    await db.bulkTranslateBatch.findUnique({ where: { id: row.id }, select: { state: true, batchIds: true } }).catch(() => null);
+    return "waiting";
+  }
   const expiresAtMs = search.expiresAt ? Date.parse(search.expiresAt) : NaN;
   await db.task.updateMany({
     where: { id: row.taskId, status: { in: [...OPEN_BATCH_TASK_STATUSES] } },
@@ -445,6 +475,30 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
     return await reconcileUnknownCreate(deps, row, token, decision, cancelRequested);
   }
 
+  // 3b. A row that wants a cancel gets a provider attempt on EVERY tick until it is CONFIRMED (cancelRequestedAt):
+  //     it needs only the settlement credentials, never the shop's admin client, so an uninstalled shop's row
+  //     is retried too. No content is fetched and nothing is written here.
+  let cancelFailed = false;
+  if (cancelRequested && batchIds.length > 0 && !row.cancelRequestedAt) {
+    if (!decision.ok) {
+      // Own key gone / our configuration refuses: cannot cancel. The row is NOT closed; the absolute end converts.
+      logger.warn("[BatchPoll] Cancel wanted but no settlement access; the row waits for the absolute end", {
+        context: "AI",
+        batchRowId: row.id,
+        reason: decision.reason,
+      });
+      if (decision.reason === "ai_key_missing") return "keyMissing";
+      if (CONFIG_REFUSALS.includes(decision.reason)) return "configBlocked";
+      return await noteFailedTick(deps, row, token, new Error(`settlement_${decision.reason}`));
+    }
+    if (await cancelAllAtProvider(decision.transport, batchIds)) {
+      await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { cancelRequestedAt: new Date() } });
+      row = { ...row, cancelRequestedAt: new Date() };
+    } else {
+      cancelFailed = true;
+    }
+  }
+
   // 4. Shops we cannot talk to are skipped, not failed (uninstall cancels its own batches).
   let admin: unknown;
   try {
@@ -470,14 +524,7 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
   }
   const transport = decision.transport;
 
-  // 6. The merchant asked to cancel: tell the provider, then collect what is already paid for.
-  if (cancelRequested) {
-    try {
-      for (const id of batchIds) await withDeadline(() => transport.cancel(id));
-    } catch (error) {
-      return await noteFailedTick(deps, row, token, error, transport);
-    }
-  }
+  // 6. (the provider cancel was attempted in 3b; a confirmed one is never repeated)
 
   // 7. Where is the provider?
   let ended = batchIds.length > 0;
@@ -494,6 +541,10 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
     }
   } catch (error) {
     return await noteFailedTick(deps, row, token, error, transport);
+  }
+  if (!ended && cancelFailed) {
+    // The cancel was not confirmed and the batch still runs: a failed tick (counted, backed off, retried).
+    return await noteFailedTick(deps, row, token, new Error("provider_cancel_failed"), transport);
   }
   if (!ended) {
     // Still working: the task stays open and must not be cleaned up -- push its expiry past the provider's.

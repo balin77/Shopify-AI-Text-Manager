@@ -415,8 +415,8 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
         let reread = false;
         let lastReadError = "";
         const retryDelay = args.rereadRetryDelayMs ?? 300;
-        for (let attempt = 0; attempt < 3 && !reread; attempt++) {
-          if (attempt > 0 && retryDelay > 0) await new Promise((resolve) => setTimeout(resolve, retryDelay));
+        for (let attempt = 0; attempt < 5 && !reread; attempt++) {
+          if (attempt > 0 && retryDelay > 0) await new Promise((resolve) => setTimeout(resolve, retryDelay * attempt));
           try {
             [task, current] = await Promise.all([
               db.task.findUnique({ where: { id: taskId }, select: { status: true } }),
@@ -428,15 +428,22 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
           }
         }
         if (!reread) {
-          // The Task is provably no longer `submitting`, so this run lost it. The batch is paid for and cannot
-          // be owned: cancel it at the provider NOW (abandonCreated tries even while the database is failing) and
-          // hand the row to the poller; cancelRequestedAt is only ever set by a CONFIRMED cancel.
-          logger.error("[BulkTranslateBatch] Re-read after a lost flip failed; cancelling the batch", {
+          // The state of the run is UNKNOWN (the database does not answer): do not cancel from here on a guess.
+          // The row is handed to the poller as `cancel_requested` (conditional on it still being `submitting`;
+          // cancelRequestedAt stays unset = "provider cancel not confirmed"), which cancels at the provider with
+          // retries and settles the hold by the guiding rule. Rows already waiting / collecting are left untouched.
+          logger.error("[BulkTranslateBatch] Re-read after a lost flip failed; handing the row to the poller", {
             context: "AI",
             taskId,
             error: lastReadError,
           });
-          return await abandonCreated(created.batchId, "lost_flip_reread_failed", false);
+          await db.bulkTranslateBatch
+            .updateMany({
+              where: { id: row.id, state: "submitting" },
+              data: { state: "cancel_requested", lastError: "lost_flip_reread_failed" },
+            })
+            .catch(() => undefined);
+          return { ok: false, code: "task_not_ours" };
         }
         // A row in a state the poller still works (waiting, cancel_requested, collecting) that names this batch is ours.
         // NOT `done`: a done row is never polled or cancelled again (uninstall / recovery can set it while this

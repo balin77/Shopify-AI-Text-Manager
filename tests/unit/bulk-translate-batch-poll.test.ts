@@ -444,12 +444,96 @@ describe("cancel_requested (merchant cancel)", () => {
     expect(d.runCollect).not.toHaveBeenCalled();
   });
 
-  it("a cancel the provider refuses is a failed tick (counted), not a lost cancel", async () => {
+  it("a cancel the provider refuses while the batch still runs is a failed tick (counted); cancelRequestedAt stays unset, so the next tick cancels again", async () => {
     putTask("cancel_requested");
     putRow({ state: "cancel_requested" });
     h.cancel.mockRejectedValue(new Error("503"));
+    h.retrieve.mockResolvedValue({ providerStatus: "in_progress", ended: false });
     expect(await processBatchRow("row-1", deps())).toBe("failedTick");
     expect(h.rows.get("row-1").failedTicks).toBe(1);
+    expect(h.rows.get("row-1").cancelRequestedAt).toBeUndefined();
+    h.cancel.mockResolvedValue({ providerStatus: "canceling", ended: false });
+    await processBatchRow("row-1", deps({ now: new Date("2026-11-12T11:00:00Z") }));
+    expect(h.cancel).toHaveBeenCalledTimes(2);
+    expect(h.rows.get("row-1").cancelRequestedAt).toEqual(expect.any(Date));
+  });
+
+  it("a cancel that errors but the batch has ENDED: collection goes on (an ended batch needs no cancel)", async () => {
+    putTask("cancel_requested");
+    putRow({ state: "cancel_requested" });
+    h.cancel.mockRejectedValue(new Error("batch already ended"));
+    expect(await processBatchRow("row-1", deps())).toBe("collected");
+  });
+
+  it("a confirmed cancel (cancelRequestedAt set) is NOT repeated: an ended batch whose cancel would error still collects", async () => {
+    putTask("cancel_requested");
+    putRow({ state: "cancel_requested", cancelRequestedAt: new Date("2026-11-12T09:00:00Z") });
+    h.cancel.mockRejectedValue(new Error("batch already ended"));
+    expect(await processBatchRow("row-1", deps())).toBe("collected");
+    expect(h.cancel).not.toHaveBeenCalled();
+  });
+
+  it("a cancel_requested row of an UNINSTALLED shop still gets its provider cancel every tick; no content is fetched, nothing written", async () => {
+    putTask("cancel_requested");
+    putRow({ state: "cancel_requested" });
+    h.cancel.mockRejectedValue(new Error("503"));
+    const d = deps({ adminFor: async () => { throw new Error("shop uninstalled"); } });
+    expect(await processBatchRow("row-1", d)).toBe("skippedShop");
+    expect(h.cancel).toHaveBeenCalledTimes(1);
+    expect(h.rows.get("row-1").cancelRequestedAt).toBeUndefined();
+    expect(h.rows.get("row-1").state).toBe("cancel_requested");
+    h.cancel.mockResolvedValue({ providerStatus: "canceling", ended: false });
+    expect(await processBatchRow("row-1", d)).toBe("skippedShop");
+    expect(h.cancel).toHaveBeenCalledTimes(2);
+    expect(h.rows.get("row-1").cancelRequestedAt).toEqual(expect.any(Date));
+    expect(h.results).not.toHaveBeenCalled();
+    expect(d.runCollect).not.toHaveBeenCalled();
+    expect(h.release).not.toHaveBeenCalled();
+  });
+
+  it("no settlement access (own key gone): the row is NOT closed, left to the absolute end", async () => {
+    putTask("cancel_requested");
+    putRow({ state: "cancel_requested", source: "own" });
+    h.settle.mockResolvedValue({ ok: false, reason: "ai_key_missing" });
+    expect(await processBatchRow("row-1", deps())).toBe("keyMissing");
+    expect(h.rows.get("row-1").state).toBe("cancel_requested");
+    expect(h.tasks.get("task-1").status).toBe("cancel_requested");
+  });
+});
+
+describe("rule: an orphan / withdrawn row closes only after a CONFIRMED cancel or an ENDED batch", () => {
+  it("orphan, cancel fails, batch still running: row stays open, hold untouched; next tick retries the cancel", async () => {
+    putTask("failed");
+    h.cancel.mockRejectedValue(new Error("503"));
+    h.retrieve.mockResolvedValue({ providerStatus: "in_progress", ended: false });
+    expect(await processBatchRow("row-1", deps())).toBe("orphan");
+    expect(h.rows.get("row-1").state).toBe("waiting");
+    expect(h.rows.get("row-1").cancelRequestedAt).toBeUndefined();
+    expect(h.convert).not.toHaveBeenCalled();
+    expect(h.release).not.toHaveBeenCalled();
+    await processBatchRow("row-1", deps());
+    expect(h.cancel).toHaveBeenCalledTimes(2);
+  });
+
+  it("orphan, cancel fails but the provider shows the batch ENDED: settled and closed", async () => {
+    putTask("failed");
+    h.cancel.mockRejectedValue(new Error("already ended"));
+    expect(await processBatchRow("row-1", deps())).toBe("orphan");
+    expect(h.rows.get("row-1").state).toBe("done");
+    expect(h.convert).toHaveBeenCalled();
+  });
+
+  it("withdrawn, cancel fails, batch running: no close, no content fetch", async () => {
+    h.settings = WITHDRAWN;
+    h.cancel.mockRejectedValue(new Error("503"));
+    h.retrieve.mockResolvedValue({ providerStatus: "in_progress", ended: false });
+    const d = deps();
+    expect(await processBatchRow("row-1", d)).toBe("consentWithdrawn");
+    expect(h.rows.get("row-1").state).not.toBe("done");
+    expect(h.rows.get("row-1").cancelRequestedAt).toBeUndefined();
+    expect(h.results).not.toHaveBeenCalled();
+    expect(h.convert).not.toHaveBeenCalled();
+    expect(h.release).not.toHaveBeenCalled();
   });
 });
 
@@ -710,6 +794,17 @@ describe("a create of unknown outcome (create_unknown)", () => {
     expect(h.results).not.toHaveBeenCalled();
     expect(h.convert).not.toHaveBeenCalled();
     expect(h.release).not.toHaveBeenCalled();
+  });
+
+  it("an adopt whose conditional update matched nothing (lease taken over meanwhile) bails for this tick: no Task expiry write", async () => {
+    unknownRow();
+    h.find.mockImplementation(async () => {
+      h.rows.get("row-1").leaseToken = "someone-else";
+      return { found: true, batchId: "msgbatch_found", expiresAt: "2026-11-13T09:59:00Z" };
+    });
+    expect(await processBatchRow("row-1", deps())).toBe("waiting");
+    expect(h.tasks.get("task-1").expiresAt).toBeUndefined();
+    expect(h.rows.get("row-1").batchIds).toEqual([]);
   });
 
   it("a create_unknown row that already NAMES a batch goes to that id: no provider search, state waiting", async () => {

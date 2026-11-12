@@ -54,11 +54,13 @@ describe("cancelTask", () => {
     expect(rows[0].status).toBe("cancel_requested");
     expect(batchUpdateMany).toHaveBeenCalledWith({
       where: { taskId: "t1", shop: SHOP, state: "waiting" },
-      data: { state: "cancel_requested", cancelRequestedAt: expect.any(Date) },
+      data: { state: "cancel_requested" },
     });
     // never the manifest
     const data = (batchUpdateMany.mock.calls[0] as any[])[0].data;
     expect(Object.keys(data)).not.toContain("manifest");
+    // cancelRequestedAt = provider cancel CONFIRMED: never set by the mirror
+    expect(Object.keys(data)).not.toContain("cancelRequestedAt");
   });
 
   it("running and pending keep the old immediate semantics", async () => {
