@@ -2473,7 +2473,7 @@ export const en: Translation = {
       batchFailed:
         "The AI provider could not process this job, so nothing was written. Please start the run again, or run it immediately.",
       batchCollectFailed:
-        "The AI provider's result could not be applied completely. The cost has been booked and some translations may already be written. Please run it again: it only fills in what is still missing.",
+        "The AI provider's result could not be applied completely. The results were collected and some translations may already be saved. Please run it again: it only fills in what is still missing.",
       batchNotAvailable:
         "The cheaper mode is not available for this store, so nothing was started. Please run it immediately.",
       batchNothingToSubmit:

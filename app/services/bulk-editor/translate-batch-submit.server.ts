@@ -425,7 +425,16 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
             where: { id: row.id, state: "create_unknown" },
             data: { batchIds: [created.batchId], state: "waiting", failedTicks: 0, lastError: null },
           });
-          if (adopted.count === 0) return await abandonCreated(created.batchId, "task_not_ours", false);
+          if (adopted.count === 0) {
+            // The poller may have adopted this very batch first (its search found it): then it is still ours.
+            const again = await db.bulkTranslateBatch.findUnique({ where: { id: row.id }, select: { state: true, batchIds: true } });
+            const adoptedByPoller =
+              !!again &&
+              ["waiting", "cancel_requested"].includes(again.state) &&
+              Array.isArray(again.batchIds) &&
+              again.batchIds.includes(created.batchId);
+            if (!adoptedByPoller) return await abandonCreated(created.batchId, "task_not_ours", false);
+          }
         }
         if (!resumed) return await abandonCreated(created.batchId, "task_not_ours", false);
       }

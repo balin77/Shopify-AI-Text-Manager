@@ -78,7 +78,8 @@ const jobs = (count: number, extra = false) =>
     ],
   }));
 
-function makeDb(opts: { taskStillOurs?: boolean; idStoreFails?: boolean; txFails?: boolean; resumedByRecovery?: boolean; parkedByRecovery?: boolean } = {}) {
+function makeDb(opts: { taskStillOurs?: boolean; idStoreFails?: boolean; txFails?: boolean; resumedByRecovery?: boolean; parkedByRecovery?: boolean; adoptMisses?: boolean } = {}) {
+  let polledAdopted = false;
   const calls: { op: string; arg: any }[] = [];
   const rowState = { state: "submitting", batchIds: [] as string[], manifest: "" };
   const db: any = {
@@ -108,14 +109,18 @@ function makeDb(opts: { taskStillOurs?: boolean; idStoreFails?: boolean; txFails
       }),
       updateMany: vi.fn(async (arg: any) => {
         calls.push({ op: "row.updateMany", arg });
+        if (opts.adoptMisses && arg.where.state === "create_unknown") {
+          polledAdopted = true; // the poller got there first
+          return { count: 0 };
+        }
         if (arg.data.batchIds) rowState.batchIds = arg.data.batchIds;
         if (arg.data.state) rowState.state = arg.data.state;
         return { count: 1 };
       }),
       findUnique: vi.fn(async () => ({
         id: "row-1", provider: "claude", model: "claude-haiku-4-5", source: "managed", reservationState: "held",
-        batchIds: opts.resumedByRecovery ? ["msgbatch_1"] : opts.parkedByRecovery ? [] : rowState.batchIds,
-        state: opts.resumedByRecovery ? "waiting" : opts.parkedByRecovery ? "create_unknown" : rowState.state,
+        batchIds: opts.resumedByRecovery || polledAdopted ? ["msgbatch_1"] : opts.parkedByRecovery ? [] : rowState.batchIds,
+        state: polledAdopted ? "waiting" : opts.resumedByRecovery ? "waiting" : opts.parkedByRecovery ? "create_unknown" : rowState.state,
         manifest: rowState.manifest,
       })),
     },
@@ -515,6 +520,16 @@ describe("a row parked as create_unknown by a recovery while the runner was aliv
     expect(h.release).not.toHaveBeenCalled();
     const adopt = db.calls.find((c: any) => c.op === "row.updateMany" && c.arg.where.state === "create_unknown");
     expect(adopt.arg.data).toMatchObject({ batchIds: ["msgbatch_1"], state: "waiting" });
+  });
+});
+
+describe("the adopt of a create_unknown row matches nothing", () => {
+  it("the poller adopted the batch first (row waiting, names the batch): still ours, nothing is cancelled or abandoned", async () => {
+    const db = makeDb({ taskStillOurs: false, parkedByRecovery: true, adoptMisses: true });
+    const out = await submitBulkTranslateBatch("task-1", args(db, fakeService()));
+    expect(out).toMatchObject({ ok: true, batchId: "msgbatch_1" });
+    expect(h.cancel).not.toHaveBeenCalled();
+    expect(h.release).not.toHaveBeenCalled();
   });
 });
 

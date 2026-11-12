@@ -522,6 +522,34 @@ describe("a provider that stops answering", () => {
     expect(h.release).toHaveBeenCalledWith("row-1");
   });
 
+  it("an EARLIER tick reached the collect, the last one fails at a status read: given up as batch_collect_failed, never 'nothing was written'", async () => {
+    h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
+    h.rows.get("row-1").lastError = "batch_collect_failed:results_incomplete:0/1";
+    h.retrieve.mockRejectedValue(new Error("403"));
+    expect(await processBatchRow("row-1", deps())).toBe("unreachable");
+    expect(h.tasks.get("task-1")).toMatchObject({ status: "failed", error: "batch_collect_failed" });
+  });
+
+  it("collect failures add up across ticks: the counter is not reset by step 8 when the row carries a collect failure", async () => {
+    h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
+    h.rows.get("row-1").lastError = "batch_collect_failed:booking_failed";
+    h.booking.mockResolvedValue({ applied: false, reason: "failed" });
+    expect(await processBatchRow("row-1", deps())).toBe("unreachable");
+    expect(h.tasks.get("task-1")).toMatchObject({ error: "batch_collect_failed" });
+  });
+
+  it("a collect failure is marked in lastError, and a later early failure keeps the mark", async () => {
+    h.booking.mockResolvedValue({ applied: false, reason: "failed" });
+    await processBatchRow("row-1", deps());
+    expect(h.rows.get("row-1").lastError).toMatch(/^batch_collect_failed:/);
+    h.rows.get("row-1").leaseToken = null;
+    h.rows.get("row-1").updatedAt = new Date("2026-11-12T00:00:00Z");
+    h.retrieve.mockRejectedValue(new Error("403"));
+    await processBatchRow("row-1", deps());
+    expect(h.rows.get("row-1").lastError).toMatch(/^batch_collect_failed:/);
+    expect(h.rows.get("row-1").failedTicks).toBe(2);
+  });
+
   it("a hold is settled BEFORE the row is marked done (the sweep must never see a done row with a hold that should be converted)", async () => {
     h.retrieve.mockRejectedValue(new Error("403"));
     h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
@@ -741,6 +769,7 @@ describe("a collect that stays open is counted and given up on (batch_collect_fa
 
   it(`after ${MAX_FAILED_TICKS} in a row: the hold is settled FIRST (pro rata, never released), then the Task fails with batch_collect_failed`, async () => {
     h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
+    h.rows.get("row-1").lastError = "batch_collect_failed:batch_collect_failed"; // eleven earlier collects failed (the counter is kept)
     let stateAtConvert = "";
     h.convert.mockImplementation(async () => { stateAtConvert = h.rows.get("row-1").state; return { applied: true, micros: 9 }; });
     expect(await processBatchRow("row-1", staysOpen())).toBe("unreachable");

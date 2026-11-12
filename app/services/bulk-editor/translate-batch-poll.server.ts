@@ -205,6 +205,10 @@ async function closeRun(
   });
 }
 
+function isCollectMarked(lastError: string | null | undefined): boolean {
+  return (lastError ?? "").startsWith(BATCH_COLLECT_FAILED_ERROR);
+}
+
 /** What the Task and the code say when a run is given up on after MAX_FAILED_TICKS. */
 function giveUpOutcome(row: Pick<BulkTranslateBatch, "batchIds">, errorCode?: string) {
   if (errorCode) return { status: "failed", error: errorCode };
@@ -226,18 +230,34 @@ async function noteFailedTick(
   giveUpCode?: string,
 ): Promise<RowOutcome> {
   const { db } = deps;
-  const failedTicks = row.failedTicks + 1;
-  logger.warn("[BatchPoll] Tick failed for a batch", { context: "AI", batchRowId: row.id, failedTicks, error: messageOf(error) });
+  // Read the row FRESH: the in-memory copy is from the start of the tick, and step 8 rewrites the counter and the
+  // state in the database. The counter and the "a collect was reached" evidence are the DATABASE's.
+  const fresh = await db.bulkTranslateBatch
+    .findUnique({ where: { id: row.id }, select: { failedTicks: true, lastError: true, reservationState: true, source: true } })
+    .catch(() => null);
+  const storedTicks = fresh?.failedTicks ?? row.failedTicks;
+  const failedTicks = storedTicks + 1;
+  // A failure inside the collect (results fetch, booking, write) is marked in `lastError`. The mark outlives later
+  // ticks that fail EARLIER (a status read): by then the cost may be booked and writes may exist, so the give-up
+  // must say "collect failed", never "nothing was written". A booking that left `held` is the same evidence.
+  const collectPhase = row.state === "collecting";
+  const priorCollect = isCollectMarked(fresh?.lastError);
+  const bookedAlready = fresh?.source === "managed" && !!fresh.reservationState && fresh.reservationState !== "held";
+  const collectReached = collectPhase || priorCollect || bookedAlready;
+  const errorText = messageOf(error);
+  const marked = (collectPhase || priorCollect) && !isCollectMarked(errorText) ? `${BATCH_COLLECT_FAILED_ERROR}:${errorText}` : errorText;
+  const lastError = marked.substring(0, 500);
+  logger.warn("[BatchPoll] Tick failed for a batch", { context: "AI", batchRowId: row.id, failedTicks, error: errorText });
   if (failedTicks >= MAX_FAILED_TICKS) {
     const outcome = await settleHold(row, transport, { final: true });
     if (outcome.kind !== "pending") {
-      await closeRun(db, row, token, giveUpOutcome(row, giveUpCode));
+      await closeRun(db, row, token, giveUpOutcome(row, giveUpCode ?? (collectReached ? BATCH_COLLECT_FAILED_ERROR : undefined)));
       return "unreachable";
     }
   }
   await db.bulkTranslateBatch.updateMany({
     where: { id: row.id, leaseToken: token },
-    data: { failedTicks, lastError: messageOf(error).substring(0, 500), state: row.state === "collecting" ? "waiting" : row.state },
+    data: { failedTicks, lastError, state: row.state === "collecting" ? "waiting" : row.state },
   });
   return "failedTick";
 }
@@ -472,7 +492,9 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
   }
 
   // 8. ENDED: fetch the results (the paid-for part of a cancelled batch included).
-  await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { state: "collecting", failedTicks: 0 } });
+  await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { state: "collecting", ...(isCollectMarked(row.lastError) ? {} : { failedTicks: 0 }) } });
+  // The counter is NOT reset when an earlier tick already failed inside the collect: those failures must add up
+  // to the give-up, or a collect that fails every time would restart its count on every tick and never end.
   const results = new Map<string, SettlementResultItem>();
   try {
     for (const id of batchIds) {
