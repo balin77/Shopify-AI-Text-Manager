@@ -15,22 +15,31 @@ const h = vi.hoisted(() => ({
   batchUpdateMany: vi.fn(async (_a: unknown) => ({ count: 1 })),
   taskUpdateMany: vi.fn(async (_a: unknown) => ({ count: 1 })),
   release: vi.fn(async (_id: string): Promise<unknown> => ({ applied: true, micros: 100 })),
+  convert: vi.fn(async (_id: string): Promise<unknown> => ({ applied: true, micros: 100 })),
+  heldRows: [] as any[],
 }));
 
 vi.mock('~/db.server', () => ({
   db: {
     bulkTranslateBatch: {
-      findMany: vi.fn(async () => {
+      findMany: vi.fn(async (args: any) => {
         if (h.findManyError) throw h.findManyError;
+        // the sweep of OTHER rows that still hold a reservation
+        if (args?.where?.reservationState === 'held') return h.heldRows;
         return h.rows;
       }),
+      // the settlement accessor re-loads the row by id inside ai-credentials
+      findUnique: vi.fn(async ({ where }: any) => [...h.rows, ...h.heldRows].find((r) => r.id === where.id) ?? null),
       updateMany: (a: unknown) => h.batchUpdateMany(a),
     },
     task: { updateMany: (a: unknown) => h.taskUpdateMany(a) },
     aISettings: { findUnique: vi.fn(async () => h.settings) },
   },
 }));
-vi.mock('~/services/ai/usage-meter.server', () => ({ releaseBudget: (id: string) => h.release(id) }));
+vi.mock('~/services/ai/usage-meter.server', () => ({
+  releaseBudget: (id: string) => h.release(id),
+  convertReservation: (id: string) => h.convert(id),
+}));
 vi.mock('~/utils/encryption.server', () => ({ tryDecryptApiKey: (v: string | null | undefined) => v ?? null }));
 const warn = vi.fn();
 vi.mock('~/utils/logger.server', () => ({
@@ -38,7 +47,12 @@ vi.mock('~/utils/logger.server', () => ({
   loggers: { ai: vi.fn() },
 }));
 
-import { cancelOpenBatches, OPEN_BATCH_STATES } from '~/services/bulk-editor/translate-batch-cancel.server';
+import {
+  cancelOpenBatches,
+  OPEN_BATCH_STATES,
+  OVERALL_DEADLINE_MS,
+  PROVIDER_CALL_DEADLINE_MS,
+} from '~/services/bulk-editor/translate-batch-cancel.server';
 import { __setSettlementOpsFactoryForTests } from '~/services/ai/ai-credentials.server';
 import type { SettlementProviderOps } from '~/services/ai/batch-settlement.shared';
 
@@ -88,12 +102,15 @@ beforeEach(() => {
   process.env.MANAGED_AI_MODEL = 'claude-haiku-4-5';
   process.env.MANAGED_AI_API_KEY = 'sk-operator';
   h.rows = [];
+  h.heldRows = [];
   h.findManyError = null;
   h.settings = null;
   h.batchUpdateMany.mockClear();
   h.taskUpdateMany.mockClear();
   h.release.mockClear();
+  h.convert.mockClear();
   h.release.mockResolvedValue({ applied: true, micros: 100 });
+  h.convert.mockResolvedValue({ applied: true, micros: 100 });
   warn.mockClear();
 });
 afterEach(() => {
@@ -107,7 +124,7 @@ afterEach(() => {
 describe('cancelOpenBatches', () => {
   it('a shop with no open batch is a no-op', async () => {
     const { calls } = opsRig();
-    expect(await cancelOpenBatches(SHOP)).toEqual({ rows: 0, cancelled: 0, failed: 0, released: 0 });
+    expect(await cancelOpenBatches(SHOP)).toEqual({ rows: 0, cancelled: 0, failed: 0, released: 0, converted: 0 });
     expect(calls).toEqual([]);
     expect(h.batchUpdateMany).not.toHaveBeenCalled();
   });
@@ -118,7 +135,7 @@ describe('cancelOpenBatches', () => {
 
     const res = await cancelOpenBatches(SHOP);
 
-    expect(res).toEqual({ rows: 1, cancelled: 2, failed: 0, released: 1 });
+    expect(res).toEqual({ rows: 1, cancelled: 2, failed: 0, released: 1, converted: 0 });
     expect(calls).toEqual(['cancel:msgbatch_1', 'cancel:msgbatch_2', 'deleteFile:file_in']);
     expect(h.batchUpdateMany).toHaveBeenCalledWith({
       where: { id: 'row-1', state: { in: [...OPEN_BATCH_STATES] } },
@@ -157,21 +174,26 @@ describe('cancelOpenBatches', () => {
 
     const res = await cancelOpenBatches(SHOP);
 
-    expect(res).toMatchObject({ rows: 1, cancelled: 1, failed: 1, released: 1 });
+    // one cancel was not confirmed: that batch may still bill, so the hold is BOOKED (M5), not released
+    expect(res).toMatchObject({ rows: 1, cancelled: 1, failed: 1, released: 0, converted: 1 });
     expect(calls).toContain('cancel:msgbatch_2');
     expect(calls).toContain('deleteFile:file_in');
-    expect(h.release).toHaveBeenCalled();
+    expect(h.convert).toHaveBeenCalledWith('row-1');
+    expect(h.release).not.toHaveBeenCalled();
     expect(warn.mock.calls.some((c) => String(c[0]).includes('provider 503'))).toBe(true);
   });
 
-  it('before the provider calls exist (default stub) the rows are still marked and the hold released, nothing throws', async () => {
-    h.rows = [row()];
+  it('a provider that cannot be reached: the rows are still marked, the hold is BOOKED (not released), nothing throws', async () => {
+    h.rows = [row({ provider: 'openai' })]; // no real provider calls for openai yet: the stub says so
+    process.env.MANAGED_AI_PROVIDER = 'openai';
+    process.env.MANAGED_AI_MODEL = 'gpt-5-nano';
     __setSettlementOpsFactoryForTests(null);
     const res = await cancelOpenBatches(SHOP);
     expect(res.rows).toBe(1);
     expect(res.cancelled).toBe(0);
     expect(res.failed).toBeGreaterThan(0);
-    expect(res.released).toBe(1);
+    expect(res.released).toBe(0);
+    expect(res.converted).toBe(1);
     expect(h.batchUpdateMany).toHaveBeenCalled();
   });
 
@@ -180,7 +202,8 @@ describe('cancelOpenBatches', () => {
     const { calls } = opsRig();
     process.env.MANAGED_AI_ENABLED = 'false';
     const res = await cancelOpenBatches(SHOP);
-    expect(res).toMatchObject({ rows: 1, cancelled: 0, failed: 1, released: 1 });
+    // no settlement access = no confirmed cancel: the hold becomes the charge
+    expect(res).toMatchObject({ rows: 1, cancelled: 0, failed: 1, released: 0, converted: 1 });
     expect(calls).toEqual([]);
     expect(h.batchUpdateMany).toHaveBeenCalled();
   });
@@ -207,7 +230,7 @@ describe('cancelOpenBatches', () => {
     h.rows = [row({ state: 'submitting', batchIds: [], fileIds: [] })];
     const { calls } = opsRig();
     const res = await cancelOpenBatches(SHOP);
-    expect(res).toEqual({ rows: 1, cancelled: 0, failed: 0, released: 1 });
+    expect(res).toEqual({ rows: 1, cancelled: 0, failed: 0, released: 1, converted: 0 });
     expect(calls).toEqual([]);
   });
 
@@ -226,5 +249,53 @@ describe('cancelOpenBatches', () => {
     expect(res.rows).toBe(2);
     expect(res.failed).toBe(1);
     expect(res.released).toBe(1);
+  });
+
+  it('releases the hold of EVERY other row of the shop that still holds one, whatever its state (M2)', async () => {
+    h.rows = [row()];
+    h.heldRows = [
+      row({ id: 'row-done', taskId: 'task-done', state: 'done', batchIds: [], fileIds: [], reservationState: 'held' }),
+      row({ id: 'row-1', reservationState: 'held' }), // an open row is handled once, not twice
+    ];
+    opsRig();
+    const res = await cancelOpenBatches(SHOP);
+    expect(h.release.mock.calls.map((c) => c[0]).sort()).toEqual(['row-1', 'row-done']);
+    expect(res.released).toBe(2);
+  });
+
+  it('a provider call that hangs hits its own deadline: the redaction does not wait for it, the hold is booked', async () => {
+    vi.useFakeTimers();
+    try {
+      h.rows = [row({ batchIds: ['msgbatch_1'], fileIds: [] })];
+      opsRig({ cancel: vi.fn(() => new Promise<never>(() => undefined)) });
+      const pending = cancelOpenBatches(SHOP);
+      await vi.advanceTimersByTimeAsync(PROVIDER_CALL_DEADLINE_MS + 100);
+      const res = await pending;
+      expect(res).toMatchObject({ cancelled: 0, failed: 1, converted: 1, released: 0 });
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('exceeded'))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('after the overall deadline further provider calls are skipped and counted, never hung on', async () => {
+    vi.useFakeTimers();
+    try {
+      h.rows = [
+        row({ id: 'a', taskId: 'ta', batchIds: ['b1'], fileIds: [] }),
+        row({ id: 'b', taskId: 'tb', batchIds: ['b2'], fileIds: [] }),
+      ];
+      const cancel = vi.fn(() => new Promise<never>(() => undefined));
+      opsRig({ cancel });
+      const pending = cancelOpenBatches(SHOP);
+      // first row hangs 15 s; push the clock past the overall deadline before the second row starts
+      await vi.advanceTimersByTimeAsync(OVERALL_DEADLINE_MS + 1000);
+      const res = await pending;
+      expect(res.rows).toBe(2);
+      expect(cancel.mock.calls.length).toBeLessThanOrEqual(2);
+      expect(res.converted).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
