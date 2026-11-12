@@ -2003,6 +2003,15 @@ export interface BulkDiffEntry {
   expected?: Record<string, string>;
 }
 
+/** Reserved keys of a `BulkDiffEntry.expected` map (fill-only mode). Real keys
+ *  are Shopify GIDs, which never start with "#". */
+export const EXPECTED_ORDER_KEY = "#order";
+/** Value recorded for a target whose key Shopify did not list at plan time: ANY
+ *  digest found at write time then reads as a changed source. */
+export const EXPECTED_ABSENT = "#absent";
+/** The ordered target-id list of a cell, as stored under EXPECTED_ORDER_KEY. */
+export const expectedOrderOf = (targetIds: string[]): string => targetIds.join(",");
+
 export interface BulkFailure {
   rowId: string;
   rowType: BulkRowType;

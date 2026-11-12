@@ -136,6 +136,9 @@ import {
   type BulkApplyResult,
   type BulkFailure,
   type ColumnDescriptor,
+  EXPECTED_ABSENT,
+  EXPECTED_ORDER_KEY,
+  expectedOrderOf,
 } from "./columns.shared";
 import { moneyToDecimalString } from "../product-variant-sync.server";
 import { writeMetaobjectFields, type MetaobjectFieldWrite } from "../metaobject-write.server";
@@ -362,12 +365,24 @@ function fillOnlyVerdict(
   locale: string,
   key: string,
   digest: string | undefined,
-  expected: string | undefined,
+  /** The cell's whole plan-time `expected` map (undefined = the cell carried none). */
+  expectedMap: Record<string, string> | undefined,
 ): "ok" | "unknown" | "filled" | "changed" {
   const live = deps.live.get(resourceId)?.get(locale);
   if (!live) return "unknown";
   if (live.has(key)) return "filled";
-  if (expected !== undefined && digest !== undefined && digest !== expected) return "changed";
+  if (expectedMap !== undefined) {
+    // The plan recorded every target it read: a target it did not know (a
+    // featured image or metafield replaced since) is a different resource.
+    const expected = expectedMap[resourceId];
+    if (expected === undefined) return "changed";
+    if (expected === EXPECTED_ABSENT) {
+      // The key was not listed at plan time: any digest now is a new text.
+      if (digest !== undefined) return "changed";
+    } else if (digest !== undefined && digest !== expected) {
+      return "changed";
+    }
+  }
   return "ok";
 }
 
@@ -3210,7 +3225,7 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         locale,
         write.key,
         digest,
-        group.expected?.[write.columnId]?.[resourceId],
+        group.expected?.[write.columnId],
       );
       if (verdict === "unknown") {
         failures.push(failureOf(group, FILL_UNKNOWN_MESSAGE, write.columnId));
@@ -3532,7 +3547,7 @@ async function writeFeaturedImageAltTranslation(
       locale,
       "alt",
       deps.digests.get(imageResourceId)?.get("alt"),
-      group.expected?.[cell.columnId]?.[imageResourceId],
+      group.expected?.[cell.columnId],
     );
     if (verdict === "unknown") return FILL_UNKNOWN_MESSAGE;
     if (verdict === "filled" || verdict === "changed") return { skipped: verdict };
@@ -3713,6 +3728,17 @@ async function persistSubResourceTranslations(
       pairs = [{ target: targets[0], value: cell.value }];
     }
 
+    // Fill-only: the cell must address the SAME targets in the SAME order the
+    // plan translated (option values pair by position: a value added, removed
+    // or reordered since would put a text on the wrong entry).
+    if (deps.fillOnly) {
+      const plannedOrder = group.expected?.[cell.columnId]?.[EXPECTED_ORDER_KEY];
+      if (plannedOrder !== undefined && plannedOrder !== expectedOrderOf(pairs.map((p) => p.target.resourceId))) {
+        deps.skips.changed++;
+        continue;
+      }
+    }
+
     let cellFailed: string | null = null;
     const claimed: string[] = [];
     // Fill-only: targets left alone on purpose (see FillSkip). An option-VALUES
@@ -3725,7 +3751,7 @@ async function persistSubResourceTranslations(
         pair.target,
         pair.value,
         deps,
-        group.expected?.[cell.columnId]?.[pair.target.resourceId],
+        group.expected?.[cell.columnId],
       );
       if (outcome !== null && typeof outcome === "object") {
         cellSkips[outcome.skipped]++;
@@ -3791,7 +3817,7 @@ async function persistSubResourceTranslations(
     target: SubResourceTarget,
     value: string,
     persistDeps: PersistDeps,
-    expectedDigest?: string,
+    expectedMap?: Record<string, string>,
   ): Promise<string | null | FillSkip> {
     // Clearing: Shopify rejects blank option/metafield translations, so a
     // cleared cell REMOVES the translation — and the local row only goes when
@@ -3827,7 +3853,7 @@ async function persistSubResourceTranslations(
         locale,
         target.key,
         persistDeps.digests.get(target.resourceId)?.get(target.key),
-        expectedDigest,
+        expectedMap,
       );
       if (verdict === "unknown") return FILL_UNKNOWN_MESSAGE;
       if (verdict === "filled" || verdict === "changed") return { skipped: verdict };

@@ -63,8 +63,8 @@ describe("planTranslateRead", () => {
     expect(plan.jobs).toHaveLength(1);
     expect(plan.jobs[0].cells).toHaveLength(2);
     expect(plan.skippedChanged).toBe(0);
-    expect(plan.expected.get(planCellKey(P1, "field.title"))).toEqual({ [P1]: "dt" });
-    expect(plan.expected.get(planCellKey(P1, "field.descriptionHtml"))).toEqual({ [P1]: "db" });
+    expect(plan.expected.get(planCellKey(P1, "field.title"))).toEqual({ [P1]: "dt", "#order": P1 });
+    expect(plan.expected.get(planCellKey(P1, "field.descriptionHtml"))).toEqual({ [P1]: "db", "#order": P1 });
   });
 
   it("drops a cell whose source changed at Shopify (counted in UNITS, not a failure); line endings and padding do not count as change", async () => {
@@ -78,6 +78,7 @@ describe("planTranslateRead", () => {
     expect(plan.failures).toEqual([]);
     expect(plan.jobs[0].cells.map((c) => c.column.id)).toEqual(["field.descriptionHtml"]);
     expect(plan.expected.has(planCellKey(P1, "field.title"))).toBe(false);
+    expect(plan.mismatchesByKey).toEqual({ title: 3 });
   });
 
   it("a job with no cell left disappears", async () => {
@@ -111,13 +112,13 @@ describe("planTranslateRead", () => {
     expect(plan.failures).toHaveLength(1);
   });
 
-  it("a key Shopify does not list is left to the write path's own digest rule (no expectation, not dropped)", async () => {
+  it("a key Shopify does not list is left to the write path's own digest rule (a sentinel expectation, not dropped)", async () => {
     const { gateway } = gatewayFor({ [P1]: { title: { value: "Scarf", digest: "dt" } } });
     const plan = await planTranslateRead({ db: noDb, shop: SHOP, gateway, rowType: "product" }, [
       job(P1, [cell("field.seoTitle", "SEO scarf")]),
     ]);
     expect(plan.jobs[0].cells).toHaveLength(1);
-    expect(plan.expected.has(planCellKey(P1, "field.seoTitle"))).toBe(false);
+    expect(plan.expected.get(planCellKey(P1, "field.seoTitle"))).toEqual({ [P1]: "#absent", "#order": P1 });
   });
 
   it("a metafield and an option-values cell are read on their OWN resources, entry by entry", async () => {
@@ -150,8 +151,8 @@ describe("planTranslateRead", () => {
       ]),
     ]);
     expect(plan.jobs[0].cells).toHaveLength(2);
-    expect(plan.expected.get(planCellKey(P1, metafieldColumnId("custom", "care")))).toEqual({ [MF]: "dm" });
-    expect(plan.expected.get(planCellKey(P1, optionColumnId(1, "values")))).toEqual({ [V1]: "d1", [V2]: "d2" });
+    expect(plan.expected.get(planCellKey(P1, metafieldColumnId("custom", "care")))).toEqual({ [MF]: "dm", "#order": MF });
+    expect(plan.expected.get(planCellKey(P1, optionColumnId(1, "values")))).toEqual({ [V1]: "d1", [V2]: "d2", "#order": `${V1},${V2}` });
   });
 
   it("an option-values cell is dropped when ANY of its entries changed", async () => {
@@ -193,7 +194,7 @@ describe("planTranslateRead", () => {
       job(C1, [{ column: alt, source: "Blue vase", locales: ["fr"] }]),
       job(C2, [{ column: alt, source: "Red vase", locales: ["fr"] }]),
     ]);
-    expect(plan.expected.get(planCellKey(C1, "img.featuredAlt"))).toEqual({ [IMG]: "da" });
+    expect(plan.expected.get(planCellKey(C1, "img.featuredAlt"))).toEqual({ [IMG]: "da", "#order": IMG });
     expect(plan.failures).toEqual([expect.objectContaining({ rowId: C2 })]);
     expect(plan.jobs.map((j) => j.rowId)).toEqual([C1]);
   });

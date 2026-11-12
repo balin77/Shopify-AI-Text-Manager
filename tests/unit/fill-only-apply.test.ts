@@ -421,3 +421,114 @@ describe("fillOnly — query shape and cost", () => {
     expect(groups[0].expected).toEqual({ "field.title": { [PRODUCT]: "d1" } });
   });
 });
+
+describe("fillOnly — the plan's expected map must cover the write's targets (H1)", () => {
+  const OPTION_ID = "gid://shopify/ProductOption/5";
+  const V1 = "gid://shopify/ProductOptionValue/1";
+  const V2 = "gid://shopify/ProductOptionValue/2";
+  const optionDbWith = (valueIds: string[]) =>
+    mockDb({
+      productMetafield: { findMany: vi.fn(async () => []) },
+      productOption: {
+        findMany: vi.fn(async () => [
+          {
+            id: OPTION_ID,
+            productId: PRODUCT,
+            position: 1,
+            values: JSON.stringify(valueIds.map((id, i) => ({ id, name: `v${i}` }))),
+            linkedMetafieldKey: null,
+          },
+        ]),
+      },
+    });
+
+  it("option values reordered since the plan: the whole cell is skippedChanged", async () => {
+    const { admin, registered } = shopify({
+      [V1]: { content: { name: "dv1" }, translations: { fr: {} } },
+      [V2]: { content: { name: "dv2" }, translations: { fr: {} } },
+    });
+    const result = await run(admin, optionDbWith([V2, V1]), [
+      cell(optionColumnId(1, "values"), "Rouge | Bleu", {
+        expected: { [V1]: "dv1", [V2]: "dv2", "#order": `${V1},${V2}` },
+      }),
+    ]);
+    expect(registered).toEqual([]);
+    expect(result.skippedChanged).toBe(1);
+  });
+
+  it("option values in the planned order are written", async () => {
+    const { admin, registered } = shopify({
+      [V1]: { content: { name: "dv1" }, translations: { fr: {} } },
+      [V2]: { content: { name: "dv2" }, translations: { fr: {} } },
+    });
+    await run(admin, optionDbWith([V1, V2]), [
+      cell(optionColumnId(1, "values"), "Rouge | Bleu", {
+        expected: { [V1]: "dv1", [V2]: "dv2", "#order": `${V1},${V2}` },
+      }),
+    ]);
+    expect(registered).toHaveLength(2);
+  });
+
+  it("a target the plan did not know (an added option value) is changed", async () => {
+    const { admin, registered } = shopify({
+      [V1]: { content: { name: "dv1" }, translations: { fr: {} } },
+      [V2]: { content: { name: "dv2" }, translations: { fr: {} } },
+    });
+    await run(admin, optionDbWith([V1, V2]), [
+      cell(optionColumnId(1, "values"), "Rouge | Bleu", { expected: { [V1]: "dv1" } }),
+    ]);
+    expect(registered.map((r) => r.resourceId)).toEqual([V1]);
+  });
+
+  it("a metafield recreated under a new GID is changed, not written", async () => {
+    const OLD = "gid://shopify/Metafield/3";
+    const NEW = "gid://shopify/Metafield/4";
+    const db = mockDb({
+      productMetafield: {
+        findMany: vi.fn(async () => [{ id: NEW, productId: PRODUCT, namespace: "custom", key: "care" }]),
+      },
+      productOption: { findMany: vi.fn(async () => []) },
+    });
+    const cols = columnsByType([{ namespace: "custom", key: "care", type: "single_line_text_field" }]);
+    const { admin, registered } = shopify({ [NEW]: { content: { value: "dn" }, translations: { fr: {} } } });
+    const result = await run(
+      admin,
+      db,
+      [cell(metafieldColumnId("custom", "care"), "Soie", { expected: { [OLD]: "dm" } })],
+      cols,
+    );
+    expect(registered).toEqual([]);
+    expect(result.skippedChanged).toBe(1);
+  });
+
+  it("a featured image replaced since the plan is changed", async () => {
+    const s = shopify({
+      "gid://shopify/CollectionImage/9": { content: { alt: "da" }, translations: { fr: {} } },
+    });
+    const r = await applyBulkDiff(
+      { db: mockDb() as never, shop: SHOP, admin: s.admin as never, columnsByType: columnsByType(), fillOnly: true },
+      [
+        {
+          rowId: "gid://shopify/Collection/4",
+          rowType: "collection",
+          locale: "fr",
+          marketId: "",
+          columnId: "img.featuredAlt",
+          value: "Vase",
+          expected: { "gid://shopify/CollectionImage/1": "da" },
+        },
+      ],
+    );
+    expect(s.registered).toEqual([]);
+    expect(r.skippedChanged).toBe(1);
+  });
+
+  it("a key absent at plan time (sentinel) reads any digest at write time as changed", async () => {
+    const { admin, registered } = shopify({
+      [PRODUCT]: { content: { title: "now-there" }, translations: { fr: {} } },
+    });
+    const result = await run(admin, mockDb(), [cell("field.title", "Titre", { expected: { [PRODUCT]: "#absent" } })]);
+    expect(registered).toEqual([]);
+    expect(result.skippedChanged).toBe(1);
+  });
+});

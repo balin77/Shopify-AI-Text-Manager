@@ -27,8 +27,12 @@
  * exactly what the write will address.
  */
 
+import { createHash } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import {
+  EXPECTED_ABSENT,
+  EXPECTED_ORDER_KEY,
+  expectedOrderOf,
   LIST_DISPLAY_SEPARATOR,
   isFeaturedImageAltColumn,
   type BulkRowType,
@@ -71,11 +75,30 @@ export interface PlanReadResult<J extends PlanJob> {
   skippedChanged: number;
   /** Cells whose live text could not be read at all. */
   failures: PlanFailure[];
+  /** Units dropped for a text mismatch, per translation key. A key that is
+   *  skipped systematically (a representation difference between the cache and
+   *  Shopify, e.g. in body_html) shows up here and in the warn log. */
+  mismatchesByKey: Record<string, number>;
 }
 
 /** Line endings and surrounding whitespace are representation, not content. */
 function normalize(text: string): string {
   return text.replace(/\r\n/g, "\n").trim();
+}
+
+/** A short description of a mismatch for the log: lengths, a hash and the
+ *  first/last 40 characters of each side -- never the whole merchant text. */
+function mismatchSample(live: string, cached: string): Record<string, unknown> {
+  const edge = (t: string) => (t.length <= 80 ? t : `${t.slice(0, 40)} ... ${t.slice(-40)}`);
+  const hash = (t: string) => createHash("sha1").update(t).digest("hex").slice(0, 10);
+  return {
+    liveLength: live.length,
+    cachedLength: cached.length,
+    liveHash: hash(live),
+    cachedHash: hash(cached),
+    liveEdges: edge(live),
+    cachedEdges: edge(cached),
+  };
 }
 
 export const planCellKey = (rowId: string, columnId: string): string => `${rowId}|${columnId}`;
@@ -100,7 +123,8 @@ export async function planTranslateRead<J extends PlanJob>(
   jobs: J[],
 ): Promise<PlanReadResult<J>> {
   const { db, shop, gateway, rowType } = deps;
-  const result: PlanReadResult<J> = { jobs: [], expected: new Map(), skippedChanged: 0, failures: [] };
+  const result: PlanReadResult<J> = { jobs: [], expected: new Map(), skippedChanged: 0, failures: [], mismatchesByKey: {} };
+  const loggedMismatch = new Set<string>();
 
   // ── 1. Which resource + key carries each cell's text ─────────────────────
   const subCells = jobs.flatMap((job) => job.cells.filter((c) => isSubResourceColumn(c.column)).map(() => job.rowId));
@@ -118,8 +142,9 @@ export async function planTranslateRead<J extends PlanJob>(
         )
       : new Map();
 
-  /** `rowId|columnId` -> its targets; `null` = could not be resolved. */
-  const targetsByCell = new Map<string, Target[] | null>();
+  /** `rowId|columnId` -> its targets; `null` = the collection/article has no
+   *  featured image, `"unreadable"` = asking for it threw. */
+  const targetsByCell = new Map<string, Target[] | null | "unreadable">();
   for (const job of jobs) {
     for (const cell of job.cells) {
       const cellKey = planCellKey(job.rowId, cell.column.id);
@@ -128,7 +153,7 @@ export async function planTranslateRead<J extends PlanJob>(
           const imageId = await resolveFeaturedImageId(gateway, rowType, job.rowId);
           targetsByCell.set(cellKey, imageId ? [{ resourceId: imageId, key: "alt", expectedText: cell.source }] : null);
         } catch {
-          targetsByCell.set(cellKey, null);
+          targetsByCell.set(cellKey, "unreadable");
         }
         continue;
       }
@@ -157,6 +182,7 @@ export async function planTranslateRead<J extends PlanJob>(
   const resourceIds = new Set<string>();
   const keys = new Set<string>();
   for (const targets of targetsByCell.values()) {
+    if (targets === "unreadable") continue;
     for (const t of targets ?? []) {
       resourceIds.add(t.resourceId);
       keys.add(t.key);
@@ -188,6 +214,10 @@ export async function planTranslateRead<J extends PlanJob>(
         kept.push(cell);
         continue;
       }
+      if (targets === "unreadable") {
+        result.failures.push({ rowId: job.rowId, columnId: cell.column.id, message: UNREADABLE, units });
+        continue;
+      }
       if (targets === null) {
         result.failures.push({
           rowId: job.rowId,
@@ -207,20 +237,40 @@ export async function planTranslateRead<J extends PlanJob>(
       for (const target of targets) {
         const live = state.values.get(target.resourceId)?.get(target.key);
         const digest = state.digests.get(target.resourceId)?.get(target.key);
-        // A key Shopify does not list: no comparison is possible and no digest
-        // to expect — the write path's own digest rule answers it.
-        if (live === undefined) continue;
+        // A key Shopify does not list: no comparison is possible. Record a
+        // sentinel so ANY digest found at write time reads as a changed
+        // source (the write path's own digest rule answers the rest).
+        if (live === undefined || !digest) {
+          expected[target.resourceId] = EXPECTED_ABSENT;
+          continue;
+        }
         if (normalize(live) !== normalize(target.expectedText)) {
           changed = true;
+          result.mismatchesByKey[target.key] = (result.mismatchesByKey[target.key] ?? 0) + units;
+          const sampleKey = `${rowType}|${target.key}`;
+          if (!loggedMismatch.has(sampleKey)) {
+            loggedMismatch.add(sampleKey);
+            logger.warn("[BulkTranslate] Plan-time text differs from the cached source (first sample for this key)", {
+              context: "AI",
+              rowType,
+              key: target.key,
+              ...mismatchSample(live, target.expectedText),
+            });
+          }
           break;
         }
-        if (digest) expected[target.resourceId] = digest;
+        expected[target.resourceId] = digest;
       }
       if (changed) {
         result.skippedChanged += units;
         continue;
       }
-      if (Object.keys(expected).length > 0) result.expected.set(cellKey, expected);
+      if (Object.keys(expected).length > 0) {
+        // The ordered target list: an option-values cell pairs its texts with
+        // the entries by position, so the write requires the same list.
+        expected[EXPECTED_ORDER_KEY] = expectedOrderOf(targets.map((t) => t.resourceId));
+        result.expected.set(cellKey, expected);
+      }
       kept.push(cell);
     }
     if (kept.length > 0) result.jobs.push({ ...job, cells: kept });
