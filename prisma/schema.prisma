@@ -1863,6 +1863,77 @@ model ManagedAiGlobalCounter {
   @@unique([period, pool])
 }
 
+// State of ONE Batch-API run of the bulk editor's "add missing translations"
+// (PLAN_BULK_TRANSLATE_BATCHING 19.4). A provider batch lives up to 24 hours,
+// so what the run needs to survive a restart lives HERE and not in the Task
+// row: Task.updatedAt moves on every write (heartbeat, cancel, progress), and a
+// manifest of up to ~2 MB read-modify-written by several writers loses writes.
+//
+// - ONE writer for the manifest: the holder of the lease (leaseToken +
+//   leaseUntil, taken with a compare-and-swap UPDATE, renewed only WHERE the
+//   token matches). Small state moves (waiting -> cancel_requested by the Tasks
+//   tab) are conditional updateMany that never touch the manifest.
+// - `period` / `pool` / `poolPeriod` are pinned at SUBMIT: the reservation was
+//   written under those keys, so booking and release must use the same ones.
+// - `reservationState` makes reserve / convert / release idempotent per row
+//   (usage-meter.server.ts): the counter writes happen in the same transaction
+//   as the state flip.
+// - `idPrefix` + `intentAt` are the INTENT record written before the provider
+//   create call, so an orphan sweep can tie a provider batch to a task.
+//
+// FK-less like the other per-shop tables (no relation to Task): redactShopData
+// and the uninstall cleanup delete it by shop, after cancelOpenBatches.
+model BulkTranslateBatch {
+  id     String @id @default(cuid())
+  taskId String @unique
+  shop   String
+
+  // "submitting" | "waiting" | "cancel_requested" | "collecting" | "done"
+  state String @default("submitting")
+
+  provider String // "claude" | "openai"
+  model    String
+  source   String // "managed" | "byo"
+  role     String @default("default") // "default" | "failover" (managed credential role used to submit)
+
+  period     String @default("") // AiUsageCounter period the reservation was written under
+  pool       String @default("") // "paid" | "taster" | "" (byo)
+  poolPeriod String @default("") // ManagedAiGlobalCounter period (calendar month) at submit
+
+  // Provider batch ids (empty until create returned) and the provider files
+  // this run uploaded (OpenAI input), so the settlement transport may delete
+  // exactly those.
+  batchIds Json @default("[]")
+  fileIds  Json @default("[]")
+
+  // custom_id prefix + the moment the intent was recorded (before create).
+  idPrefix String    @default("")
+  intentAt DateTime?
+
+  // Reservation, both tables. reservedMicros = AiUsageCounter side (billedMicros
+  // only), reservedPoolMicros = ManagedAiGlobalCounter side.
+  reservedMicros     Int    @default(0)
+  reservedPoolMicros Int    @default(0)
+  reservationState   String @default("none") // "none" | "held" | "converted" | "released"
+
+  manifest String @default("") @db.Text
+
+  leaseToken        String?
+  leaseUntil        DateTime?
+  failedTicks       Int       @default(0)
+  cancelRequestedAt DateTime?
+  // Set when the AI processing consent was withdrawn while the batch waited:
+  // cancel at once, fetch nothing, book the reserved upper bound (owner, 16).
+  consentWithdrawnAt DateTime?
+  lastError          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([state])
+  @@index([shop])
+}
+
 // SEO tab Phase 3: storefront 404 hits, reported by the theme app-embed beacon
 // through the /apps/contentpilot/seo-404 app-proxy. Shopify exposes no 404 logs
 // via API, so we collect them ourselves. Mirrors DirectTranslationCandidate:
