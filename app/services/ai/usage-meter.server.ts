@@ -244,14 +244,19 @@ export async function recordAiUsage(
       // charged is the default model's price for the same tokens. Same table,
       // same rounding — the two columns describe one call and must not be
       // computed two different ways.
-      // No cache split here: the cache hits belong to the model that RAN, so
-      // pricing the billed model with them could hand the merchant a discount
-      // the billed model never gave. Full input price is never less.
+      // Cache READS are left out of the billed price: they belong to the model
+      // that RAN, and pricing the billed model with them could hand the
+      // merchant a discount the billed model never gave (full input price is
+      // never less). Cache WRITES are passed: they only ever raise a price (a
+      // Claude write carries its 1.25x surcharge), so a Claude -> Claude
+      // failover with writes is not billed below the default model's own write
+      // price. A billed provider without a write factor prices them at 1.0.
       billedMicros = priceCall(
         input.billedProvider ?? input.provider,
         input.billedModel,
         inputTokens,
         outputTokens,
+        { cacheWriteTokens },
       ).costMicros;
     } else {
       billedMicros = costMicros;

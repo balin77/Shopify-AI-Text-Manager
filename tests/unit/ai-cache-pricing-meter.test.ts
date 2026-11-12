@@ -122,6 +122,18 @@ describe('recordAiUsage cache fields', () => {
     expect(c.cacheWriteTokens).toBe(0n);
   });
 
+  it('failover billing: cache WRITES carry the billed model\'s surcharge, cache READS are never credited', async () => {
+    const run = { ...baseInput, model: 'claude-haiku-4-5', billedModel: 'claude-sonnet-5', failover: true, inputTokens: 10_000, outputTokens: 100 };
+    const none = await recordAiUsage(run);
+    expect(none.billedMicros).toBe(priceCall('claude', 'claude-sonnet-5', 10_000, 100).costMicros);
+    const written = await recordAiUsage({ ...run, cacheWriteTokens: 6000 });
+    expect(written.billedMicros).toBe(priceCall('claude', 'claude-sonnet-5', 10_000, 100, { cacheWriteTokens: 6000 }).costMicros);
+    expect(written.billedMicros).toBeGreaterThan(none.billedMicros);
+    // Reads ride on the model that ran; the billed price ignores them.
+    const read = await recordAiUsage({ ...run, cacheReadTokens: 6000 });
+    expect(read.billedMicros).toBe(none.billedMicros);
+  });
+
   it('cost with no cache tokens equals the legacy cost', async () => {
     const r = await recordAiUsage({ ...baseInput, inputTokens: 12345, outputTokens: 678 });
     expect(r.costMicros).toBe(legacy('claude', 'claude-sonnet-5', 12345, 678));
