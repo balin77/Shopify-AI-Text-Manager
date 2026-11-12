@@ -112,7 +112,7 @@ export async function cancelOpenBatches(shop: string): Promise<CancelOpenBatches
       try {
         await db.bulkTranslateBatch.updateMany({
           where: { id: row.id, state: { in: [...OPEN_BATCH_STATES] } },
-          data: { state: "cancel_requested", cancelRequestedAt: new Date() },
+          data: { state: "cancel_requested" },
         });
         await db.task.updateMany({
           where: { id: row.taskId, shop, status: { in: [...OPEN_BATCH_TASK_STATUSES] } },
@@ -127,6 +127,7 @@ export async function cancelOpenBatches(shop: string): Promise<CancelOpenBatches
       //    A failed cancel is only logged here: whether the batch ran is decided by the counts below.
       const batchIds = stringList(row.batchIds);
       let transport: SettlementTransport | null = null;
+      let allCancelled = batchIds.length === 0;
       try {
         // The row is re-loaded INSIDE the accessor by id -- nothing the caller
         // read is trusted (PLAN 19.3).
@@ -136,6 +137,7 @@ export async function cancelOpenBatches(shop: string): Promise<CancelOpenBatches
           logger.warn(`[BatchCancel] No settlement access for batch ${row.id} of ${shop}: ${decision.reason}`);
         } else {
           transport = decision.transport;
+          let confirmedIds = 0;
           for (const batchId of batchIds) {
             if (budgetLeft() <= 0) {
               result.failed += 1;
@@ -145,10 +147,16 @@ export async function cancelOpenBatches(shop: string): Promise<CancelOpenBatches
             try {
               await withDeadline(() => decision.transport.cancel(batchId), callBudget());
               result.cancelled += 1;
+              confirmedIds += 1;
             } catch (error) {
               result.failed += 1;
               logger.warn(`[BatchCancel] Provider cancel failed for batch ${row.id} of ${shop}: ${messageOf(error)}`);
             }
+          }
+          // The poller reads cancelRequestedAt as "provider cancel CONFIRMED": set it only when every id was.
+          if (batchIds.length > 0 && confirmedIds === batchIds.length) {
+            allCancelled = true;
+            await db.bulkTranslateBatch.updateMany({ where: { id: row.id, state: "cancel_requested" }, data: { cancelRequestedAt: new Date() } }).catch(() => undefined);
           }
           for (const fileId of stringList(row.fileIds)) {
             if (budgetLeft() <= 0) break;
@@ -171,7 +179,9 @@ export async function cancelOpenBatches(shop: string): Promise<CancelOpenBatches
         const outcome = await settleHold(row, transport, { final: true });
         if (outcome.kind === "released") result.released += 1;
         else if (outcome.kind === "booked" || outcome.kind === "converted") result.converted += 1;
-        if (outcome.kind !== "pending") {
+        // A row whose provider cancel was NOT confirmed stays open (cancel_requested, no cancelRequestedAt): the
+        // poller treats it as an orphan, cancels again and settles (settleHold acts only while held).
+        if (outcome.kind !== "pending" && allCancelled) {
           await db.bulkTranslateBatch.updateMany({
             where: { id: row.id, state: { in: [...OPEN_BATCH_STATES] } },
             data: { state: "done", lastError: "shop_removed" },

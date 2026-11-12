@@ -87,6 +87,7 @@ import {
   type BatchManifestCell,
   type BatchManifestRequest,
 } from "./translate-batch.shared";
+import type { SettlementTransport } from "../ai/batch-settlement.shared";
 import type { BulkRowType } from "./columns.shared";
 import type { TranslateJob } from "~/routes/api-ai-handlers/bulk-editor-translate.handler";
 
@@ -427,22 +428,15 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
           }
         }
         if (!reread) {
-          // The Task is provably no longer `submitting`, so this run lost it. Hand the batch to the poller:
-          // best-effort conditional move to cancel_requested with the id stored (it cancels and settles by the guiding rule).
-          logger.error("[BulkTranslateBatch] Re-read after a lost flip failed; handing the batch to the poller to cancel", {
+          // The Task is provably no longer `submitting`, so this run lost it. The batch is paid for and cannot
+          // be owned: cancel it at the provider NOW (abandonCreated tries even while the database is failing) and
+          // hand the row to the poller; cancelRequestedAt is only ever set by a CONFIRMED cancel.
+          logger.error("[BulkTranslateBatch] Re-read after a lost flip failed; cancelling the batch", {
             context: "AI",
             taskId,
             error: lastReadError,
           });
-          try {
-            await db.bulkTranslateBatch.updateMany({
-              where: { id: row.id, state: "submitting" },
-              data: { state: "cancel_requested", batchIds: [created.batchId], cancelRequestedAt: new Date(), lastError: "lost_flip_reread_failed" },
-            });
-          } catch (error) {
-            logger.error("[BulkTranslateBatch] Could not hand the batch to the poller", { context: "AI", taskId, error: errorMessage(error) });
-          }
-          return { ok: true, batchRowId: row.id, batchId: created.batchId, requests: requests.length, carriedUnits, notStarted };
+          return await abandonCreated(created.batchId, "lost_flip_reread_failed", false);
         }
         // A row in a state the poller still works (waiting, cancel_requested, collecting) that names this batch is ours.
         // NOT `done`: a done row is never polled or cancelled again (uninstall / recovery can set it while this
@@ -533,9 +527,10 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
         where: { id: batchRowId! },
         data: { batchIds: [batchId] },
       }).catch(() => undefined);
+      // cancelRequestedAt is NOT set here: the poller reads it as "provider cancel CONFIRMED" and skips cancelling.
       await db.bulkTranslateBatch.updateMany({
         where: { id: batchRowId!, state: { in: ["submitting", "create_unknown"] } },
-        data: { state: "cancel_requested", cancelRequestedAt: new Date(), lastError: reason.substring(0, 500) },
+        data: { state: "cancel_requested", lastError: reason.substring(0, 500) },
       }).catch(() => undefined);
       if (failTask) {
         await db.task.updateMany({
@@ -543,20 +538,39 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
           data: { status: "failed", progress: 100, completedAt: new Date(), error: SUBMIT_UNCONFIRMED_ERROR },
         }).catch(() => undefined);
       }
-      const { settlementCredentialsFor } = await import("../ai/ai-credentials.server");
-      const decision = await settlementCredentialsFor(shop, batchRowId!);
-      if (decision.ok) {
-        try {
-          await decision.transport.cancel(batchId);
-        } catch (error) {
-          logger.warn("[BulkTranslateBatch] Immediate cancel failed", { context: "AI", batchRowId, error: errorMessage(error) });
+      let cancelConfirmed = false;
+      let transport: SettlementTransport | null = null;
+      try {
+        const { settlementCredentialsFor } = await import("../ai/ai-credentials.server");
+        const decision = await settlementCredentialsFor(shop, batchRowId!);
+        if (decision.ok) {
+          transport = decision.transport;
+          try {
+            await decision.transport.cancel(batchId);
+            cancelConfirmed = true;
+          } catch (error) {
+            logger.warn("[BulkTranslateBatch] Immediate cancel failed", { context: "AI", batchRowId, error: errorMessage(error) });
+          }
         }
+      } catch (error) {
+        logger.warn("[BulkTranslateBatch] No settlement access for the immediate cancel", { context: "AI", batchRowId, error: errorMessage(error) });
+      }
+      if (cancelConfirmed) {
+        await db.bulkTranslateBatch.updateMany({ where: { id: batchRowId!, state: "cancel_requested" }, data: { cancelRequestedAt: new Date() } }).catch(() => undefined);
+      } else {
+        // The batch may still run: a row somebody closed (`done`) is reopened so the poller cancels and settles it
+        // as an orphan (settleHold acts only while held; the 48 h expiry ends it for good).
+        await db.bulkTranslateBatch.updateMany({
+          where: { id: batchRowId!, state: "done" },
+          data: { state: "cancel_requested", cancelRequestedAt: null, lastError: reason.substring(0, 500) },
+        }).catch(() => undefined);
       }
       // A confirmed cancel proves nothing: the counts decide (a batch that had ended ran).
       const fresh = await db.bulkTranslateBatch.findUnique({ where: { id: batchRowId! } });
       if (fresh) {
-        const outcome = await settleHold(fresh, decision.ok ? decision.transport : null, { final: false });
-        if (outcome.kind !== "pending") {
+        const outcome = await settleHold(fresh, transport, { final: false });
+        // Closed only after a confirmed cancel; otherwise the row stays open for the poller to cancel.
+        if (outcome.kind !== "pending" && cancelConfirmed) {
           await db.bulkTranslateBatch.updateMany({
             where: { id: batchRowId!, state: "cancel_requested" },
             data: { state: "done", lastError: reason.substring(0, 500) },

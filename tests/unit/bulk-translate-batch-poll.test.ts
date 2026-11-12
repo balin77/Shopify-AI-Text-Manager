@@ -712,6 +712,14 @@ describe("a create of unknown outcome (create_unknown)", () => {
     expect(h.release).not.toHaveBeenCalled();
   });
 
+  it("a create_unknown row that already NAMES a batch goes to that id: no provider search, state waiting", async () => {
+    unknownRow({ batchIds: ["msgbatch_named"] });
+    await processBatchRow("row-1", deps());
+    expect(h.find).not.toHaveBeenCalled();
+    expect(h.rows.get("row-1").state).not.toBe("create_unknown");
+    expect(h.rows.get("row-1").batchIds).toEqual(["msgbatch_named"]);
+  });
+
   it("an adopted batch of a Task the merchant cancelled meanwhile continues as cancel_requested", async () => {
     unknownRow();
     putTask("cancel_requested");

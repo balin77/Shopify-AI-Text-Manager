@@ -155,7 +155,7 @@ describe('cancelOpenBatches', () => {
     expect(calls).toEqual(['cancel:msgbatch_1', 'cancel:msgbatch_2', 'deleteFile:file_in']);
     expect(h.batchUpdateMany).toHaveBeenCalledWith({
       where: { id: 'row-1', state: { in: [...OPEN_BATCH_STATES] } },
-      data: { state: 'cancel_requested', cancelRequestedAt: expect.any(Date) },
+      data: { state: 'cancel_requested' },
     });
     // never the manifest
     expect(Object.keys((h.batchUpdateMany.mock.calls[0] as any[])[0].data)).not.toContain('manifest');
@@ -224,6 +224,9 @@ describe('cancelOpenBatches', () => {
     expect(h.convert).toHaveBeenCalledWith('row-1', undefined);
     expect(h.release).not.toHaveBeenCalled();
     expect(warn.mock.calls.some((c) => String(c[0]).includes('provider 503'))).toBe(true);
+    // the unconfirmed cancel keeps the row open for the poller: never closed here, no cancelRequestedAt
+    expect(h.batchUpdateMany.mock.calls.some((c: any[]) => c[0].data.state === 'done')).toBe(false);
+    expect(h.batchUpdateMany.mock.calls.some((c: any[]) => c[0].data.cancelRequestedAt)).toBe(false);
   });
 
   it('a provider that cannot be reached: the rows are still marked, the hold is BOOKED (not released), nothing throws', async () => {

@@ -432,7 +432,16 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
   const cancelRequested = row.state === "cancel_requested" || task!.status === TASK_STATUS_CANCEL_REQUESTED;
 
   // 3. A create of unknown outcome: find its batch (or wait for the absolute end).
-  if (row.state === "create_unknown" || batchIds.length === 0) {
+  if (row.state === "create_unknown" && batchIds.length > 0) {
+    // The row already names its batch (the submit got the answer after a recovery parked it): go to that id,
+    // no provider search.
+    const nextState = cancelRequested ? "cancel_requested" : "waiting";
+    await db.bulkTranslateBatch.updateMany({
+      where: { id: row.id, leaseToken: token, state: "create_unknown" },
+      data: { state: nextState, failedTicks: 0, lastError: null },
+    });
+    row = { ...row, state: nextState, failedTicks: 0, lastError: null };
+  } else if (row.state === "create_unknown" || batchIds.length === 0) {
     return await reconcileUnknownCreate(deps, row, token, decision, cancelRequested);
   }
 

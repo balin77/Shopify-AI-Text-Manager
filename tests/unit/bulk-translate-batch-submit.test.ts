@@ -546,18 +546,34 @@ describe("a row that names this batch is ours in ANY state (M3)", () => {
     expect(n).toBeGreaterThan(1);
     expect(h.cancel).not.toHaveBeenCalled();
   });
-  it("a re-read that keeps throwing hands the batch to the poller (conditional cancel_requested with the id), no Task failure, no settle here", async () => {
+  it("a re-read that keeps throwing: the batch is CANCELLED at the provider at once (even with the DB failing), cancelRequestedAt only after that confirmed cancel, no hold release", async () => {
     const db = makeDb({ taskStillOurs: false, rereadThrows: true });
     const out = await submitBulkTranslateBatch("task-1", { ...args(db, fakeService()), rereadRetryDelayMs: 0 });
-    expect(out).toMatchObject({ ok: true, batchId: "msgbatch_1" });
-    expect(db.bulkTranslateBatch.findUnique.mock.calls.length).toBe(3);
-    const handoff = db.calls.find((c: any) => c.op === "row.updateMany" && c.arg.data.state === "cancel_requested");
-    expect(handoff.arg.where).toEqual({ id: "row-1", state: "submitting" });
-    expect(handoff.arg.data.batchIds).toEqual(["msgbatch_1"]);
+    expect(out).toEqual({ ok: false, code: "task_not_ours" });
+    expect(db.bulkTranslateBatch.findUnique.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(h.cancel).toHaveBeenCalledWith("msgbatch_1");
+    const moves = db.calls.filter((c: any) => c.op === "row.updateMany" && c.arg.data.state === "cancel_requested");
+    expect(moves.length).toBeGreaterThan(0);
+    for (const m of moves) {
+      expect(m.arg.data.cancelRequestedAt).toBeUndefined();
+      expect(m.arg.where.state).toEqual({ in: ["submitting", "create_unknown"] });
+    }
+    const stamp = db.calls.find((c: any) => c.op === "row.updateMany" && c.arg.data.cancelRequestedAt);
+    expect(stamp).toBeDefined();
+    expect(db.calls.indexOf(stamp)).toBeGreaterThan(db.calls.indexOf(moves[0]));
     expect(db.calls.map((c: any) => c.arg).find((a: any) => a.data?.status === "failed")).toBeUndefined();
-    expect(h.cancel).not.toHaveBeenCalled();
     expect(h.release).not.toHaveBeenCalled();
-    expect(h.convert).not.toHaveBeenCalled();
+  });
+  it("an UNCONFIRMED cancel leaves cancelRequestedAt unset and reopens a done row for the poller (never closed here)", async () => {
+    h.cancel.mockRejectedValue(new Error("provider down"));
+    h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true, requestCounts: { total: 1, processing: 0, succeeded: 0, errored: 0, expired: 0, canceled: 1 } });
+    const db = makeDb({ taskStillOurs: false, namedInState: "done" });
+    const out = await submitBulkTranslateBatch("task-1", args(db, fakeService()));
+    expect(out).toEqual({ ok: false, code: "task_not_ours" });
+    expect(db.calls.some((c: any) => c.op === "row.updateMany" && c.arg.data.cancelRequestedAt instanceof Date)).toBe(false);
+    const reopen = db.calls.find((c: any) => c.op === "row.updateMany" && c.arg.where.state === "done");
+    expect(reopen.arg.data).toMatchObject({ state: "cancel_requested", cancelRequestedAt: null });
+    expect(db.calls.some((c: any) => c.op === "row.updateMany" && c.arg.data.state === "done")).toBe(false);
   });
 });
 
