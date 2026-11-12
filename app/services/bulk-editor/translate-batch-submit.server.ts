@@ -415,9 +415,18 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
           !!task &&
           [TASK_STATUS_WAITING_BATCH, TASK_STATUS_CANCEL_REQUESTED].includes(task.status) &&
           !!current &&
-          ["waiting", "cancel_requested"].includes(current.state) &&
-          Array.isArray(current.batchIds) &&
-          current.batchIds.includes(created.batchId);
+          ["waiting", "cancel_requested", "create_unknown"].includes(current.state) &&
+          // A recovery may have parked the row as create_unknown (no batch id) while this runner was alive and
+          // got its answer: the batch is ours all the same; the conditional update below names it.
+          (current.state === "create_unknown" ||
+            (Array.isArray(current.batchIds) && current.batchIds.includes(created.batchId)));
+        if (resumed && current?.state === "create_unknown") {
+          const adopted = await db.bulkTranslateBatch.updateMany({
+            where: { id: row.id, state: "create_unknown" },
+            data: { batchIds: [created.batchId], state: "waiting", failedTicks: 0, lastError: null },
+          });
+          if (adopted.count === 0) return await abandonCreated(created.batchId, "task_not_ours", false);
+        }
         if (!resumed) return await abandonCreated(created.batchId, "task_not_ours", false);
       }
 

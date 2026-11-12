@@ -78,7 +78,7 @@ const jobs = (count: number, extra = false) =>
     ],
   }));
 
-function makeDb(opts: { taskStillOurs?: boolean; idStoreFails?: boolean; txFails?: boolean; resumedByRecovery?: boolean } = {}) {
+function makeDb(opts: { taskStillOurs?: boolean; idStoreFails?: boolean; txFails?: boolean; resumedByRecovery?: boolean; parkedByRecovery?: boolean } = {}) {
   const calls: { op: string; arg: any }[] = [];
   const rowState = { state: "submitting", batchIds: [] as string[], manifest: "" };
   const db: any = {
@@ -90,7 +90,7 @@ function makeDb(opts: { taskStillOurs?: boolean; idStoreFails?: boolean; txFails
         if (arg.data.status === "waiting_batch" && opts.taskStillOurs === false) return { count: 0 };
         return { count: 1 };
       }),
-      findUnique: vi.fn(async () => ({ status: opts.resumedByRecovery ? "waiting_batch" : "cancelled" })),
+      findUnique: vi.fn(async () => ({ status: opts.resumedByRecovery || opts.parkedByRecovery ? "waiting_batch" : "cancelled" })),
     },
     bulkTranslateBatch: {
       create: vi.fn(async (arg: any) => {
@@ -114,7 +114,8 @@ function makeDb(opts: { taskStillOurs?: boolean; idStoreFails?: boolean; txFails
       }),
       findUnique: vi.fn(async () => ({
         id: "row-1", provider: "claude", model: "claude-haiku-4-5", source: "managed", reservationState: "held",
-        batchIds: opts.resumedByRecovery ? ["msgbatch_1"] : rowState.batchIds, state: opts.resumedByRecovery ? "waiting" : rowState.state,
+        batchIds: opts.resumedByRecovery ? ["msgbatch_1"] : opts.parkedByRecovery ? [] : rowState.batchIds,
+        state: opts.resumedByRecovery ? "waiting" : opts.parkedByRecovery ? "create_unknown" : rowState.state,
         manifest: rowState.manifest,
       })),
     },
@@ -502,6 +503,18 @@ describe("the Task is no longer ours when the batch id comes back (cancelled, de
     expect(out).toMatchObject({ ok: true, batchId: "msgbatch_1" });
     expect(h.cancel).not.toHaveBeenCalled();
     expect(h.release).not.toHaveBeenCalled();
+  });
+});
+
+describe("a row parked as create_unknown by a recovery while the runner was alive", () => {
+  it("the answer arrived after all: the batch is OURS, the row flips to waiting with the batch id (conditional), nothing is cancelled", async () => {
+    const db = makeDb({ taskStillOurs: false, parkedByRecovery: true });
+    const out = await submitBulkTranslateBatch("task-1", args(db, fakeService()));
+    expect(out).toMatchObject({ ok: true, batchId: "msgbatch_1" });
+    expect(h.cancel).not.toHaveBeenCalled();
+    expect(h.release).not.toHaveBeenCalled();
+    const adopt = db.calls.find((c: any) => c.op === "row.updateMany" && c.arg.where.state === "create_unknown");
+    expect(adopt.arg.data).toMatchObject({ batchIds: ["msgbatch_1"], state: "waiting" });
   });
 });
 
