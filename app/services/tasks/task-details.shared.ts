@@ -379,7 +379,7 @@ const bulkEditorTranslate: Summariser = (blob) => {
   // skipped: a run that skipped nothing has nothing to explain, and a column
   // of zeros would also hide the "nothing was missing" sentence the panel
   // shows for an all-zero result.
-  for (const key of ["skippedChanged", "skippedFilled"]) {
+  for (const key of ["skippedChanged", "skippedFilled", "skippedGone", "notProcessed"]) {
     const v = blob[key];
     if (typeof v === "number" && Number.isFinite(v) && v > 0) lines.push({ labelKey: key, value: String(v) });
   }

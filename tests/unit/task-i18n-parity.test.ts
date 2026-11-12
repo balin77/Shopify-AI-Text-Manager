@@ -76,7 +76,7 @@ const MAXIMAL: [string, unknown][] = [
       retranslation: { started: 1, translations: 2, skipped: 1, capped: 1 },
     },
   ],
-  ["bulkEditorTranslate", { saved: 1, failed: 1, skippedHandles: 1, skippedChanged: 1, skippedFilled: 1, cancelled: true, failures: [] }],
+  ["bulkEditorTranslate", { saved: 1, failed: 1, skippedHandles: 1, skippedChanged: 1, skippedFilled: 1, skippedGone: 1, notProcessed: 1, cancelled: true, failures: [] }],
   ["seoBulkFix", { succeeded: [], failed: [] }],
   ["blogArticleRedirects", { created: 1, failed: 1, skippedDrafts: 1, skippedOverCap: 1 }],
   ["altTextTemplateApply", { applied: 1, attempted: 1, errors: ["x (Position 1): boom"] }],

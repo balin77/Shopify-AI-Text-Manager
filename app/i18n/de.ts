@@ -2566,6 +2566,8 @@ export const de = {
       skipped: "Übersprungen",
       skippedChanged: "Übersprungen (Text inzwischen geändert)",
       skippedFilled: "Übersprungen (inzwischen übersetzt)",
+      skippedGone: "Übersprungen (Eintrag gelöscht oder Text leer)",
+      notProcessed: "Nicht mehr bearbeitet (Lauf gestoppt)",
       cancelledRun: "Abgebrochen – bis dahin Gespeichertes bleibt erhalten",
       skippedDrafts: "Übersprungen (Entwürfe)",
       skippedHandles: "Übersprungene URL-Slugs",
@@ -4750,10 +4752,13 @@ export const de = {
       skippedHandles:
         "{count} URL-Handle(s) übersprungen — die Übersetzung war identisch mit der Primärsprache oder ergab keinen gültigen Slug.",
       skippedChanged:
-        "{count} Übersetzung(en) übersprungen — der Originaltext wurde inzwischen geändert. Beim nächsten Lauf werden sie mit dem neuen Text ergänzt.",
+        "{count} Übersetzung(en) übersprungen — der Originaltext wurde inzwischen geändert. Sie werden ergänzt, wenn der Eintrag neu geladen bzw. synchronisiert ist und Sie den Lauf erneut starten.",
       skippedFilled:
         "{count} Übersetzung(en) übersprungen — diese Sprache hatte inzwischen schon eine Übersetzung. Es wurde nichts überschrieben.",
+      skippedGone:
+        "{count} Übersetzung(en) übersprungen — der Eintrag existiert nicht mehr oder sein Originaltext ist jetzt leer.",
       cancelled: "Der Lauf wurde abgebrochen. {saved} Übersetzung(en) wurden bis dahin gespeichert.",
+      cancelledNotProcessed: "{count} Übersetzung(en) wurden nicht mehr bearbeitet (kein Fehler).",
       runTruncated:
         "Es wurden maximal {max} Übersetzungen ausgeführt — {rest} weitere sind offen. Starte den Lauf erneut für den Rest.",
       noneMissing: "In der aktuellen Auswahl fehlt keine Übersetzung.",

@@ -553,12 +553,28 @@ export async function loadTranslatedLocales(
  *
  * Returns `${rowId}|${columnId}|${locale}` keys of the cells that are still
  * missing. A row that no longer loads, or whose source text is empty now,
- * contributes nothing (there is nothing to fill).
+ * contributes nothing (there is nothing to fill) -- `recheckMissingDetailed`
+ * says which of the two it was, so the run does not report those cells as
+ * "already translated".
  */
 export async function recheckMissing(
   db: PrismaClient,
   shop: string,
-  opts: {
+  opts: RecheckOptions,
+): Promise<Set<string>> {
+  return (await recheckMissingDetailed(db, shop, opts)).missing;
+}
+
+export interface RecheckResult {
+  /** `${rowId}|${columnId}|${locale}` of the cells still missing. */
+  missing: Set<string>;
+  /** Row ids that no longer load (deleted, or out of the loader's reach). */
+  goneRows: Set<string>;
+  /** `${rowId}|${columnId}` whose primary text is empty now (nothing to fill). */
+  emptySources: Set<string>;
+}
+
+type RecheckOptions = {
     type: BulkRowType;
     moType?: string;
     /** Blog rows are live-fetched — the loader needs the admin client. */
@@ -566,11 +582,19 @@ export async function recheckMissing(
     rowIds: string[];
     columns: ColumnDescriptor[];
     locales: string[];
-  },
-): Promise<Set<string>> {
+};
+
+export async function recheckMissingDetailed(
+  db: PrismaClient,
+  shop: string,
+  opts: RecheckOptions,
+): Promise<RecheckResult> {
   const stillMissing = new Set<string>();
+  const goneRows = new Set<string>();
+  const emptySources = new Set<string>();
+  const result: RecheckResult = { missing: stillMissing, goneRows, emptySources };
   const rowIds = [...new Set(opts.rowIds)];
-  if (rowIds.length === 0 || opts.locales.length === 0 || opts.columns.length === 0) return stillMissing;
+  if (rowIds.length === 0 || opts.locales.length === 0 || opts.columns.length === 0) return result;
 
   const scanOpts: MissingScanOptions = {
     type: opts.type,
@@ -607,6 +631,8 @@ export async function recheckMissing(
       admin: opts.admin,
       moType: opts.moType ?? "",
     });
+    const loaded = new Set(rows.map((r) => r.id));
+    for (const id of ids) if (!loaded.has(id)) goneRows.add(id);
     if (rows.length === 0) continue;
     const translated = await loadTranslatedLocales(db, shop, scanOpts, rows, keys);
     const subTranslated = await loadSubResourceTranslatedLocales(db, shop, scanOpts, rows, subColumns);
@@ -620,7 +646,10 @@ export async function recheckMissing(
         } else {
           const key = keyByColumnId.get(column.id);
           if (!key) continue;
-          if (candidateSourceValue(row, column).trim() === "") continue;
+          if (candidateSourceValue(row, column).trim() === "") {
+            emptySources.add(`${row.id}|${column.id}`);
+            continue;
+          }
           const have = byKey?.get(key);
           missing = opts.locales.filter((locale) => !have?.has(locale));
         }
@@ -628,5 +657,5 @@ export async function recheckMissing(
       }
     }
   }
-  return stillMissing;
+  return result;
 }

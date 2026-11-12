@@ -65,7 +65,7 @@ import {
   isSubResourceColumn,
 } from "~/services/bulk-editor/translations.server";
 import {
-  recheckMissing,
+  recheckMissingDetailed,
   scanMissingTranslations,
   translateCandidateColumns,
 } from "~/services/bulk-editor/missing-translations.server";
@@ -226,6 +226,12 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
     progress: 0,
     expiresAt: getTaskExpirationDate(),
   });
+  if (!claim.ok && claim.cancelled) {
+    return json(
+      { success: false, code: "CANCELLED", error: "The run was cancelled before it started.", taskId: claim.taskId },
+      { status: 409 },
+    );
+  }
   if (!claim.ok) {
     return json(
       {
@@ -315,7 +321,7 @@ type RunTaskData = Parameters<PrismaClient["task"]["create"]>[0]["data"];
 export async function claimBulkTranslateRun(
   db: PrismaClient,
   data: Omit<RunTaskData, "status">,
-): Promise<{ ok: true; task: { id: string } } | { ok: false; taskId: string }> {
+): Promise<{ ok: true; task: { id: string } } | { ok: false; taskId: string; cancelled?: boolean }> {
   const task = await db.task.create({ data: { ...data, status: "pending" } });
   const blocker = await db.task.findFirst({
     where: {
@@ -341,7 +347,10 @@ export async function claimBulkTranslateRun(
   const started = await db.task.updateMany({ where: { id: task.id, status: "pending" }, data: { status: "running" } });
   if (started.count === 0) {
     // Somebody (a cancel, the reaper) took the row between insert and start.
-    return { ok: false, taskId: task.id };
+    // A cancel is the merchant's own act and must not be answered with
+    // "already running" (there is nothing else running).
+    const own = await db.task.findUnique({ where: { id: task.id }, select: { status: true } }).catch(() => null);
+    return { ok: false, taskId: task.id, ...(own?.status === "cancelled" ? { cancelled: true } : {}) };
   }
   return { ok: true, task: { id: task.id } };
 }
@@ -550,6 +559,18 @@ interface TranslateResultJson {
    * meantime (found at a block's re-check, or by the live read before the
    * write). Nothing was overwritten. */
   skippedFilled: number;
+  /** Units NOT written because their row is gone or its primary text is empty
+   * now (found at a block's re-check): nothing to fill, which is not the same
+   * as "already translated". */
+  skippedGone: number;
+  /** Units that were never processed because the run was stopped (cancelled,
+   * reaped) before their turn, including translated cells still buffered.
+   * Only present on a stopped run. Not failures. */
+  notProcessed?: number;
+  /** Units dropped for a source-text mismatch at plan time, per translation
+   * key -- a key that is skipped on (nearly) every run points at a systematic
+   * representation difference between the cache and Shopify. */
+  mismatchesByKey?: Record<string, number>;
   /** "sync" is the only mode that exists yet. */
   mode: "sync";
   /** Write blocks that went through applyBulkDiff. */
@@ -601,6 +622,8 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
   let skippedHandles = 0;
   let skippedChanged = 0;
   let skippedFilled = 0;
+  let skippedGone = 0;
+  let mismatchesByKey: Record<string, number> = {};
   let saved = 0;
   let blocks = 0;
   /** Units whose outcome is FINAL: written, skipped on purpose or failed. The
@@ -690,7 +713,7 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     // the strong one): a cell the mirror already has since the scan is dropped.
     if (args.recheck) {
       try {
-        const stillMissing = await recheckMissing(db, shop, {
+        const rechecked = await recheckMissingDetailed(db, shop, {
           type: rowType,
           moType: args.recheck.moType,
           admin: admin as never,
@@ -698,11 +721,17 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
           columns: args.recheck.columns,
           locales: args.recheck.locales,
         });
-        const kept = entries.filter((e) => stillMissing.has(`${e.rowId}|${e.columnId}|${e.locale}`));
-        const dropped = entries.length - kept.length;
-        if (dropped > 0) {
-          skippedFilled += dropped;
-          settled += dropped;
+        const kept = entries.filter((e) => rechecked.missing.has(`${e.rowId}|${e.columnId}|${e.locale}`));
+        const dropped = entries.filter((e) => !rechecked.missing.has(`${e.rowId}|${e.columnId}|${e.locale}`));
+        if (dropped.length > 0) {
+          // WHY a cell left matters: "already translated" is reassuring, a
+          // row that is gone or a source that is empty now is not.
+          const gone = dropped.filter(
+            (e) => rechecked.goneRows.has(e.rowId) || rechecked.emptySources.has(`${e.rowId}|${e.columnId}`),
+          ).length;
+          skippedGone += gone;
+          skippedFilled += dropped.length - gone;
+          settled += dropped.length;
           entries = kept;
         }
       } catch (err: unknown) {
@@ -791,6 +820,7 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     const jobs = plan.jobs;
     skippedChanged += plan.skippedChanged;
     settled += plan.skippedChanged;
+    mismatchesByKey = plan.mismatchesByKey ?? {};
     for (const failure of plan.failures) {
       failures.push({ rowId: failure.rowId, columnId: failure.columnId, message: failure.message });
       settled += failure.units;
@@ -1061,13 +1091,23 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
 
     // Every selected unit ends in exactly one bucket: saved, deliberately
     // skipped, or failed — derived, so the buckets always add up to the run.
-    const failed = Math.max(0, units - saved - skippedHandles - skippedChanged - skippedFilled);
+    const accounted = saved + skippedHandles + skippedChanged + skippedFilled + skippedGone;
+    // A stopped run did not process everything: only what reached a final
+    // outcome (settled) and is not written/skipped is a failure; the rest was
+    // never processed and is NOT a failure.
+    const failed = stoppedBy
+      ? Math.max(0, settled - accounted)
+      : Math.max(0, units - accounted);
+    const notProcessed = stoppedBy ? Math.max(0, units - settled) : 0;
     const result: TranslateResultJson = {
       saved,
       failed,
       skippedHandles,
       skippedChanged,
       skippedFilled,
+      skippedGone,
+      ...(notProcessed > 0 ? { notProcessed } : {}),
+      ...(Object.keys(mismatchesByKey).length > 0 ? { mismatchesByKey } : {}),
       mode: "sync",
       blocks,
       ...(stoppedBy === "cancelled" ? { cancelled: true } : {}),
@@ -1076,13 +1116,16 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     const failedRows = new Set(failures.map((f) => f.rowId)).size;
     if (stoppedBy) {
       // Cancelled (or reaped, or deleted) under the run: the Task already has
-      // its terminal state and keeps it. A CANCELLED row also gets what the
-      // run did write, so the Tasks tab does not report "nothing happened".
+      // its terminal state and keeps it. A row that still exists gets what the
+      // run did write (cancelled, or failed by the reaper), so the Tasks tab
+      // does not report "nothing happened". CONDITIONAL on the status we
+      // observed: a deleted row matches nothing and is never resurrected, and
+      // the status itself is never touched.
       logger.warn("[API-AI] Bulk-editor translate: stopped", { context: "AI", taskId, status: stoppedBy, saved });
-      if (stoppedBy === "cancelled") {
+      if (stoppedBy !== "deleted") {
         await db.task
           .updateMany({
-            where: { id: taskId, status: "cancelled" },
+            where: { id: taskId, status: stoppedBy },
             data: { processed: settled, result: JSON.stringify(result) },
           })
           .catch(() => undefined);
@@ -1136,10 +1179,11 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
             ? {
                 result: JSON.stringify({
                   saved,
-                  failed: Math.max(0, units - saved - skippedHandles - skippedChanged - skippedFilled),
+                  failed: Math.max(0, units - saved - skippedHandles - skippedChanged - skippedFilled - skippedGone),
                   skippedHandles,
                   skippedChanged,
                   skippedFilled,
+                  skippedGone,
                   mode: "sync",
                   blocks,
                   failures,

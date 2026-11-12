@@ -22,7 +22,7 @@ vi.mock("~/services/bulk-editor/translate-plan-read.server", () => ({
 const recheckMissing = vi.fn();
 vi.mock("~/services/bulk-editor/missing-translations.server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/services/bulk-editor/missing-translations.server")>();
-  return { ...actual, recheckMissing: (...a: unknown[]) => recheckMissing(...a) };
+  return { ...actual, recheckMissingDetailed: (...a: unknown[]) => recheckMissing(...a) };
 });
 vi.mock("~/utils/logger.server", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
@@ -210,10 +210,12 @@ describe("bulk translate: block writing", () => {
   });
 
   it("the local re-check drops cells that were filled since the scan (skippedFilled) before the block is written", async () => {
-    recheckMissing.mockImplementation(async () =>
+    recheckMissing.mockImplementation(async () => ({
       // only French is still missing for row 1
-      new Set(["gid://shopify/Product/1|field.title|fr"]),
-    );
+      missing: new Set(["gid://shopify/Product/1|field.title|fr"]),
+      goneRows: new Set(),
+      emptySources: new Set(),
+    }));
     const db = makeDb();
     await run(db, jobs(1), { recheck: { columns: [titleColumn], moType: "", locales: LOCALES } });
     expect(applyBulkDiff).toHaveBeenCalledTimes(1);
@@ -221,6 +223,19 @@ describe("bulk translate: block writing", () => {
     const { result } = finalResult(db);
     expect(result).toMatchObject({ saved: 1, skippedFilled: 2, failed: 0 });
     expect(recheckMissing.mock.calls[0][2]).toMatchObject({ type: "product", locales: LOCALES });
+  });
+
+  it("a cell dropped because its row is gone or its source is empty is skippedGone, not skippedFilled", async () => {
+    recheckMissing.mockImplementation(async () => ({
+      missing: new Set(["gid://shopify/Product/1|field.title|fr"]),
+      goneRows: new Set(["gid://shopify/Product/2"]),
+      emptySources: new Set(["gid://shopify/Product/1|field.title"]),
+    }));
+    const db = makeDb();
+    await run(db, jobs(2), { recheck: { columns: [titleColumn], moType: "", locales: LOCALES } });
+    const { result } = finalResult(db);
+    // Row 1: fr still missing (kept), es+it dropped; its source is "empty" -> gone. Row 2: all gone.
+    expect(result).toMatchObject({ saved: 1, skippedGone: 5, skippedFilled: 0, failed: 0 });
   });
 
   it("a failing re-check falls back to the live check instead of blocking the write", async () => {

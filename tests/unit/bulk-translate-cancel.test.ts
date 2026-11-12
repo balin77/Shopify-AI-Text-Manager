@@ -91,9 +91,20 @@ describe("bulk translate: cancellation", () => {
     const cancelledWrite = db.task.updateMany.mock.calls.map((c: any[]) => c[0]).find((c: any) => c.where.status === "cancelled");
     expect(cancelledWrite).toBeTruthy();
     const result = JSON.parse(cancelledWrite.data.result);
-    expect(result).toMatchObject({ cancelled: true, saved: 252, mode: "sync", blocks: 1 });
+    expect(result).toMatchObject({ cancelled: true, saved: 252, mode: "sync", blocks: 1, failed: 0 });
+    // The 48 units that never got their turn are "not processed", not failed.
+    expect(result.notProcessed).toBe(48);
     // translation stopped: not all 100 rows were asked
     expect(translateShortFieldsBatch.mock.calls.length).toBeLessThan(100);
+  });
+
+  it("a run stopped by the reaper (status failed) still records its partial result, conditional on that status", async () => {
+    const db = makeDb(84 + 1, "failed");
+    await run(db, jobs(100));
+    const write = db.task.updateMany.mock.calls.map((c: any[]) => c[0]).find((c: any) => c.where.status === "failed");
+    expect(write).toBeTruthy();
+    expect(write.data.status).toBeUndefined();
+    expect(JSON.parse(write.data.result)).toMatchObject({ saved: 252, notProcessed: 48 });
   });
 
   it("stops between the pieces of one block", async () => {

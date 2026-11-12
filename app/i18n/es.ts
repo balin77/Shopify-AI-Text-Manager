@@ -2545,6 +2545,8 @@ export const es: Translation = {
       skipped: "Omitidos",
       skippedChanged: "Omitidos (texto modificado entretanto)",
       skippedFilled: "Omitidos (ya traducidos entretanto)",
+      skippedGone: "Omitidos (elemento eliminado o texto vacío)",
+      notProcessed: "Sin procesar (ejecución detenida)",
       cancelledRun: "Cancelado – lo guardado hasta entonces se conserva",
       skippedDrafts: "Omitidos (borradores)",
       skippedHandles: "URL slugs omitidos",
@@ -4713,10 +4715,13 @@ export const es: Translation = {
       skippedHandles:
         "{count} handle(s) de URL omitido(s): la traducción era idéntica al idioma principal o no produjo un slug válido.",
       skippedChanged:
-        "{count} traducción(es) omitida(s) — el texto original se modificó entretanto. La próxima ejecución las completará con el texto nuevo.",
+        "{count} traducción(es) omitida(s) — el texto original se modificó entretanto. Se completarán cuando el elemento se haya recargado o sincronizado y vuelvas a iniciar la ejecución.",
       skippedFilled:
         "{count} traducción(es) omitida(s) — ese idioma ya tenía una traducción. No se sobrescribió nada.",
+      skippedGone:
+        "{count} traducción(es) omitida(s) — el elemento ya no existe o su texto original está vacío.",
       cancelled: "La ejecución se canceló. Hasta ese momento se habían guardado {saved} traducción(es).",
+      cancelledNotProcessed: "{count} traducción(es) ya no se procesaron (no es un error).",
       runTruncated:
         "Se procesaron como máximo {max} traducciones: quedan {rest} pendientes. Vuelve a iniciar la ejecución para el resto.",
       noneMissing: "No falta ninguna traducción en la selección actual.",

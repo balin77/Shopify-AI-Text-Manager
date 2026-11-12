@@ -2562,6 +2562,8 @@ export const en: Translation = {
       skipped: "Skipped",
       skippedChanged: "Skipped (text changed meanwhile)",
       skippedFilled: "Skipped (translated meanwhile)",
+      skippedGone: "Skipped (item deleted or text empty)",
+      notProcessed: "Not processed (run stopped)",
       cancelledRun: "Cancelled – what was saved before stays saved",
       skippedDrafts: "Skipped (drafts)",
       skippedHandles: "Skipped URL slugs",
@@ -4728,10 +4730,13 @@ export const en: Translation = {
       skippedHandles:
         "{count} URL handle(s) skipped — the translation was identical to the primary language or produced no valid slug.",
       skippedChanged:
-        "{count} translation(s) skipped — the original text was changed in the meantime. The next run fills them in from the new text.",
+        "{count} translation(s) skipped — the original text was changed in the meantime. They are filled in once the item has been reloaded or synced and you start the run again.",
       skippedFilled:
         "{count} translation(s) skipped — that language already had a translation by then. Nothing was overwritten.",
+      skippedGone:
+        "{count} translation(s) skipped — the item no longer exists or its original text is now empty.",
       cancelled: "The run was cancelled. {saved} translation(s) had been saved by then.",
+      cancelledNotProcessed: "{count} translation(s) were not processed any more (not an error).",
       runTruncated:
         "At most {max} translations were processed — {rest} are still open. Start the run again for the rest.",
       noneMissing: "Nothing is missing in the current selection.",

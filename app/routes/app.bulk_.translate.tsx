@@ -261,6 +261,8 @@ interface TranslateTaskResult {
    * the language had a translation by then (fill-only write path). */
   skippedChanged?: number;
   skippedFilled?: number;
+  skippedGone?: number;
+  notProcessed?: number;
 }
 
 type ResultBanner =
@@ -272,9 +274,10 @@ type ResultBanner =
       skippedHandles: number;
       skippedChanged: number;
       skippedFilled: number;
+      skippedGone: number;
       overCap: number;
     }
-  | { kind: "cancelled"; saved: number }
+  | { kind: "cancelled"; saved: number; notProcessed: number }
   | { kind: "none" }
   | { kind: "failed"; message?: string; interrupted?: boolean };
 
@@ -446,7 +449,7 @@ export default function BulkTranslateMissingPage() {
         if (task.status === "cancelled") {
           // Cancelled in the Tasks tab: what the run wrote before it stopped
           // stays written, so the list is reloaded like after a finished run.
-          setBanner({ kind: "cancelled", saved: parsed?.saved ?? 0 });
+          setBanner({ kind: "cancelled", saved: parsed?.saved ?? 0, notProcessed: parsed?.notProcessed ?? 0 });
         } else {
           setBanner({
             kind: "done",
@@ -455,6 +458,7 @@ export default function BulkTranslateMissingPage() {
             skippedHandles: parsed?.skippedHandles ?? 0,
             skippedChanged: parsed?.skippedChanged ?? 0,
             skippedFilled: parsed?.skippedFilled ?? 0,
+            skippedGone: parsed?.skippedGone ?? 0,
             overCap: startedOverCap.current,
           });
         }
@@ -507,7 +511,14 @@ export default function BulkTranslateMissingPage() {
               <Banner tone={banner.interrupted ? "warning" : "critical"}>{banner.message || tm.failed}</Banner>
             )}
             {banner?.kind === "cancelled" && (
-              <Banner tone="warning">{tm.cancelled.replace("{saved}", String(banner.saved))}</Banner>
+              <Banner tone="warning">
+                <BlockStack gap="100">
+                  <Text as="p">{tm.cancelled.replace("{saved}", String(banner.saved))}</Text>
+                  {banner.notProcessed > 0 && (
+                    <Text as="p">{tm.cancelledNotProcessed.replace("{count}", String(banner.notProcessed))}</Text>
+                  )}
+                </BlockStack>
+              </Banner>
             )}
             {banner?.kind === "done" && (
               <Banner tone={banner.failed > 0 ? "warning" : "success"}>
@@ -525,6 +536,9 @@ export default function BulkTranslateMissingPage() {
                   )}
                   {banner.skippedFilled > 0 && (
                     <Text as="p">{tm.skippedFilled.replace("{count}", String(banner.skippedFilled))}</Text>
+                  )}
+                  {banner.skippedGone > 0 && (
+                    <Text as="p">{tm.skippedGone.replace("{count}", String(banner.skippedGone))}</Text>
                   )}
                   {banner.overCap > 0 && (
                     <Text as="p">

@@ -66,6 +66,7 @@ function fakeDb(clock: () => Date, ids: () => string) {
       }
       return found[0] ?? null;
     }),
+    findUnique: vi.fn(async ({ where }: any) => rows.find((r) => r.id === where.id) ?? null),
     updateMany: vi.fn(async ({ where, data }: any) => {
       const hit = rows.filter((r) => matches(r, where));
       for (const r of hit) Object.assign(r, data);
@@ -124,6 +125,18 @@ describe("claimBulkTranslateRun", () => {
     expect(first.ok).toBe(true);
     expect(second).toEqual({ ok: false, taskId: (first as { task: { id: string } }).task.id });
     expect(rows).toHaveLength(1);
+  });
+
+  it("a claim whose own row was cancelled before it started answers cancelled, not 'already running'", async () => {
+    const { db, rows } = fakeDb(() => new Date(), nextId);
+    const find = db.task.findFirst;
+    db.task.findFirst = vi.fn(async (a: any) => {
+      // the merchant cancels the pending row between the insert and the start
+      for (const r of rows) r.status = "cancelled";
+      return find(a);
+    });
+    const claim = await claimBulkTranslateRun(db, data);
+    expect(claim).toEqual({ ok: false, taskId: rows[0].id, cancelled: true });
   });
 
   it("another shop's run never blocks", async () => {

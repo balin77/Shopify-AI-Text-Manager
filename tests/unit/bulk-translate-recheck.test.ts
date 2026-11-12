@@ -11,7 +11,7 @@ vi.mock("~/services/bulk-editor/load.server", () => ({
   loadBulkRows: (...a: unknown[]) => loadBulkRows(...a),
 }));
 
-import { recheckMissing } from "~/services/bulk-editor/missing-translations.server";
+import { recheckMissing, recheckMissingDetailed } from "~/services/bulk-editor/missing-translations.server";
 import { buildColumnsForType, type BulkRow, type ProductColumnCaps } from "~/services/bulk-editor/columns.shared";
 
 const caps: ProductColumnCaps = { metafields: true, options: true, imageAlt: false };
@@ -86,5 +86,21 @@ describe("recheckMissing", () => {
     const missing = await recheckMissing({} as never, SHOP, { type: "product", rowIds: [], columns: [col("field.title")], locales: ["fr"] });
     expect(missing.size).toBe(0);
     expect(loadBulkRows).not.toHaveBeenCalled();
+  });
+});
+
+describe("recheckMissingDetailed", () => {
+  it("names WHY a cell left: the row is gone, or its source is empty now", async () => {
+    loadBulkRows.mockResolvedValue({ rows: [row("p1", { title: "  " })], total: 1 });
+    const db = { contentTranslation: { findMany: vi.fn(async () => []) } };
+    const r = await recheckMissingDetailed(db as never, SHOP, {
+      type: "product",
+      rowIds: ["p1", "gone"],
+      columns: [col("field.title")],
+      locales: ["fr"],
+    });
+    expect([...r.goneRows]).toEqual(["gone"]);
+    expect([...r.emptySources]).toEqual(["p1|field.title"]);
+    expect(r.missing.size).toBe(0);
   });
 });

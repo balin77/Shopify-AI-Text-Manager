@@ -198,4 +198,17 @@ describe("planTranslateRead", () => {
     expect(plan.failures).toEqual([expect.objectContaining({ rowId: C2 })]);
     expect(plan.jobs.map((j) => j.rowId)).toEqual([C1]);
   });
+  it("a THROWING featured-image lookup is an unreadable cell, not 'no featured image'", async () => {
+    const C1 = "gid://shopify/Collection/1";
+    const { gateway } = gatewayFor({}, (query) => {
+      if (query.includes("bulkFeaturedImageId")) throw new Error("throttled");
+      return undefined;
+    });
+    const alt = BULK_COLUMNS_BY_TYPE.collection.find((c) => c.id === "img.featuredAlt")!;
+    const plan = await planTranslateRead({ db: noDb, shop: SHOP, gateway, rowType: "collection" }, [
+      job(C1, [{ column: alt, source: "Blue vase", locales: ["fr"] }]),
+    ]);
+    expect(plan.failures).toEqual([expect.objectContaining({ rowId: C1, message: expect.stringContaining("could not be read") })]);
+    expect(plan.failures[0].message).not.toMatch(/no featured image/);
+  });
 });
