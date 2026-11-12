@@ -753,3 +753,188 @@ export async function releaseSettledReservations(limit = 50): Promise<{ released
   }
   return { released, failed };
 }
+
+// ─── Booking what a settled batch really consumed (PLAN 5.5 / 6.4) ───────────
+
+/** One result line's usage, as the provider reported it (or an estimate). */
+export interface BatchUsageItem {
+  provider: AIProvider;
+  model: string;
+  /** The SUM of all input tokens, cache parts included (same meaning as RecordAiUsageInput). */
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  /** True when the provider reported no usage and the figures are our estimate. */
+  estimated: boolean;
+}
+
+export type BatchBookingOutcome =
+  | { applied: true; costMicros: number; billedMicros: number; calls: number }
+  | {
+      applied: false;
+      reason:
+        | 'noBatch'
+        | 'alreadySettled' // the reservation was already converted / released / booked: nothing to do
+        | 'leaseLost' // the lease token on the row is not the caller's any more
+        | 'failed';
+    };
+
+class LeaseLostError extends Error {}
+
+/**
+ * Book the ACTUAL usage of a collected batch and settle its reservation in ONE
+ * transaction (idempotent per batch row). Called BEFORE the translations are
+ * written, so a crash after it re-collects and re-writes without ever booking
+ * twice, and a crash before it books nothing.
+ *
+ * The idempotency marker is `reservationState`, the same flag the reserve /
+ * convert / release path flips: a MANAGED row must be `held` (it flips to
+ * `released` = settled), an own-key row has no reservation and is `none`
+ * (flips to `released` too, so a second collect finds it settled). Anything
+ * else -- `converted` (consent withdrawn: the upper bound was booked already),
+ * `released` -- is `alreadySettled` and nothing is written.
+ *
+ * With a `leaseToken` the row is locked `FOR UPDATE` and the token compared
+ * inside the transaction: a collector that lost its lease rolls back instead of
+ * booking on behalf of the new holder.
+ *
+ * Pricing is the BATCH tier (`priceCall` tier 'batch': the model's published
+ * batch factor on the non-cache components, 1.0 where none is known = over-
+ * count). `billedMicros = costMicros`: the batch discount is passed on to the
+ * merchant (owner decision, PLAN 16). Booked under the period / pool PINNED at
+ * submit, on the same keys the reservation was written under.
+ */
+export async function settleBatchUsage(
+  batchId: string,
+  items: BatchUsageItem[],
+  opts: { leaseToken?: string | null; feature?: string } = {},
+): Promise<BatchBookingOutcome> {
+  try {
+    const { db } = await import('../../db.server');
+    const feature = opts.feature ?? BATCH_RESERVATION_FEATURE;
+    const outcome = await db.$transaction(async (tx) => {
+      const rawTx = tx as unknown as { $queryRaw?: (q: TemplateStringsArray, ...v: unknown[]) => Promise<unknown> };
+      if (typeof rawTx.$queryRaw === 'function') {
+        await rawTx.$queryRaw`SELECT "id" FROM "BulkTranslateBatch" WHERE "id" = ${batchId} FOR UPDATE`;
+      }
+      const row = await tx.bulkTranslateBatch.findUnique({ where: { id: batchId } });
+      if (!row) return { applied: false, reason: 'noBatch' } as const;
+      if (opts.leaseToken !== undefined && row.leaseToken !== opts.leaseToken) throw new LeaseLostError();
+      const managed = row.source === 'managed';
+      if (row.reservationState !== (managed ? 'held' : 'none')) {
+        return { applied: false, reason: 'alreadySettled' } as const;
+      }
+      const flipped = await tx.bulkTranslateBatch.updateMany({
+        where: { id: batchId, reservationState: row.reservationState },
+        data: { reservationState: 'released' },
+      });
+      if (flipped.count !== 1) return { applied: false, reason: 'alreadySettled' } as const;
+
+      const period = row.period || currentAiUsagePeriod();
+      const source: AiCredentialSource = managed ? 'managed' : 'byo';
+      // One ledger row per (provider, model, measured/estimated), priced once on the sums.
+      const groups = new Map<
+        string,
+        { provider: AIProvider; model: string; estimated: boolean; input: number; output: number; read: number; write: number; calls: number }
+      >();
+      for (const item of items) {
+        const key = `${item.provider}|${item.model}|${item.estimated}`;
+        const g = groups.get(key) ?? {
+          provider: item.provider, model: item.model, estimated: item.estimated, input: 0, output: 0, read: 0, write: 0, calls: 0,
+        };
+        g.input += safeTokens(item.inputTokens);
+        g.output += safeTokens(item.outputTokens);
+        g.read += safeTokens(item.cacheReadTokens ?? 0);
+        g.write += safeTokens(item.cacheWriteTokens ?? 0);
+        g.calls += 1;
+        groups.set(key, g);
+      }
+      let totalCost = 0;
+      let totalCalls = 0;
+      for (const g of groups.values()) {
+        const read = Math.min(g.read, g.input);
+        const write = Math.min(g.write, g.input - read);
+        const priced = priceCall(g.provider, g.model, g.input, g.output, {
+          cacheReadTokens: read,
+          cacheWriteTokens: write,
+          tier: 'batch',
+        });
+        if (priced.pricedAtCeiling) warnUnknownModelOnce(g.provider, g.model);
+        const cost = clampMicros(priced.costMicros);
+        totalCost += cost;
+        totalCalls += g.calls;
+        await tx.aiUsageCounter.upsert({
+          where: {
+            shop_period_source_provider_model_feature_estimated: {
+              shop: row.shop, period, source, provider: g.provider, model: g.model, feature, estimated: g.estimated,
+            },
+          },
+          create: {
+            shop: row.shop, period, source, provider: g.provider, model: g.model, feature, estimated: g.estimated,
+            calls: g.calls,
+            inputTokens: BigInt(g.input),
+            outputTokens: BigInt(g.output),
+            cacheReadTokens: BigInt(read),
+            cacheWriteTokens: BigInt(write),
+            costMicros: BigInt(cost),
+            // billed = cost: the batch discount is passed on (PLAN 16).
+            billedMicros: BigInt(cost),
+          },
+          update: {
+            calls: { increment: g.calls },
+            inputTokens: { increment: BigInt(g.input) },
+            outputTokens: { increment: BigInt(g.output) },
+            cacheReadTokens: { increment: BigInt(read) },
+            cacheWriteTokens: { increment: BigInt(write) },
+            costMicros: { increment: BigInt(cost) },
+            billedMicros: { increment: BigInt(cost) },
+          },
+        });
+      }
+      if (managed) {
+        const k = reservationKeys(row);
+        // The pool counter carries the HOLD as cost until now: add what was
+        // spent, then take the hold off (clamped at zero in the statement).
+        if (totalCost > 0) {
+          await tx.managedAiGlobalCounter.upsert({
+            where: { period_pool: { period: k.poolPeriod, pool: k.pool } },
+            create: { period: k.poolPeriod, pool: k.pool, costMicros: BigInt(totalCost), failoverMicros: BigInt(0) },
+            update: { costMicros: { increment: BigInt(totalCost) } },
+          });
+        }
+        await dropReservation(tx as never, k, clampReservation(row.reservedMicros), clampReservation(row.reservedPoolMicros));
+      }
+      return { applied: true, costMicros: totalCost, billedMicros: totalCost, calls: totalCalls } as const;
+    });
+
+    if (outcome.applied) {
+      // The Task's per-run totals are a convenience record (Int32 columns); a
+      // failure here must not undo the booking, so it is outside the transaction.
+      try {
+        const row = await db.bulkTranslateBatch.findUnique({ where: { id: batchId }, select: { taskId: true } });
+        if (row) {
+          await db.task.updateMany({
+            where: { id: row.taskId },
+            data: {
+              inputTokens: { increment: Math.min(items.reduce((n, i) => n + safeTokens(i.inputTokens), 0), MAX_MICROS) },
+              outputTokens: { increment: Math.min(items.reduce((n, i) => n + safeTokens(i.outputTokens), 0), MAX_MICROS) },
+              costMicros: { increment: Math.min(outcome.costMicros, MAX_MICROS) },
+            },
+          });
+        }
+      } catch (error) {
+        logger.warn(
+          `[AI-METER] Task totals of batch ${batchId} not written: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    return outcome;
+  } catch (error) {
+    if (error instanceof LeaseLostError) return { applied: false, reason: 'leaseLost' };
+    logger.error(
+      `[AI-METER] Booking the usage of batch ${batchId} failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return { applied: false, reason: 'failed' };
+  }
+}

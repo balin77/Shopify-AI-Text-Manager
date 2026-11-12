@@ -48,7 +48,16 @@ describe('priceCall with all factors 1.0', () => {
           expect(
             priceCall(provider, model, i, o, { cacheReadTokens: Math.floor(i / 2), cacheWriteTokens: Math.floor(i / 4) }).costMicros,
           ).toBeGreaterThanOrEqual(legacy(provider, model, i, o));
-          expect(priceCall(provider, model, i, o, { tier: 'batch' }).costMicros).toBe(legacy(provider, model, i, o));
+          // The batch tier: Anthropic's published 50% factor for EVERY claude model (the unknown-model ceiling included),
+          // the full price (1.0 = over-count) for every other provider --
+          // none of them has a batch factor in the table.
+          const batch = priceCall(provider, model, i, o, { tier: 'batch' }).costMicros;
+          if (provider === 'claude') {
+            expect(batch).toBeLessThanOrEqual(legacy(provider, model, i, o));
+            expect(batch).toBeGreaterThanOrEqual(Math.floor(legacy(provider, model, i, o) / 2));
+          } else {
+            expect(batch).toBe(legacy(provider, model, i, o));
+          }
         }
       }
     }

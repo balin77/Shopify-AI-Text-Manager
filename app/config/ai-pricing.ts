@@ -79,7 +79,13 @@ function price(usdIn: number, usdOut: number): ModelPrice {
  * is over-counted, and one that only writes is not under-counted.
  */
 function claudePrice(usdIn: number, usdOut: number): ModelPrice {
-  return { ...price(usdIn, usdOut), cacheWriteMult: 1.25 };
+  // `batchMult: 0.5` is Anthropic's published Message Batches pricing: batch
+  // requests are charged at 50% of the standard input AND output price
+  // (Anthropic pricing page, "Batch processing"; docs "Message Batches").
+  // Applied to the NON-cache components only (priceCall); whether and how it
+  // stacks with the cache factors is not published here, so those stay at
+  // their full factors (over-count).
+  return { ...price(usdIn, usdOut), cacheWriteMult: 1.25, batchMult: 0.5 };
 }
 
 /**

@@ -34,8 +34,10 @@ import {
   packagePlannedOutputTokens,
   packageTimeoutMs,
   planPackages,
+  type PackageBudget,
   type PackageEntry,
   type PackageItem,
+  type PackagePlan,
   type TranslatePackage,
 } from "./translate-packages.shared";
 import {
@@ -149,11 +151,37 @@ interface CellState {
   done: boolean;
 }
 
-export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePhaseResult> {
-  const { jobs, ai } = deps;
-  const stats: PackagePhaseResult["stats"] = { packages: 0, requests: 0, retries: 0, oversizedCells: 0, groups: {} };
+/** What the planner needs of the run: the jobs and its own classifiers (one source of truth for routing). */
+export interface PackagePlanDeps {
+  jobs: TranslateJob[];
+  instructionsFor(fieldKeys: string[]): string | undefined;
+  isGroupedColumn(column: ColumnDescriptor): boolean;
+  isValueColumn(column: ColumnDescriptor): boolean;
+  isShortColumn(column: ColumnDescriptor): boolean;
+  isListValuesColumn(column: ColumnDescriptor): boolean;
+  isHandleColumn(column: ColumnDescriptor): boolean;
+  isTitleColumn(column: ColumnDescriptor): boolean;
+}
 
-  // ── 1. Entries ────────────────────────────────────────────────────────────
+export interface BuiltPackagePlan {
+  plan: PackagePlan;
+  built: { entries: PackageEntry[]; partsOf: Map<string, string[]> };
+  /** `rowId|columnId` of the cells the packages do NOT carry (productType, an entry that fits no package). */
+  excluded: Set<string>;
+  oversizedCells: number;
+}
+
+/** The `rowId|columnId` key a cell is tracked under. */
+export const packageCellKey = (job: TranslateJob, cell: Cell): string => `${job.rowId}|${cell.column.id}`;
+
+/**
+ * Jobs -> entries -> packages. Pure planning (no AI, no database): the live
+ * package phase and the Batch-API submit use THIS function, so a batch carries
+ * exactly the cells (and sizes exactly the packages) a live run would.
+ */
+export function buildPackagePlan(deps: PackagePlanDeps, budget: PackageBudget): BuiltPackagePlan {
+  const { jobs } = deps;
+  let oversizedCells = 0;
   const excluded = new Set<string>();
   for (const job of jobs) {
     for (const cell of job.cells) if (deps.isGroupedColumn(cell.column)) excluded.add(cellKeyOf(job, cell));
@@ -213,9 +241,6 @@ export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePh
     return { entries, partsOf };
   };
 
-  const limits = ai.packageLimits();
-  const budget = packageBudgetFor({ modelMaxOutput: limits.maxOutputTokens, bucketTpm: limits.bucketTpm });
-
   let built = buildEntries();
   let plan = planPackages(buildPackageItems(built.entries), budget);
   // A cell with ONE entry that cannot ride in a package goes to the per-row
@@ -227,12 +252,25 @@ export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePh
     for (const [cellKey, owners] of built.partsOf) {
       if (!excluded.has(cellKey) && owners.some((owner) => oversizedOwners.has(owner))) {
         excluded.add(cellKey);
-        stats.oversizedCells++;
+        oversizedCells++;
       }
     }
     built = buildEntries();
     plan = planPackages(buildPackageItems(built.entries), budget);
   }
+  return { plan, built, excluded, oversizedCells };
+}
+
+export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePhaseResult> {
+  const { jobs, ai } = deps;
+  const stats: PackagePhaseResult["stats"] = { packages: 0, requests: 0, retries: 0, oversizedCells: 0, groups: {} };
+
+  // ── 1. Entries ────────────────────────────────────────────────────────────
+  const limits = ai.packageLimits();
+  const budget = packageBudgetFor({ modelMaxOutput: limits.maxOutputTokens, bucketTpm: limits.bucketTpm });
+  const planned = buildPackagePlan(deps, budget);
+  const { plan, built, excluded } = planned;
+  stats.oversizedCells = planned.oversizedCells;
   const itemByKey = new Map<string, PackageItem>();
   for (const pkg of plan.packages) for (const item of pkg.items) itemByKey.set(item.key, item);
   stats.packages = plan.packages.length;

@@ -359,11 +359,11 @@ describe('the transport reaches nothing else', () => {
   });
 });
 
-describe('before the provider calls exist', () => {
+describe('providers whose batch calls are not built yet (OpenAI)', () => {
   it('the default operations answer SettlementNotImplementedError, not a silent success', async () => {
     configureManaged();
     __setSettlementOpsFactoryForTests(null);
-    const decision = await access(SHOP, row());
+    const decision = await access(SHOP, row({ provider: 'openai', role: 'failover' }));
     if (!decision.ok) throw new Error('expected access');
     await expect(decision.transport.cancel('msgbatch_1')).rejects.toBeInstanceOf(SettlementNotImplementedError);
     await expect(decision.transport.retrieve('msgbatch_1')).rejects.toBeInstanceOf(SettlementNotImplementedError);

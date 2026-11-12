@@ -156,6 +156,7 @@ import {
   releaseBudget,
   convertReservation,
   releaseSettledReservations,
+  settleBatchUsage,
   getAiUsage,
   isReservedFeature,
   reservedFeature,
@@ -448,3 +449,85 @@ describe('releaseSettledReservations (the sweep)', () => {
     expect(await releaseSettledReservations()).toEqual({ released: 0, failed: 0 });
   });
 });
+
+describe('settleBatchUsage books the ACTUAL usage and settles the hold in one idempotent step', () => {
+  const ITEMS = [
+    { provider: 'claude' as const, model: 'claude-haiku-4-5', inputTokens: 1_000_000, outputTokens: 500_000, estimated: false },
+    { provider: 'claude' as const, model: 'claude-haiku-4-5', inputTokens: 1_000_000, outputTokens: 500_000, estimated: false },
+  ];
+  // haiku-4-5: 1.0 / 5.0 USD per M tokens, batch factor 0.5 on both -> a known, nonzero charge
+  const charge = () => h.usage.get(chargeUsageKey().replace('|true', '|false'));
+
+  it('moves the hold to the real feature row at the BATCH tier (billed = cost) and swaps the pool hold for the spend', async () => {
+    await reserveBudget('batch-1', { billedMicros: 10_000_000 });
+    const out = await settleBatchUsage('batch-1', ITEMS);
+    expect(out.applied).toBe(true);
+    if (!out.applied) return;
+    // 2 requests x (1M in + 0.5M out) at half price: 2 x 0.5 x (1.0 + 2.5) USD = 3.5 USD
+    expect(out.calls).toBe(2);
+    expect(out.costMicros).toBeGreaterThan(3_000_000);
+    expect(out.costMicros).toBeLessThan(3_500_000);
+    expect(out.billedMicros).toBe(out.costMicros);
+    expect(charge()).toMatchObject({ calls: 2, inputTokens: 2_000_000n, outputTokens: 1_000_000n, costMicros: BigInt(out.costMicros), billedMicros: BigInt(out.costMicros) });
+    // the hold is gone from the :reserved row, the pool carries the spend instead of the hold
+    expect(h.usage.get(reservedUsageKey()).billedMicros).toBe(0n);
+    expect(poolRow().costMicros).toBe(BigInt(out.costMicros));
+    expect(h.batches.get('batch-1').reservationState).toBe('released');
+  });
+
+  it('is idempotent: a second booking of the same batch writes nothing', async () => {
+    await reserveBudget('batch-1', { billedMicros: 10_000_000 });
+    await settleBatchUsage('batch-1', ITEMS);
+    const before = JSON.stringify([...h.usage], (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
+    expect(await settleBatchUsage('batch-1', ITEMS)).toEqual({ applied: false, reason: 'alreadySettled' });
+    expect(JSON.stringify([...h.usage], (_k, v) => (typeof v === 'bigint' ? v.toString() : v))).toBe(before);
+  });
+
+  it('a hold that was converted (consent withdrawn) is never booked again', async () => {
+    await reserveBudget('batch-1', { billedMicros: 10_000_000 });
+    await convertReservation('batch-1');
+    expect(await settleBatchUsage('batch-1', ITEMS)).toEqual({ applied: false, reason: 'alreadySettled' });
+  });
+
+  it('a managed row without a hold is not booked (it never reserved: nothing to settle against)', async () => {
+    expect(await settleBatchUsage('batch-1', ITEMS)).toEqual({ applied: false, reason: 'alreadySettled' });
+    expect(h.usage.size).toBe(0);
+  });
+
+  it('a lost lease rolls the whole booking back (state included)', async () => {
+    await reserveBudget('batch-1', { billedMicros: 10_000_000 });
+    h.batches.get('batch-1').leaseToken = 'holder-A';
+    expect(await settleBatchUsage('batch-1', ITEMS, { leaseToken: 'holder-B' })).toEqual({ applied: false, reason: 'leaseLost' });
+    expect(h.batches.get('batch-1').reservationState).toBe('held');
+    expect(h.usage.get(reservedUsageKey()).billedMicros).toBe(10_000_000n);
+    // the rightful holder can still book
+    expect((await settleBatchUsage('batch-1', ITEMS, { leaseToken: 'holder-A' })).applied).toBe(true);
+  });
+
+  it('an own-key run books under the byo source, touches no pool and settles by the same marker', async () => {
+    h.batches.set('byo', batchRow({ id: 'byo', source: 'byo', period: '', pool: '', poolPeriod: '' }));
+    const out = await settleBatchUsage('byo', ITEMS);
+    expect(out.applied).toBe(true);
+    expect(h.pool.size).toBe(0);
+    const rows = [...h.usage.values()];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ source: 'byo', feature: BATCH_RESERVATION_FEATURE, calls: 2 });
+    expect(await settleBatchUsage('byo', ITEMS)).toEqual({ applied: false, reason: 'alreadySettled' });
+  });
+
+  it('measured and estimated usage are keyed apart; an unknown batch is a value', async () => {
+    await reserveBudget('batch-1', { billedMicros: 10_000_000 });
+    await settleBatchUsage('batch-1', [ITEMS[0], { ...ITEMS[1], estimated: true }]);
+    expect([...h.usage.values()].filter((r) => r.feature === BATCH_RESERVATION_FEATURE).map((r) => r.estimated).sort()).toEqual([false, true]);
+    expect(await settleBatchUsage('nope', ITEMS)).toEqual({ applied: false, reason: 'noBatch' });
+  });
+
+  it('the hold may be smaller than the spend: the pool never goes below zero', async () => {
+    await reserveBudget('batch-1', { billedMicros: 1_000 });
+    const out = await settleBatchUsage('batch-1', ITEMS);
+    expect(out.applied).toBe(true);
+    expect(poolRow().costMicros >= 0n).toBe(true);
+    expect(h.usage.get(reservedUsageKey()).billedMicros).toBe(0n);
+  });
+});
+

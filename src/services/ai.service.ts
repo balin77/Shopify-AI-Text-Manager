@@ -24,6 +24,11 @@ import {
   planLocaleChunks,
 } from '../../app/services/ai/translation-budget.shared';
 import { ADHOC_FEATURE, type AiCredentialSource } from '../../app/services/ai/usage-dimensions.shared';
+import type {
+  SettlementBatchStatus,
+  SettlementProviderOps,
+  SettlementResultItem,
+} from '../../app/services/ai/batch-settlement.shared';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
 
@@ -189,6 +194,30 @@ export interface AiRequestOptions {
    * everywhere else, which leaves the request exactly as it was.
    */
   cacheSplit?: number;
+}
+
+/** One package request as the live path and the batch path both take it. */
+export interface AiPackageRequest {
+  kind: 'short' | 'value' | 'long' | 'handle';
+  fromLang: string;
+  locales: string[];
+  items: { id: string; text: string; context?: string }[];
+  contentType: string;
+  instructions?: string;
+  plannedOutputTokens: number;
+  timeoutMs: number;
+  /** The caller's group has enough packages for a cache write to pay off. */
+  cacheable?: boolean;
+}
+
+/** One request of a provider batch: what the submit path sends and the manifest records. */
+export interface AiBatchRequest {
+  customId: string;
+  prompt: string;
+  /** `max_tokens` the request is SENT with (clamped to the serving model's ceiling). */
+  maxTokens: number;
+  /** Estimated input tokens of the prompt (pessimistic), for the reservation. */
+  inputEstimateTokens: number;
 }
 
 class AIRequestTimeoutError extends Error {
@@ -1394,39 +1423,12 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   }
 
   /**
-   * ONE cross-item PACKAGE of the "add missing translations" run
-   * (PLAN_BULK_TRANSLATE_BATCHING 3.1): many unrelated items of one group,
-   * answered as `{ "<id>": { "<locale>": "<text>" } }`.
-   *
-   * This method only asks and parses. It judges nothing about the CONTENT of
-   * the answer (swapped entries, a damaged HTML skeleton ... that is
-   * translate-package-verify.shared.ts), and it never repeats a request (the
-   * ladder in translate-package-run.shared.ts owns that, which is why the SDK
-   * does not retry package calls either). Provider errors propagate untouched
-   * so the caller's stand-down / key-rejection handling sees them; an answer
-   * that was cut off at the output ceiling or cannot be parsed comes back as
-   * `invalid`, because the right reaction is a smaller package, not a throw.
-   *
-   * Prompt order is deliberate: the stable part (rules + the merchant's
-   * instructions) first, then everything that varies per package -- the
-   * glossary is built from THIS package's texts, so it cannot be part of a
-   * cacheable prefix (and a group-wide glossary would crowd the package's own
-   * terms out of MAX_TERMS_IN_PROMPT).
-   *
-   * The item texts must already have passed `sanitizePromptInput`.
+   * The prompt of ONE package request, as its stable PREFIX (rules + the
+   * merchant's instructions) and the per-package remainder (target languages,
+   * this package's glossary, the items, the answer skeleton). ONE builder for
+   * the live request and the batch request, so the two can never drift.
    */
-  async translatePackage(req: {
-    kind: 'short' | 'value' | 'long' | 'handle';
-    fromLang: string;
-    locales: string[];
-    items: { id: string; text: string; context?: string }[];
-    contentType: string;
-    instructions?: string;
-    plannedOutputTokens: number;
-    timeoutMs: number;
-    /** The caller's group has enough packages for a cache write to pay off. */
-    cacheable?: boolean;
-  }): Promise<{ parsed: unknown; invalid?: 'truncated' | 'unparseable' }> {
+  private async composePackagePrompt(req: AiPackageRequest): Promise<{ prefix: string; variable: string }> {
     const targetLanguages = req.locales.map((loc) => `${localeName(loc)} (${loc})`).join(', ');
     const rules = [
       'Translate EVERY item into EVERY target language listed below.',
@@ -1469,6 +1471,33 @@ ${JSON.stringify({ items: req.items.map((item) => ({ id: item.id, text: item.tex
 
 Respond with ONLY a JSON object keyed by item id, then by locale code, like this (shown for the first item):
 ${JSON.stringify(skeleton)}`;
+    return { prefix, variable };
+  }
+
+  /**
+   * ONE cross-item PACKAGE of the "add missing translations" run
+   * (PLAN_BULK_TRANSLATE_BATCHING 3.1): many unrelated items of one group,
+   * answered as `{ "<id>": { "<locale>": "<text>" } }`.
+   *
+   * This method only asks and parses. It judges nothing about the CONTENT of
+   * the answer (swapped entries, a damaged HTML skeleton ... that is
+   * translate-package-verify.shared.ts), and it never repeats a request (the
+   * ladder in translate-package-run.shared.ts owns that, which is why the SDK
+   * does not retry package calls either). Provider errors propagate untouched
+   * so the caller's stand-down / key-rejection handling sees them; an answer
+   * that was cut off at the output ceiling or cannot be parsed comes back as
+   * `invalid`, because the right reaction is a smaller package, not a throw.
+   *
+   * Prompt order is deliberate: the stable part (rules + the merchant's
+   * instructions) first, then everything that varies per package -- the
+   * glossary is built from THIS package's texts, so it cannot be part of a
+   * cacheable prefix (and a group-wide glossary would crowd the package's own
+   * terms out of MAX_TERMS_IN_PROMPT).
+   *
+   * The item texts must already have passed `sanitizePromptInput`.
+   */
+  async translatePackage(req: AiPackageRequest): Promise<{ parsed: unknown; invalid?: 'truncated' | 'unparseable' }> {
+    const { prefix, variable } = await this.composePackagePrompt(req);
 
     const stop = { truncated: false };
     // Anthropic prompt caching: the prefix (rules + merchant instructions, NEVER
@@ -1495,6 +1524,205 @@ ${JSON.stringify(skeleton)}`;
     } catch {
       return { parsed: null, invalid: 'unparseable' };
     }
+  }
+
+  // ─── Provider Batch API (PLAN_BULK_TRANSLATE_BATCHING 5, Anthropic) ──────────
+
+  /** Does this provider have a Batch API this app drives? (Anthropic only for now; OpenAI is the next step.) */
+  static batchSupportedFor(provider: AIProvider): boolean {
+    return provider === 'claude';
+  }
+
+  /** Parse the text of a package answer (live or from a batch result) exactly as the live path does. */
+  static parsePackageAnswer(text: string, truncated: boolean): { parsed: unknown; invalid?: 'truncated' | 'unparseable' } {
+    if (truncated) return { parsed: null, invalid: 'truncated' };
+    try {
+      return { parsed: AIService.prototype.parseJSONResponse(text) };
+    } catch {
+      return { parsed: null, invalid: 'unparseable' };
+    }
+  }
+
+  /**
+   * One package request as a BATCH request: the same prompt the live path
+   * sends (`composePackagePrompt`), sent whole as the user turn. No cache
+   * marker: whether caching and the batch discount stack is not measured, and
+   * an unmarked request can only cost the plain (discounted) price.
+   */
+  async buildBatchRequest(customId: string, req: AiPackageRequest): Promise<AiBatchRequest> {
+    const { prefix, variable } = await this.composePackagePrompt(req);
+    const prompt = `${prefix}\n${variable}`;
+    return {
+      customId,
+      prompt,
+      maxTokens: Math.max(
+        256,
+        Math.min(packageMaxTokensFor(req.plannedOutputTokens), maxOutputTokensFor(this.provider, this.getModel())),
+      ),
+      // ~3 characters per token: the pessimistic rule this service meters estimates with.
+      inputEstimateTokens: AIService.estimateTokensFor(prompt),
+    };
+  }
+
+  /**
+   * THE GATE of a batch submit, asked once before anything is reserved or
+   * sent. A managed service runs the per-request preflight (consent, kill
+   * switch, shop budget, global pool) exactly as a live call does; a refusal is
+   * the typed ManagedAiRefusedError, never a generic failure. The answer pins
+   * what the reservation and the later booking are filed under (period, pool,
+   * credential role): the same keys for the whole life of the batch.
+   */
+  async batchGate(): Promise<{
+    provider: AIProvider;
+    model: string;
+    source: 'managed' | 'byo';
+    role: 'default' | 'failover';
+    period?: string;
+    pool?: 'paid' | 'taster';
+  }> {
+    if (this.config.managedRefusal) throw new ManagedAiRefusedError(this.config.managedRefusal);
+    if (!AIService.batchSupportedFor(this.provider) || !this.anthropic) {
+      throw new Error(`batch_unsupported:${this.provider}`);
+    }
+    let period = this.config.usagePeriod;
+    let pool = this.config.usagePool;
+    if (this.config.preflight) {
+      const verdict = await this.config.preflight();
+      if (!verdict.ok) {
+        throw new ManagedAiRefusedError(verdict.reason, {
+          usedMicros: verdict.usedMicros,
+          limitMicros: verdict.limitMicros,
+        });
+      }
+      period = verdict.period ?? period;
+      pool = verdict.pool ?? pool;
+    }
+    return {
+      provider: this.provider,
+      model: this.getModel(),
+      source: this.config.credentialSource === 'managed' ? 'managed' : 'byo',
+      role: this.config.failoverServed ? 'failover' : 'default',
+      ...(period !== undefined ? { period } : {}),
+      ...(pool !== undefined ? { pool } : {}),
+    };
+  }
+
+  /**
+   * Create the provider batch. Provider errors propagate untouched (the
+   * submit path decides what a refusal means). Never retried here: a create
+   * that failed AFTER the provider accepted it would make a second batch.
+   */
+  async createBatch(requests: AiBatchRequest[]): Promise<{ batchId: string; expiresAt: string | null }> {
+    if (!this.anthropic) throw new Error(`batch_unsupported:${this.provider}`);
+    const model = this.getModel();
+    const batch = await this.anthropic.messages.batches.create(
+      {
+        requests: requests.map((r) => ({
+          custom_id: r.customId,
+          params: { model, max_tokens: r.maxTokens, messages: [{ role: 'user' as const, content: r.prompt }] },
+        })),
+      },
+      { maxRetries: 0, timeout: 120_000 },
+    );
+    return { batchId: batch.id, expiresAt: batch.expires_at ?? null };
+  }
+
+  /**
+   * The SETTLEMENT operations of one provider (retrieve / results / cancel /
+   * deleteFile), built from a key that is handed in and kept in the closure.
+   * Static and instance-free on purpose: settling a batch happens after the
+   * shop may no longer be allowed a NEW call, so it cannot go through a
+   * service that carries the per-request gate. Only the credentials module
+   * calls it (it is the one place that holds the key).
+   */
+  static settlementOps(provider: AIProvider, apiKey: string): SettlementProviderOps | null {
+    if (provider !== 'claude') return null;
+    const client = new Anthropic({ apiKey, timeout: 60_000, maxRetries: 2 });
+    const toStatus = (b: {
+      processing_status: string;
+      expires_at?: string | null;
+      request_counts?: { processing: number; succeeded: number; errored: number; expired: number; canceled: number };
+    }): SettlementBatchStatus => {
+      const c = b.request_counts;
+      return {
+        providerStatus: b.processing_status,
+        ended: b.processing_status === 'ended',
+        canceling: b.processing_status === 'canceling',
+        ...(c
+          ? {
+              requestCounts: {
+                total: c.processing + c.succeeded + c.errored + c.expired + c.canceled,
+                succeeded: c.succeeded,
+                errored: c.errored,
+                expired: c.expired,
+                canceled: c.canceled,
+              },
+            }
+          : {}),
+        expiresAt: b.expires_at ?? null,
+      };
+    };
+    return {
+      retrieve: async (batchId) => toStatus(await client.messages.batches.retrieve(batchId)),
+      cancel: async (batchId) => {
+        try {
+          return toStatus(await client.messages.batches.cancel(batchId));
+        } catch (error) {
+          // A batch that already ended (or is already being cancelled) cannot be
+          // cancelled again and answers with an error -- but then there is
+          // nothing running: report its state instead of failing the cancel.
+          try {
+            const current = await client.messages.batches.retrieve(batchId);
+            if (current.processing_status !== 'in_progress') return toStatus(current);
+          } catch {
+            // fall through: the original error is the one that matters
+          }
+          throw error;
+        }
+      },
+      results: (batchId) =>
+        (async function* (): AsyncGenerator<SettlementResultItem> {
+          const lines = await client.messages.batches.results(batchId);
+          for await (const line of lines) {
+            const r = line.result;
+            if (r.type === 'succeeded') {
+              const message = r.message;
+              const block = message.content.find((b) => b.type === 'text');
+              const usage = message.usage as {
+                input_tokens?: number;
+                output_tokens?: number;
+                cache_read_input_tokens?: number | null;
+                cache_creation_input_tokens?: number | null;
+              };
+              const cacheRead = usage?.cache_read_input_tokens ?? 0;
+              const cacheWrite = usage?.cache_creation_input_tokens ?? 0;
+              yield {
+                customId: line.custom_id,
+                outcome: 'succeeded',
+                text: block && block.type === 'text' ? block.text : '',
+                truncated: message.stop_reason === 'max_tokens',
+                usage: {
+                  // `input_tokens` EXCLUDES the cache parts; the total is the sum of the three.
+                  inputTokens: (usage?.input_tokens ?? 0) + cacheRead + cacheWrite,
+                  outputTokens: usage?.output_tokens ?? 0,
+                  ...(cacheRead > 0 ? { cacheReadTokens: cacheRead } : {}),
+                  ...(cacheWrite > 0 ? { cacheWriteTokens: cacheWrite } : {}),
+                },
+              };
+            } else if (r.type === 'errored') {
+              yield {
+                customId: line.custom_id,
+                outcome: 'errored',
+                error: r.error?.error?.message ?? 'errored',
+              };
+            } else {
+              yield { customId: line.custom_id, outcome: r.type };
+            }
+          }
+        })(),
+      // Anthropic's Message Batches leave no files behind.
+      deleteFile: async () => undefined,
+    };
   }
 
   /**

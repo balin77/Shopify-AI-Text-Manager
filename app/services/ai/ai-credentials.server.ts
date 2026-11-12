@@ -776,7 +776,7 @@ function managedPreflight(
 /** Builds the provider calls for one provider. The KEY is passed in here and goes no further than the returned closure. */
 type SettlementOpsFactory = (ctx: { provider: AIProvider; apiKey: string }) => SettlementProviderOps;
 
-/** Until the poller phase ships the provider calls, every operation says so. */
+/** A provider whose Batch API this app does not drive yet (OpenAI): every operation says so. */
 function stubSettlementOps(ctx: { provider: AIProvider }): SettlementProviderOps {
   const refuse = (operation: string): never => {
     throw new SettlementNotImplementedError(ctx.provider, operation);
@@ -789,7 +789,15 @@ function stubSettlementOps(ctx: { provider: AIProvider }): SettlementProviderOps
   };
 }
 
-let settlementOpsFactory: SettlementOpsFactory = stubSettlementOps;
+/**
+ * The real provider calls live in AIService (the one place that owns the
+ * provider SDK clients); the key is handed to it here and goes no further than
+ * the closure it builds. A provider it does not drive answers the stub.
+ */
+const realSettlementOps: SettlementOpsFactory = (ctx) =>
+  AIService.settlementOps(ctx.provider, ctx.apiKey) ?? stubSettlementOps(ctx);
+
+let settlementOpsFactory: SettlementOpsFactory = realSettlementOps;
 
 /**
  * TEST SEAM for the provider calls. Refuses outside the test runner: a way to
@@ -799,7 +807,7 @@ export function __setSettlementOpsFactoryForTests(factory: SettlementOpsFactory 
   if (process.env.NODE_ENV !== "test") {
     throw new Error("__setSettlementOpsFactoryForTests is a test seam and refuses to run outside tests");
   }
-  settlementOpsFactory = factory ?? stubSettlementOps;
+  settlementOpsFactory = factory ?? realSettlementOps;
 }
 
 /**
