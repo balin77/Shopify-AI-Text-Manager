@@ -241,6 +241,8 @@ export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePh
   // (halves) share its prefix and keep the flag.
   const packagesPerGroup = new Map<string, number>();
   for (const pkg of plan.packages) packagesPerGroup.set(pkg.groupKey, (packagesPerGroup.get(pkg.groupKey) ?? 0) + 1);
+  const isCacheable = (pkg: TranslatePackage): boolean =>
+    (packagesPerGroup.get(pkg.groupKey) ?? 0) >= PACKAGE_CACHE_MIN_GROUP_PACKAGES;
 
   // ── 2. Cell bookkeeping ───────────────────────────────────────────────────
   const ownerToItem = new Map<string, string>();
@@ -317,7 +319,7 @@ export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePh
         instructions: pkg.instructions,
         plannedOutputTokens: planned,
         timeoutMs: packageTimeoutMs(planned),
-        ...((packagesPerGroup.get(pkg.groupKey) ?? 0) >= PACKAGE_CACHE_MIN_GROUP_PACKAGES ? { cacheable: true } : {}),
+        ...(isCacheable(pkg) ? { cacheable: true } : {}),
       });
       if (result.invalid) return { answer: null, invalid: result.invalid };
       return { answer: { parsed: result.parsed, idOf } };
@@ -369,19 +371,50 @@ export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePh
   let longRunning = 0;
   let aborted: unknown = null;
   let hasAborted = false;
-  const take = (): TranslatePackage | undefined => {
-    // At most ONE long package in flight per shop (the queue enforces it too).
-    const index = pending.findIndex((p) => p.kind !== "long" || longRunning === 0);
-    if (index < 0) return undefined;
-    const [pkg] = pending.splice(index, 1);
-    if (pkg.kind === "long") longRunning++;
-    return pkg;
+  // Prompt caching: the FIRST package of a cacheable group goes out ALONE, so it
+  // writes the cache (1.25x) once and the rest of that group reads it. Sending
+  // two at once makes both write. Other groups are unaffected; a failed first
+  // package still releases the group (no cache, no deadlock). Halved/single
+  // retries are built from the parent package and keep its groupKey, so they
+  // keep the cacheable flag (callPackage derives it from the group) and run
+  // inside the first package's own ladder, i.e. before the group is released.
+  const groupStarted = new Set<string>();
+  const groupReleased = new Set<string>();
+  let wake: (() => void)[] = [];
+  const wakeAll = () => {
+    const w = wake;
+    wake = [];
+    for (const resolve of w) resolve();
+  };
+  /** A package, "wait" when only a cache group's first package in flight blocks
+   *  the rest, or undefined when nothing is left to take. */
+  const take = (): TranslatePackage | "wait" | undefined => {
+    let waiting = false;
+    for (let index = 0; index < pending.length; index++) {
+      const p = pending[index];
+      // At most ONE long package in flight per shop (the queue enforces it too).
+      if (p.kind === "long" && longRunning > 0) continue;
+      if (isCacheable(p) && groupStarted.has(p.groupKey) && !groupReleased.has(p.groupKey)) {
+        waiting = true;
+        continue;
+      }
+      pending.splice(index, 1);
+      if (p.kind === "long") longRunning++;
+      if (isCacheable(p)) groupStarted.add(p.groupKey);
+      return p;
+    }
+    return waiting ? "wait" : undefined;
   };
 
   const worker = async (): Promise<void> => {
     for (;;) {
       if (hasAborted || deps.managedRefusal() || (await deps.shouldStop())) return;
-      const pkg = take();
+      let pkg = take();
+      while (pkg === "wait") {
+        await new Promise<void>((resolve) => wake.push(resolve));
+        if (hasAborted || deps.managedRefusal() || (await deps.shouldStop())) return;
+        pkg = take();
+      }
       if (!pkg) return;
       try {
         const { outcomes, stats: pkgStats, stopped } = await runPackageLadder(pkg, {
@@ -417,12 +450,16 @@ export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePh
         return;
       } finally {
         if (pkg.kind === "long") longRunning--;
+        // Whatever happened to the group's first package, its rest may go now.
+        groupReleased.add(pkg.groupKey);
+        wakeAll();
       }
     }
   };
 
   const workerCount = Math.min(3, Math.max(1, plan.packages.length));
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  wakeAll();
   if (hasAborted) throw aborted;
 
   // ── 5. Leftovers ──────────────────────────────────────────────────────────

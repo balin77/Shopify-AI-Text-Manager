@@ -353,6 +353,49 @@ describe("packages ON", () => {
     expect(first.every((r) => r.cacheable === true)).toBe(true);
   });
 
+  it("a cacheable group sends its FIRST package alone; the rest of the group follows once it has answered", async () => {
+    echoModel();
+    const base = translatePackage.getMockImplementation()!;
+    const log: string[] = [];
+    let inflight = 0;
+    let maxInflightAfterFirst = 0;
+    translatePackage.mockImplementation(async (req: any) => {
+      const n = log.filter((l) => l.startsWith("start")).length + 1;
+      log.push(`start${n}`);
+      inflight++;
+      if (n > 1) maxInflightAfterFirst = Math.max(maxInflightAfterFirst, inflight);
+      if (n === 1) {
+        // The first package is still out while the others would be taken.
+        await new Promise((r) => setTimeout(r, 30));
+        expect(inflight).toBe(1);
+      } else {
+        await new Promise((r) => setTimeout(r, 2));
+      }
+      const out = await base(req);
+      inflight--;
+      log.push(`end${n}`);
+      return out;
+    });
+    packageLimits.mockReturnValue({ maxOutputTokens: 1024, bucketTpm: null });
+    await run(makeDb(), jobs(120), { packages: true });
+    expect(translatePackage.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(log.indexOf("end1")).toBeLessThan(log.indexOf("start2"));
+    // After the first, the group runs with the normal concurrency again.
+    expect(maxInflightAfterFirst).toBeGreaterThan(1);
+  });
+
+  it("a failing first package still releases its group (no deadlock)", async () => {
+    echoModel();
+    const base = translatePackage.getMockImplementation()!;
+    translatePackage.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("boom"), { status: 400 });
+    });
+    translatePackage.mockImplementation(base);
+    packageLimits.mockReturnValue({ maxOutputTokens: 1024, bucketTpm: null });
+    await run(makeDb(), jobs(120), { packages: true });
+    expect(translatePackage.mock.calls.length).toBeGreaterThan(3);
+  });
+
   it("a transient provider error (503) repeats the same package once instead of splitting it", async () => {
     echoModel();
     const base = translatePackage.getMockImplementation()!;
