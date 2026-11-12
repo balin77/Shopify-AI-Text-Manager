@@ -271,6 +271,27 @@ describe('reserveBudget writes BOTH counters, billedMicros only', () => {
   });
 });
 
+describe('reserveBudget refuses a row whose keys are not pinned (M3)', () => {
+  it.each([
+    ['an empty period', { period: '' }],
+    ['an empty poolPeriod', { poolPeriod: '' }],
+    ['an empty pool', { pool: '' }],
+    ['a pool that is neither paid nor taster', { pool: 'something' }],
+  ])('%s: nothing is written anywhere, the row stays "none"', async (_label, over) => {
+    h.batches.set('batch-1', batchRow(over));
+    const out = await reserveBudget('batch-1', { billedMicros: 500 });
+    expect(out).toEqual({ applied: false, reason: 'unpinned' });
+    expect(h.usage.size).toBe(0);
+    expect(h.pool.size).toBe(0);
+    expect(h.batches.get('batch-1').reservationState).toBe('none');
+  });
+
+  it('a taster row with all keys pinned still reserves', async () => {
+    h.batches.set('batch-1', batchRow({ pool: 'taster' }));
+    expect(await reserveBudget('batch-1', { billedMicros: 500 })).toEqual({ applied: true, micros: 500 });
+  });
+});
+
 describe('the three readers', () => {
   it('(a) managedBudgetStatus counts the hold as used budget -- under the billing period the submit pinned', async () => {
     const limit = managedBudgetMicros('max');

@@ -518,6 +518,7 @@ export type ReservationOutcome =
         | 'byo' // an own-key run has no budget to reserve against
         | 'zero' // nothing to reserve
         | 'already' // reserve: the row is not in state "none"
+        | 'unpinned' // reserve: period / poolPeriod / pool are not pinned on the row (pool must be paid or taster)
         | 'notHeld' // convert / release: nothing is held (never reserved, or already settled)
         | 'failed'; // the transaction failed; nothing was written
     };
@@ -561,6 +562,13 @@ export async function reserveBudget(
     if (!row) return { applied: false, reason: 'noBatch' };
     if (row.source !== 'managed') return { applied: false, reason: 'byo' };
     if (row.reservationState !== 'none') return { applied: false, reason: 'already' };
+    // A reservation is written under the keys PINNED at submit. A row without
+    // them would be held under the empty period (or default to the paid pool),
+    // a place no budget or pool reader looks: the hold would exist and protect
+    // nothing, and its release would miss too. Refuse instead.
+    if (!row.period || !row.poolPeriod || (row.pool !== 'paid' && row.pool !== 'taster')) {
+      return { applied: false, reason: 'unpinned' };
+    }
     const billed = clampReservation(amounts.billedMicros);
     const poolAmount = clampReservation(amounts.poolMicros ?? amounts.billedMicros);
     if (billed <= 0) return { applied: false, reason: 'zero' };
@@ -644,6 +652,11 @@ export async function releaseBudget(batchId: string): Promise<ReservationOutcome
  * hold moves from the `:reserved` row into the real feature row (billedMicros
  * and costMicros, estimated); the pool counter already carries the amount as
  * cost and is left alone.
+ *
+ * `costMicros` is set equal to `billedMicros` ON PURPOSE (owner decision,
+ * PLAN 16: batch discount passed on, billed = cost, and a conversion has no
+ * measured provider cost -- the upper bound IS the amount the shop is charged
+ * and the amount recorded as spent). Do not "correct" it to zero.
  */
 export async function convertReservation(batchId: string): Promise<ReservationOutcome> {
   return settleReservation(batchId, 'converted');
