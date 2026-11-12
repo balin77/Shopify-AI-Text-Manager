@@ -516,7 +516,7 @@ describe("the Task is no longer ours when the batch id comes back (cancelled, de
 });
 
 describe("a row that names this batch is ours in ANY state (M3)", () => {
-  for (const state of ["waiting", "cancel_requested", "collecting", "done"]) {
+  for (const state of ["waiting", "cancel_requested", "collecting"]) {
     it(`${state}: not abandoned, not settled`, async () => {
       const out = await submitBulkTranslateBatch("task-1", args(makeDb({ taskStillOurs: false, namedInState: state }), fakeService()));
       expect(out).toMatchObject({ ok: true, batchId: "msgbatch_1" });
@@ -525,10 +525,36 @@ describe("a row that names this batch is ours in ANY state (M3)", () => {
       expect(h.convert).not.toHaveBeenCalled();
     });
   }
-  it("a re-read that throws neither fails the Task nor settles: the poller owns the batch", async () => {
-    const db = makeDb({ taskStillOurs: false, rereadThrows: true });
+  it("a done row naming the batch is NOT ours: the batch is cancelled at the provider, never adopted, the row is not reopened", async () => {
+    const db = makeDb({ taskStillOurs: false, namedInState: "done" });
     const out = await submitBulkTranslateBatch("task-1", args(db, fakeService()));
+    expect(out).toEqual({ ok: false, code: "task_not_ours" });
+    expect(h.cancel).toHaveBeenCalledWith("msgbatch_1");
+    const reopen = db.calls.filter((c: any) => c.op === "row.updateMany" && c.arg.data.state === "cancel_requested");
+    for (const c of reopen) expect(c.arg.where.state).toEqual({ in: ["submitting", "create_unknown"] });
+  });
+  it("a re-read that fails once is retried and then judged normally", async () => {
+    const db = makeDb({ taskStillOurs: false, namedInState: "waiting" });
+    let n = 0;
+    const real = db.bulkTranslateBatch.findUnique;
+    db.bulkTranslateBatch.findUnique = vi.fn(async (a: any) => {
+      if (n++ === 0) throw new Error("db blink");
+      return real(a);
+    });
+    const out = await submitBulkTranslateBatch("task-1", { ...args(db, fakeService()), rereadRetryDelayMs: 0 });
     expect(out).toMatchObject({ ok: true, batchId: "msgbatch_1" });
+    expect(n).toBeGreaterThan(1);
+    expect(h.cancel).not.toHaveBeenCalled();
+  });
+  it("a re-read that keeps throwing hands the batch to the poller (conditional cancel_requested with the id), no Task failure, no settle here", async () => {
+    const db = makeDb({ taskStillOurs: false, rereadThrows: true });
+    const out = await submitBulkTranslateBatch("task-1", { ...args(db, fakeService()), rereadRetryDelayMs: 0 });
+    expect(out).toMatchObject({ ok: true, batchId: "msgbatch_1" });
+    expect(db.bulkTranslateBatch.findUnique.mock.calls.length).toBe(3);
+    const handoff = db.calls.find((c: any) => c.op === "row.updateMany" && c.arg.data.state === "cancel_requested");
+    expect(handoff.arg.where).toEqual({ id: "row-1", state: "submitting" });
+    expect(handoff.arg.data.batchIds).toEqual(["msgbatch_1"]);
+    expect(db.calls.map((c: any) => c.arg).find((a: any) => a.data?.status === "failed")).toBeUndefined();
     expect(h.cancel).not.toHaveBeenCalled();
     expect(h.release).not.toHaveBeenCalled();
     expect(h.convert).not.toHaveBeenCalled();

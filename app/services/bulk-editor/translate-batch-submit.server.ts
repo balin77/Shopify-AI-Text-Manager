@@ -111,6 +111,8 @@ export interface SubmitArgs {
   classifiers: Omit<PackagePlanDeps, "jobs" | "instructionsFor">;
   /** TEST SEAMS. */
   service?: AIService;
+  /** Delay between the attempts to re-read the rows after a lost flip (default 300 ms). */
+  rereadRetryDelayMs?: number;
 }
 
 export type SubmitOutcome =
@@ -407,24 +409,45 @@ export async function submitBulkTranslateBatch(taskId: string, args: SubmitArgs)
       if (!flipped) {
         // Not `submitting` any more. If a recovery merely RESUMED the run (`waiting_batch` over a `waiting` row
         // that names this batch) it is still ours; anything else (cancelled, deleted, failed) is not.
-        let task: { status: string } | null;
-        let current: { state: string; batchIds: unknown } | null;
-        try {
-          [task, current] = await Promise.all([
-            db.task.findUnique({ where: { id: taskId }, select: { status: true } }),
-            db.bulkTranslateBatch.findUnique({ where: { id: row.id }, select: { state: true, batchIds: true } }),
-          ]);
-        } catch (error) {
-          // The batch exists and its id is stored: the poller owns it from here. Never fail the Task or settle on a failed read.
-          logger.error("[BulkTranslateBatch] Re-read after a lost flip failed; leaving the batch to the poller", {
+        let task: { status: string } | null = null;
+        let current: { state: string; batchIds: unknown } | null = null;
+        let reread = false;
+        let lastReadError = "";
+        const retryDelay = args.rereadRetryDelayMs ?? 300;
+        for (let attempt = 0; attempt < 3 && !reread; attempt++) {
+          if (attempt > 0 && retryDelay > 0) await new Promise((resolve) => setTimeout(resolve, retryDelay));
+          try {
+            [task, current] = await Promise.all([
+              db.task.findUnique({ where: { id: taskId }, select: { status: true } }),
+              db.bulkTranslateBatch.findUnique({ where: { id: row.id }, select: { state: true, batchIds: true } }),
+            ]);
+            reread = true;
+          } catch (error) {
+            lastReadError = errorMessage(error);
+          }
+        }
+        if (!reread) {
+          // The Task is provably no longer `submitting`, so this run lost it. Hand the batch to the poller:
+          // best-effort conditional move to cancel_requested with the id stored (it cancels and settles by the guiding rule).
+          logger.error("[BulkTranslateBatch] Re-read after a lost flip failed; handing the batch to the poller to cancel", {
             context: "AI",
             taskId,
-            error: errorMessage(error),
+            error: lastReadError,
           });
+          try {
+            await db.bulkTranslateBatch.updateMany({
+              where: { id: row.id, state: "submitting" },
+              data: { state: "cancel_requested", batchIds: [created.batchId], cancelRequestedAt: new Date(), lastError: "lost_flip_reread_failed" },
+            });
+          } catch (error) {
+            logger.error("[BulkTranslateBatch] Could not hand the batch to the poller", { context: "AI", taskId, error: errorMessage(error) });
+          }
           return { ok: true, batchRowId: row.id, batchId: created.batchId, requests: requests.length, carriedUnits, notStarted };
         }
-        // A row (in ANY state but still `submitting`: waiting, cancel_requested, collecting, done) that names this batch is ours.
-        const namesBatch = !!current && current.state !== "submitting" && Array.isArray(current.batchIds) && current.batchIds.includes(created.batchId);
+        // A row in a state the poller still works (waiting, cancel_requested, collecting) that names this batch is ours.
+        // NOT `done`: a done row is never polled or cancelled again (uninstall / recovery can set it while this
+        // runner lives), so a batch it names would run unattended; that one goes to abandonCreated.
+        const namesBatch = !!current && ["waiting", "cancel_requested", "collecting"].includes(current.state) && Array.isArray(current.batchIds) && current.batchIds.includes(created.batchId);
         const resumed =
           namesBatch ||
           // A recovery may have parked the row as create_unknown (no batch id) while this runner was alive and
