@@ -66,15 +66,16 @@ export function hash64(text: string): string {
 
 /**
  * The identity of ONE item for matching a result back to a cell: what was
- * asked (kind), in which languages, about which text. NOT the merchant's
- * instructions and NOT the handle's title context -- an answer to the same text
- * in the same languages is a valid translation whichever wording rules were on
- * when it was asked, and keying on them would discard paid results the moment
- * the merchant edits an instruction while the batch waits.
+ * asked (kind) about which text. NOT the languages (the collect step may need a
+ * SUBSET of the languages the batch asked for -- one was filled by hand while
+ * it waited -- and an answer holds every language it was asked for), NOT the
+ * merchant's instructions and NOT the handle's title context: an answer to the
+ * same text is a valid translation whichever wording rules were on when it was
+ * asked, and keying on them would discard paid results the moment the merchant
+ * edits an instruction while the batch waits.
  */
-export function itemSignature(item: { kind: string; locales: string[]; source: string }): string {
-  const locales = [...new Set(item.locales)].sort().join(",");
-  return hash64(`${item.kind}\u0000${locales}\u0000${item.source}`);
+export function itemSignature(item: { kind: string; source: string }): string {
+  return hash64(`${item.kind}\u0000${item.source}`);
 }
 
 /** Hash of a cell's source text, to notice that the text moved between submit and collect. */

@@ -112,6 +112,9 @@ export interface PackagePhaseDeps {
   managedRefusal(): string | null;
   /** After each package: heartbeat and write-if-due. */
   afterPackage(): Promise<void>;
+  /** Planned output cap per package; omitted = the live (timeout-bound) cap. A batch collect passes the batch cap
+   *  its packages were SIZED with, or an entry that fit then would read as oversized now. */
+  outputCap?: number;
   log(level: "info" | "warn", message: string, meta?: Record<string, unknown>): void;
 }
 
@@ -267,7 +270,11 @@ export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePh
 
   // ── 1. Entries ────────────────────────────────────────────────────────────
   const limits = ai.packageLimits();
-  const budget = packageBudgetFor({ modelMaxOutput: limits.maxOutputTokens, bucketTpm: limits.bucketTpm });
+  const budget = packageBudgetFor({
+    modelMaxOutput: limits.maxOutputTokens,
+    bucketTpm: limits.bucketTpm,
+    ...(deps.outputCap ? { outputCap: deps.outputCap } : {}),
+  });
   const planned = buildPackagePlan(deps, budget);
   const { plan, built, excluded } = planned;
   stats.oversizedCells = planned.oversizedCells;

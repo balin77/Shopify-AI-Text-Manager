@@ -138,6 +138,13 @@ export interface MissingScanOptions {
    * them; the page's loader does not — shipping every product description to
    * the browser to draw a checkbox list would be pure payload. */
   withSources?: boolean;
+  /**
+   * Restrict the scan to exactly these rows (a Batch-API collect re-reads the
+   * rows its manifest names: PLAN_BULK_TRANSLATE_BATCHING 5.5). Everything else
+   * -- what counts as missing, the sources, the sub-resource entries -- is the
+   * scan's own, so a collect sees what a fresh run would.
+   */
+  rowIds?: string[];
 }
 
 export interface MissingScanResult {
@@ -247,6 +254,7 @@ export async function scanMissingTranslations(
       productCells,
       admin: opts.admin,
       moType: opts.moType,
+      ...(opts.rowIds ? { ids: opts.rowIds } : {}),
     });
     matchedRows = total;
     if (rows.length === 0) {

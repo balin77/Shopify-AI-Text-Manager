@@ -57,9 +57,16 @@ import {
 import { buildServerColumnsByType } from "~/services/bulk-editor/columns.server";
 import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
 import { chunkImportDiff } from "~/services/bulk-editor/diff-chunks.server";
-import { runPackagePhase, type PackagePhaseResult } from "~/services/bulk-editor/translate-package-phase.server";
+import {
+  runPackagePhase,
+  type PackagePhaseAI,
+  type PackagePhaseResult,
+} from "~/services/bulk-editor/translate-package-phase.server";
 import { estimateTranslateRun, type TranslateEstimate } from "~/services/bulk-editor/translate-estimate.shared";
+import { PACKAGE_OUTPUT_CAP_BATCH } from "~/services/bulk-editor/translate-packages.shared";
 import { aiServiceFor } from "~/services/ai/ai-credentials.server";
+import { batchEligibility } from "~/services/bulk-editor/translate-batch-eligibility.server";
+import { submitBulkTranslateBatch } from "~/services/bulk-editor/translate-batch-submit.server";
 import { planTranslateRead, planCellKey } from "~/services/bulk-editor/translate-plan-read.server";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import {
@@ -169,6 +176,9 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
   // It sits behind the same plan gate (above) and, through /api/ai, behind
   // aiRefusalFor: a shop without a key gets the refusal, not a number.
   const estimateOnly = getFormString(formData, "estimateOnly") === "true";
+  // "batch" = the Anthropic Message Batches mode ("cheaper, result within 24 hours"); anything else is the
+  // live run. The choice is only a request: whether this shop MAY use it is decided below, server-side.
+  const wantsBatch = getFormString(formData, "mode") === "batch";
 
   const columnsByType = await buildServerColumnsByType(db, shop, plan);
   // Metaobject rows are only schema-homogeneous per definition type — an
@@ -233,6 +243,7 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
       shop,
       settings,
       plan,
+      batchAvailable: (await batchEligibility(settings, shop, plan)).available,
       jobs,
       units,
       overCap,
@@ -250,6 +261,23 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
       return json({ success: false, code: "ESTIMATE_UNAVAILABLE", error: "The estimate is not available." });
     }
     return json({ success: true, estimate });
+  }
+
+  // The batch choice is re-decided HERE (this route takes a direct POST): a shop whose provider has no
+  // batch API, a taster, or a refused shop gets an answer, never a silent downgrade to a live run.
+  if (wantsBatch) {
+    const eligibility = await batchEligibility(settings, shop, plan);
+    if (!eligibility.available) {
+      return json(
+        {
+          success: false,
+          code: "BATCH_NOT_AVAILABLE",
+          reason: eligibility.reason,
+          error: "The cheaper batch mode is not available for this store. Run it immediately instead.",
+        },
+        { status: 409 },
+      );
+    }
   }
 
   const claim = await claimBulkTranslateRun(db, {
@@ -281,6 +309,58 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
     );
   }
   const task = claim.task;
+
+  if (wantsBatch) {
+    // The merchant's translate instructions, exactly as the live run builds them per request.
+    const instructionRow = await db.aIInstructions.findUnique({ where: { shop } }).catch(() => null);
+    const instructionsFor = (fieldKeys: string[]): string | undefined =>
+      buildTranslateInstructions(
+        getInstructionWithDefault(instructionRow, "translateInstructions"),
+        translationMode,
+        fieldKeys,
+        { limits: seoLimits as unknown as Record<string, number> | null },
+      );
+    // Submitting is slow (plan-time read, prompt building, the provider call): detached, like the live run.
+    // The Task is `submitting` from its first step; its terminal state is the submit path's.
+    void submitBulkTranslateBatch(task.id, {
+      db,
+      shop,
+      admin: backgroundAdmin(shop, admin),
+      settings,
+      jobs,
+      units,
+      rowType,
+      moType,
+      primaryLocale,
+      contentType: BULK_ROW_TYPE_TO_CONTENT_TYPE[rowType],
+      targetLocales,
+      instructionsFor,
+      classifiers: {
+        isGroupedColumn: isGroupedProductTypeColumn,
+        isValueColumn: isBatchSubResourceColumn,
+        isShortColumn: isShortFieldColumn,
+        isListValuesColumn,
+        isHandleColumn: (column) => column.id === HANDLE_COLUMN_ID,
+        isTitleColumn: (column) => column.kind === "field" && canonicalFieldNameForColumn(column) === "title",
+      },
+    }).catch((err: unknown) => {
+      logger.error("[API-AI] Bulk-editor translate batch submit crashed", {
+        context: "AI",
+        taskId: task.id,
+        error: errorMessage(err),
+      });
+    });
+    return json({
+      success: true,
+      taskId: task.id,
+      total: units,
+      mode: "batch",
+      skippedOverCap: overCap,
+      scanTruncated: scan.scanTruncated,
+      matchedRows: scan.matchedRows,
+      scannedRows: scan.scannedRows,
+    });
+  }
 
   void runBulkEditorTranslate(task.id, {
     db,
@@ -338,6 +418,8 @@ async function buildEstimate(args: {
   units: number;
   overCap: number;
   scanTruncated: boolean;
+  /** The server's own answer (translate-batch-eligibility): is the batch alternative offered? */
+  batchAvailable: boolean;
   instructionsFor: (fieldKeys: string[]) => string | undefined;
 }): Promise<TranslateEstimate | null> {
   try {
@@ -386,6 +468,7 @@ async function buildEstimate(args: {
       glossaryChars,
       source,
       managedBudget,
+      batchAvailable: args.batchAvailable,
     });
   } catch (err: unknown) {
     logger.warn("[API-AI] Bulk-editor translate estimate failed", { context: "AI", error: errorMessage(err) });
@@ -607,6 +690,36 @@ export interface RunArgs {
   /** Cross-item packages on/off. Omitted = the deployment switch
    *  (BULK_TRANSLATE_PACKAGES, exactly "true"). A TEST SEAM. */
   packages?: boolean;
+  /**
+   * BATCH COLLECT mode (PLAN_BULK_TRANSLATE_BATCHING 5.5): the same run, with
+   * the model's answers coming from a collected provider batch instead of live
+   * requests. Everything that makes the live run safe is reused unchanged -- the
+   * plan-time read, the per-entry verification (the package ladder), the handle
+   * rules, the block re-check and the FILL-ONLY write -- and only four things
+   * differ: where the answers come from (`ai`), which Task statuses the run owns
+   * (the Task waits as `waiting_batch` / `cancel_requested`, never `running`),
+   * the digests the write is held to (the ones recorded at SUBMIT, a stronger
+   * promise than a fresh read), and what was settled before the run started.
+   */
+  batch?: {
+    ai: PackagePhaseAI;
+    ownStatuses: string[];
+    /** `rowId|columnId` -> targetResourceId -> digest, from the manifest. */
+    expected: Map<string, Record<string, string>>;
+    /** Outcomes already known at collect time (cells that moved or were filled since submit, plan-time results). */
+    preAccounted: {
+      skippedChanged: number;
+      skippedFilled: number;
+      mismatchesByKey: Record<string, number>;
+      failures: { rowId: string; columnId?: string; locale?: string; message: string }[];
+      /** Units of those outcomes (they count as settled). */
+      settledUnits: number;
+      /** Units the submit never started (productType, fits no package): not failures. */
+      notStarted: number;
+    };
+    /** Provider-side figures for the result JSON (`result.batch`), read when the result is BUILT (the retry count is only final then). */
+    summary: () => Record<string, unknown>;
+  };
 }
 
 /**
@@ -693,8 +806,12 @@ interface TranslateResultJson {
    * key -- a key that is skipped on (nearly) every run points at a systematic
    * representation difference between the cache and Shopify. */
   mismatchesByKey?: Record<string, number>;
-  /** "sync" is the only mode that exists yet. */
-  mode: "sync";
+  /** "batch" when the answers came from a collected provider batch. */
+  mode: "sync" | "batch";
+  /** Units the Batch-API submit never started (they fit no package): left for a later "Sofort" run, not failures. */
+  notStarted?: number;
+  /** Batch mode only: what the provider did with the requests, and what the collect cost. */
+  batch?: Record<string, unknown>;
   /** Only present when the run used cross-item packages: how many packages
    *  were planned, how many provider requests and retries they cost, and the
    *  retry rate per group (kind / languages / instruction set). */
@@ -746,22 +863,28 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
   const contentType = BULK_ROW_TYPE_TO_CONTENT_TYPE[rowType];
   // createAIService(settings, shop, taskId) → every provider call goes through
   // AIQueueService.enqueue (rate limits, per-shop fairness).
-  const aiService = createAIService(settings, shop, taskId);
+  const batch = args.batch;
+  // In batch mode the answers come from the collected batch; the live service is not built here (a live
+  // retry, when allowed, is the wrapper's own business and goes through the normal gate).
+  const aiService = batch ? (null as unknown as AIService) : createAIService(settings, shop, taskId);
+  /** The Task statuses this run owns: `running` live, `waiting_batch` / `cancel_requested` while collecting. */
+  const ownStatuses = batch?.ownStatuses ?? ["running"];
+  const notStartedUnits = batch?.preAccounted.notStarted ?? 0;
 
   /** Translated, verified-so-far entries waiting for their write block. */
   let buffer: BulkDiffEntry[] = [];
-  const failures: TranslateResultJson["failures"] = [];
+  const failures: TranslateResultJson["failures"] = [...(batch?.preAccounted.failures ?? [])];
   let skippedHandles = 0;
-  let skippedChanged = 0;
-  let skippedFilled = 0;
+  let skippedChanged = batch?.preAccounted.skippedChanged ?? 0;
+  let skippedFilled = batch?.preAccounted.skippedFilled ?? 0;
   let skippedGone = 0;
-  let mismatchesByKey: Record<string, number> = {};
+  let mismatchesByKey: Record<string, number> = { ...(batch?.preAccounted.mismatchesByKey ?? {}) };
   let saved = 0;
   let blocks = 0;
   let packaging: TranslateResultJson["packaging"] | undefined;
   /** Units whose outcome is FINAL: written, skipped on purpose or failed. The
    * progress bar counts these, so it never runs ahead of what is stored. */
-  let settled = 0;
+  let settled = batch?.preAccounted.settledUnits ?? 0;
   let lastWriteAt = Date.now();
 
   const heartbeat = async () => {
@@ -827,7 +950,7 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     try {
       const row = await db.task.findUnique({ where: { id: taskId }, select: { status: true } });
       if (!row) stoppedBy = "deleted";
-      else if (row.status !== "running") stoppedBy = row.status;
+      else if (!ownStatuses.includes(row.status)) stoppedBy = row.status;
     } catch {
       // transient — keep going
     }
@@ -960,7 +1083,7 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
   // in another container during a deploy overlap is never failed under its own feet.
   const beat = setInterval(() => {
     void db.task
-      .updateMany({ where: { id: taskId, status: "running" }, data: { updatedAt: new Date() } })
+      .updateMany({ where: { id: taskId, status: { in: ownStatuses } }, data: { updatedAt: new Date() } })
       .catch(() => undefined);
   }, BULK_TRANSLATE_HEARTBEAT_MS);
   try {
@@ -975,7 +1098,8 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     const jobs = plan.jobs;
     skippedChanged += plan.skippedChanged;
     settled += plan.skippedChanged;
-    mismatchesByKey = plan.mismatchesByKey ?? {};
+    // Merged, not replaced: a batch collect carries the submit-time mismatches in already.
+    for (const [key, n] of Object.entries(plan.mismatchesByKey ?? {})) mismatchesByKey[key] = (mismatchesByKey[key] ?? 0) + n;
     for (const failure of plan.failures) {
       failures.push({ rowId: failure.rowId, columnId: failure.columnId, message: failure.message });
       settled += failure.units;
@@ -1011,7 +1135,10 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
       valueFor: (locale: string) => string | undefined,
       skipLocale?: (locale: string) => boolean,
     ) => {
-      const expected = plan.expected.get(planCellKey(job.rowId, cell.column.id));
+      // Batch collect: the digests recorded at SUBMIT (the text the model was asked about) win over the
+      // fresh ones -- a text that moved while the batch waited must be refused, not translated-over.
+      const cellKey = planCellKey(job.rowId, cell.column.id);
+      const expected = batch?.expected.get(cellKey) ?? plan.expected.get(cellKey);
       for (const locale of cell.locales) {
         if (skipLocale?.(locale)) continue;
         // Never substitute the source text — an untranslated value written
@@ -1066,10 +1193,10 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     // Cross-item packages (BULK_TRANSLATE_PACKAGES, off by default): carry the
     // cells they can; whatever they leave runs through the per-row loop below.
     let loopJobs = jobs;
-    if ((args.packages ?? bulkTranslatePackagesEnabled()) && !managedRefusal && !(await shouldStop())) {
+    if ((batch || (args.packages ?? bulkTranslatePackagesEnabled())) && !managedRefusal && !(await shouldStop())) {
       const phase = await runPackagePhase({
         jobs,
-        ai: aiService as never,
+        ai: (batch ? batch.ai : aiService) as never,
         primaryLocale,
         contentType,
         instructionsFor,
@@ -1084,13 +1211,15 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
         standsDown,
         shouldStop,
         managedRefusal: () => managedRefusal,
+        ...(batch ? { outputCap: PACKAGE_OUTPUT_CAP_BATCH } : {}),
         afterPackage: async () => {
           await heartbeat();
           if (!managedRefusal && blockDue()) await flushSerial();
         },
         log: (level, message, meta) => logger[level](message, { context: "AI", taskId, ...meta }),
       });
-      loopJobs = phase.remainingJobs;
+      // A batch collect has no per-row path: what the packages did not carry was never submitted.
+      loopJobs = batch ? [] : phase.remainingJobs;
       packaging = {
         packages: phase.stats.packages,
         requests: phase.stats.requests,
@@ -1309,8 +1438,8 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     // never processed and is NOT a failure.
     const failed = stoppedBy
       ? Math.max(0, settled - accounted)
-      : Math.max(0, units - accounted);
-    const notProcessed = stoppedBy ? Math.max(0, units - settled) : 0;
+      : Math.max(0, units - accounted - notStartedUnits);
+    const notProcessed = stoppedBy ? Math.max(0, units - settled - notStartedUnits) : 0;
     const result: TranslateResultJson = {
       saved,
       failed,
@@ -1320,7 +1449,9 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
       skippedGone,
       ...(notProcessed > 0 ? { notProcessed } : {}),
       ...(Object.keys(mismatchesByKey).length > 0 ? { mismatchesByKey } : {}),
-      mode: "sync",
+      mode: batch ? "batch" : "sync",
+      ...(notStartedUnits > 0 ? { notStarted: notStartedUnits } : {}),
+      ...(batch ? { batch: batch.summary() } : {}),
       blocks,
       ...(packaging ? { packaging } : {}),
       ...(stoppedBy === "cancelled" ? { cancelled: true } : {}),
@@ -1354,32 +1485,42 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
     }
     // CONDITIONAL on still being "running": a row somebody else already settled (boot recovery of a genuinely
     // dead run) keeps its terminal state instead of flipping back.
-    await db.task.updateMany({
-      where: { id: taskId, status: "running" },
-      data: {
-        status: saved === 0 && (failedRows > 0 || managedRefusal) ? "failed" : "completed",
-        progress: 100,
-        processed: units,
-        completedAt: new Date(),
-        result: JSON.stringify(result),
-        // A machine code, translated at render time by `taskErrorText` — this
-        // runner has no merchant locale. No total: `units` counts translated
-        // CELLS, not rows, so it is not the denominator of `failedRows`.
-        // A managed stand-down outranks the row count: it is the reason the
-        // rest was not translated.
-        error: managedRefusal
-          ? managedRefusal.substring(0, 1000)
-          : failedRows > 0
-            ? `rows_failed:${failedRows}`.substring(0, 1000)
-            : null,
-      },
-    });
+    const terminal = {
+      status: saved === 0 && (failedRows > 0 || managedRefusal) ? "failed" : "completed",
+      progress: 100,
+      processed: units,
+      completedAt: new Date(),
+      result: JSON.stringify(result),
+      // A machine code, translated at render time by `taskErrorText` — this
+      // runner has no merchant locale. No total: `units` counts translated
+      // CELLS, not rows, so it is not the denominator of `failedRows`.
+      // A managed stand-down outranks the row count: it is the reason the
+      // rest was not translated.
+      error: managedRefusal
+        ? managedRefusal.substring(0, 1000)
+        : failedRows > 0
+          ? `rows_failed:${failedRows}`.substring(0, 1000)
+          : null,
+    };
+    if (batch) {
+      // One conditional update per owned status: a run the merchant asked to cancel
+      // (`cancel_requested`) ends as `cancelled` -- its partial results are written, and
+      // saying "completed" over a cancel would be the wrong word.
+      for (const status of ownStatuses) {
+        await db.task.updateMany({
+          where: { id: taskId, status },
+          data: { ...terminal, status: status === "cancel_requested" ? "cancelled" : terminal.status },
+        });
+      }
+    } else {
+      await db.task.updateMany({ where: { id: taskId, status: "running" }, data: terminal });
+    }
   } catch (err: unknown) {
     const message = errorMessage(err);
     logger.error("[API-AI] Bulk-editor translate: run failed", { context: "AI", taskId, error: message });
     await db.task
       .updateMany({
-        where: { id: taskId, status: "running" },
+        where: { id: taskId, status: { in: ownStatuses } },
         data: {
           status: "failed",
           progress: 100,
@@ -1397,7 +1538,7 @@ export async function runBulkEditorTranslate(taskId: string, args: RunArgs): Pro
                   skippedChanged,
                   skippedFilled,
                   skippedGone,
-                  mode: "sync",
+                  mode: batch ? "batch" : "sync",
                   blocks,
                   ...(packaging ? { packaging } : {}),
                   failures,

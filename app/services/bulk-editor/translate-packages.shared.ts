@@ -75,6 +75,11 @@ export interface TranslatePackage {
 /** A request must deliver its answer inside its timeout: ~5 000 output tokens
  *  is ~120-180 s at a pessimistic generation speed (NOT measured). */
 export const PACKAGE_OUTPUT_CAP_SYNC = 5000;
+/** A BATCH request has no timeout to fit inside (the provider works through it
+ *  within its own window), so its packages may be much larger. 32 000 is the
+ *  plan's figure; the QUALITY of such large packages is not measured, which is
+ *  why the per-entry verification and the retry cap exist. */
+export const PACKAGE_OUTPUT_CAP_BATCH = 32000;
 /** Share of a model's output ceiling a package may plan to use. */
 export const PACKAGE_OUTPUT_SAFETY = 0.6;
 /** Share of a bucket's per-minute token allowance one package may estimate to. */

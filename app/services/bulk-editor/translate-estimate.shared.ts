@@ -32,6 +32,7 @@ import type { AIProvider } from "~/utils/api-key-validation";
 import { LIST_DISPLAY_SEPARATOR, type ColumnDescriptor } from "./columns.shared";
 import { perLocaleSourceBudgetChars, planLocaleChunks, fitsOneRequest } from "~/services/ai/translation-budget.shared";
 import {
+  PACKAGE_OUTPUT_CAP_BATCH,
   PACKAGE_PREFIX_TOKENS,
   buildPackageItems,
   itemOutputTokens,
@@ -107,6 +108,29 @@ export interface TranslateEstimate {
   source: "managed" | "byo";
   /** Managed shops only: the remaining budget the estimate is read against. */
   budget?: { remainingMicros: number; limitMicros: number; wouldExceed: boolean };
+  /**
+   * The "cheaper, result within 24 hours" alternative, present only when the
+   * run can be sent as a provider batch (the server decided: provider with a
+   * batch API, not a taster). Same cells, planned with the batch's own package
+   * sizes, priced at the batch tier.
+   */
+  batch?: {
+    requests: number;
+    inputTokens: number;
+    outputTokens: number;
+    /** null = no per-token price. */
+    costMicros: number | null;
+    pricedAtCeiling: boolean;
+    /**
+     * Managed: what a batch must RESERVE up front (a worst case with the
+     * output ceiling the requests are sent with -- more than the estimate) and
+     * whether the remaining budget covers it. A batch that does not fit is
+     * refused at the start; "Sofort" is not (it stops cleanly when the budget
+     * runs out).
+     */
+    reserveMicros?: number;
+    wouldExceed?: boolean;
+  };
 }
 
 const inTok = (chars: number): number => Math.ceil(chars / 3);
@@ -314,6 +338,8 @@ function estimatePackaged(
   c: EstimateClassifiers,
   limits: ModelLimitsForEstimate,
   glossaryTok: GlossaryTok,
+  /** A provider batch: the batch package size, no per-minute rail, no prompt caching. */
+  batch = false,
 ): Totals {
   const t: Totals = { requests: 0, inputTokens: 0, outputTokens: 0 };
   const entries: PackageEntry[] = [];
@@ -351,7 +377,9 @@ function estimatePackaged(
       });
     }
   }
-  const budget = packageBudgetFor({ modelMaxOutput: limits.maxOutputTokens, bucketTpm: limits.bucketTpm });
+  const budget = batch
+    ? packageBudgetFor({ modelMaxOutput: limits.maxOutputTokens, bucketTpm: null, outputCap: PACKAGE_OUTPUT_CAP_BATCH })
+    : packageBudgetFor({ modelMaxOutput: limits.maxOutputTokens, bucketTpm: limits.bucketTpm });
   const plan = planPackages(buildPackageItems(entries), budget);
   // Prompt caching, as the runner does it (translate-package-phase): a Claude
   // group with enough packages and a long enough stable prefix sends its first
@@ -367,6 +395,7 @@ function estimatePackaged(
     t.outputTokens += thinking;
     const prefixTokens = PACKAGE_PREFIX_TOKENS + Math.ceil((pkg.instructions?.length ?? 0) / 4);
     if (
+      !batch &&
       limits.provider === "claude" &&
       (packagesPerGroup.get(pkg.groupKey) ?? 0) >= PACKAGE_CACHE_MIN_GROUP_PACKAGES &&
       prefixTokens >= PACKAGE_CACHE_MIN_PREFIX_TOKENS &&
@@ -412,6 +441,8 @@ export function estimateTranslateRun(args: {
   source?: "managed" | "byo";
   /** Remaining managed budget; omitted for a shop on its own key. */
   managedBudget?: { remainingMicros: number; limitMicros: number };
+  /** The server says this run CAN be sent as a provider batch: the estimate then carries `batch`. */
+  batchAvailable?: boolean;
 }): TranslateEstimate {
   const { jobs, units, packages, classifiers, limits } = args;
   const glossaryTok: GlossaryTok = (localeCount) =>
@@ -429,6 +460,31 @@ export function estimateTranslateRun(args: {
     cacheWriteTokens: Math.min(raw.cacheWriteTokens ?? 0, inputTokens),
   });
   const costMicros = priced.unpriced ? null : priced.costMicros;
+
+  // The batch alternative: the same cells through the SAME planner with the batch's package sizes.
+  let batchEstimate: TranslateEstimate["batch"];
+  if (args.batchAvailable && jobs.length > 0) {
+    const braw = estimatePackaged(jobs, classifiers, limits, glossaryTok, true);
+    const bRequests = Math.max(1, Math.ceil(braw.requests * RETRY_ALLOWANCE));
+    const bIn = Math.ceil(braw.inputTokens * RETRY_ALLOWANCE);
+    const bOut = Math.ceil(braw.outputTokens * RETRY_ALLOWANCE);
+    const bPriced = priceCall(limits.provider, limits.model, bIn, bOut, { tier: "batch" });
+    const bCost = bPriced.unpriced ? null : bPriced.costMicros;
+    // What the submit RESERVES: the output ceiling the requests are sent with (planned x 1.5), not the plan.
+    const reserve = bPriced.unpriced
+      ? undefined
+      : priceCall(limits.provider, limits.model, bIn, Math.ceil(bOut * 1.5), { tier: "batch" }).costMicros;
+    batchEstimate = {
+      requests: bRequests,
+      inputTokens: bIn,
+      outputTokens: bOut,
+      costMicros: bCost,
+      pricedAtCeiling: bPriced.pricedAtCeiling,
+      ...(args.managedBudget && reserve !== undefined
+        ? { reserveMicros: reserve, wouldExceed: reserve > args.managedBudget.remainingMicros }
+        : {}),
+    };
+  }
   return {
     units,
     requests,
@@ -440,6 +496,7 @@ export function estimateTranslateRun(args: {
     source: args.source ?? "byo",
     skippedOverCap: args.skippedOverCap,
     scanTruncated: args.scanTruncated,
+    ...(batchEstimate ? { batch: batchEstimate } : {}),
     ...(args.managedBudget
       ? {
           budget: {
