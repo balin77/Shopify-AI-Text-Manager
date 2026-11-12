@@ -419,6 +419,9 @@ export function estimateTranslateRun(args: {
   const raw = packages
     ? estimatePackaged(jobs, classifiers, limits, glossaryTok)
     : estimatePerRow(jobs, classifiers, glossaryTok);
+  // Gemini 2.5 thinking is billed as output on EVERY request, per-row ones
+  // included (the package path adds it per package itself).
+  if (!packages) raw.outputTokens += geminiThinkingAllowanceTokens(limits.provider, limits.model) * raw.requests;
   const requests = jobs.length === 0 ? 0 : Math.max(1, Math.ceil(raw.requests * RETRY_ALLOWANCE));
   const inputTokens = Math.ceil(raw.inputTokens * RETRY_ALLOWANCE);
   const outputTokens = Math.ceil(raw.outputTokens * RETRY_ALLOWANCE);

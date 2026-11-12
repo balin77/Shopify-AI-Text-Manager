@@ -82,7 +82,7 @@ describe("packaged estimate: cache write once per qualifying group, Gemini think
     expect(o.costMicros).toBe(priceCall("openai", "gpt-4o", o.inputTokens, o.outputTokens).costMicros);
   });
 
-  it("Gemini 2.5 package requests carry the thinking allowance in the output; other Gemini models and the per-row path do not", () => {
+  it("Gemini 2.5 package requests carry the thinking allowance in the output; other Gemini models do not; the per-row path carries it as well", () => {
     const g25 = { provider: "gemini" as const, model: "gemini-2.5-flash", maxOutputTokens: 32_000, bucketTpm: null };
     const g20 = { provider: "gemini" as const, model: "gemini-2.0-flash", maxOutputTokens: 8192, bucketTpm: null };
     const a = estimateTranslateRun({ ...base, jobs: many(10), classifiers: shortClassifiers(undefined), limits: g25 });
@@ -90,7 +90,8 @@ describe("packaged estimate: cache write once per qualifying group, Gemini think
     expect(a.outputTokens).toBeGreaterThan(b.outputTokens);
     const perRow25 = estimateTranslateRun({ ...base, packages: false, jobs: many(10), classifiers: shortClassifiers(undefined), limits: g25 });
     const perRow20 = estimateTranslateRun({ ...base, packages: false, jobs: many(10), classifiers: shortClassifiers(undefined), limits: g20 });
-    expect(perRow25.outputTokens).toBe(perRow20.outputTokens);
+    // Per-row requests carry the thinking allowance too (it is billed as output).
+    expect(perRow25.outputTokens).toBeGreaterThan(perRow20.outputTokens);
   });
 });
 
