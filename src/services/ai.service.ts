@@ -37,6 +37,10 @@ export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok'
 export interface AiCallUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Part of `inputTokens` read from a prompt cache (inside it, never beside). */
+  cacheReadTokens?: number;
+  /** Part of `inputTokens` written to a prompt cache (inside it). */
+  cacheWriteTokens?: number;
   model: string;
   /** `provider` = the SDK reported both numbers; `estimate` = we counted characters. */
   source: 'provider' | 'estimate';
@@ -3293,6 +3297,8 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         feature: await this.resolveFeature(),
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
+        ...(usage.cacheReadTokens ? { cacheReadTokens: usage.cacheReadTokens } : {}),
+        ...(usage.cacheWriteTokens ? { cacheWriteTokens: usage.cacheWriteTokens } : {}),
         // Not a default so much as a fact: no managed credential exists in the
         // app yet, so every construction site today really is spending the
         // merchant's own key. Phase 1 introduces the resolver that sets this,
@@ -3403,7 +3409,12 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   private usageOf(
     prompt: string,
     output: string,
-    reported: { input?: number | null; output?: number | null } | null,
+    reported: {
+      input?: number | null;
+      output?: number | null;
+      cacheRead?: number | null;
+      cacheWrite?: number | null;
+    } | null,
     imageCount = 0,
   ): AiCallUsage {
     const model = this.getModel();
@@ -3419,7 +3430,18 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     // legitimately be 0 (an answer we then reject carries input and no
     // output), so only the input side decides.
     if (typeof input === 'number' && typeof out === 'number' && input > 0 && out >= 0) {
-      return { inputTokens: input, outputTokens: out, model, source: 'provider' };
+      // The cache parts are INSIDE `input` and clamped to it, so the total is
+      // never under-counted and the parts never exceed it.
+      const cacheRead = Math.min(Math.max(0, Number(reported?.cacheRead) || 0), input);
+      const cacheWrite = Math.min(Math.max(0, Number(reported?.cacheWrite) || 0), input - cacheRead);
+      return {
+        inputTokens: input,
+        outputTokens: out,
+        ...(cacheRead > 0 ? { cacheReadTokens: cacheRead } : {}),
+        ...(cacheWrite > 0 ? { cacheWriteTokens: cacheWrite } : {}),
+        model,
+        source: 'provider',
+      };
     }
     return {
       inputTokens:
@@ -3476,7 +3498,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
      * happened to have attached invented tokens that were never sent.
      */
     const reportChat = (
-      completion: { usage?: { prompt_tokens?: number; completion_tokens?: number } | null },
+      completion: {
+        usage?: {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+          // OpenAI-style: INCLUDED in prompt_tokens.
+          prompt_tokens_details?: { cached_tokens?: number | null } | null;
+          // DeepSeek-style: also included in prompt_tokens.
+          prompt_cache_hit_tokens?: number | null;
+        } | null;
+      },
       text: string,
       sentImages: number,
     ) => {
@@ -3487,6 +3518,9 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           {
             input: completion.usage?.prompt_tokens,
             output: completion.usage?.completion_tokens,
+            cacheRead:
+              completion.usage?.prompt_tokens_details?.cached_tokens ??
+              completion.usage?.prompt_cache_hit_tokens,
           },
           sentImages,
         ),
@@ -3601,14 +3635,33 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           });
       const textBlock = message.content.find((b) => b.type === 'text');
       const claudeText = textBlock?.text ?? '';
-      // `input_tokens` deliberately EXCLUDES cache_creation/cache_read tokens.
-      // This app uses no prompt caching; adopting it means adding them here or
-      // silently under-counting.
+      // `input_tokens` deliberately EXCLUDES cache_creation/cache_read tokens,
+      // so the total input is the sum of the three (else it is under-counted);
+      // the cache parts ride separately. No cache_control is sent yet, so both
+      // are 0 in practice.
+      const claudeUsage = message.usage as
+        | {
+            input_tokens?: number;
+            output_tokens?: number;
+            cache_read_input_tokens?: number | null;
+            cache_creation_input_tokens?: number | null;
+          }
+        | undefined;
+      const claudeCacheRead = claudeUsage?.cache_read_input_tokens ?? 0;
+      const claudeCacheWrite = claudeUsage?.cache_creation_input_tokens ?? 0;
       meter.observed.push(
         this.usageOf(
           prompt,
           claudeText,
-          { input: message.usage?.input_tokens, output: message.usage?.output_tokens },
+          {
+            input:
+              typeof claudeUsage?.input_tokens === 'number'
+                ? claudeUsage.input_tokens + claudeCacheRead + claudeCacheWrite
+                : claudeUsage?.input_tokens,
+            output: claudeUsage?.output_tokens,
+            cacheRead: claudeCacheRead,
+            cacheWrite: claudeCacheWrite,
+          },
           hasImages ? images.length : 0,
         ),
       );
