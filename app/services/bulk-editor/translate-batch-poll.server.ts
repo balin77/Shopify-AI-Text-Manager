@@ -245,12 +245,13 @@ async function noteFailedTick(
   error: unknown,
   transport: SettlementTransport | null = null,
   giveUpCode?: string,
+  cancelWanted = false,
 ): Promise<RowOutcome> {
   const { db } = deps;
   // Read the row FRESH: the in-memory copy is from the start of the tick, and step 8 rewrites the counter and the
   // state in the database. The counter and the "a collect was reached" evidence are the DATABASE's.
   const fresh = await db.bulkTranslateBatch
-    .findUnique({ where: { id: row.id }, select: { failedTicks: true, lastError: true, reservationState: true, source: true, leaseToken: true } })
+    .findUnique({ where: { id: row.id }, select: { failedTicks: true, lastError: true, reservationState: true, source: true, leaseToken: true, cancelRequestedAt: true } })
     .catch(() => null);
   // Another tick took the lease over (ours expired): no give-up, no close, no settle from this tick.
   if (fresh && fresh.leaseToken !== token) return "leaseLost";
@@ -268,7 +269,15 @@ async function noteFailedTick(
   const marked = (collectPhase || priorCollect) && !isCollectMarked(errorText) ? `${BATCH_COLLECT_FAILED_ERROR}:${errorText}` : errorText;
   const lastError = marked.substring(0, 500);
   logger.warn("[BatchPoll] Tick failed for a batch", { context: "AI", batchRowId: row.id, failedTicks, error: errorText });
-  if (failedTicks >= MAX_FAILED_TICKS) {
+  // A wanted cancel that the provider has not CONFIRMED means a paid batch may still run unattended: the row is
+  // not given up on while the batch has not ended (counting and backoff go on; the 48 h expiry is the hard end).
+  const cancelUnconfirmed =
+    (cancelWanted || row.state === "cancel_requested" || !!row.consentWithdrawnAt) &&
+    !(fresh ? fresh.cancelRequestedAt : row.cancelRequestedAt) &&
+    stringList(row.batchIds).length > 0;
+  if (failedTicks >= MAX_FAILED_TICKS && cancelUnconfirmed && !(await batchesEnded(transport, stringList(row.batchIds)))) {
+    logger.warn("[BatchPoll] Give-up deferred: a wanted provider cancel is not confirmed and the batch has not ended", { context: "AI", batchRowId: row.id, failedTicks });
+  } else if (failedTicks >= MAX_FAILED_TICKS) {
     const outcome = await settleHold(row, transport, { final: true });
     if (outcome.kind !== "pending") {
       await closeRun(db, row, token, giveUpOutcome(row, giveUpCode ?? (collectReached ? BATCH_COLLECT_FAILED_ERROR : undefined)));
@@ -358,7 +367,7 @@ async function handleWithdrawal(deps: RowDeps, row: BulkTranslateBatch, token: s
     // Cannot cancel or read: our own configuration (wait for the absolute end, which converts) or a lookup failure.
     return CONFIG_REFUSALS.includes(access.reason)
       ? "configBlocked"
-      : await noteFailedTick(deps, row, token, new Error(`settlement_${access.reason}`), null, CONSENT_GIVE_UP_CODE);
+      : await noteFailedTick(deps, row, token, new Error(`settlement_${access.reason}`), null, CONSENT_GIVE_UP_CODE, true);
   }
   let cancelConfirmed = batchIds.length === 0 || !!row.cancelRequestedAt;
   if (!cancelConfirmed) {
@@ -407,7 +416,6 @@ async function reconcileUnknownCreate(
   });
   if (adopted.count === 0) {
     // The row changed under us (lease lost, closed, adopted by the submit): re-read and leave it for the next tick.
-    await db.bulkTranslateBatch.findUnique({ where: { id: row.id }, select: { state: true, batchIds: true } }).catch(() => null);
     return "waiting";
   }
   const expiresAtMs = search.expiresAt ? Date.parse(search.expiresAt) : NaN;
@@ -417,6 +425,38 @@ async function reconcileUnknownCreate(
   });
   logger.info("[BatchPoll] Adopted a batch whose create answer was lost", { context: "AI", batchRowId: row.id });
   return "adopted";
+}
+
+/** Step 3b: one provider cancel attempt for a row that wants one and has none CONFIRMED yet. */
+async function attemptWantedCancel(
+  deps: RowDeps,
+  row: BulkTranslateBatch,
+  token: string,
+  decision: Access,
+  cancelRequested: boolean,
+  batchIds: string[],
+): Promise<{ outcome: RowOutcome } | { cancelFailed: boolean; row: BulkTranslateBatch }> {
+  const { db } = deps;
+  if (!(cancelRequested && batchIds.length > 0 && !row.cancelRequestedAt)) return { cancelFailed: false, row };
+  if (!decision.ok) {
+    // Own key gone / our configuration refuses: cannot cancel. The row is NOT closed; the absolute end converts.
+    logger.warn("[BatchPoll] Cancel wanted but no settlement access; the row waits for the absolute end", {
+      context: "AI",
+      batchRowId: row.id,
+      reason: decision.reason,
+    });
+    if (decision.reason === "ai_key_missing") return { outcome: "keyMissing" };
+    if (CONFIG_REFUSALS.includes(decision.reason)) return { outcome: "configBlocked" };
+    return {
+      outcome: await noteFailedTick(deps, row, token, new Error(`settlement_${decision.reason}`), null, undefined, true),
+    };
+  }
+  if (await cancelAllAtProvider(decision.transport, batchIds)) {
+    const at = new Date();
+    await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { cancelRequestedAt: at } });
+    return { cancelFailed: false, row: { ...row, cancelRequestedAt: at } };
+  }
+  return { cancelFailed: true, row };
 }
 
 async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string): Promise<RowOutcome> {
@@ -456,7 +496,15 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
     const consent = aiProcessingConsentState(settings);
     if (row.consentWithdrawnAt || consent === "withdrawn") return await handleWithdrawal(deps, row, token, decision);
     // A bumped notice version is an unanswered NEW question, not a request to stop: hold the row.
-    if (consent === "outdated") return "consentOutdated";
+    if (consent === "outdated") {
+      // A cancel reads and writes no content, so a wanted one is still attempted while the notice is unanswered.
+      const wanted = row.state === "cancel_requested" || task!.status === TASK_STATUS_CANCEL_REQUESTED;
+      if (wanted && batchIds.length > 0 && !row.cancelRequestedAt) {
+        const attempt = await attemptWantedCancel(deps, row, token, decision, true, batchIds);
+        if ("outcome" in attempt) return attempt.outcome;
+      }
+      return "consentOutdated";
+    }
   }
 
   const cancelRequested = row.state === "cancel_requested" || task!.status === TASK_STATUS_CANCEL_REQUESTED;
@@ -478,26 +526,10 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
   // 3b. A row that wants a cancel gets a provider attempt on EVERY tick until it is CONFIRMED (cancelRequestedAt):
   //     it needs only the settlement credentials, never the shop's admin client, so an uninstalled shop's row
   //     is retried too. No content is fetched and nothing is written here.
-  let cancelFailed = false;
-  if (cancelRequested && batchIds.length > 0 && !row.cancelRequestedAt) {
-    if (!decision.ok) {
-      // Own key gone / our configuration refuses: cannot cancel. The row is NOT closed; the absolute end converts.
-      logger.warn("[BatchPoll] Cancel wanted but no settlement access; the row waits for the absolute end", {
-        context: "AI",
-        batchRowId: row.id,
-        reason: decision.reason,
-      });
-      if (decision.reason === "ai_key_missing") return "keyMissing";
-      if (CONFIG_REFUSALS.includes(decision.reason)) return "configBlocked";
-      return await noteFailedTick(deps, row, token, new Error(`settlement_${decision.reason}`));
-    }
-    if (await cancelAllAtProvider(decision.transport, batchIds)) {
-      await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { cancelRequestedAt: new Date() } });
-      row = { ...row, cancelRequestedAt: new Date() };
-    } else {
-      cancelFailed = true;
-    }
-  }
+  const cancelAttempt = await attemptWantedCancel(deps, row, token, decision, cancelRequested, batchIds);
+  if ("outcome" in cancelAttempt) return cancelAttempt.outcome;
+  const cancelFailed = cancelAttempt.cancelFailed;
+  row = cancelAttempt.row;
 
   // 4. Shops we cannot talk to are skipped, not failed (uninstall cancels its own batches).
   let admin: unknown;
@@ -520,7 +552,7 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
       logger.warn("[BatchPoll] Settlement access refused by configuration; the row waits", { context: "AI", batchRowId: row.id, reason: decision.reason });
       return "configBlocked";
     }
-    return await noteFailedTick(deps, row, token, new Error(`settlement_${decision.reason}`));
+    return await noteFailedTick(deps, row, token, new Error(`settlement_${decision.reason}`), null, undefined, cancelRequested);
   }
   const transport = decision.transport;
 
@@ -540,11 +572,11 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
       succeededExpected = typeof counted === "number" && succeededExpected !== null ? succeededExpected + counted : null;
     }
   } catch (error) {
-    return await noteFailedTick(deps, row, token, error, transport);
+    return await noteFailedTick(deps, row, token, error, transport, undefined, cancelRequested);
   }
   if (!ended && cancelFailed) {
     // The cancel was not confirmed and the batch still runs: a failed tick (counted, backed off, retried).
-    return await noteFailedTick(deps, row, token, new Error("provider_cancel_failed"), transport);
+    return await noteFailedTick(deps, row, token, new Error("provider_cancel_failed"), transport, undefined, true);
   }
   if (!ended) {
     // Still working: the task stays open and must not be cleaned up -- push its expiry past the provider's.

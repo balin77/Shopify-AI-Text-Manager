@@ -625,6 +625,7 @@ describe("a provider that stops answering", () => {
     h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
     h.rows.get("row-1").lastError = "batch_collect_failed:booking_failed";
     h.rows.get("row-1").reservationState = "converted";
+    h.rows.get("row-1").cancelRequestedAt = new Date("2026-11-12T09:00:00Z"); // cancel CONFIRMED: only then may the give-up close
     await processBatchRow("row-1", deps());
     expect(h.tasks.get("task-1")).toMatchObject({ status: "failed", error: "managed_ai_refused:consentMissing" });
   });
