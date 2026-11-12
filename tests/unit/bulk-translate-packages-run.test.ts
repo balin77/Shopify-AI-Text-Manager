@@ -337,6 +337,22 @@ describe("packages ON", () => {
     expect(data.status).not.toBe("failed");
   });
 
+  it("only a group with at least three packages asks for prompt caching", async () => {
+    echoModel();
+    // One small package: not cacheable.
+    await run(makeDb(), jobs(3), { packages: true });
+    expect(translatePackage.mock.calls.every((c) => c[0].cacheable === undefined)).toBe(true);
+
+    translatePackage.mockClear();
+    echoModel();
+    // A tiny output ceiling forces many packages in the one group.
+    packageLimits.mockReturnValue({ maxOutputTokens: 1024, bucketTpm: null });
+    await run(makeDb(), jobs(120), { packages: true });
+    const first = translatePackage.mock.calls.map((c) => c[0]);
+    expect(first.length).toBeGreaterThanOrEqual(3);
+    expect(first.every((r) => r.cacheable === true)).toBe(true);
+  });
+
   it("a transient provider error (503) repeats the same package once instead of splitting it", async () => {
     echoModel();
     const base = translatePackage.getMockImplementation()!;

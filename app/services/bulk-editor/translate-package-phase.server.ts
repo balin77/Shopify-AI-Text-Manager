@@ -24,6 +24,7 @@
  */
 
 import { isAIRequestStarved, isAIRequestTooLarge } from "../../../src/services/ai-queue.service";
+import { PACKAGE_CACHE_MIN_GROUP_PACKAGES } from "~/config/ai-model-limits";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import type { ColumnDescriptor } from "~/services/bulk-editor/columns.shared";
 import { LIST_DISPLAY_SEPARATOR } from "~/services/bulk-editor/columns.shared";
@@ -58,6 +59,7 @@ export interface PackagePhaseAI {
     instructions?: string;
     plannedOutputTokens: number;
     timeoutMs: number;
+    cacheable?: boolean;
   }): Promise<{ parsed: unknown; invalid?: "truncated" | "unparseable" }>;
   packageLimits(): { maxOutputTokens: number; bucketTpm: number | null };
   translateShortFieldsBatch(
@@ -234,6 +236,11 @@ export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePh
   const itemByKey = new Map<string, PackageItem>();
   for (const pkg of plan.packages) for (const item of pkg.items) itemByKey.set(item.key, item);
   stats.packages = plan.packages.length;
+  // Prompt caching pays only for a group with enough packages (the first one
+  // writes the cache, the rest read it); retries of the group's packages
+  // (halves) share its prefix and keep the flag.
+  const packagesPerGroup = new Map<string, number>();
+  for (const pkg of plan.packages) packagesPerGroup.set(pkg.groupKey, (packagesPerGroup.get(pkg.groupKey) ?? 0) + 1);
 
   // ── 2. Cell bookkeeping ───────────────────────────────────────────────────
   const ownerToItem = new Map<string, string>();
@@ -310,6 +317,7 @@ export async function runPackagePhase(deps: PackagePhaseDeps): Promise<PackagePh
         instructions: pkg.instructions,
         plannedOutputTokens: planned,
         timeoutMs: packageTimeoutMs(planned),
+        ...((packagesPerGroup.get(pkg.groupKey) ?? 0) >= PACKAGE_CACHE_MIN_GROUP_PACKAGES ? { cacheable: true } : {}),
       });
       if (result.invalid) return { answer: null, invalid: result.invalid };
       return { answer: { parsed: result.parsed, idOf } };

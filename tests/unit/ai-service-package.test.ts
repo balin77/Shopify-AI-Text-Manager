@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AIService } from "../../src/services/ai.service";
+import { recordAiUsage } from "../../app/services/ai/usage-meter.server";
 
 vi.mock("@anthropic-ai/sdk", () => ({ default: class { messages = { create: vi.fn() }; } }));
 vi.mock("openai", () => ({ default: class { chat = { completions: { create: vi.fn() } }; } }));
@@ -175,5 +176,98 @@ describe("packageLimits", () => {
   it("reports the model ceiling and the bucket's token allowance for planning", () => {
     const { svc } = claude(() => message("x"));
     expect(svc.packageLimits()).toMatchObject({ provider: "claude", maxOutputTokens: 32_000, bucketTpm: 40_000 });
+  });
+});
+
+describe("prompt caching (phase 1d)", () => {
+  // 4 chars per token estimate: 17 000 chars of instructions = a 4250+ token prefix.
+  const LONG = "Always keep the brand voice playful and precise. ".repeat(350);
+  const cacheable = { ...REQUEST, instructions: LONG, cacheable: true };
+  const ANSWER = '{"k1":{"fr":"a","es":"b"},"k2":{"fr":"c","es":"d"}}';
+
+  it("Anthropic: the stable prefix becomes a cache_control system block; glossary and items stay in the user turn", async () => {
+    const { svc, calls } = claude(() => message(ANSWER));
+    await svc.translatePackage(cacheable);
+    const params = calls[0].params;
+    expect(params.system).toHaveLength(1);
+    expect(params.system[0].cache_control).toEqual({ type: "ephemeral" });
+    expect(params.system[0].text).toContain("Requirements:");
+    expect(params.system[0].text).toContain("playful and precise");
+    expect(params.system[0].text).not.toContain("GLOSSARY");
+    expect(params.system[0].text).not.toContain("Schal");
+    expect(params.system[0].text).not.toContain("French");
+    const user = params.messages[0].content as string;
+    expect(user).toContain("Target languages:");
+    expect(user).toContain("GLOSSARY");
+    expect(user).toContain("Schal");
+    // Nothing is lost by the split: the same text as the unsplit prompt, minus the joining newline.
+    const plain = claude(() => message(ANSWER));
+    await plain.svc.translatePackage({ ...cacheable, cacheable: false });
+    expect(`${params.system[0].text}\n${user}`).toBe(plain.calls[0].params.messages[0].content);
+  });
+
+  it("no marker when the group has too few packages (caller says not cacheable)", async () => {
+    const { svc, calls } = claude(() => message(ANSWER));
+    await svc.translatePackage({ ...cacheable, cacheable: false });
+    expect(calls[0].params.system).toBeUndefined();
+    expect(JSON.stringify(calls[0].params)).not.toContain("cache_control");
+  });
+
+  it("no marker when the prefix is below the minimum", async () => {
+    const { svc, calls } = claude(() => message(ANSWER));
+    await svc.translatePackage({ ...REQUEST, cacheable: true });
+    expect(calls[0].params.system).toBeUndefined();
+    expect(JSON.stringify(calls[0].params)).not.toContain("cache_control");
+  });
+
+  it("calls that are not package calls never carry a marker or a system block", async () => {
+    const { svc, calls } = claude(() => message("hello"));
+    await svc.replayRequest(LONG);
+    await (svc as any).askAI(LONG);
+    for (const call of calls) {
+      expect(call.params.system).toBeUndefined();
+      expect(JSON.stringify(call.params)).not.toContain("cache_control");
+    }
+  });
+
+  it("OpenAI: no marker, the stable prefix stays first, and cached_tokens is metered as a cache read", async () => {
+    const svc = new AIService("openai", { openaiApiKey: "k", selectedModel: "gpt-4o" } as never, SHOP, "task-1");
+    const seen: any[] = [];
+    (svc as any).openai = {
+      chat: {
+        completions: {
+          create: async (params: any) => {
+            seen.push(params);
+            return {
+              choices: [{ message: { content: ANSWER }, finish_reason: "stop" }],
+              usage: { prompt_tokens: 5000, completion_tokens: 50, prompt_tokens_details: { cached_tokens: 4000 } },
+            };
+          },
+        },
+      },
+    };
+    (svc as any).getGlossaryDirective = async () => "GLOSSARY: x";
+    vi.mocked(recordAiUsage).mockClear();
+    await svc.translatePackage(cacheable);
+    expect(seen[0].messages).toHaveLength(1);
+    expect(JSON.stringify(seen[0])).not.toContain("cache_control");
+    const prompt: string = seen[0].messages[0].content;
+    expect(prompt.indexOf("playful and precise")).toBeLessThan(prompt.indexOf("Target languages:"));
+    expect(vi.mocked(recordAiUsage).mock.calls[0][0]).toMatchObject({ inputTokens: 5000, cacheReadTokens: 4000 });
+  });
+
+  it("Anthropic cache read/write tokens are metered separately and the input stays the sum of all three", async () => {
+    const { svc } = claude(() => ({
+      content: [{ type: "text", text: ANSWER }],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 200, output_tokens: 50, cache_read_input_tokens: 4000, cache_creation_input_tokens: 300 },
+    }));
+    vi.mocked(recordAiUsage).mockClear();
+    await svc.translatePackage(cacheable);
+    expect(vi.mocked(recordAiUsage).mock.calls[0][0]).toMatchObject({
+      inputTokens: 4500,
+      cacheReadTokens: 4000,
+      cacheWriteTokens: 300,
+    });
   });
 });

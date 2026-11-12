@@ -16,7 +16,7 @@ import { DEFAULT_MODELS, resolveModelId } from '../../app/config/ai-models.confi
 /** Retired model ids already logged by this process — one warning each, not one per call. */
 const retiredModelWarned = new Set<string>();
 import { TRANSLATION_BATCH } from '../../app/config/constants';
-import { maxOutputTokensFor } from '../../app/config/ai-model-limits';
+import { maxOutputTokensFor, PACKAGE_CACHE_MIN_PREFIX_TOKENS } from '../../app/config/ai-model-limits';
 import {
   estimateOutputChars,
   fitsOneRequest,
@@ -181,6 +181,14 @@ export interface AiRequestOptions {
   timeoutMs: number;
   /** Set by the provider branch when the answer was cut off at max_tokens. */
   stop: { truncated: boolean };
+  /**
+   * Prompt caching (Anthropic only, package path only): the prompt is split at
+   * this character index into a stable PREFIX (sent as a `system` block with a
+   * cache marker) and the per-package remainder. Set by `translatePackage` only
+   * when the prefix is long enough and the group has enough packages; absent
+   * everywhere else, which leaves the request exactly as it was.
+   */
+  cacheSplit?: number;
 }
 
 class AIRequestTimeoutError extends Error {
@@ -1416,6 +1424,8 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     instructions?: string;
     plannedOutputTokens: number;
     timeoutMs: number;
+    /** The caller's group has enough packages for a cache write to pay off. */
+    cacheable?: boolean;
   }): Promise<{ parsed: unknown; invalid?: 'truncated' | 'unparseable' }> {
     const targetLanguages = req.locales.map((loc) => `${localeName(loc)} (${loc})`).join(', ');
     const rules = [
@@ -1461,11 +1471,21 @@ Respond with ONLY a JSON object keyed by item id, then by locale code, like this
 ${JSON.stringify(skeleton)}`;
 
     const stop = { truncated: false };
+    // Anthropic prompt caching: the prefix (rules + merchant instructions, NEVER
+    // the per-package glossary or items) is marked only when the caller says the
+    // group has enough packages AND the prefix reaches the (conservative)
+    // minimum. OpenAI-style providers cache a repeated prefix by themselves --
+    // the prefix-first order above is all they need.
+    const cacheSplit =
+      req.cacheable && this.provider === 'claude' && Math.ceil(prefix.length / 4) >= PACKAGE_CACHE_MIN_PREFIX_TOKENS
+        ? prefix.length
+        : undefined;
     const responseText = await this.askAI(`${prefix}\n${variable}`, undefined, {
       maxOutputTokens: packageMaxTokensFor(req.plannedOutputTokens),
       plannedOutputTokens: req.plannedOutputTokens,
       timeoutMs: req.timeoutMs,
       stop,
+      ...(cacheSplit !== undefined ? { cacheSplit } : {}),
     });
     // A cut-off answer may still parse as JSON up to the cut: it is rejected as
     // a whole, whatever its beginning looks like.
@@ -3862,18 +3882,27 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
               ],
             }],
           }, sdkOptions)
-        : await this.anthropic.messages.create({
-            model: this.getModel(),
-            max_tokens: maxTokens,
-            messages: [{ role: 'user', content: prompt }],
-          }, sdkOptions);
+        : requestOptions?.cacheSplit && requestOptions.cacheSplit > 0 && requestOptions.cacheSplit < prompt.length
+          ? await this.anthropic.messages.create({
+              model: this.getModel(),
+              max_tokens: maxTokens,
+              // The stable prefix carries the cache marker; what varies per
+              // package follows in the user turn.
+              system: [{ type: 'text', text: prompt.slice(0, requestOptions.cacheSplit), cache_control: { type: 'ephemeral' } }],
+              messages: [{ role: 'user', content: prompt.slice(requestOptions.cacheSplit).replace(/^\n/, '') }],
+            }, sdkOptions)
+          : await this.anthropic.messages.create({
+              model: this.getModel(),
+              max_tokens: maxTokens,
+              messages: [{ role: 'user', content: prompt }],
+            }, sdkOptions);
       markTruncated(message.stop_reason === 'max_tokens');
       const textBlock = message.content.find((b) => b.type === 'text');
       const claudeText = textBlock?.text ?? '';
       // `input_tokens` deliberately EXCLUDES cache_creation/cache_read tokens,
       // so the total input is the sum of the three (else it is under-counted);
-      // the cache parts ride separately. No cache_control is sent yet, so both
-      // are 0 in practice.
+      // the cache parts ride separately. cache_control is sent only
+      // for a package request with a cache split; everywhere else both are 0.
       const claudeUsage = message.usage as
         | {
             input_tokens?: number;

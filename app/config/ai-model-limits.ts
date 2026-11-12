@@ -63,3 +63,15 @@ export function maxOutputTokensFor(provider: string | undefined | null, model: s
 export function modelLimitRules(): ReadonlyArray<Readonly<LimitRule>> {
   return RULES;
 }
+
+/**
+ * Prompt caching on the package path (PLAN_BULK_TRANSLATE_BATCHING 3.5): a
+ * cache marker is only sent when the stable prefix reaches this many tokens.
+ * Anthropic's documented minimum is model-dependent (about 1024 to 4096); NOT
+ * measured here, so the cautious end is used for every model -- below the real
+ * minimum a marker is silently ignored, so too high only forgoes a saving.
+ */
+export const PACKAGE_CACHE_MIN_PREFIX_TOKENS = 4096;
+
+/** A group needs at least this many packages before a cache WRITE amortises. */
+export const PACKAGE_CACHE_MIN_GROUP_PACKAGES = 3;
