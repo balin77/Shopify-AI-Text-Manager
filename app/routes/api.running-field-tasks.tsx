@@ -2,6 +2,7 @@ import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { handlePolledAuthError } from "~/utils/polled-auth-error.server";
+import { ACTIVE_TASK_STATUSES } from "~/config/task-statuses.js";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
@@ -21,7 +22,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         where: {
           shop: session.shop,
           resourceId,
-          status: { in: ["pending", "queued", "running"] },
+          status: { in: [...ACTIVE_TASK_STATUSES] },
         },
         select: {
           id: true,

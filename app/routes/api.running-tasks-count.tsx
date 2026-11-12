@@ -3,6 +3,7 @@ import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { handlePolledAuthError } from "~/utils/polled-auth-error.server";
 import { WEBP_ITEM_TASK_TYPE } from "~/config/webp-tasks.js";
+import { ACTIVE_TASK_STATUSES } from "~/config/task-statuses.js";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
@@ -11,7 +12,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     try {
       const { db } = await import("../db.server");
 
-      // Count active tasks (pending → queued → running).
+      // Count active tasks (pending → queued → running, plus the batch states).
       //
       // The per-image work items of a WebP conversion are excluded — a 20-image
       // upload would otherwise put "21" on the badge for one merchant action.
@@ -23,8 +24,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         where: {
           shop: session.shop,
           type: { not: WEBP_ITEM_TASK_TYPE },
+          // Includes the batch states: a run waiting up to 24 h for its
+          // provider batch is still a running task as far as the badge goes.
           status: {
-            in: ["pending", "queued", "running"],
+            in: [...ACTIVE_TASK_STATUSES],
           },
         },
       });

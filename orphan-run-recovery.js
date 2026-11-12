@@ -85,6 +85,28 @@ export const BOOT_SILENCE_MS = 90_000;
 export const BOOT_RECOVERY_TASK_TYPES = [...HEARTBEAT_TASK_TYPES, ...BOOT_ORPHAN_TASK_TYPES];
 
 /**
+ * Task types that can WAIT for a provider batch (PLAN_BULK_TRANSLATE_BATCHING
+ * 19.4). Their open states are `submitting`, `waiting_batch` and
+ * `cancel_requested` (app/config/task-statuses.js), and the recovery here
+ * treats them in two different ways on purpose:
+ *
+ *  - `waiting_batch` / `cancel_requested` are NEVER touched. Nothing in this
+ *    process "runs" a waiting batch -- the provider holds it and its state
+ *    lives in BulkTranslateBatch -- so "no heartbeat" is the normal condition,
+ *    not evidence of death. Every `status: "running"` filter below (and the
+ *    reaper's NON_TERMINAL list) simply does not match them; do not widen those
+ *    filters to "any open status" or a restart would orphan every waiting
+ *    batch.
+ *  - `submitting` HAS a runner (it uploads / creates the batch and heartbeats).
+ *    When that runner is gone, what happens depends on whether the provider
+ *    batch id was PERSISTED: yes -> the run is a waiting batch after all
+ *    (`waiting_batch`, nothing lost, the poller takes over); no -> there is
+ *    nothing to wait for and the task fails as interrupted. The window between
+ *    the provider's `create` and the saved id is a stated residual (19.10).
+ */
+export const BATCH_TASK_TYPES = ["bulkEditorTranslate"];
+
+/**
  * Longest silence a heartbeat-type run may have before it counts as orphaned.
  *
  * The crawl's own ceiling inside the fetch loop is 10s
@@ -229,6 +251,74 @@ export async function reconcileOrphanCrawlSnapshots(prisma, shops = null) {
 }
 
 /**
+ * Resolve `submitting` batch tasks whose submit runner is gone.
+ *
+ * `olderThan` (a Date) = only rows silent that long (the periodic reaper);
+ * `silentMs` + `createdBefore` = the boot rule (existed before this process,
+ * and silent for BOOT_SILENCE_MS so a run alive in another container during a
+ * deploy overlap is left alone); neither = every one (a caller that knows no
+ * runner can be alive). `shops` scopes; `[]` sweeps nothing.
+ *
+ * @param {any} prisma
+ * @param {{ types?: string[], olderThan?: Date | null, createdBefore?: Date | null, silentMs?: number | null, shops?: string[] | null }} [options]
+ * @returns {Promise<{ resumed: number, failed: number, shops: string[] }>}
+ */
+export async function recoverSubmittingBatchTasks(prisma, options = {}) {
+  const { types = BATCH_TASK_TYPES, olderThan = null, createdBefore = null, silentMs = null, shops = null } = options;
+  const none = { resumed: 0, failed: 0, shops: [] };
+  if (shops && shops.length === 0) return none;
+  const where = { type: { in: types }, status: "submitting" };
+  if (olderThan) where.updatedAt = { lt: olderThan };
+  else if (silentMs) where.updatedAt = { lt: new Date(Date.now() - silentMs) };
+  if (createdBefore) where.createdAt = { lt: createdBefore };
+  if (shops) where.shop = { in: shops };
+
+  const rows = await prisma.task.findMany({ where, select: { id: true, shop: true } });
+  if (rows.length === 0) return none;
+
+  const batches = await prisma.bulkTranslateBatch.findMany({
+    where: { taskId: { in: rows.map((r) => r.id) } },
+    select: { taskId: true, batchIds: true },
+  });
+  const persisted = new Set(
+    batches.filter((b) => Array.isArray(b.batchIds) && b.batchIds.length > 0).map((b) => b.taskId),
+  );
+  const resumeIds = rows.filter((r) => persisted.has(r.id)).map((r) => r.id);
+  const failIds = rows.filter((r) => !persisted.has(r.id)).map((r) => r.id);
+
+  let resumed = 0;
+  let failed = 0;
+  // Conditional on the row still being `submitting`: a runner that finished
+  // between the select and here keeps its own state.
+  if (resumeIds.length > 0) {
+    const res = await prisma.task.updateMany({
+      where: { id: { in: resumeIds }, status: "submitting" },
+      data: { status: "waiting_batch" },
+    });
+    resumed = res.count;
+    await prisma.bulkTranslateBatch.updateMany({
+      where: { taskId: { in: resumeIds }, state: "submitting" },
+      data: { state: "waiting" },
+    });
+  }
+  if (failIds.length > 0) {
+    const res = await prisma.task.updateMany({
+      where: { id: { in: failIds }, status: "submitting" },
+      data: { status: "failed", error: INTERRUPTED_TASK_ERROR, completedAt: new Date() },
+    });
+    failed = res.count;
+    // The batch row is settled too ('done'), so the reservation sweep
+    // (usage-meter.server.ts releaseSettledReservations) frees what the run
+    // had reserved before it died.
+    await prisma.bulkTranslateBatch.updateMany({
+      where: { taskId: { in: failIds }, state: "submitting" },
+      data: { state: "done", lastError: INTERRUPTED_TASK_ERROR },
+    });
+  }
+  return { resumed, failed, shops: Array.from(new Set(rows.map((r) => r.shop))) };
+}
+
+/**
  * Both halves, in the order they have to happen: the task first, then the
  * snapshots (which read the task status to decide what is an orphan).
  *
@@ -242,10 +332,37 @@ export async function reconcileOrphanCrawlSnapshots(prisma, shops = null) {
 /**
  * @param {any} prisma
  * @param {{ olderThan?: Date | null, types?: string[], shops?: string[] | null, createdBefore?: Date | null, silentTypes?: { types: string[], silentMs: number } | null }} [options]
- * @returns {Promise<{ tasks: number, snapshots: number, shops: string[] }>}
+ * @returns {Promise<{ tasks: number, snapshots: number, shops: string[], resumedBatches: number }>}
  */
 export async function recoverOrphanedRuns(prisma, options = {}) {
   const { count, shops: failedShops } = await failOrphanedRuns(prisma, options);
   const snapshots = await reconcileOrphanCrawlSnapshots(prisma, options.shops ?? null);
-  return { tasks: count, snapshots, shops: failedShops };
+
+  // `submitting` batch tasks: only for a caller that NAMED a batch type (the
+  // boot recovery does; the crawl's request-scoped sweep does not, and an
+  // unscoped "every one" must never reach another feature's live submit).
+  let submittingFailed = 0;
+  let resumed = 0;
+  const batchTypes = BATCH_TASK_TYPES.filter((type) => (options.types ?? HEARTBEAT_TASK_TYPES).includes(type));
+  if (batchTypes.length > 0) {
+    try {
+      const silentMs = options.silentTypes?.types?.some((type) => batchTypes.includes(type))
+        ? options.silentTypes.silentMs
+        : null;
+      const sub = await recoverSubmittingBatchTasks(prisma, {
+        types: batchTypes,
+        olderThan: options.olderThan ?? null,
+        createdBefore: options.createdBefore ?? null,
+        silentMs,
+        shops: options.shops ?? null,
+      });
+      submittingFailed = sub.failed;
+      resumed = sub.resumed;
+    } catch (error) {
+      // Never let this abort the rest of the recovery: a delayed resolution
+      // of a submitting row costs a retry on the next pass.
+      console.error("[OrphanRecovery] Resolving submitting batch tasks failed:", error);
+    }
+  }
+  return { tasks: count + submittingFailed, snapshots, shops: failedShops, resumedBatches: resumed };
 }

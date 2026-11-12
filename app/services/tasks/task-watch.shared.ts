@@ -18,6 +18,9 @@ export const TERMINAL_TASK_STATUSES: ReadonlySet<string> = new Set([
   "completed_with_errors",
   "failed",
   "cancelled",
+  // The provider stopped answering for a batch (PLAN_BULK_TRANSLATE_BATCHING
+  // 19.4): terminal. `waiting_batch` & co. are NOT terminal and stay "alive".
+  "batch_unreachable",
 ]);
 
 /** The loader answers `missing` for a row that is not there. */

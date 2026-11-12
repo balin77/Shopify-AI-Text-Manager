@@ -5,6 +5,7 @@
  */
 
 import { PrismaClient } from "@prisma/client";
+import { NOT_OPEN_BATCH_TASK } from "./app/config/task-statuses.js";
 
 // Reuse the global PrismaClient shared with the Remix app (db.server.ts)
 // instead of creating a separate instance with its own connection pool.
@@ -68,11 +69,16 @@ export class TaskCleanupService {
       const now = new Date();
       console.log(`[TaskCleanup] Running cleanup at ${now.toISOString()}...`);
 
+      // A task waiting for its provider batch (submitting / waiting_batch /
+      // cancel_requested) is never deleted by age: its row is the only handle
+      // on a paid batch, and the poller that pushes `expiresAt` forward may
+      // have been down for days (PLAN_BULK_TRANSLATE_BATCHING 19.4).
       const result = await prisma.task.deleteMany({
         where: {
           expiresAt: {
             lt: now,
           },
+          ...NOT_OPEN_BATCH_TASK,
         },
       });
 
@@ -96,6 +102,7 @@ export class TaskCleanupService {
         expiresAt: {
           lt: now,
         },
+        ...NOT_OPEN_BATCH_TASK,
       },
     });
     return result.count;

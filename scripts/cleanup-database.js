@@ -14,6 +14,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
+import { NOT_OPEN_BATCH_TASK, SETTLED_TASK_STATUSES } from '../app/config/task-statuses.js';
 
 const db = new PrismaClient();
 
@@ -35,9 +36,11 @@ async function cleanupDatabase() {
     const expiredTasksDeleted = await db.task.deleteMany({
       where: {
         OR: [
-          { expiresAt: { lt: new Date() } },
+          // Never an open batch task (submitting / waiting_batch / cancel_requested):
+          // its row is the only handle on a paid provider batch.
+          { expiresAt: { lt: new Date() }, ...NOT_OPEN_BATCH_TASK },
           {
-            status: { in: ['completed', 'failed', 'cancelled'] },
+            status: { in: SETTLED_TASK_STATUSES },
             completedAt: { lt: threeDaysAgo }
           }
         ]

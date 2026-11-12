@@ -148,6 +148,10 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
     // merchant to look for a fault in their own shop.
     case "task_interrupted":
       return t?.tasks?.taskInterrupted || "Interrupted by a server restart. Please start it again.";
+    // The provider stopped answering for a waiting batch (BulkTranslateBatch,
+    // PLAN_BULK_TRANSLATE_BATCHING 19.4): written with Task.status of the same name.
+    case "batch_unreachable":
+      return t?.tasks?.batchUnreachable || "The AI provider no longer answers for this job. Nothing was written. Please start the run again.";
     case "bot_blocked": {
       const base = crawl.errorBotBlocked || null;
       // Without the attribution the merchant only sees "something blocked the

@@ -22,6 +22,7 @@ import {
   HEARTBEAT_STALL_MS,
   recoverOrphanedRuns,
   reconcileOrphanCrawlSnapshots,
+  recoverSubmittingBatchTasks,
 } from "./orphan-run-recovery.js";
 
 // Reuse the global PrismaClient shared with the Remix app (db.server.ts)
@@ -122,6 +123,11 @@ const LONG_RUNNING_TASK_TYPES = [
 // R4-H2 (core): cap how many rows a single reaper pass flips per statement
 // (the old blanket updateMany had no bound). Loop until drained.
 const STUCK_REAP_BATCH = Math.max(1, parseInt(process.env.STUCK_REAP_BATCH || '500', 10));
+// Deliberately NOT the batch states (submitting / waiting_batch /
+// cancel_requested, app/config/task-statuses.js): a task waiting for its
+// provider batch has no process behind it, so "no update for N minutes" is its
+// normal condition and reaping it would orphan a paid batch. `submitting` is
+// resolved by recoverSubmittingBatchTasks (orphan-run-recovery.js) instead.
 const NON_TERMINAL = ['running', 'pending', 'queued'];
 
 export class TaskRecoveryService {
@@ -530,6 +536,19 @@ export class TaskRecoveryService {
       status: { in: NON_TERMINAL },
       updatedAt: { lt: defaultCutoff },
     });
+
+    // A `submitting` batch task whose submit runner went silent: with a
+    // persisted provider batch id it becomes `waiting_batch` (nothing lost),
+    // without one it fails as interrupted. Never reaped as "timed out".
+    await recoverSubmittingBatchTasks(prisma, { olderThan: heartbeatCutoff }).then(
+      (r) => {
+        if (r.resumed > 0 || r.failed > 0) {
+          console.log(`[TaskRecovery] Submitting batch tasks: ${r.resumed} now waiting, ${r.failed} failed`);
+        }
+        total += r.failed;
+      },
+      (err) => console.error('[TaskRecovery] Failed to resolve submitting batch tasks:', err),
+    );
 
     // The snapshot half of a reaped crawl. Runs on every pass, not just at
     // boot: a crawl that times out here leaves the same open SeoCrawlSnapshot

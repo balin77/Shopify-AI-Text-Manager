@@ -2349,6 +2349,10 @@ export const de = {
       completed_with_errors: "Mit Fehlern abgeschlossen",
       failed: "Fehlgeschlagen",
       cancelled: "Abgebrochen",
+      submitting: "Wird eingereicht",
+      waiting_batch: "Wartet auf die KI (bis zu 24 Stunden)",
+      cancel_requested: "Wird abgebrochen",
+      batch_unreachable: "KI-Auftrag nicht erreichbar",
     },
     progress: "Fortschritt",
     startedAt: "Gestartet um",
@@ -2414,6 +2418,7 @@ export const de = {
     seoBulkFixCompleted: "SEO-Korrektur abgeschlossen",
     taskTimedOut: "Zeitüberschreitung — die Aufgabe hat zu lange keinen Fortschritt gemeldet und wurde abgebrochen. Bitte erneut starten.",
     taskInterrupted: "Unterbrochen — der Server wurde neu gestartet (z. B. durch ein Deploy), während die Aufgabe lief. Bitte erneut starten.",
+    batchUnreachable: "Der KI-Anbieter antwortet für diesen Auftrag nicht mehr. Es wurde nichts geschrieben. Bitte starte den Lauf erneut.",
     // Zugänglicher Name der Benachrichtigungsbox in der Navigation — wird
     // vorgelesen statt der farbigen Umrandung, die allen anderen dasselbe sagt.
     notificationSuccess: "Erfolgsmeldung",
@@ -4748,6 +4753,7 @@ export const de = {
         "Die Übersetzungen werden direkt gespeichert. Da nur leere Felder gefüllt werden, kann dabei nichts überschrieben werden — das Ergebnis lässt sich danach im Bulk-Editor prüfen und ändern.",
       start: "Übersetzen & speichern",
       running: "KI-Übersetzung gestartet — Fortschritt im Tab \"Aufgaben\".",
+      waitingBatch: "Eingereicht. Der KI-Anbieter arbeitet im Hintergrund, das Ergebnis kommt bis zu 24 Stunden später. Du kannst diese Seite verlassen; der Fortschritt steht im Tab \"Aufgaben\".",
       savedResult: "{saved} Übersetzung(en) gespeichert, {failed} fehlgeschlagen.",
       skippedHandles:
         "{count} URL-Handle(s) übersprungen — die Übersetzung war identisch mit der Primärsprache oder ergab keinen gültigen Slug.",

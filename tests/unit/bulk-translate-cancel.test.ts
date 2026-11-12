@@ -138,7 +138,7 @@ describe("tasks tab: cancel is branched on status", () => {
   it("cancels only a pending or running task, conditionally", async () => {
     const updateMany = vi.fn(async () => ({ count: 1 }));
     const outcome = await cancelTask({ task: { updateMany } } as never, "shop.myshopify.com", "task-9");
-    expect(outcome).toEqual({ ok: true });
+    expect(outcome).toEqual({ ok: true, mode: "cancelled" });
     expect(updateMany).toHaveBeenCalledWith({
       where: { id: "task-9", shop: "shop.myshopify.com", status: { in: ["pending", "running"] } },
       data: { status: "cancelled", completedAt: expect.any(Date) },

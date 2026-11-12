@@ -11,6 +11,7 @@ import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { BackgroundSyncService } from "./background-sync.service";
 import { getLastActivity, isShopActive } from "../middleware/activity-tracker.middleware";
 import { logger } from "~/utils/logger.server";
+import { NOT_OPEN_BATCH_TASK, SETTLED_TASK_STATUSES } from "~/config/task-statuses.js";
 import { backgroundAdmin, createRefreshingAdmin, maybeMigrateToExpiringToken, migrationMayBeNeeded } from "~/utils/offline-admin.server";
 import { expiringOfflineTokensEnabled } from "~/utils/offline-token-flags.server";
 
@@ -630,14 +631,30 @@ class SyncSchedulerService {
       const expiredTasks = await db.task.deleteMany({
         where: {
           OR: [
-            { expiresAt: { lt: new Date() } },
+            // Never an open batch task (submitting / waiting_batch /
+            // cancel_requested): its row is the only handle on a paid
+            // provider batch (PLAN_BULK_TRANSLATE_BATCHING 19.4).
+            { expiresAt: { lt: new Date() }, ...NOT_OPEN_BATCH_TASK },
             {
-              status: { in: ['completed', 'failed', 'cancelled'] },
+              status: { in: [...SETTLED_TASK_STATUSES] },
               completedAt: { lt: threeDaysAgo }
             }
           ]
         }
       });
+
+      // The batch state of a settled run goes with its (expired) task. A row
+      // still holding a reservation stays until the reservation sweep has
+      // released it (usage-meter.server.ts releaseSettledReservations).
+      await db.bulkTranslateBatch
+        .deleteMany({
+          where: { state: 'done', reservationState: { not: 'held' }, updatedAt: { lt: threeDaysAgo } },
+        })
+        .catch((error: unknown) => {
+          logger.warn('[SyncScheduler] Settled batch rows could not be pruned', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
 
       // 2. Delete old webhook logs.
       //   a) processed rows after 24h (minimise storage for multi-tenant SaaS).

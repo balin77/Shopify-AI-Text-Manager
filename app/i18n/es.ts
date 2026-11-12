@@ -2328,6 +2328,10 @@ export const es: Translation = {
       completed_with_errors: "Completada con errores",
       failed: "Fallida",
       cancelled: "Cancelada",
+      submitting: "Enviando",
+      waiting_batch: "Esperando a la IA (hasta 24 horas)",
+      cancel_requested: "Cancelando",
+      batch_unreachable: "Trabajo de IA inaccesible",
     },
     progress: "Progreso",
     startedAt: "Iniciada a las",
@@ -2393,6 +2397,7 @@ export const es: Translation = {
     seoBulkFixCompleted: "Corrección SEO finalizada",
     taskTimedOut: "Tiempo agotado — la tarea no informó progreso durante demasiado tiempo y se canceló. Vuelve a iniciarla.",
     taskInterrupted: "Interrumpida — el servidor se reinició (por ejemplo, un despliegue) mientras la tarea estaba en curso. Vuelve a iniciarla.",
+    batchUnreachable: "El proveedor de IA ya no responde para este trabajo. No se escribió nada. Vuelve a iniciar la ejecución.",
     // Nombre accesible del cuadro de notificaciones de la navegación — se lee
     // en voz alta en lugar del borde de color, que dice lo mismo a los demás.
     notificationSuccess: "Notificación de éxito",
@@ -4711,6 +4716,7 @@ export const es: Translation = {
         "Las traducciones se guardan directamente. Como solo se rellenan campos vacíos, nada puede sobrescribirse: el resultado se puede revisar y modificar después en el editor masivo.",
       start: "Traducir y guardar",
       running: "Traducción con IA iniciada: sigue el progreso en la pestaña Tareas.",
+      waitingBatch: "Enviado. El proveedor de IA trabaja en segundo plano y el resultado llega hasta 24 horas después. Puedes salir de esta página; el progreso está en la pestaña Tareas.",
       savedResult: "{saved} traducción(es) guardada(s), {failed} fallida(s).",
       skippedHandles:
         "{count} handle(s) de URL omitido(s): la traducción era idéntica al idioma principal o no produjo un slug válido.",

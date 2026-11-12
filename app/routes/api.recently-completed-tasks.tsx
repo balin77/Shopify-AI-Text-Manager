@@ -36,7 +36,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           // parent type and still notify — one per image, as they always did,
           // which is the behaviour their merchant is already mid-way through.
           type: { not: WEBP_ITEM_TASK_TYPE },
-          status: { in: ["completed", "completed_with_errors", "failed"] },
+          status: { in: ["completed", "completed_with_errors", "failed", "batch_unreachable"] },
           completedAt: {
             gte: thirtySecondsAgo,
           },

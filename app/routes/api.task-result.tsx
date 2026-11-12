@@ -2,6 +2,7 @@ import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { summariseTaskResult } from "~/services/tasks/task-details.shared";
+import { isOpenBatchTaskStatus } from "~/config/task-statuses.js";
 
 /**
  * Fetch a single task's status + result by id. Used by the client to wait for
@@ -59,6 +60,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (!task || task.shop !== session.shop) {
       return json({ error: "Task not found" }, { status: 404 });
     }
+
+    // A task that waits for / submits its provider batch carries NO result
+    // (its manifest lives in BulkTranslateBatch, which no route ships). The
+    // blanking below is the backstop for that rule: whatever ever lands in
+    // `Task.result` while the batch is open is never sent to a browser.
+    if (isOpenBatchTaskStatus(task.status)) task.result = null;
 
     if (wantsDetail) {
       // `result` is READ (it is what the summary is made of) and deliberately

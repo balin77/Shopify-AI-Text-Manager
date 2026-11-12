@@ -193,3 +193,49 @@ describe("claimBulkTranslateRun", () => {
     expect(claim.ok).toBe(false);
   });
 });
+
+describe("a run waiting for its provider batch holds the single-flight (PLAN 19.4)", () => {
+  for (const status of ["submitting", "waiting_batch", "cancel_requested"]) {
+    it(`a ${status} task blocks a new claim`, async () => {
+      const { db, rows } = fakeDb(() => new Date(), nextId);
+      rows.push({
+        id: "id-open",
+        shop: data.shop,
+        type: data.type,
+        status,
+        createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+        updatedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+      });
+      const claim = await claimBulkTranslateRun(db, data);
+      expect(claim).toEqual({ ok: false, taskId: "id-open" });
+      // the loser removed its own row, the waiting one stays
+      expect(rows.map((r) => r.id)).toEqual(["id-open"]);
+    });
+  }
+
+  it("a terminal batch status does not block", async () => {
+    const { db, rows } = fakeDb(() => new Date(), nextId);
+    rows.push({
+      id: "id-dead",
+      shop: data.shop,
+      type: data.type,
+      status: "batch_unreachable",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    expect((await claimBulkTranslateRun(db, data)).ok).toBe(true);
+  });
+
+  it("another shop's waiting task does not block", async () => {
+    const { db, rows } = fakeDb(() => new Date(), nextId);
+    rows.push({
+      id: "id-other",
+      shop: "other.myshopify.com",
+      type: data.type,
+      status: "waiting_batch",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    expect((await claimBulkTranslateRun(db, data)).ok).toBe(true);
+  });
+});

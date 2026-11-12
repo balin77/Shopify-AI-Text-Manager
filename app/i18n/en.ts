@@ -2348,6 +2348,10 @@ export const en: Translation = {
       completed_with_errors: "Completed with errors",
       failed: "Failed",
       cancelled: "Cancelled",
+      submitting: "Submitting",
+      waiting_batch: "Waiting for the AI (up to 24 hours)",
+      cancel_requested: "Cancelling",
+      batch_unreachable: "AI job unreachable",
     },
     progress: "Progress",
     startedAt: "Started at",
@@ -2413,6 +2417,7 @@ export const en: Translation = {
     seoBulkFixCompleted: "SEO fix finished",
     taskTimedOut: "Timed out — the task reported no progress for too long and was cancelled. Please start it again.",
     taskInterrupted: "Interrupted — the server restarted (a deploy, for example) while the task was running. Please start it again.",
+    batchUnreachable: "The AI provider no longer answers for this job. Nothing was written. Please start the run again.",
     // Accessible name of the navigation's notification box — read out instead
     // of the coloured border, which says the same thing to everyone else.
     notificationSuccess: "Success notification",
@@ -4726,6 +4731,7 @@ export const en: Translation = {
         "The translations are saved directly. Since only empty fields are filled, nothing can be overwritten — the result can be reviewed and changed in the bulk editor afterwards.",
       start: "Translate & save",
       running: "AI translation started — track progress in the Tasks tab.",
+      waitingBatch: "Submitted. The AI provider works in the background and the result arrives up to 24 hours later. You can leave this page; progress is in the Tasks tab.",
       savedResult: "{saved} translation(s) saved, {failed} failed.",
       skippedHandles:
         "{count} URL handle(s) skipped — the translation was identical to the primary language or produced no valid slug.",

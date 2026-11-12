@@ -87,6 +87,7 @@ import { buildTranslateInstructions } from "~/utils/character-limits";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import type { DataResponse } from "~/types/data-response";
 import { backgroundAdmin } from "~/utils/offline-admin.server";
+import { RUN_OCCUPYING_TASK_STATUSES } from "~/config/task-statuses.js";
 
 /** Fields compact enough for the short-batch prompt — the subset
  * translateShortFieldsBatch accepts (productType runs its own grouped path). */
@@ -399,13 +400,16 @@ async function buildEstimate(args: {
  * for ever. */
 export const PENDING_CLAIM_STALE_MS = 10 * 60 * 1000;
 
-/** Rows that count as "a translate run is active for this shop". */
+/** Rows that count as "a translate run is active for this shop". A run waiting
+ * for its provider batch (submitting / waiting_batch / cancel_requested) holds
+ * the single-flight exactly like a running one: two runs on the same cells is
+ * what the flight exists to prevent, and a batch waits up to 24 hours. */
 function activeRunWhere(shop: string, now: number = Date.now()) {
   return {
     shop,
     type: "bulkEditorTranslate",
     OR: [
-      { status: "running" },
+      { status: { in: [...RUN_OCCUPYING_TASK_STATUSES] } },
       { status: "pending", updatedAt: { gte: new Date(now - PENDING_CLAIM_STALE_MS) } },
     ],
   };
@@ -435,7 +439,7 @@ export async function claimBulkTranslateRun(
       type: "bulkEditorTranslate",
       id: { not: task.id },
       OR: [
-        { status: "running" },
+        { status: { in: [...RUN_OCCUPYING_TASK_STATUSES] } },
         {
           status: "pending",
           updatedAt: { gte: new Date(Date.now() - PENDING_CLAIM_STALE_MS) },

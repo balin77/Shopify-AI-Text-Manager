@@ -78,6 +78,12 @@ import { LocaleToggleBar } from "../components/bulk-editor/LocaleToggleBar";
 import { MissingTranslationList } from "../components/bulk-editor/MissingTranslationList";
 import { appFetch } from "../utils/app-fetch";
 import {
+  RUN_OCCUPYING_TASK_STATUSES,
+  TASK_STATUS_WAITING_BATCH,
+  isTranslatePollTerminal,
+  translatePollDelayMs,
+} from "../config/task-statuses.js";
+import {
   TranslateConfirmModal,
   type ConfirmEstimateState,
 } from "../components/bulk-editor/TranslateConfirmModal";
@@ -192,7 +198,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     : foreign.map((f) => f.locale);
 
   const runningTask = await db.task.findFirst({
-    where: { shop, type: "bulkEditorTranslate", status: { in: ["pending", "running"] } },
+    where: { shop, type: "bulkEditorTranslate", status: { in: ["pending", ...RUN_OCCUPYING_TASK_STATUSES] } },
     select: { id: true },
   });
 
@@ -273,6 +279,7 @@ interface TranslateTaskResult {
 
 type ResultBanner =
   | { kind: "running" }
+  | { kind: "waiting" }
   | {
       kind: "done";
       saved: number;
@@ -474,76 +481,108 @@ export default function BulkTranslateMissingPage() {
   }, [startFetcher.state, startFetcher.data]);
 
   // Poll the detached task (same /api/task-result pattern as the editors).
+  //
+  // A self-scheduling timeout, not an interval: the delay depends on the
+  // status. A run waiting for its provider batch (`waiting_batch`, up to 24
+  // hours) is asked once a minute; everything else every 2 seconds. The page
+  // only READS here -- a batch that is waiting changes nothing on screen
+  // except the banner. `cancelled` and `batch_unreachable` end the poll like
+  // `completed` and `failed` (task-statuses.js).
   useEffect(() => {
     if (!taskId) return;
     let cancelled = false;
-    const timer = setInterval(async () => {
-      try {
-        const res = await appFetch(`/api/task-result?taskId=${encodeURIComponent(taskId)}`, {
-          headers: { Accept: "application/json" },
-        });
-        if (!res.ok || cancelled) return;
-        const payload = (await res.json()) as {
-          task?: { status: string; result?: string | null; error?: string | null };
-        };
-        const task = payload.task;
-        if (
-          !task ||
-          (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") ||
-          cancelled
-        ) {
-          return;
-        }
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-        setTaskId(null);
-        if (task.status === "failed" && !task.result) {
-          // `Task.error` is a machine code for everything a detached runner
-          // writes (task-error-text.ts) — rendering it raw is how a merchant
-          // reads `rows_failed:3`. A genuine provider message still passes
-          // through verbatim.
-          setBanner({
-            kind: "failed",
-            message: taskErrorText(task.error, t) ?? undefined,
-            // An app restart under the run is a warning, not an error of the
-            // merchant's: the run can simply be started again.
-            interrupted: isInterruptedTaskError(task.error),
-          });
-          return;
-        }
-        let parsed: TranslateTaskResult | null = null;
-        try {
-          parsed = task.result ? (JSON.parse(task.result) as TranslateTaskResult) : null;
-        } catch {
-          parsed = null;
-        }
-        if (task.status === "cancelled") {
-          // Cancelled in the Tasks tab: what the run wrote before it stopped
-          // stays written, so the list is reloaded like after a finished run.
-          setBanner({ kind: "cancelled", saved: parsed?.saved ?? 0, notProcessed: parsed?.notProcessed ?? 0 });
-        } else {
-          setBanner({
-            kind: "done",
-            saved: parsed?.saved ?? 0,
-            failed: parsed?.failed ?? 0,
-            skippedHandles: parsed?.skippedHandles ?? 0,
-            skippedChanged: parsed?.skippedChanged ?? 0,
-            skippedFilled: parsed?.skippedFilled ?? 0,
-            skippedGone: parsed?.skippedGone ?? 0,
-            overCap: startedOverCap.current,
-          });
-        }
-        // The translated rows are no longer candidates — reload the list and
-        // start from a clean selection.
-        setSelection(initialTranslateSelection(columnIds));
-        missingLocalesByPair.current = new Map();
-        revalidator.revalidate();
-      } catch {
-        // transient — the next tick retries
+    /** Returns the status the next delay is chosen from; `null` when the run ended. */
+    const check = async (): Promise<string | undefined | null> => {
+      const res = await appFetch(`/api/task-result?taskId=${encodeURIComponent(taskId)}`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!res.ok || cancelled) return undefined;
+      const payload = (await res.json()) as {
+        task?: { status: string; result?: string | null; error?: string | null };
+      };
+      const task = payload.task;
+      if (!task || cancelled) return undefined;
+      if (!isTranslatePollTerminal(task.status)) {
+        // Waiting on the provider: say so (once), keep asking slowly.
+        setBanner((prev) =>
+          task.status === TASK_STATUS_WAITING_BATCH
+            ? prev?.kind === "waiting"
+              ? prev
+              : { kind: "waiting" }
+            : prev?.kind === "waiting"
+              ? { kind: "running" }
+              : prev,
+        );
+        return task.status;
       }
-    }, 2000);
+
+      setTaskId(null);
+      if ((task.status === "failed" || task.status === "batch_unreachable") && !task.result) {
+        // `Task.error` is a machine code for everything a detached runner
+        // writes (task-error-text.ts) -- rendering it raw is how a merchant
+        // reads `rows_failed:3`. A genuine provider message still passes
+        // through verbatim.
+        setBanner({
+          kind: "failed",
+          message:
+            taskErrorText(task.error ?? (task.status === "batch_unreachable" ? "batch_unreachable" : null), t) ??
+            undefined,
+          // An app restart under the run is a warning, not an error of the
+          // merchant's: the run can simply be started again.
+          interrupted: isInterruptedTaskError(task.error),
+        });
+        return null;
+      }
+      let parsed: TranslateTaskResult | null = null;
+      try {
+        parsed = task.result ? (JSON.parse(task.result) as TranslateTaskResult) : null;
+      } catch {
+        parsed = null;
+      }
+      if (task.status === "cancelled") {
+        // Cancelled in the Tasks tab: what the run wrote before it stopped
+        // stays written, so the list is reloaded like after a finished run.
+        setBanner({ kind: "cancelled", saved: parsed?.saved ?? 0, notProcessed: parsed?.notProcessed ?? 0 });
+      } else {
+        setBanner({
+          kind: "done",
+          saved: parsed?.saved ?? 0,
+          failed: parsed?.failed ?? 0,
+          skippedHandles: parsed?.skippedHandles ?? 0,
+          skippedChanged: parsed?.skippedChanged ?? 0,
+          skippedFilled: parsed?.skippedFilled ?? 0,
+          skippedGone: parsed?.skippedGone ?? 0,
+          overCap: startedOverCap.current,
+        });
+      }
+      // The translated rows are no longer candidates -- reload the list and
+      // start from a clean selection.
+      setSelection(initialTranslateSelection(columnIds));
+      missingLocalesByPair.current = new Map();
+      revalidator.revalidate();
+      return null;
+    };
+
+    const schedule = (status: string | undefined) => {
+      if (cancelled) return;
+      timer = setTimeout(async () => {
+        let next: string | undefined | null = status;
+        try {
+          next = await check();
+        } catch {
+          // transient -- the next tick retries
+          next = status;
+        }
+        if (next === null || cancelled) return;
+        schedule(next ?? status);
+      }, translatePollDelayMs(status));
+    };
+    schedule(undefined);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      if (timer) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
@@ -576,6 +615,7 @@ export default function BulkTranslateMissingPage() {
             </Text>
 
             {banner?.kind === "running" && <Banner tone="info">{tm.running}</Banner>}
+            {banner?.kind === "waiting" && <Banner tone="info">{tm.waitingBatch}</Banner>}
             {banner?.kind === "none" && <Banner tone="info">{tm.noneMissing}</Banner>}
             {banner?.kind === "failed" && (
               <Banner tone={banner.interrupted ? "warning" : "critical"}>{banner.message || tm.failed}</Banner>

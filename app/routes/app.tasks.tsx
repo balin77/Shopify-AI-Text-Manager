@@ -29,11 +29,19 @@ import {
   taskSubjectLabel,
 } from "~/services/tasks/task-labels.shared";
 import { hasTaskDetails } from "~/services/tasks/task-details.shared";
-import { cancelTask } from "~/services/tasks/task-cancel.server";
+import { cancelTask, deleteTask } from "~/services/tasks/task-cancel.server";
 import { taskEditorDeepLink } from "~/services/tasks/task-deep-link.shared";
 import { useAppNavigation } from "~/hooks/useAppNavigation";
 import { useTaskCount } from "~/contexts/TaskCountContext";
 import { WEBP_ITEM_TASK_TYPE } from "~/config/webp-tasks.js";
+import {
+  BATCH_TERMINAL_TASK_STATUSES,
+  SETTLED_TASK_STATUSES,
+  TASK_STATUS_CANCEL_REQUESTED,
+  TASK_STATUS_SUBMITTING,
+  TASK_STATUS_WAITING_BATCH,
+  isOpenBatchTaskStatus,
+} from "~/config/task-statuses.js";
 import { TaskDetailsPanel } from "~/components/tasks/TaskDetailsPanel";
 
 /**
@@ -137,7 +145,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     } else if (statusFilter === "completed_with_errors") {
       where.status = "completed_with_errors";
     } else if (statusFilter === "failed") {
-      where.status = "failed";
+      // A batch the provider stopped answering for is a failure too.
+      where.status = { in: ["failed", ...BATCH_TERMINAL_TASK_STATUSES] };
     }
 
     // Date range filter (max 24 hours = 1 day)
@@ -193,7 +202,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // Booleans only — `hasTaskDetails` answers "is there anything behind the
       // arrow" from these, so the payload never carries the text itself.
       hasPrompt: typeof prompt === "string" && prompt.length > 0,
-      hasResult: typeof result === "string" && result.length > 0,
+      // An open batch task has no result to show (and the route never ships one).
+      hasResult: typeof result === "string" && result.length > 0 && !isOpenBatchTaskStatus(task.status),
       error: task.error ? String(task.error) : null, // Full error message
       startedAt: task.startedAt.toISOString(),
       completedAt: task.completedAt ? task.completedAt.toISOString() : null,
@@ -254,9 +264,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (action === "delete") {
     try {
-      await db.task.delete({
-        where: { id: taskId, shop: session.shop },
-      });
+      // Refused server-side for a task that is waiting for / submitting its
+      // provider batch (task-cancel.server.ts): the row is the only handle on
+      // a paid batch, and the missing button in the list is UI only.
+      const outcome = await deleteTask(db, session.shop, taskId);
+      if (!outcome.ok) {
+        return json(
+          {
+            success: false,
+            error:
+              outcome.reason === "openBatch"
+                ? "This task is still waiting for its AI batch. Cancel it first."
+                : "Task not found.",
+          },
+          { status: outcome.reason === "openBatch" ? 409 : 404 },
+        );
+      }
       return json({ success: true });
     } catch (error: unknown) {
       logger.error("Failed to delete task", { context: "TasksRoute", taskId, error: error instanceof Error ? error.message : String(error) });
@@ -288,13 +311,19 @@ export default function TasksPage() {
   // Auto-refresh every 3 seconds if there are running tasks
   useEffect(() => {
     const hasRunningTasks = tasks.some((task: any) =>
-      task.status === "pending" || task.status === "running"
+      task.status === "pending" ||
+      task.status === "running" ||
+      task.status === TASK_STATUS_SUBMITTING ||
+      task.status === TASK_STATUS_CANCEL_REQUESTED
     );
+    // A batch waiting for its provider changes a few times a day: a slow
+    // refresh is plenty and keeps an open tab from hammering the loader.
+    const hasWaitingBatch = tasks.some((task: any) => task.status === TASK_STATUS_WAITING_BATCH);
 
-    if (hasRunningTasks) {
+    if (hasRunningTasks || hasWaitingBatch) {
       const interval = setInterval(() => {
         revalidatorRef.current.revalidate();
-      }, 3000);
+      }, hasRunningTasks ? 3000 : 60000);
 
       return () => clearInterval(interval);
     }
@@ -356,6 +385,10 @@ export default function TasksPage() {
       completed_with_errors: "warning",
       failed: "critical",
       cancelled: "warning",
+      submitting: "info",
+      waiting_batch: "info",
+      cancel_requested: "warning",
+      batch_unreachable: "critical",
     };
 
     return (
@@ -556,7 +589,7 @@ export default function TasksPage() {
                         </div>
                         <div onClick={(e: React.MouseEvent) => e.stopPropagation()}>
                           <InlineStack gap="200">
-                            {(task.status === "pending" || task.status === "running") && (
+                            {(task.status === "pending" || task.status === "running" || task.status === TASK_STATUS_WAITING_BATCH) && (
                               <Button
                                 size="slim"
                                 onClick={() => handleCancelTask(task.id)}
@@ -565,7 +598,7 @@ export default function TasksPage() {
                                 {t.tasks.cancel}
                               </Button>
                             )}
-                            {(task.status === "completed" || task.status === "completed_with_errors" || task.status === "failed" || task.status === "cancelled") && (
+                            {SETTLED_TASK_STATUSES.includes(task.status) && (
                               <Button
                                 size="slim"
                                 tone="critical"
@@ -641,7 +674,7 @@ export default function TasksPage() {
                     )}
 
                     {/* Progress Bar - Always Visible */}
-                    {(task.status === "running" || task.status === "pending" || task.status === "queued") && (
+                    {(task.status === "running" || task.status === "pending" || task.status === "queued" || isOpenBatchTaskStatus(task.status)) && (
                       <div>
                         <ProgressBar progress={task.progress} size="small" />
                         <Text as="p" variant="bodySm" tone="subdued">

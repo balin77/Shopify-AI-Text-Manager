@@ -8,7 +8,7 @@ export interface CompletedTask {
   // `completed_with_errors` is a terminal state of its own (the translation
   // paths write it when some locales failed) and reaches the notifications
   // through /api/recently-completed-tasks alongside the two extremes.
-  status: "completed" | "completed_with_errors" | "failed";
+  status: "completed" | "completed_with_errors" | "failed" | "batch_unreachable";
   resourceType: string | null;
   resourceTitle: string | null;
   fieldType: string | null;

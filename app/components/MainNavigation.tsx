@@ -250,7 +250,7 @@ export function MainNavigation() {
       let tone: InfoBoxTone = "success";
       let message = baseMessage;
 
-      if (task.status === "failed") {
+      if (task.status === "failed" || task.status === "batch_unreachable") {
         tone = "critical";
         // With an error text the word "failed" still has to be IN the body:
         // `taskErrorText` passes an unrecognised message through verbatim

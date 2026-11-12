@@ -186,6 +186,7 @@ const TERMINAL_STATUSES = new Set([
   "completed_with_errors",
   "failed",
   "cancelled",
+  "batch_unreachable",
 ]);
 /**
  * Floor between two fetches of the SAME open card. The page revalidates every
