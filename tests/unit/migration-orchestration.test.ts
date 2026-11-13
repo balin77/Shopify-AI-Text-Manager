@@ -176,10 +176,30 @@ describe("no other start-path script falls back to db push", () => {
   });
 });
 
-describe("railway.json restart policy", () => {
-  it("bounds restarts of a broken deploy", () => {
-    const d = JSON.parse(readFileSync("railway.json", "utf8")).deploy;
-    expect(d.restartPolicyType).toBe("ON_FAILURE");
-    expect(d.restartPolicyMaxRetries).toBe(10);
+// Service settings live on Railway; .railway/railway.ts documents them (Railway
+// does not read it on deploy). The restart policy of the web service is Railway's
+// default ON_FAILURE / 10 retries and is deliberately left implicit there (Railway
+// stores the default as unset), so the test guards that it is not overridden.
+describe(".railway/railway.ts service settings", () => {
+  const src = readFileSync(".railway/railway.ts", "utf8");
+
+  it("keeps the web service start chain, healthcheck and draining window", () => {
+    expect(src).toMatch(/start:\s*"npm run start:production"/);
+    expect(src).toMatch(/healthcheck:\s*"\/health"/);
+    expect(src).toMatch(/healthcheckTimeout:\s*900/);
+    expect(src).toMatch(/drainingSeconds:\s*15/);
+    expect(src).toMatch(/builder:\s*"DOCKERFILE"/);
+  });
+
+  it("leaves the web restart policy at Railway's default (no override)", () => {
+    expect(src).toMatch(/default ON_FAILURE with 10 retries/);
+    expect(src).not.toMatch(/restartPolicyMaxRetries/);
+  });
+
+  it("runs the Db Backup cron nightly at 02:00 UTC without restart", () => {
+    const m = src.match(/service\(prod \? "Db Backup"[\s\S]*?\n {2}\}\);/);
+    expect(m).not.toBeNull();
+    expect(m![0]).toMatch(/cronSchedule:\s*"0 2 \* \* \*"/);
+    expect(m![0]).toMatch(/restartPolicyType:\s*"NEVER"/);
   });
 });

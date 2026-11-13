@@ -5,20 +5,37 @@ Dieses Projekt nutzt zwei Railway Environments für eine saubere Trennung:
 - **Production**: Läuft auf dem `master` Branch
 - **Development**: Läuft auf dem `develop` Branch
 
-## 0. Config as Code — welche Datei zu welchem Service gehört
+## 0. Service-Einstellungen — `.railway/railway.ts`
 
-Die Deploy-Mechanik liegt im Repo, damit sie versioniert ist und nicht still im
-Dashboard driftet. Railway liest die Config-Datei **pro Service**; der Pfad wird
-je Service unter Settings → Config-as-Code hinterlegt.
+Die Service-Einstellungen leben auf Railway selbst. Die Datei
+[.railway/railway.ts](.railway/railway.ts) (Railway „Infrastructure as Code“)
+dokumentiert sie versioniert. Railway liest sie beim Deploy **nicht**; sie wirkt
+nur, wenn sie pro Environment angewendet wird. Die früheren Config-as-Code-Dateien
+(`railway.json`, `railway.dbbackup.json`, `railway.dbalert.json`) liest Railway ab
+2026-12-01 nicht mehr und sie sind entfernt.
 
-| Service | Config-Datei | Inhalt |
+Änderung anwenden (aus `.railway/`, nach `npm ci` dort), je Environment:
+
+```
+railway config plan  --environment <env>
+railway config apply --environment <env>
+```
+
+Die Datei wählt über `ctx.environment` aus: `production` → Branch `master`,
+`Development` → Branch `develop`. Variablen verwaltet die Datei nicht. Unter
+Windows ruft das SDK `railway --version` ohne Shell auf; dafür muss die
+Umgebungsvariable `_` auf die echte `railway.exe` zeigen
+(`npm
+ode_modules\@railway\cliinailway.exe`).
+
+| Service | Ressource in `railway.ts` | Inhalt |
 |---|---|---|
-| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` (Timeout 900 s, damit ein langer Index-Build beim Start nicht abgebrochen wird), `drainingSeconds` 15, Neustart bei Fehler `ON_FAILURE`, höchstens 10-mal (siehe unten) |
-| Db Space Checker (Cron, nur production) | [railway.dbalert.json](railway.dbalert.json) | Dockerfile-Builder, `node scripts/db-alert.mjs`, alle 15 Min, kein Restart |
-| Db Backup (Cron, production **und** development) | [railway.dbbackup.json](railway.dbbackup.json) | Dockerfile-Builder, `node scripts/db-backup.mjs`, täglich 02:00 UTC, kein Restart |
+| Web (production **und** development) | `Contentpilot` | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` (Timeout 900 s, damit ein langer Index-Build beim Start nicht abgebrochen wird), `drainingSeconds` 15, Neustart bei Fehler `ON_FAILURE`, höchstens 10-mal (siehe unten) |
+| Db Space Checker (Cron, nur production) | `Db Space Checker` | Dockerfile-Builder, `node scripts/db-alert.mjs`, alle 15 Min, kein Restart |
+| Db Backup (Cron, production **und** development) | `Db Backup` | Dockerfile-Builder, `node scripts/db-backup.mjs`, täglich 02:00 UTC, kein Restart |
 
 **Neustart-Regel des Web-Services (`restartPolicyType: ON_FAILURE`, `restartPolicyMaxRetries: 10`).** Das ist
-Railways Standard; beides steht bewusst ausdrücklich in `railway.json`, damit die Entscheidung sichtbar ist. Ein niedrigerer
+Railways Standard; er bleibt in `railway.ts` bewusst implizit (Railway speichert den Standard als „nicht gesetzt“ und würde sonst dauerhaft einen Unterschied zeigen). Ein niedrigerer
 Wert wurde erwogen und verworfen: Der Zähler gilt auch für Abstürze im **laufenden Betrieb** (z. B. Speichermangel), und
 wann Railway ihn nach einem gesunden Lauf zurücksetzt, ist nicht gemessen. Ein kleiner Wert könnte die Produktion nach
 einer Absturzserie dauerhaft stehen lassen. Gewonnen wäre wenig: Ein fehlgeschlagenes Deploy ersetzt den alten Container
@@ -26,10 +43,8 @@ nie (er läuft weiter) und ist durch das Healthcheck-Timeout von 900 s ohnehin b
 Migrationsprüfung: Baut ein anderer Container gerade einen Index dieses Images, gilt er als ungültig, der Start bricht ab
 und der Neustart prüft erneut. Die beiden Cron-Services behalten `NEVER`.
 
-Beide Web-Environments sind identisch konfiguriert — deshalb braucht `railway.json`
-keine `environments`-Überschreibungen. Weichen sie irgendwann ab, kommt ein Block
-`"environments": { "development": { "deploy": { … } } }` dazu, statt die Abweichung
-nur im Dashboard zu machen.
+Beide Web-Environments sind bis auf Branch und Domain gleich konfiguriert; Abweichungen
+gehören in `railway.ts` (Verzweigung über `ctx.environment`), nicht nur ins Dashboard.
 
 **Alle vier Services bauen mit dem [Dockerfile](Dockerfile).** Der `CMD` darin
 (`npm run start`, **ohne** Migrationen) wird vom `startCommand` oben überschrieben —
@@ -140,7 +155,7 @@ die Lage von oben, nur kurz. Behandelt wird sie so:
 5. **Shutdown wartet kurz** (bis 4 s, `drain`, parallel zum Drain der
    AI-Queue von bis zu 8 s) auf laufende Konvertierungen. `gracefulShutdown`
    beendet den Prozess nach 10 s hart. Damit dieses Fenster überhaupt existiert,
-   steht in [railway.json](railway.json) `deploy.drainingSeconds: 15` (das
+   steht in [.railway/railway.ts](.railway/railway.ts) `drainingSeconds: 15` (das
    Feld ist im Railway-Schema definiert als Zeit zwischen SIGTERM und SIGKILL
    des alten Deploys; dass der Standard 0 ist, steht in Railways Doku, nicht im
    Schema. Im Manifest stand `null`, d. h. SIGKILL folgte sofort und
@@ -592,10 +607,9 @@ Produktions-Backups löschen kann. Genau davor schützt die Aufteilung. Ein
 gemeinsamer Bucket mit zwei `BACKUP_PREFIX`-Werten wäre billiger, gäbe diese
 Eigenschaft aber auf.
 
-`railway.dbbackup.json` bleibt für beide dieselbe Datei — die Unterschiede oben
+Der Service `Db Backup` ist in `railway.ts` für beide Environments gleich definiert — die Unterschiede oben
 sind ausschließlich Environment-Variablen, und die sind in Railway ohnehin pro
-Environment gesetzt. Es braucht also keine zweite Config-Datei und keinen
-`environments`-Block.
+Environment gesetzt.
 
 Der Ablauf bricht bei jedem Schritt ab, statt ein halbes Backup als Erfolg zu
 melden: Versionscheck → `pg_dump -Fc` → **`pg_restore --list` auf das Ergebnis**

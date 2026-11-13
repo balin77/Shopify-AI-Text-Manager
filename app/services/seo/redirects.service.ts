@@ -220,8 +220,8 @@ export async function analyze404(db: PrismaClient, shop: string): Promise<Analyz
 //
 // Single-process-in-memory rationale: same as the OAuth nonce store in
 // google-search-console.server.ts — server.js documents that this app
-// currently deploys as a single Node process (railway.json:
-// `startCommand: npm run start:production`, replica count dashboard-owned),
+// currently deploys as a single Node process (.railway/railway.ts:
+// `start: "npm run start:production"`, one replica),
 // so a module-level Map is sufficient. Multi-instance would need a shared store
 // (e.g. Redis) since each replica would otherwise keep its own independent
 // bucket per shop.

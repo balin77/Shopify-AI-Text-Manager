@@ -417,9 +417,10 @@ const server = app.listen(port, host, async () => {
   //   • duplicated cleanup churn / racing deletes.
   //
   // This is currently LATENT: the app is deployed as a single web process
-  // (railway.json: `startCommand: npm run start:production`). NOTE the replica
-  // count is NOT pinned in railway.json — it is a Railway dashboard value, so
-  // this assumption is only as strong as that setting. Scaling the service past
+  // (.railway/railway.ts: `start: "npm run start:production"`, one replica).
+  // NOTE that file only documents the settings, which live on Railway and are
+  // never read on deploy, so this assumption is only as strong as the live
+  // replica setting. Scaling the service past
   // one instance activates every problem listed above.
   //
   // A correct fix needs cluster-wide mutual exclusion, but every safe option
@@ -541,7 +542,7 @@ async function gracefulShutdown(signal) {
   // processor keeps claiming rows (and the AI queue keeps dispatching) until
   // the process is killed. Both drains are STARTED here and awaited together
   // before the DB is closed, so neither eats the other's share of the 10s
-  // bound. railway.json's drainingSeconds (15) has to stay above that bound, or
+  // bound. The drainingSeconds in .railway/railway.ts (15) has to stay above that bound, or
   // SIGKILL arrives before any of this gets its time. Each step has its own
   // try/catch: a failing stop() of one must not skip the other, and never
   // skips the wait before $disconnect.
