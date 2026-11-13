@@ -33,7 +33,7 @@ import { OPEN_BATCH_TASK_STATUSES, TASK_STATUS_BATCH_UNREACHABLE } from "~/confi
 import { stringList } from "../ai/batch-settlement.shared";
 import { logger } from "~/utils/logger.server";
 import { settleHold } from "./translate-batch-hold.server";
-import { BATCH_COLLECT_FAILED_ERROR, CONSENT_GIVE_UP_CODE, SHOP_REMOVED_ERROR, collectEvidence } from "./translate-batch-poll.server";
+import { BATCH_COLLECT_FAILED_ERROR, CONSENT_GIVE_UP_CODE, collectEvidence } from "./translate-batch-poll.server";
 
 /** Provider batches expire at 24 h + collection time; 48 h leaves a day for a poller that was down. */
 export const OPEN_BATCH_MAX_AGE_MS = 48 * 60 * 60 * 1000;
@@ -101,28 +101,29 @@ export async function expireStaleBatches(
         // managed booking that left "held") must not read "nothing was written"; a withdrawn consent says so.
         const unconfirmed = stringList(row.batchIds).length === 0;
         const collectReached = collectEvidence(row);
-        const shopRemoved = row.lastError === SHOP_REMOVED_ERROR && !collectReached;
-        const code = shopRemoved
-          ? SHOP_REMOVED_ERROR
-          : row.consentWithdrawnAt
+        // A cancel the merchant or the shop removal asked for leaves the Task at cancel_requested: that is a
+        // cancellation, accurately, with no error code.
+        const taskNow = await db.task.findUnique({ where: { id: row.taskId }, select: { status: true } }).catch(() => null);
+        const cancelledByRequest = taskNow?.status === "cancel_requested" && !row.consentWithdrawnAt && !collectReached;
+        const code = row.consentWithdrawnAt
           ? CONSENT_GIVE_UP_CODE
           : collectReached
             ? BATCH_COLLECT_FAILED_ERROR
             : unconfirmed
               ? BATCH_SUBMIT_UNCONFIRMED_ERROR
               : BATCH_UNREACHABLE_ERROR;
-        const failTask = code !== BATCH_UNREACHABLE_ERROR && !shopRemoved;
+        const failTask = code !== BATCH_UNREACHABLE_ERROR;
         const closed = await db.$transaction(async (tx) => {
           const flipped = await tx.bulkTranslateBatch.updateMany({
             where: { id: row.id, leaseToken: token },
-            data: { state: "done", lastError: code, leaseToken: null, leaseUntil: null },
+            data: { state: "done", lastError: cancelledByRequest ? null : code, leaseToken: null, leaseUntil: null },
           });
           if (flipped.count !== 1) return false;
           await tx.task.updateMany({
             where: { id: row.taskId, status: { in: [...OPEN_BATCH_TASK_STATUSES] } },
             data: {
-              status: shopRemoved ? "cancelled" : failTask ? "failed" : TASK_STATUS_BATCH_UNREACHABLE,
-              error: code,
+              status: cancelledByRequest ? "cancelled" : failTask ? "failed" : TASK_STATUS_BATCH_UNREACHABLE,
+              ...(cancelledByRequest ? {} : { error: code }),
               completedAt: now,
             },
           });

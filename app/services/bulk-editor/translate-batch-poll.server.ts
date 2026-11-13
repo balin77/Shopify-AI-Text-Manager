@@ -226,22 +226,15 @@ export function isCollectMarked(lastError: string | null | undefined): boolean {
   return (lastError ?? "").startsWith(BATCH_COLLECT_FAILED_ERROR);
 }
 
-/** Marker the shop removal (uninstall / redact) leaves on a row it could not cancel at the provider. */
-export const SHOP_REMOVED_ERROR = "shop_removed";
-
 /**
- * Evidence that a collect was reached: the collect marker, the collecting state, or a managed booking that
- * CONVERTED the hold (released / none are no evidence). A conversion by the shop removal (uninstall, redact) is
- * not evidence either: it is the removal's own upper-bound booking, not a collect.
+ * Evidence that a collect was reached: the durable `collectStartedAt` stamp (set before booking and writing, never
+ * cleared), or the collect marker in `lastError` (rows from before the column existed).
  */
 export function collectEvidence(
-  row: { state?: string | null; lastError?: string | null; source?: string | null; reservationState?: string | null } | null | undefined,
+  row: { collectStartedAt?: Date | null; lastError?: string | null } | null | undefined,
 ): boolean {
   if (!row) return false;
-  if (isCollectMarked(row.lastError)) return true;
-  if (row.state === "collecting") return true;
-  if (row.lastError === SHOP_REMOVED_ERROR) return false;
-  return row.source === "managed" && row.reservationState === "converted";
+  return row.collectStartedAt != null || isCollectMarked(row.lastError);
 }
 
 /** What the Task and the code say when a run is given up on after MAX_FAILED_TICKS. */
@@ -269,7 +262,7 @@ async function noteFailedTick(
   // Read the row FRESH: the in-memory copy is from the start of the tick, and step 8 rewrites the counter and the
   // state in the database. The counter and the "a collect was reached" evidence are the DATABASE's.
   const fresh = await db.bulkTranslateBatch
-    .findUnique({ where: { id: row.id }, select: { failedTicks: true, lastError: true, reservationState: true, source: true, leaseToken: true } })
+    .findUnique({ where: { id: row.id }, select: { failedTicks: true, lastError: true, collectStartedAt: true, leaseToken: true } })
     .catch(() => null);
   // Another tick took the lease over (ours expired): no give-up, no close, no settle from this tick.
   if (fresh && fresh.leaseToken !== token) return "leaseLost";
@@ -279,10 +272,9 @@ async function noteFailedTick(
   // ticks that fail EARLIER (a status read): by then the cost may be booked and writes may exist, so the give-up
   // must say "collect failed", never "nothing was written". A booking that left `held` is the same evidence.
   const collectPhase = row.state === "collecting";
-  const priorCollect = isCollectMarked(fresh?.lastError);
-  const collectReached = collectPhase || collectEvidence(fresh ? { ...fresh, state: row.state } : null);
+  const collectReached = collectPhase || collectEvidence(fresh);
   const errorText = messageOf(error);
-  const marked = (collectPhase || priorCollect) && !isCollectMarked(errorText) ? `${BATCH_COLLECT_FAILED_ERROR}:${errorText}` : errorText;
+  const marked = collectReached && !isCollectMarked(errorText) ? `${BATCH_COLLECT_FAILED_ERROR}:${errorText}` : errorText;
   const lastError = marked.substring(0, 500);
   logger.warn("[BatchPoll] Tick failed for a batch", { context: "AI", batchRowId: row.id, failedTicks, error: errorText });
   // A row that names batch ids is not given up on while the batch is not PROVABLY ended (any error or missing
@@ -626,6 +618,8 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
 
   // 8. ENDED: fetch the results (the paid-for part of a cancelled batch included).
   await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { state: "collecting", ...(isCollectMarked(row.lastError) ? {} : { failedTicks: 0 }) } });
+  // The durable collect evidence, stamped BEFORE booking and any write; only if still null, never cleared.
+  await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token, collectStartedAt: null }, data: { collectStartedAt: new Date() } });
   // The counter is NOT reset when an earlier tick already failed inside the collect: those failures must add up
   // to the give-up, or a collect that fails every time would restart its count on every tick and never end.
   const results = new Map<string, SettlementResultItem>();

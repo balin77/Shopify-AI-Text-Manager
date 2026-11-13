@@ -61,6 +61,7 @@ vi.mock("~/db.server", () => {
           let count = 0;
           for (const r of h.rows.values()) {
             if (!matches(r, where)) continue;
+            if (data.collectStartedAt) h.order.push("collectStamp");
             Object.assign(r, data);
             touch(r);
             count++;
@@ -655,14 +656,35 @@ describe("a provider that stops answering", () => {
     expect(h.tasks.get("task-1")).toMatchObject({ status: "failed", error: "batch_collect_failed" });
   });
 
-  it("collectEvidence: marker / collecting / managed converted count; released, none and shop_removed do not", () => {
+  it("collectEvidence truth table: the durable stamp or the old marker count; state, reservation and shop_removed do not", () => {
+    expect(collectEvidence({ collectStartedAt: new Date() })).toBe(true);
     expect(collectEvidence({ lastError: "batch_collect_failed:x" })).toBe(true);
-    expect(collectEvidence({ state: "collecting" })).toBe(true);
-    expect(collectEvidence({ source: "managed", reservationState: "converted" })).toBe(true);
-    expect(collectEvidence({ source: "managed", reservationState: "released" })).toBe(false);
-    expect(collectEvidence({ source: "managed", reservationState: "none" })).toBe(false);
-    expect(collectEvidence({ source: "managed", reservationState: "converted", lastError: "shop_removed" })).toBe(false);
-    expect(collectEvidence({ source: "own", reservationState: "converted" })).toBe(false);
+    expect(collectEvidence({ collectStartedAt: null, lastError: null })).toBe(false);
+    expect(collectEvidence({ lastError: "shop_removed" })).toBe(false);
+    expect(collectEvidence({ state: "collecting", source: "managed", reservationState: "converted" } as never)).toBe(false);
+    expect(collectEvidence(null)).toBe(false);
+  });
+
+  it("collectStartedAt is stamped BEFORE the booking and the write", async () => {
+    await processBatchRow("row-1", deps());
+    expect(h.rows.get("row-1").collectStartedAt).toBeInstanceOf(Date);
+    const order = h.order.filter((s) => ["collectStamp", "book", "write"].includes(s));
+    expect(order).toEqual(["collectStamp", "book", "write"]);
+  });
+
+  it("a failed tick does not erase the evidence (stamp stays, later early failures keep the give-up code)", async () => {
+    h.booking.mockResolvedValue({ applied: false, reason: "failed" });
+    await processBatchRow("row-1", deps());
+    const stamp = h.rows.get("row-1").collectStartedAt;
+    expect(stamp).toBeInstanceOf(Date);
+    h.rows.get("row-1").leaseToken = null;
+    h.rows.get("row-1").updatedAt = new Date("2026-11-12T00:00:00Z");
+    h.rows.get("row-1").lastError = "403";
+    h.retrieve.mockRejectedValue(new Error("403"));
+    h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
+    endedAtLastLook();
+    await processBatchRow("row-1", deps());
+    expect(h.rows.get("row-1").collectStartedAt).toBe(stamp);
   });
 
   it("collect failures add up across ticks: the counter is not reset by step 8 when the row carries a collect failure", async () => {

@@ -1925,6 +1925,9 @@ model BulkTranslateBatch {
   // Set when the AI processing consent was withdrawn while the batch waited:
   // cancel at once, fetch nothing, book the reserved upper bound (owner, 16).
   consentWithdrawnAt DateTime?
+  // Set once (never cleared) when the poller starts collecting, before booking and writing: the one durable
+  // evidence that a collect was reached.
+  collectStartedAt   DateTime?
   lastError          String?
 
   createdAt DateTime @default(now())

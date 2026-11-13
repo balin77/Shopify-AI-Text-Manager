@@ -24,6 +24,7 @@ const h = vi.hoisted(() => ({
   settle: vi.fn(),
   retrieve: vi.fn(),
   txFails: false,
+  taskStatus: 'waiting_batch' as string,
 }));
 
 vi.mock('~/db.server', () => {
@@ -43,6 +44,7 @@ vi.mock('~/db.server', () => {
           return { count: a.data.leaseToken ? h.claimCount : 1 };
         }),
       },
+      task: { findUnique: vi.fn(async () => ({ status: h.taskStatus })) },
       $transaction: async (fn: (t: any) => Promise<unknown>) => {
         if (h.txFails) throw new Error('tx failed');
         return fn(tx);
@@ -87,6 +89,7 @@ beforeEach(() => {
   h.claimCount = 1;
   h.flipCount = 1;
   h.txFails = false;
+  h.taskStatus = 'waiting_batch';
   h.order.length = 0;
   for (const fn of [h.batchUpdate, h.taskUpdate, h.release, h.convert, h.settle, h.retrieve]) fn.mockClear();
   h.settle.mockResolvedValue({ ok: true, transport: { retrieve: (...a: unknown[]) => h.retrieve(...a) } });
@@ -167,22 +170,34 @@ describe('expireStaleBatches', () => {
     });
   });
 
-  it('a managed row whose reservation left "held" (booked): batch_collect_failed', async () => {
-    h.rows = [row({ reservationState: 'converted' })];
+  it('collectStartedAt set: batch_collect_failed (no marker needed)', async () => {
+    h.rows = [row({ collectStartedAt: new Date('2026-11-10T01:00:00Z') })];
     await expireStaleBatches(now);
     expect(taskData()).toEqual({ status: 'failed', error: 'batch_collect_failed', completedAt: now });
   });
 
-  it('a released managed reservation is no collect evidence: not batch_collect_failed', async () => {
-    h.rows = [row({ reservationState: 'released' })];
+  it('a converted hold alone is no collect evidence', async () => {
+    h.rows = [row({ reservationState: 'converted', lastError: null })];
     await expireStaleBatches(now);
     expect(taskData().error).not.toBe('batch_collect_failed');
   });
 
-  it('a row the shop removal left open (shop_removed, converted): the Task is cancelled, not a collect failure', async () => {
-    h.rows = [row({ lastError: 'shop_removed', reservationState: 'converted' })];
+  it('uninstall left a NULL lastError row, hold converted, Task cancel_requested: cancelled without an error code', async () => {
+    h.taskStatus = 'cancel_requested';
+    h.rows = [row({ lastError: null, reservationState: 'converted' })];
     await expireStaleBatches(now);
-    expect(taskData()).toEqual({ status: 'cancelled', error: 'shop_removed', completedAt: now });
+    expect(taskData()).toEqual({ status: 'cancelled', completedAt: now });
+    expect(h.batchUpdate).toHaveBeenCalledWith({
+      where: expect.anything(),
+      data: expect.objectContaining({ state: 'done', lastError: null }),
+    });
+  });
+
+  it('cancel_requested but a collect was reached: still batch_collect_failed', async () => {
+    h.taskStatus = 'cancel_requested';
+    h.rows = [row({ collectStartedAt: new Date('2026-11-10T01:00:00Z') })];
+    await expireStaleBatches(now);
+    expect(taskData().error).toBe('batch_collect_failed');
   });
 
   it('a non-managed row with a non-held reservation keeps the unchanged code', async () => {
