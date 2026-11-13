@@ -226,6 +226,24 @@ export function isCollectMarked(lastError: string | null | undefined): boolean {
   return (lastError ?? "").startsWith(BATCH_COLLECT_FAILED_ERROR);
 }
 
+/** Marker the shop removal (uninstall / redact) leaves on a row it could not cancel at the provider. */
+export const SHOP_REMOVED_ERROR = "shop_removed";
+
+/**
+ * Evidence that a collect was reached: the collect marker, the collecting state, or a managed booking that
+ * CONVERTED the hold (released / none are no evidence). A conversion by the shop removal (uninstall, redact) is
+ * not evidence either: it is the removal's own upper-bound booking, not a collect.
+ */
+export function collectEvidence(
+  row: { state?: string | null; lastError?: string | null; source?: string | null; reservationState?: string | null } | null | undefined,
+): boolean {
+  if (!row) return false;
+  if (isCollectMarked(row.lastError)) return true;
+  if (row.state === "collecting") return true;
+  if (row.lastError === SHOP_REMOVED_ERROR) return false;
+  return row.source === "managed" && row.reservationState === "converted";
+}
+
 /** What the Task and the code say when a run is given up on after MAX_FAILED_TICKS. */
 function giveUpOutcome(row: Pick<BulkTranslateBatch, "batchIds">, errorCode?: string) {
   if (errorCode) return { status: "failed", error: errorCode };
@@ -262,9 +280,7 @@ async function noteFailedTick(
   // must say "collect failed", never "nothing was written". A booking that left `held` is the same evidence.
   const collectPhase = row.state === "collecting";
   const priorCollect = isCollectMarked(fresh?.lastError);
-  const bookedAlready =
-    fresh?.source === "managed" && ["converted", "released"].includes(fresh.reservationState ?? "");
-  const collectReached = collectPhase || priorCollect || bookedAlready;
+  const collectReached = collectPhase || collectEvidence(fresh ? { ...fresh, state: row.state } : null);
   const errorText = messageOf(error);
   const marked = (collectPhase || priorCollect) && !isCollectMarked(errorText) ? `${BATCH_COLLECT_FAILED_ERROR}:${errorText}` : errorText;
   const lastError = marked.substring(0, 500);

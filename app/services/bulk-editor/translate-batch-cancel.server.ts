@@ -183,6 +183,13 @@ export async function cancelOpenBatches(shop: string): Promise<CancelOpenBatches
         // poller treats it as an orphan, cancels again and settles (settleHold acts only while held).
         // Stated residual: on a GDPR redaction the rows are deleted afterwards, so that retry never happens; an
         // unconfirmed cancel then leaves the batch running at the provider (the hold is already converted).
+        if (outcome.kind !== "pending" && !allCancelled) {
+          // Stays open for the poller (orphan retry); the marker lets the 48 h expiry say "shop removed", not "collect failed".
+          await db.bulkTranslateBatch.updateMany({
+            where: { id: row.id, state: { in: [...OPEN_BATCH_STATES] }, NOT: { lastError: { startsWith: "batch_collect_failed" } } },
+            data: { lastError: "shop_removed" },
+          }).catch(() => undefined);
+        }
         if (outcome.kind !== "pending" && allCancelled) {
           await db.bulkTranslateBatch.updateMany({
             where: { id: row.id, state: { in: [...OPEN_BATCH_STATES] } },

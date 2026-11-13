@@ -113,6 +113,7 @@ import {
   MAX_FAILED_TICKS,
   MAX_ROWS_PER_TICK,
   acquireLease,
+  collectEvidence,
   failedTickBackoffMs,
   pollBatchesOnce,
   processBatchRow,
@@ -652,6 +653,16 @@ describe("a provider that stops answering", () => {
     endedAtLastLook();
     expect(await processBatchRow("row-1", deps())).toBe("unreachable");
     expect(h.tasks.get("task-1")).toMatchObject({ status: "failed", error: "batch_collect_failed" });
+  });
+
+  it("collectEvidence: marker / collecting / managed converted count; released, none and shop_removed do not", () => {
+    expect(collectEvidence({ lastError: "batch_collect_failed:x" })).toBe(true);
+    expect(collectEvidence({ state: "collecting" })).toBe(true);
+    expect(collectEvidence({ source: "managed", reservationState: "converted" })).toBe(true);
+    expect(collectEvidence({ source: "managed", reservationState: "released" })).toBe(false);
+    expect(collectEvidence({ source: "managed", reservationState: "none" })).toBe(false);
+    expect(collectEvidence({ source: "managed", reservationState: "converted", lastError: "shop_removed" })).toBe(false);
+    expect(collectEvidence({ source: "own", reservationState: "converted" })).toBe(false);
   });
 
   it("collect failures add up across ticks: the counter is not reset by step 8 when the row carries a collect failure", async () => {

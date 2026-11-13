@@ -33,7 +33,7 @@ import { OPEN_BATCH_TASK_STATUSES, TASK_STATUS_BATCH_UNREACHABLE } from "~/confi
 import { stringList } from "../ai/batch-settlement.shared";
 import { logger } from "~/utils/logger.server";
 import { settleHold } from "./translate-batch-hold.server";
-import { BATCH_COLLECT_FAILED_ERROR, CONSENT_GIVE_UP_CODE, isCollectMarked } from "./translate-batch-poll.server";
+import { BATCH_COLLECT_FAILED_ERROR, CONSENT_GIVE_UP_CODE, SHOP_REMOVED_ERROR, collectEvidence } from "./translate-batch-poll.server";
 
 /** Provider batches expire at 24 h + collection time; 48 h leaves a day for a poller that was down. */
 export const OPEN_BATCH_MAX_AGE_MS = 48 * 60 * 60 * 1000;
@@ -100,16 +100,18 @@ export async function expireStaleBatches(
         // The code comes from the ROW (read before the settlement above): a collect that was reached (marker, or a
         // managed booking that left "held") must not read "nothing was written"; a withdrawn consent says so.
         const unconfirmed = stringList(row.batchIds).length === 0;
-        const collectReached =
-          isCollectMarked(row.lastError) || (row.source === "managed" && row.reservationState !== "held");
-        const code = row.consentWithdrawnAt
+        const collectReached = collectEvidence(row);
+        const shopRemoved = row.lastError === SHOP_REMOVED_ERROR && !collectReached;
+        const code = shopRemoved
+          ? SHOP_REMOVED_ERROR
+          : row.consentWithdrawnAt
           ? CONSENT_GIVE_UP_CODE
           : collectReached
             ? BATCH_COLLECT_FAILED_ERROR
             : unconfirmed
               ? BATCH_SUBMIT_UNCONFIRMED_ERROR
               : BATCH_UNREACHABLE_ERROR;
-        const failTask = code !== BATCH_UNREACHABLE_ERROR;
+        const failTask = code !== BATCH_UNREACHABLE_ERROR && !shopRemoved;
         const closed = await db.$transaction(async (tx) => {
           const flipped = await tx.bulkTranslateBatch.updateMany({
             where: { id: row.id, leaseToken: token },
@@ -119,7 +121,7 @@ export async function expireStaleBatches(
           await tx.task.updateMany({
             where: { id: row.taskId, status: { in: [...OPEN_BATCH_TASK_STATUSES] } },
             data: {
-              status: failTask ? "failed" : TASK_STATUS_BATCH_UNREACHABLE,
+              status: shopRemoved ? "cancelled" : failTask ? "failed" : TASK_STATUS_BATCH_UNREACHABLE,
               error: code,
               completedAt: now,
             },

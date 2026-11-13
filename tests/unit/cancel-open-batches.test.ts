@@ -227,6 +227,8 @@ describe('cancelOpenBatches', () => {
     // the unconfirmed cancel keeps the row open for the poller: never closed here, no cancelRequestedAt
     expect(h.batchUpdateMany.mock.calls.some((c: any[]) => c[0].data.state === 'done')).toBe(false);
     expect(h.batchUpdateMany.mock.calls.some((c: any[]) => c[0].data.cancelRequestedAt)).toBe(false);
+    // ...but it is marked, so the 48 h expiry can say the shop was removed
+    expect(h.batchUpdateMany.mock.calls.some((c: any[]) => c[0].data.lastError === 'shop_removed' && !c[0].data.state)).toBe(true);
   });
 
   it('a provider that cannot be reached: the rows are still marked, the hold is BOOKED (not released), nothing throws', async () => {
