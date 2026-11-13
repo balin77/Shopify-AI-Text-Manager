@@ -220,9 +220,9 @@ async function closeRun(
   });
 }
 
-const CONSENT_GIVE_UP_CODE = "managed_ai_refused:consentMissing";
+export const CONSENT_GIVE_UP_CODE = "managed_ai_refused:consentMissing";
 
-function isCollectMarked(lastError: string | null | undefined): boolean {
+export function isCollectMarked(lastError: string | null | undefined): boolean {
   return (lastError ?? "").startsWith(BATCH_COLLECT_FAILED_ERROR);
 }
 
@@ -245,14 +245,13 @@ async function noteFailedTick(
   error: unknown,
   transport: SettlementTransport | null = null,
   giveUpCode?: string,
-  _cancelWanted = false,
   deferGiveUp = false,
 ): Promise<RowOutcome> {
   const { db } = deps;
   // Read the row FRESH: the in-memory copy is from the start of the tick, and step 8 rewrites the counter and the
   // state in the database. The counter and the "a collect was reached" evidence are the DATABASE's.
   const fresh = await db.bulkTranslateBatch
-    .findUnique({ where: { id: row.id }, select: { failedTicks: true, lastError: true, reservationState: true, source: true, leaseToken: true, cancelRequestedAt: true } })
+    .findUnique({ where: { id: row.id }, select: { failedTicks: true, lastError: true, reservationState: true, source: true, leaseToken: true } })
     .catch(() => null);
   // Another tick took the lease over (ours expired): no give-up, no close, no settle from this tick.
   if (fresh && fresh.leaseToken !== token) return "leaseLost";
@@ -373,7 +372,7 @@ async function handleWithdrawal(deps: RowDeps, row: BulkTranslateBatch, token: s
     // Cannot cancel or read: our own configuration (wait for the absolute end, which converts) or a lookup failure.
     return CONFIG_REFUSALS.includes(access.reason)
       ? "configBlocked"
-      : await noteFailedTick(deps, row, token, new Error(`settlement_${access.reason}`), null, CONSENT_GIVE_UP_CODE, true);
+      : await noteFailedTick(deps, row, token, new Error(`settlement_${access.reason}`), null, CONSENT_GIVE_UP_CODE);
   }
   let cancelConfirmed = batchIds.length === 0 || !!row.cancelRequestedAt;
   if (!cancelConfirmed) {
@@ -404,7 +403,7 @@ async function reconcileUnknownCreate(
   if (!access.ok) {
     return CONFIG_REFUSALS.includes(access.reason)
       ? "configBlocked"
-      : await noteFailedTick(deps, row, token, new Error(`settlement_${access.reason}`), null, undefined, false, deferGiveUp);
+      : await noteFailedTick(deps, row, token, new Error(`settlement_${access.reason}`), null, undefined, deferGiveUp);
   }
   const manifest = parseManifest(row.manifest);
   const requestCount = manifest?.requests.length ?? 0;
@@ -415,7 +414,7 @@ async function reconcileUnknownCreate(
       access.transport.findIntentBatch({ idPrefix: row.idPrefix, since: row.intentAt!.toISOString(), requestCount }),
     );
   } catch (error) {
-    return await noteFailedTick(deps, row, token, error, access.transport, undefined, false, deferGiveUp);
+    return await noteFailedTick(deps, row, token, error, access.transport, undefined, deferGiveUp);
   }
   if (!search.found) return "waiting"; // nothing yet (or a running candidate that cannot be told from a stranger's)
   const adopted = await db.bulkTranslateBatch.updateMany({
@@ -456,7 +455,7 @@ async function attemptWantedCancel(
     if (decision.reason === "ai_key_missing") return { outcome: "keyMissing" };
     if (CONFIG_REFUSALS.includes(decision.reason)) return { outcome: "configBlocked" };
     return {
-      outcome: await noteFailedTick(deps, row, token, new Error(`settlement_${decision.reason}`), null, undefined, true),
+      outcome: await noteFailedTick(deps, row, token, new Error(`settlement_${decision.reason}`), null, undefined),
     };
   }
   if (await cancelAllAtProvider(decision.transport, batchIds)) {
@@ -572,7 +571,7 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
       logger.warn("[BatchPoll] Settlement access refused by configuration; the row waits", { context: "AI", batchRowId: row.id, reason: decision.reason });
       return "configBlocked";
     }
-    return await noteFailedTick(deps, row, token, new Error(`settlement_${decision.reason}`), null, undefined, cancelRequested);
+    return await noteFailedTick(deps, row, token, new Error(`settlement_${decision.reason}`), null, undefined);
   }
   const transport = decision.transport;
 
@@ -592,11 +591,11 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
       succeededExpected = typeof counted === "number" && succeededExpected !== null ? succeededExpected + counted : null;
     }
   } catch (error) {
-    return await noteFailedTick(deps, row, token, error, transport, undefined, cancelRequested);
+    return await noteFailedTick(deps, row, token, error, transport, undefined);
   }
   if (!ended && cancelFailed) {
     // The cancel was not confirmed and the batch still runs: a failed tick (counted, backed off, retried).
-    return await noteFailedTick(deps, row, token, new Error("provider_cancel_failed"), transport, undefined, true);
+    return await noteFailedTick(deps, row, token, new Error("provider_cancel_failed"), transport, undefined);
   }
   if (!ended) {
     // Still working: the task stays open and must not be cleaned up -- push its expiry past the provider's.

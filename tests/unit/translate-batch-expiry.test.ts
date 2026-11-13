@@ -155,6 +155,36 @@ describe('expireStaleBatches', () => {
     });
   });
 
+  const taskData = () => (h.taskUpdate.mock.calls[0][0] as any).data;
+
+  it('a collect marker in lastError: the Task fails as batch_collect_failed, not "nothing was written"', async () => {
+    h.rows = [row({ lastError: 'batch_collect_failed:booking_failed' })];
+    await expireStaleBatches(now);
+    expect(taskData()).toEqual({ status: 'failed', error: 'batch_collect_failed', completedAt: now });
+    expect(h.batchUpdate).toHaveBeenCalledWith({
+      where: expect.anything(),
+      data: expect.objectContaining({ state: 'done', lastError: 'batch_collect_failed' }),
+    });
+  });
+
+  it('a managed row whose reservation left "held" (booked): batch_collect_failed', async () => {
+    h.rows = [row({ reservationState: 'converted' })];
+    await expireStaleBatches(now);
+    expect(taskData()).toEqual({ status: 'failed', error: 'batch_collect_failed', completedAt: now });
+  });
+
+  it('a non-managed row with a non-held reservation keeps the unchanged code', async () => {
+    h.rows = [row({ source: 'own', reservationState: 'none' })];
+    await expireStaleBatches(now);
+    expect(taskData().error).toBe(BATCH_UNREACHABLE_ERROR);
+  });
+
+  it('consent withdrawn: failed with managed_ai_refused:consentMissing', async () => {
+    h.rows = [row({ consentWithdrawnAt: new Date('2026-11-10T00:00:00Z') })];
+    await expireStaleBatches(now);
+    expect(taskData()).toEqual({ status: 'failed', error: 'managed_ai_refused:consentMissing', completedAt: now });
+  });
+
   it('a row a poller took the lease on between the select and the claim is left alone: no settlement, no task change', async () => {
     h.rows = [row()];
     h.claimCount = 0;
