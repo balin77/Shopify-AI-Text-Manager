@@ -103,9 +103,9 @@ export async function expireStaleBatches(
         }
 
         // 2. Then close the row and the task together.
-        // The code comes from the ROW (read before the settlement above): a collect that was reached (marker, or a
-        // managed booking that left "held") must not read "nothing was written"; a withdrawn consent says so.
-        const unconfirmed = stringList(row.batchIds).length === 0;
+        // The code comes from the FRESH row re-read after the claim (the snapshot only when that read failed): a
+        // collect that was reached (collectEvidence) must not read "nothing was written"; a withdrawn consent says so.
+        const unconfirmed = stringList(cur.batchIds).length === 0;
         const collectReached = collectEvidence(cur);
         // A cancel the merchant or the shop removal asked for leaves the Task at cancel_requested: that is a
         // cancellation, accurately, with no error code.
