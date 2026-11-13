@@ -590,13 +590,28 @@ describe("a provider that stops answering", () => {
   });
 
   it(`after ${MAX_FAILED_TICKS} failures in a row: batch_unreachable (terminal); unreadable = the hold is CONVERTED to the upper bound, not released`, async () => {
-    h.retrieve.mockRejectedValue(new Error("403"));
+    endedAtLastLook();
     h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
     expect(await processBatchRow("row-1", deps())).toBe("unreachable");
     expect(h.tasks.get("task-1")).toMatchObject({ status: "batch_unreachable", error: "batch_unreachable" });
     expect(h.rows.get("row-1").state).toBe("done");
     expect(h.convert).toHaveBeenCalledWith("row-1");
     expect(h.release).not.toHaveBeenCalled();
+  });
+
+  it("a batch that is NOT provably ended is never given up on at tick 12: counting goes on, hold and Task untouched (the 48 h expiry is the end)", async () => {
+    h.retrieve.mockRejectedValue(new Error("403"));
+    h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
+    expect(await processBatchRow("row-1", deps())).toBe("failedTick");
+    expect(h.rows.get("row-1")).toMatchObject({ failedTicks: MAX_FAILED_TICKS, state: "waiting" });
+    expect(h.tasks.get("task-1").status).toBe("waiting_batch");
+    expect(h.convert).not.toHaveBeenCalled();
+    expect(h.release).not.toHaveBeenCalled();
+    expect(h.cancel).not.toHaveBeenCalled();
+    h.rows.get("row-1").leaseToken = null;
+    h.rows.get("row-1").updatedAt = new Date("2026-11-12T00:00:00Z");
+    expect(await processBatchRow("row-1", deps())).toBe("failedTick");
+    expect(h.rows.get("row-1").failedTicks).toBe(MAX_FAILED_TICKS + 1);
   });
 
   it("unreachable at the end but the counts CAN be read at the last look: an ended batch with nothing succeeded releases", async () => {
@@ -620,21 +635,21 @@ describe("a provider that stops answering", () => {
     expect(h.release).not.toHaveBeenCalled();
   });
 
-  it("a withdrawn row whose settlement lookup keeps failing gives up with the consent code, not batch_collect_failed", async () => {
+  it("a withdrawn row whose settlement lookup keeps failing: no give-up while the batch is not provably ended (no transport)", async () => {
     h.settings = WITHDRAWN;
     h.settle.mockResolvedValue({ ok: false, reason: "lookup_failed" });
     h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
     h.rows.get("row-1").lastError = "batch_collect_failed:booking_failed";
     h.rows.get("row-1").reservationState = "converted";
-    h.rows.get("row-1").cancelRequestedAt = new Date("2026-11-12T09:00:00Z"); // cancel CONFIRMED: only then may the give-up close
-    await processBatchRow("row-1", deps());
-    expect(h.tasks.get("task-1")).toMatchObject({ status: "failed", error: "managed_ai_refused:consentMissing" });
+    h.rows.get("row-1").cancelRequestedAt = new Date("2026-11-12T09:00:00Z");
+    expect(await processBatchRow("row-1", deps())).toBe("failedTick");
+    expect(h.tasks.get("task-1").status).toBe("waiting_batch");
   });
 
   it("an EARLIER tick reached the collect, the last one fails at a status read: given up as batch_collect_failed, never 'nothing was written'", async () => {
     h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
     h.rows.get("row-1").lastError = "batch_collect_failed:results_incomplete:0/1";
-    h.retrieve.mockRejectedValue(new Error("403"));
+    endedAtLastLook();
     expect(await processBatchRow("row-1", deps())).toBe("unreachable");
     expect(h.tasks.get("task-1")).toMatchObject({ status: "failed", error: "batch_collect_failed" });
   });
@@ -660,7 +675,7 @@ describe("a provider that stops answering", () => {
   });
 
   it("a hold is settled BEFORE the row is marked done (the sweep must never see a done row with a hold that should be converted)", async () => {
-    h.retrieve.mockRejectedValue(new Error("403"));
+    endedAtLastLook();
     h.rows.get("row-1").failedTicks = MAX_FAILED_TICKS - 1;
     let stateAtConvert = "";
     h.convert.mockImplementation(async () => { stateAtConvert = h.rows.get("row-1").state; return { applied: true, micros: 9 }; });
@@ -996,6 +1011,12 @@ describe("the tick", () => {
   });
 });
 
+/** The provider fails the tick's own read but shows the batch ended at the last look (the only state a give-up may stand on). */
+const endedAtLastLook = () => {
+  h.retrieve.mockRejectedValueOnce(new Error("503"));
+  h.retrieve.mockResolvedValue({ providerStatus: "ended", ended: true });
+};
+
 describe("final hardening: give-up cancel, deferral, age guard, outdated-consent cancel", () => {
   const wantCancel = (over: Record<string, unknown> = {}) => {
     putTask("cancel_requested");
@@ -1058,32 +1079,32 @@ describe("final hardening: give-up cancel, deferral, age guard, outdated-consent
       expect(h.rows.get("row-1").state).toBe("cancel_requested");
       expect(h.convert).not.toHaveBeenCalled();
     });
-    it("a cancel confirmed in the same tick allows the give-up", async () => {
-      wantCancel({ failedTicks: MAX_FAILED_TICKS - 1 });
+    it("a wanted cancel plus a batch that never shows ended: no give-up, however many ticks", async () => {
+      wantCancel({ failedTicks: MAX_FAILED_TICKS + 5 });
       h.retrieve.mockRejectedValue(new Error("503"));
-      expect(await processBatchRow("row-1", deps())).toBe("unreachable");
-      expect(h.rows.get("row-1").cancelRequestedAt).toEqual(expect.any(Date));
-      expect(h.convert).toHaveBeenCalledWith("row-1");
+      h.cancel.mockRejectedValue(new Error("503"));
+      expect(await processBatchRow("row-1", deps())).toBe("failedTick");
+      expect(h.rows.get("row-1").failedTicks).toBe(MAX_FAILED_TICKS + 6);
+      expect(h.convert).not.toHaveBeenCalled();
     });
   });
 
-  describe("ordinary give-up makes one best-effort provider cancel first", () => {
-    it("cancel succeeds: stamped, then settled and closed", async () => {
+  describe("ordinary give-up (tick 12) only for a batch that is provably ended", () => {
+    it("running or unreadable batch: not given up, no cancel, counting goes on", async () => {
       putRow({ failedTicks: MAX_FAILED_TICKS - 1 });
       h.retrieve.mockRejectedValue(new Error("503"));
+      expect(await processBatchRow("row-1", deps())).toBe("failedTick");
+      expect(h.cancel).not.toHaveBeenCalled();
+      expect(h.rows.get("row-1").state).toBe("waiting");
+      expect(h.convert).not.toHaveBeenCalled();
+    });
+    it("provably ended at the last look: settled and closed without a cancel", async () => {
+      putRow({ failedTicks: MAX_FAILED_TICKS - 1 });
+      endedAtLastLook();
       expect(await processBatchRow("row-1", deps())).toBe("unreachable");
-      expect(h.cancel).toHaveBeenCalledTimes(1);
-      expect(h.rows.get("row-1").cancelRequestedAt).toEqual(expect.any(Date));
+      expect(h.cancel).not.toHaveBeenCalled();
       expect(h.rows.get("row-1").state).toBe("done");
       expect(h.convert).toHaveBeenCalledWith("row-1");
-    });
-    it("cancel fails: swallowed, not stamped, still settled and closed", async () => {
-      putRow({ failedTicks: MAX_FAILED_TICKS - 1 });
-      h.retrieve.mockRejectedValue(new Error("503"));
-      h.cancel.mockRejectedValue(new Error("503"));
-      expect(await processBatchRow("row-1", deps())).toBe("unreachable");
-      expect(h.rows.get("row-1").cancelRequestedAt).toBeUndefined();
-      expect(h.rows.get("row-1").state).toBe("done");
     });
     it("no cancel before the 12th tick", async () => {
       putRow({ failedTicks: 3 });
