@@ -25,14 +25,13 @@ Die Datei wählt über `ctx.environment` aus: `production` → Branch `master`,
 `Development` → Branch `develop`. Variablen verwaltet die Datei nicht. Unter
 Windows ruft das SDK `railway --version` ohne Shell auf; dafür muss die
 Umgebungsvariable `_` auf die echte `railway.exe` zeigen
-(`npm
-ode_modules\@railway\cliinailway.exe`).
+(`npm\node_modules\@railway\cli\bin\railway.exe`).
 
 | Service | Ressource in `railway.ts` | Inhalt |
 |---|---|---|
 | Web (production **und** development) | `Contentpilot` | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` (Timeout 900 s, damit ein langer Index-Build beim Start nicht abgebrochen wird), `drainingSeconds` 15, Neustart bei Fehler `ON_FAILURE`, höchstens 10-mal (siehe unten) |
 | Db Space Checker (Cron, nur production) | `Db Space Checker` | Dockerfile-Builder, `node scripts/db-alert.mjs`, alle 15 Min, kein Restart |
-| Db Backup (Cron, production **und** development) | `Db Backup` | Dockerfile-Builder, `node scripts/db-backup.mjs`, täglich 02:00 UTC, kein Restart |
+| Db Backup (Cron, production **und** development) | `Db Backup` (production) / `Db Backup dev` (Development) | Dockerfile-Builder, `node scripts/db-backup.mjs`, täglich 02:00 UTC, kein Restart |
 
 **Neustart-Regel des Web-Services (`restartPolicyType: ON_FAILURE`, `restartPolicyMaxRetries: 10`).** Das ist
 Railways Standard; er bleibt in `railway.ts` bewusst implizit (Railway speichert den Standard als „nicht gesetzt“ und würde sonst dauerhaft einen Unterschied zeigen). Ein niedrigerer
@@ -607,7 +606,7 @@ Produktions-Backups löschen kann. Genau davor schützt die Aufteilung. Ein
 gemeinsamer Bucket mit zwei `BACKUP_PREFIX`-Werten wäre billiger, gäbe diese
 Eigenschaft aber auf.
 
-Der Service `Db Backup` ist in `railway.ts` für beide Environments gleich definiert — die Unterschiede oben
+Der Backup-Service (`Db Backup` in production, `Db Backup dev` in Development) ist in `railway.ts` für beide Environments gleich definiert — die Unterschiede oben
 sind ausschließlich Environment-Variablen, und die sind in Railway ohnehin pro
 Environment gesetzt.
 
