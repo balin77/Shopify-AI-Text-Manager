@@ -79,6 +79,12 @@ export async function expireStaleBatches(
         });
         if (claimed.count !== 1) continue;
 
+        // Decide from the row as it is NOW: the snapshot above may be a minute old, and a poller that ran between
+        // the select and the claim may have stamped the collect evidence or the consent withdrawal. A failed
+        // re-read falls back to the snapshot.
+        const fresh = await db.bulkTranslateBatch.findUnique({ where: { id: row.id } }).catch(() => null);
+        const cur = fresh ?? row;
+
         // 1. Settle the hold FIRST (last look: counts where readable, else the upper bound).
         const { settlementCredentialsFor } = await import("../ai/ai-credentials.server");
         let transport = null;
@@ -88,7 +94,7 @@ export async function expireStaleBatches(
         } catch {
           transport = null;
         }
-        const outcome = await settleHold(row, transport, { final: true });
+        const outcome = await settleHold(cur, transport, { final: true });
         if (outcome.kind === "pending") {
           // The bookkeeping itself failed: leave the row open, the next pass tries again.
           await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { leaseToken: null, leaseUntil: null } });
@@ -100,12 +106,12 @@ export async function expireStaleBatches(
         // The code comes from the ROW (read before the settlement above): a collect that was reached (marker, or a
         // managed booking that left "held") must not read "nothing was written"; a withdrawn consent says so.
         const unconfirmed = stringList(row.batchIds).length === 0;
-        const collectReached = collectEvidence(row);
+        const collectReached = collectEvidence(cur);
         // A cancel the merchant or the shop removal asked for leaves the Task at cancel_requested: that is a
         // cancellation, accurately, with no error code.
         const taskNow = await db.task.findUnique({ where: { id: row.taskId }, select: { status: true } }).catch(() => null);
-        const cancelledByRequest = taskNow?.status === "cancel_requested" && !row.consentWithdrawnAt && !collectReached;
-        const code = row.consentWithdrawnAt
+        const cancelledByRequest = taskNow?.status === "cancel_requested" && !cur.consentWithdrawnAt && !collectReached;
+        const code = cur.consentWithdrawnAt
           ? CONSENT_GIVE_UP_CODE
           : collectReached
             ? BATCH_COLLECT_FAILED_ERROR

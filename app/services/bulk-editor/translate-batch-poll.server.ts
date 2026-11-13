@@ -272,7 +272,7 @@ async function noteFailedTick(
   // ticks that fail EARLIER (a status read): by then the cost may be booked and writes may exist, so the give-up
   // must say "collect failed", never "nothing was written". A booking that left `held` is the same evidence.
   const collectPhase = row.state === "collecting";
-  const collectReached = collectPhase || collectEvidence(fresh);
+  const collectReached = collectPhase || collectEvidence(fresh ?? row);
   const errorText = messageOf(error);
   const marked = collectReached && !isCollectMarked(errorText) ? `${BATCH_COLLECT_FAILED_ERROR}:${errorText}` : errorText;
   const lastError = marked.substring(0, 500);
@@ -617,7 +617,9 @@ async function handleRow(deps: RowDeps, row: BulkTranslateBatch, token: string):
   }
 
   // 8. ENDED: fetch the results (the paid-for part of a cancelled batch included).
-  await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { state: "collecting", ...(isCollectMarked(row.lastError) ? {} : { failedTicks: 0 }) } });
+  const flippedToCollecting = await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token }, data: { state: "collecting", ...(isCollectMarked(row.lastError) ? {} : { failedTicks: 0 }) } });
+  // The lease is gone (another tick owns the row): stamp nothing, fetch nothing.
+  if (flippedToCollecting.count === 0) return "leaseLost";
   // The durable collect evidence, stamped BEFORE booking and any write; only if still null, never cleared.
   await db.bulkTranslateBatch.updateMany({ where: { id: row.id, leaseToken: token, collectStartedAt: null }, data: { collectStartedAt: new Date() } });
   // The counter is NOT reset when an earlier tick already failed inside the collect: those failures must add up

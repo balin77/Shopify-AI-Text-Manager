@@ -25,6 +25,8 @@ const h = vi.hoisted(() => ({
   retrieve: vi.fn(),
   txFails: false,
   taskStatus: 'waiting_batch' as string,
+  fresh: undefined as any,
+  freshFails: false,
 }));
 
 vi.mock('~/db.server', () => {
@@ -38,6 +40,10 @@ vi.mock('~/db.server', () => {
         findMany: vi.fn(async (a: any) => {
           h.findManyArgs = a;
           return h.rows;
+        }),
+        findUnique: vi.fn(async (a: any) => {
+          if (h.freshFails) throw new Error('read failed');
+          return h.fresh === undefined ? (h.rows.find((r) => r.id === a.where.id) ?? null) : h.fresh;
         }),
         updateMany: vi.fn(async (a: any) => {
           h.batchUpdate(a);
@@ -90,6 +96,8 @@ beforeEach(() => {
   h.flipCount = 1;
   h.txFails = false;
   h.taskStatus = 'waiting_batch';
+  h.fresh = undefined;
+  h.freshFails = false;
   h.order.length = 0;
   for (const fn of [h.batchUpdate, h.taskUpdate, h.release, h.convert, h.settle, h.retrieve]) fn.mockClear();
   h.settle.mockResolvedValue({ ok: true, transport: { retrieve: (...a: unknown[]) => h.retrieve(...a) } });
@@ -191,6 +199,20 @@ describe('expireStaleBatches', () => {
       where: expect.anything(),
       data: expect.objectContaining({ state: 'done', lastError: null }),
     });
+  });
+
+  it('the close code comes from the row re-read AFTER the claim: collect evidence stamped meanwhile wins over the snapshot', async () => {
+    h.rows = [row()];
+    h.fresh = row({ collectStartedAt: new Date('2026-11-10T01:00:00Z') });
+    await expireStaleBatches(now);
+    expect(taskData().error).toBe('batch_collect_failed');
+  });
+
+  it('a failed re-read falls back to the snapshot', async () => {
+    h.rows = [row({ collectStartedAt: new Date('2026-11-10T01:00:00Z') })];
+    h.freshFails = true;
+    await expireStaleBatches(now);
+    expect(taskData().error).toBe('batch_collect_failed');
   });
 
   it('cancel_requested but a collect was reached: still batch_collect_failed', async () => {

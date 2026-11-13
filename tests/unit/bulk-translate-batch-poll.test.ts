@@ -275,6 +275,20 @@ describe("an ended batch: book, THEN write", () => {
     expect(d.runCollect).toHaveBeenCalledTimes(1);
   });
 
+  it("the lease lost right before the `collecting` flip: leaseLost at once, no stamp, no results fetch", async () => {
+    const orig = h.retrieve.getMockImplementation();
+    h.retrieve.mockImplementationOnce(async () => {
+      h.rows.get("row-1").leaseToken = "someone-else";
+      return { providerStatus: "ended", ended: true, requestCounts: { total: 1, processing: 0, succeeded: 1, errored: 0, expired: 0, canceled: 0 } };
+    });
+    const d = deps();
+    expect(await processBatchRow("row-1", d)).toBe("leaseLost");
+    expect(h.order).not.toContain("collectStamp");
+    expect(h.rows.get("row-1").collectStartedAt ?? null).toBeNull();
+    expect(d.runCollect).not.toHaveBeenCalled();
+    void orig;
+  });
+
   it("a booking that lost its lease stops the tick before anything is written", async () => {
     h.booking.mockResolvedValue({ applied: false, reason: "leaseLost" });
     const d = deps();
