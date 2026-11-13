@@ -39,7 +39,8 @@ export default defineRailway((ctx) => {
       drainingSeconds: 15,
       // Restart policy: Railway default ON_FAILURE with 10 retries (left implicit,
       // Railway stores the default as unset and would show a permanent diff).
-      sleepApplication: !prod,
+      // App sleeping only in Development (Railway stores production's "off" as unset).
+      ...(prod ? {} : { sleepApplication: true }),
     },
   });
 
