@@ -13,6 +13,11 @@ import { defineRailway, github, project, service } from "railway/iac";
 export const partial = "Contentpilot";
 
 export default defineRailway((ctx) => {
+  // Fail closed: an unknown environment name must never fall through to the
+  // Development settings (branch develop, sleep on) when applied to production.
+  if (ctx.environment !== "production" && ctx.environment !== "Development") {
+    throw new Error(`Unknown Railway environment "${ctx.environment}" (expected "production" or "Development")`);
+  }
   const prod = ctx.environment === "production";
   const repo = "balin77/Shopify-AI-Text-Manager";
   const branch = prod ? "master" : "develop";
