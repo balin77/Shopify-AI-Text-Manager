@@ -76,7 +76,7 @@ export const BOOT_ORPHAN_TASK_TYPES = ["bulkEditorTranslate"];
 /**
  * Boot recovery fails a BOOT type only after this silence. The runner heartbeats every 15 s
  * (bulk-editor-translate.handler.ts), so a run that is alive in ANOTHER container during a zero-downtime deploy
- * overlap (railway.json drainingSeconds) is never failed by the new one; a run killed with its process falls
+ * overlap (.railway/railway.ts drainingSeconds) is never failed by the new one; a run killed with its process falls
  * silent and is failed here when the silence has passed, else by the periodic reaper (heartbeat stall).
  */
 export const BOOT_SILENCE_MS = 90_000;

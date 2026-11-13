@@ -145,7 +145,7 @@ export function verifyOAuthState(
 //
 // This app deploys as a single Node process: server.js documents (see the
 // R4-C2 comment there, "the app is deployed as a single web process
-// (railway.json: `startCommand: npm run start:production`)") that every
+// (.railway/railway.ts: `start: "npm run start:production"`)") that every
 // in-process singleton in this codebase relies on that assumption — and that
 // the replica count backing it lives in the Railway dashboard, not in the
 // repo. A plain in-memory Map is therefore sufficient here too — it
